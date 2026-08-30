@@ -1,0 +1,31 @@
+# Project-scoped Codex harness. Loaded only for trusted projects.
+# Keep production architecture in docs/productionization; this file controls agent execution only.
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+
+developer_instructions = """
+For myTradingAlpha productionization work, read and follow root AGENTS.md and
+`docs/productionization/AGENT_AUDIT_PROTOCOL.md` before selecting or spawning roadmap agents.
+
+Use the project-scoped named Codex agents under `.codex/agents/` for every new roadmap PR after this
+policy is present on the checked-out base branch:
+- normal: `normal_implementer` + `reviewer_high`
+- high: `high_implementer` + `reviewer_high`; use `reviewer_xhigh` when ambiguity remains
+- critical: `critical_implementer` + `reviewer_xhigh`
+
+Do not substitute a generic/default worker for a required named roadmap role merely because it is
+available. If the required named role cannot be spawned with its project configuration, record
+`insufficient_evidence` and stop before merge instead of claiming the requested route was used.
+
+For roadmap implementation PRs, preserve auditable red-green-refactor history, persist the independent
+review artifact on the GitHub PR at the exact reviewed head, and persist the master merge-gate artifact
+on the GitHub PR at the exact final head before merge, as defined in AGENT_AUDIT_PROTOCOL.md.
+
+This policy is prospective. Do not rewrite or invalidate a roadmap PR whose implementation/review
+subagents were already running before this config was merged; apply it at the next fresh agent spawn.
+"""
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4
