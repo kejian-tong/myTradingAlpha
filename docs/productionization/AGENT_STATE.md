@@ -80,7 +80,7 @@ on evidence, not intent.
 
 | PR ID | Base main SHA | Branch | PR | Head / merge SHA | Complexity / actual routing | Tests | CI | Review | Scope leak | Status / next |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | pending | pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual pending; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PENDING | PENDING | none | IN PROGRESS / next: FND-02 |
+| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | `b47b01526843b1601530cc2fabc148aa2e66191f` / pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual pending; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PENDING | PENDING | none | IN PROGRESS / next: FND-02 |
 
 Recommended compact representation in agent summaries:
 
