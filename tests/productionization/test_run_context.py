@@ -111,6 +111,45 @@ def test_run_context_rejects_naive_timestamps() -> None:
 
 
 @pytest.mark.parametrize(
+    "component",
+    [
+        "data_capture_egress",
+        "model_provider_egress",
+        "research_tool_egress",
+        "paper_broker_egress",
+        "live_broker_egress",
+    ],
+)
+def test_historical_run_context_rejects_every_enabled_network_component(component: str) -> None:
+    payload = _context_payload()
+    payload["network_policy"] = {component: True}
+
+    with pytest.raises(ValidationError):
+        RunContext.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("mode", "component"),
+    [
+        ("forward_paper", "research_tool_egress"),
+        ("forward_paper", "live_broker_egress"),
+        ("live_pilot", "research_tool_egress"),
+        ("live_pilot", "paper_broker_egress"),
+        ("live_pilot", "live_broker_egress"),
+    ],
+)
+def test_run_context_rejects_disallowed_forward_and_read_only_live_egress(
+    mode: str, component: str
+) -> None:
+    payload = _context_payload()
+    payload["mode"] = mode
+    payload["network_policy"] = {component: True}
+
+    with pytest.raises(ValidationError):
+        RunContext.model_validate(payload)
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "0",

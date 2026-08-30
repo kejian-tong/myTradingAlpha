@@ -160,6 +160,34 @@ def test_config_resolution_materializes_the_all_false_default_network_policy() -
     assert dumped["run"]["network_policy"] == dict.fromkeys(_NETWORK_COMPONENTS, False)
 
 
+@pytest.mark.parametrize(
+    "omitted_fields",
+    [
+        ("decision_time", "knowledge_cutoff", "earliest_execution_time"),
+        ("bundle_id",),
+        ("bundle_hash",),
+    ],
+)
+def test_historical_config_requires_complete_time_and_bundle_metadata(
+    omitted_fields: tuple[str, ...],
+) -> None:
+    config = _historical_mapping()
+    for field_name in omitted_fields:
+        config["run"].pop(field_name)
+
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(config)
+
+
+@pytest.mark.parametrize("field_name", ["bundle_id", "bundle_hash"])
+def test_partial_bundle_identity_is_rejected_in_nonhistorical_modes(field_name: str) -> None:
+    config = _forward_paper_mapping()
+    config["run"][field_name] = "partial-bundle-identity"
+
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(config)
+
+
 def test_network_policy_is_component_scoped_immutable_extra_forbidden_and_deny_by_default() -> None:
     import mytradingalpha.contracts as contract_module
     from mytradingalpha.ops.config import NetworkPolicy
