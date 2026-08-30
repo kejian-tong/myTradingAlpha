@@ -10,13 +10,13 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `2993820d473c84b674de1f4e11f137e89b2c04d1`
-- `roadmap_status`: `in_progress`
-- `current_pr_id`: `FND-02`
+- `last_reconciled_main_sha`: `09bb07689483b5a3507f2b230a32b90c6dd788b6`
+- `roadmap_status`: `paused_pending_runtime_harness`
+- `current_pr_id`: `none`
 - `next_pr_id`: `FND-03`
 - `current_phase`: `00-foundation`
-- `autonomy_mode`: `autonomous_authorized`
-- `last_completed_roadmap_pr`: `FND-01`
+- `autonomy_mode`: `stopped_pending_pr9_fresh_master`
+- `last_completed_roadmap_pr`: `FND-02`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_reviewer_route`: `GPT-5.6 Sol / high`
@@ -81,7 +81,7 @@ on evidence, not intent.
 | PR ID | Base main SHA | Branch | PR | Head / merge SHA | Complexity / actual routing | Tests | CI | Review | Scope leak | Status / next |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge `2993820d473c84b674de1f4e11f137e89b2c04d1` | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | MERGED / next: FND-02 |
-| FND-02 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | `codex/fnd-02-contract-registry` | #10 | implementation `e1ee41fd638069770c842234242265eee47ea2c8`; repaired `bc7a2e51a60a9df3ae10f45de2f32c3915fcb9e6` / merge pending | `high` — escalated from `normal` after reviewer found numeric-string timestamp coercion and silent extra-field loss; initial implementer requested/actual GPT-5.6 Luna / max; repair implementer requested GPT-5.6 Sol / high, actual unknown/not exposed by repair runtime; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — focused 71 on Python 3.10; productionization 85; full 661 passed, 2 skipped; checker; Ruff; repaired wheel-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — both prior HIGH findings resolved; no remaining findings | none | READY TO MERGE — master PASS / next: FND-03 |
+| FND-02 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | `codex/fnd-02-contract-registry` | #10 | implementation `e1ee41fd638069770c842234242265eee47ea2c8`; repaired `bc7a2e51a60a9df3ae10f45de2f32c3915fcb9e6`; merge `09bb07689483b5a3507f2b230a32b90c6dd788b6` | `high` — escalated from `normal` after reviewer found numeric-string timestamp coercion and silent extra-field loss; initial implementer requested/actual GPT-5.6 Luna / max; repair implementer requested GPT-5.6 Sol / high, actual unknown/not exposed by repair runtime; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — focused 71 on Python 3.10; productionization 85; full 661 passed, 2 skipped; checker; Ruff; repaired wheel-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — both prior HIGH findings resolved; no remaining findings | none | MERGED / next: FND-03 blocked pending PR #9 and fresh master |
 
 Recommended compact representation in agent summaries:
 
@@ -116,12 +116,14 @@ PR IDs.
 | --- | --- | --- | --- | --- |
 | Agent harness bootstrap | #6 | `dc9bc864fc5c1188ec4fd180950dd3a52f7bcf3c` | Add root `AGENTS.md`, autonomous workflow, and durable state | merged as `6482bf97ac78f664f4081f1ff8b9f05645b454c5` |
 | Adaptive model routing | #7 | `6482bf97ac78f664f4081f1ff8b9f05645b454c5` | Add complexity-based model/effort routing and actual-model ledger fields | merged as `8e1274a8c46a14e67266a135268252c328e724c2` |
+| Project-scoped runtime/audit hardening | #9 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | Add the next Codex runtime-routing and PR-audit harness | open on `codex/harden-agent-runtime-audit`; a fresh master must merge and load it before FND-03 |
 
 ## Open blockers and deferred work
 
 - None at this checkpoint.
 - FND-01 merged as `2993820d473c84b674de1f4e11f137e89b2c04d1` after all gates passed.
-- FND-02 remains escalated to `high`; both reviewer HIGH findings are resolved, re-review approves, required CI passes, and the master gate passes.
+- FND-02 merged as `09bb07689483b5a3507f2b230a32b90c6dd788b6` after both reviewer HIGH findings were resolved and all gates passed.
+- Stop before FND-03: PR #9 must be merged, `main` refreshed, and its project-scoped runtime/audit harness loaded by a fresh master session. No FND-03 branch or plan exists.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
