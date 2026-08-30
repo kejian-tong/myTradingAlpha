@@ -5,21 +5,25 @@ It is operational state, not architecture. The approved architecture remains in
 `docs/productionization/README.md`, `docs/productionization/07_PR_IMPLEMENTATION_PLAN.md`, and the
 phase DESIGN/IMPLEMENTATION documents.
 
-`AGENTS.md` defines how agents must use and maintain this file.
+`AGENTS.md` defines how agents must use and maintain this file, including adaptive model routing.
 
 ## State schema
 
-- `schema_version`: 1
-- `last_reconciled_main_sha`: `dc9bc864fc5c1188ec4fd180950dd3a52f7bcf3c`
+- `schema_version`: 2
+- `last_reconciled_main_sha`: `6482bf97ac78f664f4081f1ff8b9f05645b454c5`
 - `roadmap_status`: `not_started`
 - `current_pr_id`: `none`
 - `next_pr_id`: `FND-01`
 - `current_phase`: `00-foundation`
 - `autonomy_mode`: `supervised_by_default`
 - `last_completed_roadmap_pr`: `none`
+- `default_master_route`: `GPT-5.6 Sol / xhigh`
+- `default_normal_implementer_route`: `GPT-5.6 Luna / max`
+- `default_reviewer_route`: `GPT-5.6 Sol / high`
 
-The state above must be reconciled against GitHub before every implementation session. GitHub/main
-is authoritative if this file is stale.
+The state above must be reconciled against GitHub before every implementation session. GitHub/main is
+authoritative if this file is stale. Model names/effort tiers here describe requested policy; each PR
+must record the actual runtime/model evidence when available.
 
 ## Durable architecture memory
 
@@ -38,14 +42,45 @@ Keep these invariants visible across fresh sessions:
 - Broker/paper/live side effects remain prohibited until their approved phase and required approval
   gates.
 
+## Durable model-routing memory
+
+The master classifies each PR from actual scope/current code before implementation.
+
+| Complexity | Implementer request | Reviewer request | Master request | Intended use |
+| --- | --- | --- | --- | --- |
+| `normal` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | bounded, well-specified ordinary-risk implementation |
+| `high` | GPT-5.6 Sol / high | GPT-5.6 Sol / high, xhigh if needed | GPT-5.6 Sol / xhigh | temporal/accounting/numerical/statistical/state-machine correctness |
+| `critical` | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | safety/external-side-effect/idempotency/reconciliation/promotion boundaries |
+
+Typical reasons to classify or escalate `high` include PIT cutoff/revision semantics, EvidenceBundle
+canonical hashing, deterministic replay/event ordering, ledger/NAV accounting, corporate actions,
+risk constraints, cost/liquidity/impact accounting, walk-forward statistics, and non-live state
+machines.
+
+Typical `critical` reasons include OMS/outbox/idempotency/reconciliation, unknown-ACK behavior,
+broker credential/write boundaries, persistent halts/kill controls, and paper/live promotion logic.
+
+The master may dynamically escalate `normal -> high -> critical` if investigation/review reveals
+hidden complexity. Do not escalate only because a PR is large. Record the actual correctness/safety
+reason.
+
+If the runtime cannot select the requested model or effort:
+
+- do not claim that it did;
+- use the strongest available compatible route;
+- preserve a fresh independent reviewer context;
+- record requested and actual model/effort;
+- for critical work, stop with `insufficient_evidence` if adequate model strength/independence is not
+  available.
+
 ## Roadmap PR ledger
 
 The master/orchestrator owns this ledger. Add one row per roadmap PR. Keep entries concise and based
 on evidence, not intent.
 
-| PR ID | Base main SHA | Branch | PR | Head / merge SHA | Tests | CI | Review | Scope leak | Status / next |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| _none yet_ | — | — | — | — | — | — | — | — | Next: FND-01 |
+| PR ID | Base main SHA | Branch | PR | Head / merge SHA | Complexity / actual routing | Tests | CI | Review | Scope leak | Status / next |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| _none yet_ | — | — | — | — | — | — | — | — | — | Next: FND-01 |
 
 Recommended compact representation in agent summaries:
 
@@ -54,6 +89,13 @@ FND-01
 base: <sha>
 PR: #<n>
 merge: <sha-or-pending>
+complexity: normal|high|critical
+requested implementer: <model> / <effort>
+actual implementer: <model> / <effort>
+requested reviewer: <model> / <effort>
+actual reviewer: <model> / <effort>
+actual master: <model> / <effort>
+escalation: none|<reason>
 tests: PASS|FAIL|INSUFFICIENT_EVIDENCE
 CI: PASS|FAIL|PENDING
 review: APPROVE|REQUEST_CHANGES
@@ -61,35 +103,39 @@ scope leak: none|<summary>
 next: FND-02|BLOCKED
 ```
 
+If exact actual model/effort metadata is unavailable, write `unknown/not exposed by runtime`; never
+copy the requested route into the actual field without evidence.
+
 ## Harness/bootstrap history
 
-This section tracks non-roadmap repository harness changes so they are not confused with the 47
-productionization PR IDs.
+This section tracks non-roadmap harness changes so they are not confused with the 47 productionization
+PR IDs.
 
 | Item | PR | Base SHA | Purpose | Status |
 | --- | --- | --- | --- | --- |
-| Agent harness bootstrap | #6 | `dc9bc864fc5c1188ec4fd180950dd3a52f7bcf3c` | Add root `AGENTS.md` and durable agent state | open at bootstrap |
+| Agent harness bootstrap | #6 | `dc9bc864fc5c1188ec4fd180950dd3a52f7bcf3c` | Add root `AGENTS.md`, autonomous workflow, and durable state | merged as `6482bf97ac78f664f4081f1ff8b9f05645b454c5` |
+| Adaptive model routing | #7 | `6482bf97ac78f664f4081f1ff8b9f05645b454c5` | Add complexity-based model/effort routing and actual-model ledger fields | open on `codex/add-agent-model-routing` |
 
 ## Open blockers and deferred work
 
-- None at bootstrap.
+- None at this checkpoint.
 - FND-01 has not started.
 
-Agents should record discovered unrelated technical debt here only when it materially affects a
-future slice. Do not use this section as permission to widen the active PR.
+Agents should record unrelated technical debt here only when it materially affects a future slice. Do
+not use this section as permission to widen the active PR.
 
 ## Resume protocol for a fresh master session
 
 On startup:
 
-1. Read root `AGENTS.md` completely.
-2. Read this file completely.
-3. Fetch current `main`, open roadmap PRs, and relevant CI/check state.
-4. Reconcile this file with actual GitHub state; do not trust stale SHA/status fields.
-5. If a prior PR merged but its ledger entry still says `pending`, repair the ledger before or as the
-   first state update of the next roadmap PR.
-6. Read the approved roadmap and the next PR's full phase DESIGN/IMPLEMENTATION documents.
-7. Continue from `next_pr_id` only after prerequisites and prior merge evidence are confirmed.
+1. read root `AGENTS.md` completely;
+2. read this file completely;
+3. fetch current `main`, roadmap PRs, and relevant CI/check state;
+4. reconcile this file with actual GitHub state;
+5. repair pending/stale merge, PR, status, and model-routing fields from evidence;
+6. read the approved roadmap and next PR's full phase DESIGN/IMPLEMENTATION docs;
+7. classify the next PR's complexity and requested routing from actual current scope;
+8. continue from `next_pr_id` only after prerequisites and prior merge evidence are confirmed.
 
 If a session terminates unexpectedly, this file plus GitHub history must be sufficient for a fresh
 master to recover without relying on chat memory.
@@ -97,20 +143,27 @@ master to recover without relying on chat memory.
 ## Autonomous-mode checkpoint rules
 
 Autonomous execution is allowed only when the user explicitly authorizes it for the master session.
-When authorized and the environment provides the required GitHub write/merge permissions plus fresh
-subagent contexts, the master may implement, independently review, merge, refresh `main`, and proceed
-to the next dependency-ordered PR without asking for confirmation after every ordinary code PR.
+When authorized and the environment provides required GitHub write/merge permissions plus fresh
+subagent contexts, the master may implement, independently review, merge, refresh `main`, update this
+state, and proceed to the next dependency-ordered PR without per-PR confirmation.
+
+For each PR, autonomous mode must still:
+
+- classify complexity;
+- apply/request the corresponding model routing;
+- record actual routing when exposed;
+- pass independent review, required validation, required CI, and the master gate.
 
 Autonomous mode does **not** allow the agent to waive roadmap promotion gates or approve its own
-real-world trading side effects. The master must stop for explicit human approval when the roadmap
-requires promotion/approval for paper or live broker writes, credentials, live pilot levels, or any
-other externally consequential gate.
+real-world trading side effects. Stop for explicit human approval when the roadmap requires
+promotion/approval for paper/live broker writes, credentials, live pilot levels, or another externally
+consequential gate.
 
-The master must also stop rather than self-override when there is a `BLOCKER`/`HIGH` review finding,
-CI failure attributable to the diff, architecture conflict, missing prerequisite, unavailable merge
-permission, or insufficient evidence for a blocking gate.
+The master must also stop rather than self-override for unresolved BLOCKER/HIGH findings, attributable
+CI failures, material architecture conflict, missing prerequisite, unavailable merge permission,
+blocking `insufficient_evidence`, or inadequate model/reviewer capability for a critical task.
 
 A Codex environment may support fresh subagents but not creation of new user-visible UI threads. Do
 not pretend to create a new UI thread when that capability is unavailable. Fresh isolated subagent
-contexts satisfy the implementation/review isolation requirement; this durable state file supports
-resume from a newly opened master session if the top-level session ends.
+contexts satisfy implementation/review isolation; this durable state supports resume from a newly
+opened master session if the top-level session ends.
