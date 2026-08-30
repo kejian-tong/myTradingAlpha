@@ -11,6 +11,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel
+
 _REDACTED = "[REDACTED]"
 _CORRELATION_FIELDS = (
     "correlation_id",
@@ -30,6 +32,7 @@ _SENSITIVE_FIELD_NAMES = {
     "client_secret",
     "password",
     "private_key",
+    "refresh_token",
     "secret",
     "token",
 }
@@ -40,13 +43,15 @@ _SENSITIVE_FIELD_PARTS = (
     "account-number",
     "client-secret",
     "private-key",
+    "refresh-token",
 )
 _BEARER_PATTERN = re.compile(r"(\bBearer\s+)[^\s,}\]]+", re.IGNORECASE)
 _KEY_VALUE_PATTERN = re.compile(
-    r"(\b(?:access[_-]?token|account[_-]?id|account[_-]?number|api[_-]?key|"
+    r"((?<![\w-])[\"']?(?:access[_-]?token|account[_-]?id|account[_-]?number|api[_-]?key|"
     r"authorization|bearer[_-]?token|broker[_-]?account[_-]?id|client[_-]?secret|"
-    r"password|private[_-]?key|secret|token)\s*[:=]\s*)"
-    r"([^%\s,}\]]+)",
+    r"password|private[_-]?key|refresh[_-]?token|secret|token)[\"']?\s*[:=]\s*)"
+    r"((?![\"']?\[REDACTED\][\"']?)"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^%\s,}\]]+))",
     re.IGNORECASE,
 )
 _PRIVATE_KEY_PATTERN = re.compile(
@@ -73,11 +78,20 @@ def _is_sensitive_field(field_name: Any) -> bool:
 def _redact_text(value: str) -> str:
     value = _PRIVATE_KEY_PATTERN.sub(_REDACTED, value)
     value = _BEARER_PATTERN.sub(rf"\1{_REDACTED}", value)
-    return _KEY_VALUE_PATTERN.sub(rf"\1{_REDACTED}", value)
+    return _KEY_VALUE_PATTERN.sub(_replace_sensitive_value, value)
+
+
+def _replace_sensitive_value(match: re.Match[str]) -> str:
+    raw_value = match.group(2)
+    if raw_value[0] in {'"', "'"}:
+        return f"{match.group(1)}{raw_value[0]}{_REDACTED}{raw_value[0]}"
+    return f"{match.group(1)}{_REDACTED}"
 
 
 def _redact_value(value: Any, *, field_name: Any = None) -> Any:
     if _is_sensitive_field(field_name):
+        return _REDACTED
+    if isinstance(value, BaseModel):
         return _REDACTED
     if isinstance(value, Mapping):
         return {
@@ -104,6 +118,8 @@ class RedactionFilter(logging.Filter):
         for key, value in tuple(record.__dict__.items()):
             if key not in {"msg", "args"}:
                 record.__dict__[key] = _redact_value(value, field_name=key)
+        record.msg = _redact_text(record.getMessage())
+        record.args = ()
         return True
 
 

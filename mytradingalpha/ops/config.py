@@ -33,9 +33,9 @@ _BOOL_FALSE = frozenset({"false", "0", "no", "off"})
 class ModeConfig(ContractModel):
     """Validated ``run`` section for historical and read-only forward modes."""
 
-    mode: Mode = Mode.HISTORICAL
-    variant_id: StableId = "quant_only_v1"
-    calendar_id: StableId = "XNYS-regular-v1"
+    mode: Mode
+    variant_id: StableId
+    calendar_id: StableId
     decision_time: UtcDateTime | None = None
     knowledge_cutoff: UtcDateTime | None = None
     earliest_execution_time: UtcDateTime | None = None
@@ -43,11 +43,25 @@ class ModeConfig(ContractModel):
     bundle_hash: StableId | None = None
     replay_policy: Literal["availability", "archive_realistic"] = "availability"
     network_policy: NetworkPolicy = Field(default_factory=NetworkPolicy)
-    live_level: StableId | None = None
+    live_level: Literal["L0"] | None = None
     required_gate_evidence_ref: StableId | None = None
 
     @model_validator(mode="after")
     def validate_mode_policy(self) -> ModeConfig:
+        live_fields = {"live_level", "required_gate_evidence_ref"}
+        supplied_live_fields = live_fields & self.model_fields_set
+        if self.mode is not Mode.LIVE_PILOT and supplied_live_fields:
+            raise ValueError(
+                f"{self.mode.value} mode cannot set live-only fields: "
+                f"{sorted(supplied_live_fields)!r}"
+            )
+        if self.mode is Mode.LIVE_PILOT and (
+            self.live_level != "L0" or self.required_gate_evidence_ref is None
+        ):
+            raise ValueError(
+                "live pilot configuration requires L0 and required gate evidence"
+            )
+
         if self.mode is Mode.HISTORICAL and any(
             getattr(self.network_policy, component) for component in _NETWORK_COMPONENTS
         ):
@@ -137,12 +151,40 @@ class PersistenceConfig(ContractModel):
 class ProductionConfig(ContractModel):
     """Immutable, opt-in configuration with explicit foundation sections."""
 
-    run: ModeConfig = Field(default_factory=ModeConfig)
+    run: ModeConfig
     execution: BrokerConfig = Field(default_factory=BrokerConfig)
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
 
     @model_validator(mode="after")
     def validate_cross_section_policy(self) -> ProductionConfig:
+        live_only_fields = {
+            "broker_endpoint_id",
+            "secret_ref",
+            "human_approval_required",
+        }
+        paper_only_fields = {"paper_endpoint_id", "approval_ref"}
+        supplied_live_fields = live_only_fields & self.execution.model_fields_set
+        supplied_paper_fields = paper_only_fields & self.execution.model_fields_set
+
+        if self.run.mode is not Mode.LIVE_PILOT and supplied_live_fields:
+            raise ValueError(
+                f"{self.run.mode.value} mode cannot set live-only execution fields: "
+                f"{sorted(supplied_live_fields)!r}"
+            )
+        if self.run.mode is not Mode.FORWARD_PAPER and supplied_paper_fields:
+            raise ValueError(
+                f"{self.run.mode.value} mode cannot set paper-only execution fields: "
+                f"{sorted(supplied_paper_fields)!r}"
+            )
+        if self.run.mode is Mode.LIVE_PILOT and (
+            self.execution.broker_endpoint_id is None
+            or self.execution.secret_ref is None
+            or not self.execution.human_approval_required
+        ):
+            raise ValueError(
+                "live pilot L0 requires broker endpoint, secret reference, and human approval"
+            )
+
         if self.run.mode is Mode.HISTORICAL and (
             self.execution.paper_write_enabled or self.execution.live_write_enabled
         ):
