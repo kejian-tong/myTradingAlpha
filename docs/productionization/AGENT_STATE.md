@@ -80,7 +80,7 @@ on evidence, not intent.
 
 | PR ID | Base main SHA | Branch | PR | Head / merge SHA | Complexity / actual routing | Tests | CI | Review | Scope leak | Status / next |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | `b47b01526843b1601530cc2fabc148aa2e66191f` / pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual pending; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PENDING | PENDING | none | IN PROGRESS / next: FND-02 |
+| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | MASTER GATE PENDING / next: FND-02 |
 
 Recommended compact representation in agent summaries:
 
@@ -119,7 +119,7 @@ PR IDs.
 ## Open blockers and deferred work
 
 - None at this checkpoint.
-- FND-01 implementation is complete locally; independent review and required GitHub CI are pending.
+- FND-01 implementation, independent review, and required GitHub CI pass; the master gate is pending.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
