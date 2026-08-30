@@ -412,6 +412,36 @@ def test_configured_logging_redacts_structured_text_and_raw_config_models() -> N
     assert all(sentinel not in rendered for sentinel in sentinels)
 
 
+@pytest.mark.parametrize(
+    ("message", "sentinel"),
+    [
+        ("X-API-Key: x-api-key-sentinel", "x-api-key-sentinel"),
+        ("X-Access-Token: x-access-token-sentinel", "x-access-token-sentinel"),
+        ("X-Refresh-Token: x-refresh-token-sentinel", "x-refresh-token-sentinel"),
+        ("provider_api_key=provider-api-key-sentinel", "provider-api-key-sentinel"),
+        ("Authorization: Basic basic-auth-sentinel", "basic-auth-sentinel"),
+        ("Authorization: Token token-auth-sentinel", "token-auth-sentinel"),
+        ("Proxy-Authorization: Basic proxy-auth-sentinel", "proxy-auth-sentinel"),
+        ("X-Authorization: Token x-auth-sentinel", "x-auth-sentinel"),
+    ],
+)
+def test_configured_logging_redacts_prefixed_credentials_and_complete_authorization(
+    message: str, sentinel: str
+) -> None:
+    from mytradingalpha.ops.logging import configure_logging
+
+    stream = StringIO()
+    logger = logging.getLogger("mytradingalpha.test.redaction.prefixed")
+    logger.handlers.clear()
+    configure_logging(logger=logger, stream=stream)
+
+    logger.info(message)
+    rendered = stream.getvalue()
+
+    assert "[REDACTED]" in rendered
+    assert sentinel not in rendered
+
+
 def test_structured_logs_include_context_and_restore_nested_correlation_scopes() -> None:
     from mytradingalpha.ops.logging import configure_logging, correlation_scope
 
