@@ -9,6 +9,39 @@
       ],
       "title": "Mode",
       "type": "string"
+    },
+    "NetworkPolicy": {
+      "additionalProperties": false,
+      "description": "Component-scoped network egress policy, denied by default.",
+      "properties": {
+        "data_capture_egress": {
+          "default": false,
+          "title": "Data Capture Egress",
+          "type": "boolean"
+        },
+        "model_provider_egress": {
+          "default": false,
+          "title": "Model Provider Egress",
+          "type": "boolean"
+        },
+        "research_tool_egress": {
+          "default": false,
+          "title": "Research Tool Egress",
+          "type": "boolean"
+        },
+        "paper_broker_egress": {
+          "default": false,
+          "title": "Paper Broker Egress",
+          "type": "boolean"
+        },
+        "live_broker_egress": {
+          "default": false,
+          "title": "Live Broker Egress",
+          "type": "boolean"
+        }
+      },
+      "title": "NetworkPolicy",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -67,6 +100,9 @@
       "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$",
       "title": "Variant Id",
       "type": "string"
+    },
+    "network_policy": {
+      "$ref": "#/$defs/NetworkPolicy"
     }
   },
   "required": [

@@ -33,7 +33,7 @@ def test_initializers_contain_only_module_docstrings() -> None:
         initializer = REPOSITORY_ROOT / Path(*package_name.split(".")) / "__init__.py"
         tree = ast.parse(initializer.read_text(encoding="utf-8"), filename=str(initializer))
 
-        if package_name == "mytradingalpha.contracts":
+        if package_name in {"mytradingalpha.contracts", "mytradingalpha.ops"}:
             assert isinstance(tree.body[0], ast.Expr), initializer
             assert isinstance(tree.body[0].value, ast.Constant), initializer
             assert isinstance(tree.body[0].value.value, str), initializer
@@ -75,6 +75,7 @@ def test_contracts_expose_only_the_curated_fnd02_public_api() -> None:
         "FoundationReasonCode",
         "MigrationPlan",
         "Mode",
+        "NetworkPolicy",
         "RunContext",
         "SchemaRegistry",
         "SchemaRegistryError",
@@ -84,3 +85,22 @@ def test_contracts_expose_only_the_curated_fnd02_public_api() -> None:
 
     assert set(contracts.__all__) == expected
     assert all(hasattr(contracts, name) for name in expected)
+
+
+def test_ops_expose_only_the_curated_fnd03_public_api() -> None:
+    ops = importlib.import_module("mytradingalpha.ops")
+    expected = {
+        "BrokerConfig",
+        "ModeConfig",
+        "NetworkPolicy",
+        "PersistenceConfig",
+        "ProductionConfig",
+        "RedactionFilter",
+        "configure_logging",
+        "correlation_scope",
+        "new_correlation_id",
+        "new_run_id",
+    }
+
+    assert set(ops.__all__) == expected
+    assert all(hasattr(ops, name) for name in expected)

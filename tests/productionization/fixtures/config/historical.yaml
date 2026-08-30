@@ -1,0 +1,22 @@
+run:
+  mode: historical
+  variant_id: quant_only_v1
+  decision_time: "2026-01-15T21:00:00Z"
+  knowledge_cutoff: "2026-01-15T21:00:00Z"
+  earliest_execution_time: "2026-01-16T14:30:00Z"
+  bundle_id: bundle-2026-01-15-001
+  bundle_hash: sha256:0123456789abcdef
+  calendar_id: XNYS-regular-v1
+  replay_policy: archive_realistic
+  network_policy:
+    data_capture_egress: false
+    model_provider_egress: false
+    research_tool_egress: false
+    paper_broker_egress: false
+    live_broker_egress: false
+execution:
+  paper_write_enabled: false
+  live_write_enabled: false
+persistence:
+  bundle_store: fixture-bundle-store
+  manifest_store: fixture-manifest-store
