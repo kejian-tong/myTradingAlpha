@@ -46,12 +46,56 @@ master gate.
 If a required named role cannot be spawned with its project configuration, do not silently substitute a
 generic worker and then claim the intended route. Record `insufficient_evidence` and stop before merge.
 
-## 3. Auditable test-first evidence
+## 3. Just-in-time PR Implementation Spec / Scope Contract
+
+Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**
+from the actual current repository. Before GREEN production implementation for every fresh roadmap PR,
+the master must instantiate the structure in:
+
+- `docs/productionization/PR_IMPLEMENTATION_SPEC_TEMPLATE.md`
+
+The JIT spec must be based on the exact current `main` SHA after prerequisites are merged and must
+reconcile older proposed filenames/APIs against current code. It must not blindly copy stale examples
+from architecture documents.
+
+The completed JIT spec must contain, at minimum:
+
+- roadmap PR ID/title, phase, base SHA, prerequisite merge SHAs;
+- applicable `AGENTS.md`, Codex config/agent config, architecture/design/implementation sources;
+- current-state findings and material doc/code drift;
+- exact existing files/symbols to modify and exact new files/symbols to add;
+- interfaces/schemas/invariants and observable behavioral contract;
+- explicit failure/error semantics;
+- security/network/persistence/external-side-effect boundaries;
+- backward compatibility requirements;
+- explicit non-goals and deferred later-PR work;
+- migration and rollback;
+- ordered implementation steps;
+- RED test/fixture plan and expected failures;
+- GREEN implementation plan and refactor boundary;
+- exact validation commands;
+- acceptance matrix;
+- complexity classification, named implementer/reviewer roles, configured routes, and escalation triggers.
+
+Persist the completed JIT spec in the PR body or as a durable GitHub PR-conversation artifact before
+GREEN implementation begins. A separate committed per-PR implementation-spec file is not required
+unless the roadmap explicitly asks for one.
+
+Do **not** pre-generate 47 static copies. Future implementation details must remain adaptable to the
+repository that exists when each PR starts. If a material architecture conflict cannot be resolved by
+the smallest backward-compatible implementation that preserves the approved invariant, stop and
+request human resolution rather than guessing.
+
+For docs-only/harness-only work where no GREEN production implementation exists, the JIT spec may be
+proportionally smaller but must still document scope, non-goals, validation, rollback, and why executable
+RED evidence is not applicable.
+
+## 4. Auditable test-first evidence
 
 For roadmap implementation PRs where tests can express the contract, red-green-refactor must be visible
 in Git history rather than only asserted in chat.
 
-### 3.1 RED commit
+### 4.1 RED commit
 
 Before production implementation:
 
@@ -66,7 +110,7 @@ Before production implementation:
 
 The RED commit must not contain production implementation that makes the new contract pass.
 
-### 3.2 GREEN implementation
+### 4.2 GREEN implementation
 
 After the RED commit is durable:
 
@@ -77,7 +121,7 @@ After the RED commit is durable:
 
 The PR body must identify the RED commit and GREEN implementation commit(s).
 
-### 3.3 Independent RED verification
+### 4.3 Independent RED verification
 
 The independent reviewer must verify that:
 
@@ -93,7 +137,7 @@ If the claimed RED evidence cannot be independently established, mark the TDD ev
 Docs-only/harness-only work that has no executable behavior may state `TDD not applicable` with a
 specific reason; do not manufacture meaningless failing tests.
 
-## 4. Durable independent-review artifact
+## 5. Durable independent-review artifact
 
 A subagent review that exists only in the parent chat is not sufficient durable audit evidence.
 
@@ -112,6 +156,7 @@ reviewed head: <exact SHA>
 reviewer role: reviewer_high|reviewer_xhigh
 reviewer config: .codex/agents/<file>.toml
 configured model/effort: <model> / <effort>
+JIT implementation spec: <GitHub PR body/comment reference>
 RED evidence: PASS|FAIL|INSUFFICIENT_EVIDENCE
 findings: BLOCKER/HIGH/MEDIUM/LOW/NIT with file/evidence
 acceptance matrix: <requirement -> evidence -> PASS/FAIL>
@@ -119,11 +164,14 @@ scope leak: none|<summary>
 verdict: APPROVE|REQUEST CHANGES
 ```
 
+The reviewer must verify that the final diff still matches the JIT implementation spec or that any
+deviation is explicitly justified, scope-safe, and reflected in the durable PR artifact.
+
 If any commit changes the PR head after the review — including a state-only/bookkeeping commit — the
 review is stale. Run a fresh review or explicit follow-up review against the new exact head and persist
 a new artifact before merge.
 
-## 5. Durable master merge-gate artifact
+## 6. Durable master merge-gate artifact
 
 Before autonomous merge, the master must persist a final GitHub PR-conversation artifact tied to the
 exact final head.
@@ -136,6 +184,7 @@ PR ID: <id>
 final head: <exact SHA>
 base main: <exact SHA>
 complexity: normal|high|critical
+JIT implementation spec: <GitHub PR body/comment reference>
 implementer role/configured route: <role> / <model> / <effort>
 reviewer role/configured route: <role> / <model> / <effort>
 RED commit: <SHA-or-N/A>
@@ -148,10 +197,11 @@ backward compatibility: PASS|FAIL
 master verdict: MERGE|DO NOT MERGE
 ```
 
-The master must not merge until the final-head independent review artifact, exact-head required CI, and
-this master-gate artifact all exist and pass.
+The master must independently confirm that the final diff remains within the JIT spec's scope and
+approved roadmap slice. The master must not merge until the final-head independent review artifact,
+exact-head required CI, and this master-gate artifact all exist and pass.
 
-## 6. Durable ledger fields
+## 7. Durable ledger fields
 
 On the next normal `AGENT_STATE.md` update, record at least:
 
@@ -161,6 +211,7 @@ On the next normal `AGENT_STATE.md` update, record at least:
 - named reviewer role and config path;
 - configured actual reviewer model/effort;
 - master configured/requested route;
+- JIT implementation spec GitHub artifact reference;
 - RED commit SHA and RED evidence status when applicable;
 - independent-review GitHub artifact reference;
 - master-gate GitHub artifact reference;
@@ -172,7 +223,7 @@ Do not create a separate state-only PR after every merge solely to update the le
 post-merge state updates are blocked by branch policy, reconcile the prior merge in the next roadmap
 branch before that branch's production implementation begins, while GitHub remains authoritative.
 
-## 7. Exact-head rule
+## 8. Exact-head rule
 
 Review and CI evidence are SHA-specific.
 
@@ -180,7 +231,7 @@ Any new commit after review or CI evidence invalidates the affected exact-head g
 and required CI as applicable. Never merge based on green checks or an approval artifact from an older
 head.
 
-## 8. Merge and safety boundaries
+## 9. Merge and safety boundaries
 
 This protocol strengthens execution evidence; it does not weaken any existing stop condition.
 
