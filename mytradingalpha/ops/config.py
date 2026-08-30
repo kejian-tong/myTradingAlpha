@@ -93,6 +93,19 @@ class ModeConfig(ContractModel):
                 raise ValueError(
                     "decision_time must be before earliest_execution_time"
                 )
+
+        if self.mode is Mode.HISTORICAL:
+            if not all(timestamp is not None for timestamp in timestamps):
+                raise ValueError(
+                    "historical mode requires decision times and knowledge cutoff"
+                )
+            if self.bundle_id is None or self.bundle_hash is None:
+                raise ValueError(
+                    "historical mode requires bundle_id and bundle_hash"
+                )
+
+        if (self.bundle_id is None) != (self.bundle_hash is None):
+            raise ValueError("bundle_id and bundle_hash must be provided together")
         return self
 
 

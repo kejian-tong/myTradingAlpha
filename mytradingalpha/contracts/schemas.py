@@ -10,6 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 from .common import StableId, UtcDateTime
 from .versions import CURRENT_SCHEMA_VERSION
 
+_NETWORK_COMPONENTS = (
+    "data_capture_egress",
+    "model_provider_egress",
+    "research_tool_egress",
+    "paper_broker_egress",
+    "live_broker_egress",
+)
+
 
 class ContractModel(BaseModel):
     """Immutable contract base that rejects fields outside the declared schema."""
@@ -53,6 +61,28 @@ class RunContext(ContractModel):
 
     @model_validator(mode="after")
     def validate_time_order(self) -> RunContext:
+        if self.mode is Mode.HISTORICAL and any(
+            getattr(self.network_policy, component) for component in _NETWORK_COMPONENTS
+        ):
+            raise ValueError("historical mode requires every network component to be disabled")
+
+        if self.mode is Mode.FORWARD_PAPER and (
+            self.network_policy.research_tool_egress
+            or self.network_policy.live_broker_egress
+        ):
+            raise ValueError(
+                "forward paper mode cannot enable research-tool or live-broker egress"
+            )
+
+        if self.mode is Mode.LIVE_PILOT and (
+            self.network_policy.research_tool_egress
+            or self.network_policy.paper_broker_egress
+            or self.network_policy.live_broker_egress
+        ):
+            raise ValueError(
+                "live pilot read-only mode cannot enable research, paper, or live-broker egress"
+            )
+
         if self.knowledge_cutoff > self.decision_time:
             raise ValueError(
                 "invalid_time_order: knowledge_cutoff must be at or before decision_time"
