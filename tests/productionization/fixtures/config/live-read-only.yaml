@@ -10,12 +10,6 @@ run:
     research_tool_egress: false
     paper_broker_egress: false
     live_broker_egress: false
-portfolio:
-  allowlist_id: approved-level-manifest
-  allocator: rule_v1
-risk:
-  fail_closed: true
-  policy_version: approved-live-policy-version
 execution:
   broker_endpoint_id: approved-live-endpoint
   secret_ref: scoped-secret-reference

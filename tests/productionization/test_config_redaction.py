@@ -62,7 +62,6 @@ def _forward_paper_mapping() -> dict[str, Any]:
                 "live_broker_egress": False,
             },
         },
-        "capture": {"provider_profile": "approved-capture-profile"},
         "execution": {
             "paper_endpoint_id": "approved-paper-sandbox",
             "paper_write_enabled": False,
@@ -106,8 +105,8 @@ def test_production_loader_reads_the_non_secret_yaml_fixture() -> None:
     config = _config_load(CONFIG_FIXTURES / "historical.yaml")
     dumped = _config_dump(config)
 
-    assert dumped["mode"]["mode"] == "historical"
-    assert dumped["mode"]["variant_id"] == "quant_only_v1"
+    assert dumped["run"]["mode"] == "historical"
+    assert dumped["run"]["variant_id"] == "quant_only_v1"
     assert dumped["persistence"]["bundle_store"] == "fixture-bundle-store"
 
 
@@ -115,8 +114,8 @@ def test_production_loader_reads_the_non_secret_yaml_fixture() -> None:
 def test_nonhistorical_read_only_fixtures_keep_both_write_flags_disabled(fixture_name: str) -> None:
     dumped = _config_dump(_config_load(CONFIG_FIXTURES / fixture_name))
 
-    assert dumped["broker"]["paper_write_enabled"] is False
-    assert dumped["broker"]["live_write_enabled"] is False
+    assert dumped["execution"]["paper_write_enabled"] is False
+    assert dumped["execution"]["live_write_enabled"] is False
 
 
 def test_config_precedence_is_defaults_then_mapping_then_mytradingalpha_env(monkeypatch) -> None:
@@ -125,17 +124,26 @@ def test_config_precedence_is_defaults_then_mapping_then_mytradingalpha_env(monk
     config = _config_load(_forward_paper_mapping())
     dumped = _config_dump(config)
 
-    assert dumped["mode"]["variant_id"] == "env-selected-variant"
-    assert dumped["mode"]["calendar_id"] == "XNYS-regular-v1"
-    assert dumped["broker"]["paper_write_enabled"] is False
-    assert dumped["broker"]["live_write_enabled"] is False
+    assert dumped["run"]["variant_id"] == "env-selected-variant"
+    assert dumped["run"]["calendar_id"] == "XNYS-regular-v1"
+    assert dumped["execution"]["paper_write_enabled"] is False
+    assert dumped["execution"]["live_write_enabled"] is False
+
+
+def test_config_resolution_materializes_the_all_false_default_network_policy() -> None:
+    dumped = _config_dump(_config_load(_historical_mapping()))
+
+    assert dumped["run"]["network_policy"] == dict.fromkeys(_NETWORK_COMPONENTS, False)
 
 
 def test_network_policy_is_component_scoped_immutable_extra_forbidden_and_deny_by_default() -> None:
     from mytradingalpha.ops.config import NetworkPolicy
 
+    import mytradingalpha.contracts as contract_module
+
     policy = NetworkPolicy()
 
+    assert contract_module.NetworkPolicy is NetworkPolicy
     assert policy.model_dump() == dict.fromkeys(_NETWORK_COMPONENTS, False)
     with pytest.raises((TypeError, ValidationError)):
         policy.data_capture_egress = True
@@ -197,15 +205,16 @@ def test_paper_write_requires_forward_policy_approved_endpoint_and_approval_refe
 
     loaded = _config_load(approved)
     dumped = _config_dump(loaded)
-    assert dumped["broker"]["paper_write_enabled"] is True
-    assert dumped["broker"]["paper_endpoint_id"] == "approved-paper-sandbox"
-    assert dumped["broker"]["approval_ref"] == "approved-paper-run-reference"
+    assert dumped["execution"]["paper_write_enabled"] is True
+    assert dumped["execution"]["paper_endpoint_id"] == "approved-paper-sandbox"
+    assert dumped["execution"]["approval_ref"] == "approved-paper-run-reference"
 
 
 @pytest.mark.parametrize(
     "bad_update",
     [
         {"run": {"unexpected": "field"}},
+        {"capture": {"provider_profile": "later-roadmap-field"}},
         {"execution": {"api_key": "fixture-api-key-not-secret"}},
         {"execution": {"password": "fixture-password-not-secret"}},
     ],
