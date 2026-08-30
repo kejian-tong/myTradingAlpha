@@ -442,6 +442,64 @@ def test_configured_logging_redacts_prefixed_credentials_and_complete_authorizat
     assert sentinel not in rendered
 
 
+@pytest.mark.parametrize(
+    ("template", "sentinel"),
+    [
+        ("Authorization: Basic %s", "lazy-basic-auth-sentinel"),
+        ("Authorization: Token %s", "lazy-token-auth-sentinel"),
+        ("Authorization: Bearer %s", "lazy-bearer-auth-sentinel"),
+        ("Proxy-Authorization: Basic %s", "lazy-proxy-auth-sentinel"),
+        ("X-Authorization: Token %s", "lazy-x-auth-sentinel"),
+        ("X-API-Key: %s", "lazy-x-api-key-sentinel"),
+        ("provider_api_key=%s", "lazy-provider-api-key-sentinel"),
+    ],
+)
+def test_configured_logging_redacts_lazy_formatted_credentials(
+    template: str, sentinel: str
+) -> None:
+    from mytradingalpha.ops.logging import configure_logging
+
+    stream = StringIO()
+    logger = logging.getLogger("mytradingalpha.test.redaction.lazy")
+    logger.handlers.clear()
+    configure_logging(logger=logger, stream=stream)
+
+    logger.info(template, sentinel)
+    rendered = stream.getvalue()
+
+    assert "[REDACTED]" in rendered
+    assert sentinel not in rendered
+
+
+def test_configured_logging_consumes_complete_percent_encoded_credentials() -> None:
+    from mytradingalpha.ops.logging import configure_logging
+
+    stream = StringIO()
+    logger = logging.getLogger("mytradingalpha.test.redaction.percent-encoded")
+    logger.handlers.clear()
+    configure_logging(logger=logger, stream=stream)
+
+    logger.info("api_key=alpha%2Fomega")
+    rendered = stream.getvalue()
+
+    assert "[REDACTED]" in rendered
+    assert "alpha%2Fomega" not in rendered
+    assert "2Fomega" not in rendered
+
+
+def test_configured_logging_preserves_ordinary_lazy_formatting() -> None:
+    from mytradingalpha.ops.logging import configure_logging
+
+    stream = StringIO()
+    logger = logging.getLogger("mytradingalpha.test.formatting.lazy")
+    logger.handlers.clear()
+    configure_logging(logger=logger, stream=stream)
+
+    logger.info("operation=%s count=%d", "ordinary", 2)
+
+    assert json.loads(stream.getvalue())["message"] == "operation=ordinary count=2"
+
+
 def test_structured_logs_include_context_and_restore_nested_correlation_scopes() -> None:
     from mytradingalpha.ops.logging import configure_logging, correlation_scope
 
