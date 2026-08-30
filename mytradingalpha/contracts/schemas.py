@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from .common import StableId, UtcDateTime
 from .versions import CURRENT_SCHEMA_VERSION
@@ -25,6 +25,16 @@ class Mode(str, Enum):
     LIVE_PILOT = "live_pilot"
 
 
+class NetworkPolicy(ContractModel):
+    """Component-scoped network egress policy, denied by default."""
+
+    data_capture_egress: StrictBool = False
+    model_provider_egress: StrictBool = False
+    research_tool_egress: StrictBool = False
+    paper_broker_egress: StrictBool = False
+    live_broker_egress: StrictBool = False
+
+
 class RunContext(ContractModel):
     """Immutable, versioned context delimiting one production run."""
 
@@ -39,6 +49,7 @@ class RunContext(ContractModel):
     bundle_hash: StableId
     calendar_id: StableId
     base_currency: StableId = Field(default="USD", validate_default=True)
+    network_policy: NetworkPolicy = Field(default_factory=NetworkPolicy)
 
     @model_validator(mode="after")
     def validate_time_order(self) -> RunContext:
@@ -53,4 +64,4 @@ class RunContext(ContractModel):
         return self
 
 
-__all__ = ["ContractModel", "Mode", "RunContext"]
+__all__ = ["ContractModel", "Mode", "NetworkPolicy", "RunContext"]

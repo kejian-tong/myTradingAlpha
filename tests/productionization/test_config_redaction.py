@@ -130,6 +130,30 @@ def test_config_precedence_is_defaults_then_mapping_then_mytradingalpha_env(monk
     assert dumped["execution"]["live_write_enabled"] is False
 
 
+def test_allowlisted_component_environment_override_is_nested_under_run(monkeypatch) -> None:
+    monkeypatch.setenv("MYTRADINGALPHA_DATA_CAPTURE_EGRESS", "false")
+
+    dumped = _config_dump(_config_load(_forward_paper_mapping()))
+
+    assert dumped["run"]["network_policy"]["data_capture_egress"] is False
+
+
+@pytest.mark.parametrize(
+    "environment_name, value",
+    [
+        ("MYTRADINGALPHA_PAPER_WRITE_ENABLED", "not-a-boolean"),
+        ("MYTRADINGALPHA_UNSUPPORTED_FIELD", "value"),
+    ],
+)
+def test_malformed_or_unknown_production_environment_fails_closed(
+    monkeypatch, environment_name: str, value: str
+) -> None:
+    monkeypatch.setenv(environment_name, value)
+
+    with pytest.raises(ValueError):
+        _config_load(_forward_paper_mapping())
+
+
 def test_config_resolution_materializes_the_all_false_default_network_policy() -> None:
     dumped = _config_dump(_config_load(_historical_mapping()))
 
@@ -137,9 +161,8 @@ def test_config_resolution_materializes_the_all_false_default_network_policy() -
 
 
 def test_network_policy_is_component_scoped_immutable_extra_forbidden_and_deny_by_default() -> None:
-    from mytradingalpha.ops.config import NetworkPolicy
-
     import mytradingalpha.contracts as contract_module
+    from mytradingalpha.ops.config import NetworkPolicy
 
     policy = NetworkPolicy()
 
