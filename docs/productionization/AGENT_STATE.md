@@ -82,7 +82,7 @@ on evidence, not intent.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge `2993820d473c84b674de1f4e11f137e89b2c04d1` | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | MERGED / next: FND-02 |
 | FND-02 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | `codex/fnd-02-contract-registry` | #10 | implementation `e1ee41fd638069770c842234242265eee47ea2c8`; repaired `bc7a2e51a60a9df3ae10f45de2f32c3915fcb9e6`; merge `09bb07689483b5a3507f2b230a32b90c6dd788b6` | `high` — escalated from `normal` after reviewer found numeric-string timestamp coercion and silent extra-field loss; initial implementer requested/actual GPT-5.6 Luna / max; repair implementer requested GPT-5.6 Sol / high, actual unknown/not exposed by repair runtime; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — focused 71 on Python 3.10; productionization 85; full 661 passed, 2 skipped; checker; Ruff; repaired wheel-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — both prior HIGH findings resolved; no remaining findings | none | MERGED / next: FND-03 |
-| FND-03 | `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` | `codex/fnd-03-config-observability` | #13 | RED `190cd46eb7043f8640957860266d0a3b6c571d5a`; JIT-aligned tests `ab7ab2816799d35c46a982233cc9e51ee925dc89`; merge pending | `normal`; implementer `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; reviewer `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured route GPT-5.6 Sol / high; master configured GPT-5.6 Sol / xhigh | RED PASS — focused command failed only on missing FND-03 modules; GREEN/full validation pending | PENDING | PENDING | none observed | IN PROGRESS / next after merge: FND-04 |
+| FND-03 | `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` | `codex/fnd-03-config-observability` | #13 | RED `190cd46eb7043f8640957860266d0a3b6c571d5a`; JIT-aligned tests `ab7ab2816799d35c46a982233cc9e51ee925dc89`; GREEN `694a6a6ef76ec1b889e9ede1ed135684e5c0e721`; repair RED `9985c909e4be066b8ce8b76e96599e31012612b9`; repaired implementation `7ec49ebe1df3adabf7415c68be0878fdc0c50b9e`; merge pending | `normal`; implementer `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; reviewer `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured route GPT-5.6 Sol / high; master configured GPT-5.6 Sol / xhigh | PASS — RED evidence; focused 85; productionization 125; full 701 passed, 2 skipped; dependency checker; Ruff; wheel/fresh Python 3.14 import smoke; diff check | PENDING exact-head GitHub checks | PENDING exact-head independent review | none observed | IN PROGRESS / next after merge: FND-04 |
 
 Recommended compact representation in agent summaries:
 
@@ -131,15 +131,17 @@ PR IDs.
   `/Users/oliver/Desktop/myTradingAlpha/.venv/bin/python` 3.14.6, the available local Python 3.14.x
   interpreter.
 - FND-03 JIT implementation spec: PR #13 body; RED evidence: commits `190cd46eb7043f8640957860266d0a3b6c571d5a`
-  and `ab7ab2816799d35c46a982233cc9e51ee925dc89`.
+  and `ab7ab2816799d35c46a982233cc9e51ee925dc89`; repaired implementation head:
+  `7ec49ebe1df3adabf7415c68be0878fdc0c50b9e`.
 
 ## Open blockers and deferred work
 
 - No prerequisite blocker remains for FND-03: FND-01, FND-02, FND-02 state reconciliation, the
   project-scoped audit harness, and Python 3.14 default alignment are merged and are ancestors of
   current `main`.
-- FND-03 is active as draft PR #13. GREEN remains blocked until its JIT spec is persisted in the PR
-  body; afterward review, validation, exact-head CI, and the master gate remain required.
+- FND-03 is active as draft PR #13. Its JIT spec, RED history, implementation, focused/full local
+  validation, and clean-install smoke are complete. Exact-head independent review, required CI, and
+  the master gate remain required.
 - FND-04 and all later roadmap work remain deferred until FND-03 merges.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
