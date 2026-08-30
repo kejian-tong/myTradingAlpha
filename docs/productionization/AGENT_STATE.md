@@ -10,12 +10,12 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `6482bf97ac78f664f4081f1ff8b9f05645b454c5`
-- `roadmap_status`: `not_started`
-- `current_pr_id`: `none`
-- `next_pr_id`: `FND-01`
+- `last_reconciled_main_sha`: `8e1274a8c46a14e67266a135268252c328e724c2`
+- `roadmap_status`: `in_progress`
+- `current_pr_id`: `FND-01`
+- `next_pr_id`: `FND-02`
 - `current_phase`: `00-foundation`
-- `autonomy_mode`: `supervised_by_default`
+- `autonomy_mode`: `autonomous_authorized`
 - `last_completed_roadmap_pr`: `none`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
@@ -80,7 +80,7 @@ on evidence, not intent.
 
 | PR ID | Base main SHA | Branch | PR | Head / merge SHA | Complexity / actual routing | Tests | CI | Review | Scope leak | Status / next |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| _none yet_ | — | — | — | — | — | — | — | — | — | Next: FND-01 |
+| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | READY TO MERGE — master PASS / next: FND-02 |
 
 Recommended compact representation in agent summaries:
 
@@ -114,12 +114,12 @@ PR IDs.
 | Item | PR | Base SHA | Purpose | Status |
 | --- | --- | --- | --- | --- |
 | Agent harness bootstrap | #6 | `dc9bc864fc5c1188ec4fd180950dd3a52f7bcf3c` | Add root `AGENTS.md`, autonomous workflow, and durable state | merged as `6482bf97ac78f664f4081f1ff8b9f05645b454c5` |
-| Adaptive model routing | #7 | `6482bf97ac78f664f4081f1ff8b9f05645b454c5` | Add complexity-based model/effort routing and actual-model ledger fields | open on `codex/add-agent-model-routing` |
+| Adaptive model routing | #7 | `6482bf97ac78f664f4081f1ff8b9f05645b454c5` | Add complexity-based model/effort routing and actual-model ledger fields | merged as `8e1274a8c46a14e67266a135268252c328e724c2` |
 
 ## Open blockers and deferred work
 
 - None at this checkpoint.
-- FND-01 has not started.
+- FND-01 implementation, independent review, required GitHub CI, and the master gate pass; PR #8 is ready to merge.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
