@@ -1,0 +1,22 @@
+run:
+  mode: forward_paper
+  variant_id: quant_llm_v1
+  calendar_id: XNYS-regular-v1
+  replay_policy: availability
+  network_policy:
+    data_capture_egress: true
+    model_provider_egress: true
+    research_tool_egress: false
+    paper_broker_egress: true
+    live_broker_egress: false
+capture:
+  provider_profile: approved-capture-profile
+  bundle_store: immutable-bundle-store
+execution:
+  paper_endpoint_id: approved-paper-sandbox
+  paper_write_enabled: false
+  live_write_enabled: false
+  approval_ref: required-before-enabling-paper-write
+persistence:
+  bundle_store: fixture-bundle-store
+  manifest_store: fixture-manifest-store
