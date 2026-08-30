@@ -10,13 +10,13 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `8e1274a8c46a14e67266a135268252c328e724c2`
+- `last_reconciled_main_sha`: `2993820d473c84b674de1f4e11f137e89b2c04d1`
 - `roadmap_status`: `in_progress`
-- `current_pr_id`: `FND-01`
-- `next_pr_id`: `FND-02`
+- `current_pr_id`: `FND-02`
+- `next_pr_id`: `FND-03`
 - `current_phase`: `00-foundation`
 - `autonomy_mode`: `autonomous_authorized`
-- `last_completed_roadmap_pr`: `none`
+- `last_completed_roadmap_pr`: `FND-01`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_reviewer_route`: `GPT-5.6 Sol / high`
@@ -80,7 +80,8 @@ on evidence, not intent.
 
 | PR ID | Base main SHA | Branch | PR | Head / merge SHA | Complexity / actual routing | Tests | CI | Review | Scope leak | Status / next |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | READY TO MERGE — master PASS / next: FND-02 |
+| FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge `2993820d473c84b674de1f4e11f137e89b2c04d1` | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | MERGED / next: FND-02 |
+| FND-02 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | `codex/fnd-02-contract-registry` | pending | pending | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual pending; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — focused 54 on Python 3.10; productionization 68; full 644 passed, 2 skipped; checker; Ruff; wheel-install smoke; diff check | PENDING | PENDING | none | IN PROGRESS / next: FND-03 |
 
 Recommended compact representation in agent summaries:
 
@@ -119,7 +120,8 @@ PR IDs.
 ## Open blockers and deferred work
 
 - None at this checkpoint.
-- FND-01 implementation, independent review, required GitHub CI, and the master gate pass; PR #8 is ready to merge.
+- FND-01 merged as `2993820d473c84b674de1f4e11f137e89b2c04d1` after all gates passed.
+- FND-02 implementation is complete locally; independent review and required GitHub CI are pending.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
