@@ -164,6 +164,10 @@ These mechanisms are intended to support reproducibility, debugging, experimenta
 
 This repository uses its own Git history and is developed independently. Upstream-derived code may be modified, replaced, extended, or removed as the project evolves.
 
+## Productionization Documentation
+
+The repository-specific productionization plan is maintained in [`docs/productionization/README.md`](docs/productionization/README.md). It describes the boundary between the current research graph and a future `mytradingalpha/` package, including point-in-time evidence, deterministic portfolio/risk controls, simulation, and staged paper/live gates. Only `mytradingalpha.research` may import `tradingagents`; no file under `tradingagents/` may import `mytradingalpha`. Research use only remains the current status.
+
 ## Upstream Attribution
 
 This project is derived from:
