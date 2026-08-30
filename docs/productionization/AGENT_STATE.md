@@ -114,7 +114,7 @@ PR IDs.
 | Item | PR | Base SHA | Purpose | Status |
 | --- | --- | --- | --- | --- |
 | Agent harness bootstrap | #6 | `dc9bc864fc5c1188ec4fd180950dd3a52f7bcf3c` | Add root `AGENTS.md`, autonomous workflow, and durable state | merged as `6482bf97ac78f664f4081f1ff8b9f05645b454c5` |
-| Adaptive model routing | pending | `6482bf97ac78f664f4081f1ff8b9f05645b454c5` | Add complexity-based model/effort routing and actual-model ledger fields | in review branch `codex/add-agent-model-routing` |
+| Adaptive model routing | #7 | `6482bf97ac78f664f4081f1ff8b9f05645b454c5` | Add complexity-based model/effort routing and actual-model ledger fields | open on `codex/add-agent-model-routing` |
 
 ## Open blockers and deferred work
 
