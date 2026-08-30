@@ -44,13 +44,27 @@ _SENSITIVE_FIELD_PARTS = (
     "client-secret",
     "private-key",
     "refresh-token",
+    "authorization",
 )
-_BEARER_PATTERN = re.compile(r"(\bBearer\s+)[^\s,}\]]+", re.IGNORECASE)
+_BEARER_PATTERN = re.compile(
+    r"(\bBearer\s+)(?!\[REDACTED\])[^\s,}\]]+", re.IGNORECASE
+)
+_AUTHORIZATION_PATTERN = re.compile(
+    r"(?P<prefix>(?P<key_quote>[\"']?)"
+    r"(?P<key>(?:[A-Za-z0-9]+[_-])*authorization)"
+    r"(?P=key_quote)\s*[:=])"
+    r"(?!\s*[\"']?\[REDACTED\][\"']?)"
+    r"(?P<spacing>\s*)"
+    r"(?P<value>"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^%\r\n,}\]]+))",
+    re.IGNORECASE,
+)
 _KEY_VALUE_PATTERN = re.compile(
-    r"((?<![\w-])[\"']?(?:access[_-]?token|account[_-]?id|account[_-]?number|api[_-]?key|"
-    r"authorization|bearer[_-]?token|broker[_-]?account[_-]?id|client[_-]?secret|"
-    r"password|private[_-]?key|refresh[_-]?token|secret|token)[\"']?\s*[:=]\s*)"
-    r"((?![\"']?\[REDACTED\][\"']?)"
+    r"(?P<prefix>(?P<key_quote>[\"']?)(?P<key>[A-Za-z][A-Za-z0-9_-]*)"
+    r"(?P=key_quote)\s*[:=])"
+    r"(?!\s*[\"']?\[REDACTED\][\"']?)"
+    r"(?P<spacing>\s*)"
+    r"(?P<value>"
     r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^%\s,}\]]+))",
     re.IGNORECASE,
 )
@@ -78,14 +92,20 @@ def _is_sensitive_field(field_name: Any) -> bool:
 def _redact_text(value: str) -> str:
     value = _PRIVATE_KEY_PATTERN.sub(_REDACTED, value)
     value = _BEARER_PATTERN.sub(rf"\1{_REDACTED}", value)
+    value = _AUTHORIZATION_PATTERN.sub(_replace_sensitive_value, value)
     return _KEY_VALUE_PATTERN.sub(_replace_sensitive_value, value)
 
 
 def _replace_sensitive_value(match: re.Match[str]) -> str:
-    raw_value = match.group(2)
+    if not _is_sensitive_field(match.group("key")):
+        return match.group(0)
+    raw_value = match.group("value")
     if raw_value[0] in {'"', "'"}:
-        return f"{match.group(1)}{raw_value[0]}{_REDACTED}{raw_value[0]}"
-    return f"{match.group(1)}{_REDACTED}"
+        return (
+            f"{match.group('prefix')}{match.group('spacing')}"
+            f"{raw_value[0]}{_REDACTED}{raw_value[0]}"
+        )
+    return f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
 
 
 def _redact_value(value: Any, *, field_name: Any = None) -> Any:
