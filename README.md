@@ -86,6 +86,8 @@ git clone https://github.com/kejian-tong/myTradingAlpha.git
 cd myTradingAlpha
 ```
 
+The repository's default development runtime is pinned to **Python 3.14.7** in `.python-version`, while the package remains compatible with Python 3.10 through 3.14. Use Python 3.14 for new local development unless you are explicitly testing an older supported interpreter.
+
 Create and activate a Python virtual environment, then install the package:
 
 ```bash
@@ -103,7 +105,7 @@ pytest -q
 ruff check .
 ```
 
-The project declares Python `>=3.10` and is continuously tested against Python 3.10 through 3.14.
+The project declares Python `>=3.10` for backward compatibility and continuously tests Python 3.10 through 3.14. The Docker runtime and default CI smoke/lint lanes use Python 3.14.
 
 ## Configuration
 
