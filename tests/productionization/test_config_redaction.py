@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from mytradingalpha.contracts import RunContext
@@ -160,6 +161,15 @@ def test_config_resolution_materializes_the_all_false_default_network_policy() -
     assert dumped["run"]["network_policy"] == dict.fromkeys(_NETWORK_COMPONENTS, False)
 
 
+@pytest.mark.parametrize("field_name", ["mode", "variant_id", "calendar_id"])
+def test_config_requires_explicit_mode_variant_and_calendar(field_name: str) -> None:
+    config = _historical_mapping()
+    config["run"].pop(field_name)
+
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(config)
+
+
 @pytest.mark.parametrize(
     "omitted_fields",
     [
@@ -241,6 +251,74 @@ def test_live_writes_are_rejected_before_phase_09_even_in_live_pilot_mode() -> N
         _config_load(config)
 
 
+def _live_read_only_mapping() -> dict[str, Any]:
+    return yaml.safe_load(
+        (CONFIG_FIXTURES / "live-read-only.yaml").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    ("section", "field_name"),
+    [
+        ("run", "live_level"),
+        ("run", "required_gate_evidence_ref"),
+        ("execution", "broker_endpoint_id"),
+        ("execution", "secret_ref"),
+    ],
+)
+def test_live_read_only_config_requires_complete_l0_gate_and_opaque_refs(
+    section: str, field_name: str
+) -> None:
+    config = _live_read_only_mapping()
+    config[section].pop(field_name)
+
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(config)
+
+
+def test_live_read_only_config_requires_human_approval_and_rejects_other_levels() -> None:
+    missing_approval = _live_read_only_mapping()
+    missing_approval["execution"]["human_approval_required"] = False
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(missing_approval)
+
+    unsupported_level = _live_read_only_mapping()
+    unsupported_level["run"]["live_level"] = "L2"
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(unsupported_level)
+
+
+@pytest.mark.parametrize("mode", ["historical", "forward_paper"])
+@pytest.mark.parametrize(
+    ("section", "field_name", "value"),
+    [
+        ("run", "live_level", "L0"),
+        ("run", "required_gate_evidence_ref", "unexpected-live-gate"),
+        ("execution", "broker_endpoint_id", "unexpected-live-endpoint"),
+        ("execution", "secret_ref", "unexpected-live-secret-ref"),
+        ("execution", "human_approval_required", True),
+    ],
+)
+def test_non_live_modes_reject_live_only_fields(
+    mode: str, section: str, field_name: str, value: Any
+) -> None:
+    config = _historical_mapping() if mode == "historical" else _forward_paper_mapping()
+    config[section][field_name] = value
+
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(config)
+
+
+@pytest.mark.parametrize("mode", ["historical", "live_pilot"])
+@pytest.mark.parametrize("field_name", ["paper_endpoint_id", "approval_ref"])
+def test_non_paper_modes_reject_paper_only_fields(mode: str, field_name: str) -> None:
+    config = _historical_mapping() if mode == "historical" else _live_read_only_mapping()
+    config["execution"][field_name] = "unexpected-paper-reference"
+
+    with pytest.raises((TypeError, ValueError, ValidationError)):
+        _config_load(config)
+
+
 def test_paper_write_requires_forward_policy_approved_endpoint_and_approval_reference() -> None:
     missing_endpoint = _forward_paper_mapping()
     missing_endpoint["execution"]["paper_write_enabled"] = True
@@ -299,6 +377,39 @@ def test_redaction_filter_scrubs_nested_and_formatted_secret_values() -> None:
 
     assert "redacted" in rendered.lower()
     assert all(secret not in rendered for secret in secrets)
+
+
+def test_configured_logging_redacts_structured_text_and_raw_config_models() -> None:
+    from mytradingalpha.ops.logging import configure_logging
+
+    stream = StringIO()
+    logger = logging.getLogger("mytradingalpha.test.redaction.end-to-end")
+    logger.handlers.clear()
+    configure_logging(logger=logger, stream=stream)
+
+    config = _config_load(CONFIG_FIXTURES / "live-read-only.yaml")
+    sentinels = (
+        "json-secret-value",
+        "json-access-secret",
+        "refresh-secret-value",
+        "quoted-secret-first",
+        "quoted-secret-second",
+        "approved-live-endpoint",
+        "scoped-secret-reference",
+        "phase-08-pass-record",
+        "fixture-bundle-store",
+        "fixture-manifest-store",
+    )
+    logger.info('{"api_key":"json-secret-value"}')
+    logger.info('{"access_token": "json-access-secret"}')
+    logger.info("refresh_token=refresh-secret-value")
+    logger.info("password='quoted-secret-first quoted-secret-second'")
+    logger.info("config=%s", config)
+
+    rendered = stream.getvalue()
+
+    assert "[REDACTED]" in rendered
+    assert all(sentinel not in rendered for sentinel in sentinels)
 
 
 def test_structured_logs_include_context_and_restore_nested_correlation_scopes() -> None:
