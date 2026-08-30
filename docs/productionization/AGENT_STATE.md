@@ -120,7 +120,7 @@ PR IDs.
 
 ## Open blockers and deferred work
 
-- None at this checkpoint.
+- No FND-02 implementation or merge blocker remains.
 - FND-01 merged as `2993820d473c84b674de1f4e11f137e89b2c04d1` after all gates passed.
 - FND-02 merged as `09bb07689483b5a3507f2b230a32b90c6dd788b6` after both reviewer HIGH findings were resolved and all gates passed.
 - Stop before FND-03: PR #9 must be merged, `main` refreshed, and its project-scoped runtime/audit harness loaded by a fresh master session. No FND-03 branch or plan exists.
