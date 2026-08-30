@@ -56,7 +56,7 @@ _AUTHORIZATION_PATTERN = re.compile(
     r"(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?P<spacing>\s*)"
     r"(?P<value>"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^%\r\n,}\]]+))",
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\r\n,}\]]+))",
     re.IGNORECASE,
 )
 _KEY_VALUE_PATTERN = re.compile(
@@ -65,7 +65,7 @@ _KEY_VALUE_PATTERN = re.compile(
     r"(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?P<spacing>\s*)"
     r"(?P<value>"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^%\s,}\]]+))",
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\]]+))",
     re.IGNORECASE,
 )
 _PRIVATE_KEY_PATTERN = re.compile(
@@ -91,9 +91,9 @@ def _is_sensitive_field(field_name: Any) -> bool:
 
 def _redact_text(value: str) -> str:
     value = _PRIVATE_KEY_PATTERN.sub(_REDACTED, value)
-    value = _BEARER_PATTERN.sub(rf"\1{_REDACTED}", value)
     value = _AUTHORIZATION_PATTERN.sub(_replace_sensitive_value, value)
-    return _KEY_VALUE_PATTERN.sub(_replace_sensitive_value, value)
+    value = _KEY_VALUE_PATTERN.sub(_replace_sensitive_value, value)
+    return _BEARER_PATTERN.sub(rf"\1{_REDACTED}", value)
 
 
 def _replace_sensitive_value(match: re.Match[str]) -> str:
@@ -108,23 +108,29 @@ def _replace_sensitive_value(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
 
 
-def _redact_value(value: Any, *, field_name: Any = None) -> Any:
+def _redact_value(
+    value: Any, *, field_name: Any = None, redact_strings: bool = True
+) -> Any:
     if _is_sensitive_field(field_name):
         return _REDACTED
     if isinstance(value, BaseModel):
         return _REDACTED
     if isinstance(value, Mapping):
         return {
-            key: _redact_value(item, field_name=key)
+            key: _redact_value(
+                item, field_name=key, redact_strings=redact_strings
+            )
             for key, item in value.items()
         }
     if isinstance(value, tuple):
-        return tuple(_redact_value(item) for item in value)
+        return tuple(
+            _redact_value(item, redact_strings=redact_strings) for item in value
+        )
     if isinstance(value, list):
-        return [_redact_value(item) for item in value]
+        return [_redact_value(item, redact_strings=redact_strings) for item in value]
     if isinstance(value, set):
-        return {_redact_value(item) for item in value}
-    if isinstance(value, str):
+        return {_redact_value(item, redact_strings=redact_strings) for item in value}
+    if isinstance(value, str) and redact_strings:
         return _redact_text(value)
     return value
 
@@ -133,11 +139,13 @@ class RedactionFilter(logging.Filter):
     """Redact sensitive field values and token-like formatted text."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = _redact_value(record.msg)
-        record.args = _redact_value(record.args)
+        record.msg = _redact_value(record.msg, redact_strings=False)
+        record.args = _redact_value(record.args, redact_strings=False)
         for key, value in tuple(record.__dict__.items()):
             if key not in {"msg", "args"}:
-                record.__dict__[key] = _redact_value(value, field_name=key)
+                record.__dict__[key] = _redact_value(
+                    value, field_name=key, redact_strings=False
+                )
         record.msg = _redact_text(record.getMessage())
         record.args = ()
         return True
