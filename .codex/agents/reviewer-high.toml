@@ -1,6 +1,6 @@
 name = "reviewer_high"
 description = "Required independent reviewer for normal/high myTradingAlpha productionization roadmap PRs."
-model = "gpt-5.6"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 

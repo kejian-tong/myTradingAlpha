@@ -1,6 +1,6 @@
 name = "high_implementer"
 description = "Required implementation agent for high-complexity myTradingAlpha productionization roadmap PRs with elevated correctness risk."
-model = "gpt-5.6"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 
 developer_instructions = """

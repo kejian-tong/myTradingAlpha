@@ -1,7 +1,7 @@
 # Project-scoped Codex harness. Loaded only for trusted projects.
 # Keep production architecture in docs/productionization; this file controls agent execution only.
 
-model = "gpt-5.6"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 
 developer_instructions = """

@@ -37,8 +37,8 @@ Do not infer configured actual routing when a generic/default agent was used.
 | `high` | `high_implementer` | `reviewer_high` | Sol/high implementation and review; reviewer may escalate |
 | `critical` | `critical_implementer` | `reviewer_xhigh` | Sol/xhigh implementation and review |
 
-`gpt-5.6` is the Codex/OpenAI alias used by the project configuration for GPT-5.6 Sol. The normal
-implementer uses the explicit `gpt-5.6-luna` model ID.
+`gpt-5.6-sol` is the explicit Codex model ID used by the project configuration for GPT-5.6 Sol. The
+normal implementer uses the explicit `gpt-5.6-luna` model ID.
 
 For a high PR whose review remains ambiguous, rerun independent review with `reviewer_xhigh` before the
 master gate.
