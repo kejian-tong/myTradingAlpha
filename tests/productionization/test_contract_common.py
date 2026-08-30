@@ -44,15 +44,38 @@ def test_utc_datetime_rejects_naive_values_and_normalizes_offsets() -> None:
     parsed_from_string = TypeAdapter(UtcDateTime).validate_python(
         "2026-01-15T10:30:00-05:00"
     )
+    parsed_fractional = TypeAdapter(UtcDateTime).validate_python(
+        "2026-01-15T15:30:00.123456Z"
+    )
 
     assert parsed == datetime(2026, 1, 15, 15, 30, tzinfo=timezone.utc)
     assert parsed_from_string == parsed
+    assert parsed_fractional == datetime(
+        2026, 1, 15, 15, 30, 0, 123456, tzinfo=timezone.utc
+    )
     assert parsed.tzinfo == timezone.utc
 
     with pytest.raises(ValidationError):
         TypeAdapter(UtcDateTime).validate_python(datetime(2026, 1, 15, 10, 30))
     with pytest.raises(ValidationError):
         TypeAdapter(UtcDateTime).validate_python("2026-01-15T10:30:00")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0",
+        "1234567890",
+        "2026-01-15",
+        "2026-01-15 10:30:00Z",
+        " 2026-01-15T10:30:00Z",
+        "2026-01-15T10:30:00Z ",
+        "2026-01-15T10:30:00",
+    ],
+)
+def test_utc_datetime_rejects_strings_outside_strict_iso_wire_format(value: str) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(UtcDateTime).validate_python(value)
 
 
 def test_utc_datetime_json_serialization_is_explicitly_utc() -> None:

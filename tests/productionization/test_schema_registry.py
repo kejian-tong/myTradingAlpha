@@ -44,6 +44,17 @@ class _RecordV3(BaseModel):
     owner: str
 
 
+class _DefaultConfigRecord(BaseModel):
+    schema_version: Literal["v1"]
+    value: StrictInt
+
+
+class _MissingSchemaVersionRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: StrictInt
+
+
 def _registry() -> SchemaRegistry:
     registry = SchemaRegistry()
     registry.register_schema("example", "v1", _RecordV1)
@@ -87,6 +98,35 @@ def test_registry_rejects_duplicate_and_unknown_schema_registration() -> None:
         registry.register_schema("example", "v1", _RecordV1)
     with pytest.raises(SchemaRegistryError):
         registry.resolve("example", "v9")
+
+
+def test_registry_rejects_reader_that_can_silently_ignore_extra_fields() -> None:
+    registry = SchemaRegistry()
+
+    with pytest.raises(SchemaRegistryError):
+        registry.register_schema("example", "v1", _DefaultConfigRecord)
+
+
+def test_registry_requires_reader_to_declare_schema_version() -> None:
+    registry = SchemaRegistry()
+
+    with pytest.raises(SchemaRegistryError):
+        registry.register_schema("example", "v1", _MissingSchemaVersionRecord)
+
+
+def test_registered_reader_never_silently_drops_unknown_payload_fields() -> None:
+    registry = _registry()
+
+    with pytest.raises(ValidationError):
+        registry.parse(
+            "example",
+            {
+                "schema_version": "v1",
+                "value": 4,
+                "metadata": {},
+                "future_field": "must-not-disappear",
+            },
+        )
 
 
 def test_registry_rejects_missing_or_unknown_payload_version() -> None:

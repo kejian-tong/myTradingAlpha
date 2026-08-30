@@ -136,6 +136,16 @@ class SchemaRegistry:
                 "reader must be a Pydantic BaseModel subclass",
                 FoundationReasonCode.UNSUPPORTED_SCHEMA_VERSION,
             )
+        if reader.model_config.get("extra") != "forbid":
+            raise SchemaRegistryError(
+                "registered reader must set extra='forbid'",
+                FoundationReasonCode.UNSUPPORTED_SCHEMA_VERSION,
+            )
+        if "schema_version" not in reader.model_fields:
+            raise SchemaRegistryError(
+                "registered reader must declare schema_version",
+                FoundationReasonCode.UNSUPPORTED_SCHEMA_VERSION,
+            )
 
         key = (record_type, version)
         if key in self._schemas:

@@ -7,10 +7,15 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, PlainSerializer, TypeAdapter, WithJsonSchema
+from pydantic import BeforeValidator, PlainSerializer, WithJsonSchema
 
 _STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$")
-_DATETIME_ADAPTER = TypeAdapter(datetime)
+_UTC_DATETIME_STRING_PATTERN = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+    r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
+    r"(?:\.[0-9]+)?"
+    r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
+)
 
 
 def _validate_stable_id(value: Any) -> str:
@@ -20,13 +25,22 @@ def _validate_stable_id(value: Any) -> str:
 
 
 def _validate_utc_datetime(value: Any) -> datetime:
-    if not isinstance(value, (datetime, str)):
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        if not _UTC_DATETIME_STRING_PATTERN.fullmatch(value):
+            raise ValueError(
+                "invalid_timestamp: expected a full ISO timestamp with an explicit offset"
+            )
+        normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except (ValueError, OverflowError) as exc:
+            raise ValueError(
+                "invalid_timestamp: expected a full ISO timestamp with an explicit offset"
+            ) from exc
+    else:
         raise ValueError("invalid_timestamp: expected an aware datetime or ISO timestamp")
-
-    try:
-        parsed = _DATETIME_ADAPTER.validate_python(value)
-    except Exception as exc:
-        raise ValueError("invalid_timestamp: expected an aware datetime or ISO timestamp") from exc
 
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("invalid_timestamp: naive datetimes are not supported")

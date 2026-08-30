@@ -110,6 +110,26 @@ def test_run_context_rejects_naive_timestamps() -> None:
         RunContext.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0",
+        "1234567890",
+        "2026-01-15",
+        "2026-01-15 10:30:00Z",
+        " 2026-01-15T10:30:00Z",
+        "2026-01-15T10:30:00Z ",
+        "2026-01-15T10:30:00",
+    ],
+)
+def test_run_context_rejects_strings_outside_strict_iso_wire_format(value: str) -> None:
+    payload = _context_payload()
+    payload["knowledge_cutoff"] = value
+
+    with pytest.raises(ValidationError):
+        RunContext.model_validate(payload)
+
+
 def test_run_context_is_frozen_and_forbids_extra_fields() -> None:
     with pytest.raises(ValidationError):
         RunContext.model_validate({**_context_payload(), "unexpected": "field"})
