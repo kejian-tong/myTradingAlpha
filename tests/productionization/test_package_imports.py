@@ -32,6 +32,23 @@ def test_initializers_contain_only_module_docstrings() -> None:
     for package_name in PACKAGE_NAMES:
         initializer = REPOSITORY_ROOT / Path(*package_name.split(".")) / "__init__.py"
         tree = ast.parse(initializer.read_text(encoding="utf-8"), filename=str(initializer))
+
+        if package_name == "mytradingalpha.contracts":
+            assert isinstance(tree.body[0], ast.Expr), initializer
+            assert isinstance(tree.body[0].value, ast.Constant), initializer
+            assert isinstance(tree.body[0].value.value, str), initializer
+            assert all(
+                isinstance(node, (ast.ImportFrom, ast.Assign)) for node in tree.body[1:]
+            ), initializer
+            all_assignments = [
+                node
+                for node in tree.body[1:]
+                if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+            ]
+            assert len(all_assignments) == 1, initializer
+            continue
+
         assert len(tree.body) == 1, initializer
         assert isinstance(tree.body[0], ast.Expr), initializer
         assert isinstance(tree.body[0].value, ast.Constant), initializer
@@ -47,3 +64,23 @@ def test_setuptools_discovers_production_namespace() -> None:
 def test_existing_public_imports_remain_available() -> None:
     importlib.import_module("tradingagents")
     importlib.import_module("cli.main")
+
+
+def test_contracts_expose_only_the_curated_fnd02_public_api() -> None:
+    contracts = importlib.import_module("mytradingalpha.contracts")
+    expected = {
+        "CURRENT_SCHEMA_VERSION",
+        "ContractModel",
+        "DecimalString",
+        "FoundationReasonCode",
+        "MigrationPlan",
+        "Mode",
+        "RunContext",
+        "SchemaRegistry",
+        "SchemaRegistryError",
+        "StableId",
+        "UtcDateTime",
+    }
+
+    assert set(contracts.__all__) == expected
+    assert all(hasattr(contracts, name) for name in expected)
