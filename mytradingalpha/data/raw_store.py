@@ -302,7 +302,9 @@ class RawStore:
             locks = self._open_child_directory(root, "locks", create=True)
             descriptors.append(locks)
             self._verify_directory_identity("locks", locks)
-            yield _WriteDirectories(root, objects, sha256, manifests, locks)
+            directories = _WriteDirectories(root, objects, sha256, manifests, locks)
+            yield directories
+            self._verify_write_bindings(directories)
         finally:
             for descriptor in reversed(descriptors):
                 os.close(descriptor)
@@ -330,7 +332,9 @@ class RawStore:
             sha256 = self._open_child_directory(objects, "sha256", create=False)
             descriptors.append(sha256)
             self._verify_directory_identity("objects/sha256", sha256)
-            yield _ReadDirectories(root, objects, sha256, manifests)
+            directories = _ReadDirectories(root, objects, sha256, manifests)
+            yield directories
+            self._verify_read_bindings(directories)
         finally:
             for descriptor in reversed(descriptors):
                 os.close(descriptor)
@@ -409,29 +413,129 @@ class RawStore:
         if expected != identity:
             raise RawStoreCorruptionError(f"store directory was replaced: {name}")
 
+    def _verify_write_bindings(self, directories: _WriteDirectories) -> None:
+        self._verify_current_root_binding(directories.root)
+        self._verify_child_directory_binding(directories.root, "objects", directories.objects)
+        self._verify_child_directory_binding(directories.objects, "sha256", directories.sha256)
+        self._verify_child_directory_binding(directories.root, "manifests", directories.manifests)
+        self._verify_child_directory_binding(directories.root, "locks", directories.locks)
+
+    def _verify_read_bindings(self, directories: _ReadDirectories) -> None:
+        self._verify_current_root_binding(directories.root)
+        self._verify_child_directory_binding(directories.root, "objects", directories.objects)
+        self._verify_child_directory_binding(directories.objects, "sha256", directories.sha256)
+        self._verify_child_directory_binding(directories.root, "manifests", directories.manifests)
+
+    def _verify_current_root_binding(self, operation_root_fd: int) -> None:
+        current_root_fd = self._open_physical_root(
+            create=False,
+            missing_error=RawStoreCorruptionError,
+        )
+        try:
+            self._assert_same_directory(
+                os.fstat(operation_root_fd),
+                os.fstat(current_root_fd),
+                "root",
+            )
+        finally:
+            os.close(current_root_fd)
+
+    @classmethod
+    def _verify_child_directory_binding(
+        cls,
+        parent_fd: int,
+        name: str,
+        opened_child_fd: int,
+    ) -> None:
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise RawStoreCorruptionError(f"store directory binding disappeared: {name}") from exc
+        except OSError as exc:
+            raise RawStoreCorruptionError(f"cannot verify store directory binding: {name}") from exc
+        cls._assert_same_directory(os.fstat(opened_child_fd), current, name)
+
+    @staticmethod
+    def _assert_same_directory(first: os.stat_result, second: os.stat_result, name: str) -> None:
+        if (
+            not stat.S_ISDIR(first.st_mode)
+            or not stat.S_ISDIR(second.st_mode)
+            or first.st_dev != second.st_dev
+            or first.st_ino != second.st_ino
+        ):
+            raise RawStoreCorruptionError(f"store directory binding changed: {name}")
+
     @contextmanager
     def _manifest_lock(self, locks_fd: int, manifest_id: str) -> Iterator[None]:
         lock_name = f"{manifest_id}.lock"
-        flags = (
-            os.O_RDWR
-            | os.O_CREAT
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
+        descriptor = self._open_manifest_lock(locks_fd, lock_name)
         try:
-            descriptor = os.open(lock_name, flags, 0o600, dir_fd=locks_fd)
-        except OSError as exc:
-            raise RawStoreCorruptionError("manifest lock is not a safe regular file") from exc
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise RawStoreCorruptionError("manifest lock is not a regular file")
+            self._verify_regular_file_binding(locks_fd, lock_name, descriptor)
             fcntl.flock(descriptor, fcntl.LOCK_EX)
+            self._verify_regular_file_binding(locks_fd, lock_name, descriptor)
             yield
         finally:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                self._verify_regular_file_binding(locks_fd, lock_name, descriptor)
             finally:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
+
+    @classmethod
+    def _open_manifest_lock(cls, locks_fd: int, lock_name: str) -> int:
+        common_flags = (
+            os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        for _attempt in range(100):
+            try:
+                descriptor = os.open(
+                    lock_name,
+                    common_flags | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=locks_fd,
+                )
+            except FileExistsError:
+                try:
+                    descriptor = os.open(lock_name, common_flags, dir_fd=locks_fd)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise RawStoreCorruptionError(
+                        "manifest lock is not a safe regular file"
+                    ) from exc
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RawStoreCorruptionError(
+                    "manifest lock cannot be exclusively created"
+                ) from exc
+
+            try:
+                cls._verify_regular_file_binding(locks_fd, lock_name, descriptor)
+            except Exception:
                 os.close(descriptor)
+                raise
+            return descriptor
+        raise RawStoreCorruptionError("manifest lock remained unavailable during creation")
+
+    @staticmethod
+    def _verify_regular_file_binding(parent_fd: int, name: str, opened_fd: int) -> None:
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise RawStoreCorruptionError(f"store file binding disappeared: {name}") from exc
+        except OSError as exc:
+            raise RawStoreCorruptionError(f"cannot verify store file binding: {name}") from exc
+        opened = os.fstat(opened_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or opened.st_dev != current.st_dev
+            or opened.st_ino != current.st_ino
+        ):
+            raise RawStoreCorruptionError(f"store file binding changed: {name}")
 
     @staticmethod
     def _entry_exists(directory_fd: int, name: str) -> bool:
