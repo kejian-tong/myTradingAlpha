@@ -81,6 +81,7 @@ def _query(
 ) -> FinancialFiling:
     selectors: dict[str, object] = {
         "instrument_id": "AAPL",
+        "fiscal_period_start": "2023-01-01",
         "fiscal_period_end": "2023-12-31",
         "knowledge_cutoff": knowledge_cutoff,
         "source": "synthetic-sec",
@@ -351,6 +352,42 @@ def test_event_time_may_be_any_utc_instant_on_the_fiscal_period_end() -> None:
     assert filing.manifest.event_time == datetime(2023, 12, 31, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize(
+    ("filed_at", "available_at", "fetched_at", "ingested_at"),
+    [
+        (
+            "2023-12-31T20:59:59Z",
+            "2023-12-31T20:59:59Z",
+            "2023-12-31T21:00:00Z",
+            "2023-12-31T21:00:01Z",
+        ),
+        (
+            "2023-12-31T21:00:00Z",
+            "2023-12-31T21:00:00Z",
+            "2023-12-31T21:00:01Z",
+            "2023-12-31T21:00:02Z",
+        ),
+    ],
+)
+def test_filing_requires_the_fiscal_event_strictly_before_filing(
+    filed_at: str,
+    available_at: str,
+    fetched_at: str,
+    ingested_at: str,
+) -> None:
+    with pytest.raises(ValidationError, match="event_time"):
+        _retimed_filing(
+            0,
+            filed_at=filed_at,
+            available_at=available_at,
+            fetched_at=fetched_at,
+            ingested_at=ingested_at,
+            revision=0,
+            filing_id="AAPL-2023-10K-pre-period",
+            accession_id="0000320193-23-999999",
+        )
+
+
 def test_repository_is_deterministically_sorted_and_read_only() -> None:
     original = _filing(0)
     restatement = _filing(1)
@@ -361,6 +398,43 @@ def test_repository_is_deterministically_sorted_and_read_only() -> None:
     assert forward.filings == reverse.filings
     assert forward.model_dump_json() == reverse.model_dump_json()
     assert tuple(item.manifest.revision for item in forward.filings) == (0, 1)
+
+
+def test_fiscal_period_start_separates_repository_vintage_series_and_queries() -> None:
+    calendar_year = _filing(0)
+    stub_period = _filing(
+        0,
+        overrides={
+            "filing_id": "AAPL-2023-STUB-r0",
+            "accession_id": "0000320193-24-000030",
+            "fiscal_period_start": "2023-04-01",
+        },
+        manifest_overrides={
+            "manifest_id": "AAPL-2023-STUB-capture-r0",
+            "source_locator": "fixture://sec/AAPL/2023/STUB/r0",
+        },
+    )
+    repository = _repository(stub_period, calendar_year)
+
+    assert calendar_year.vintage_key != stub_period.vintage_key
+    assert _query(repository, fiscal_period_start="2023-01-01") == calendar_year
+    assert _query(repository, fiscal_period_start="2023-04-01") == stub_period
+    with pytest.raises(FilingMissingError):
+        _query(repository, fiscal_period_start="2022-01-01")
+
+
+def test_vintage_selector_rejects_mixed_fiscal_period_starts() -> None:
+    calendar_year = _filing(0)
+    later_revision_other_start = _filing(
+        1,
+        overrides={"fiscal_period_start": "2023-04-01"},
+    )
+
+    with pytest.raises(VintageConflictError, match="vintage_key"):
+        VintageSelector().select(
+            (calendar_year, later_revision_other_start),
+            knowledge_cutoff="2024-03-01T14:10:00Z",
+        )
 
 
 def test_repository_rejects_duplicate_filing_id() -> None:
@@ -598,6 +672,23 @@ def test_ingested_after_cutoff_remains_eligible_until_pit_06_archive_policy() ->
     assert VintageSelector().select((filing,), knowledge_cutoff=cutoff) == filing
 
 
+def test_repository_keeps_late_ingestion_eligible_until_pit_06_archive_policy() -> None:
+    filing = _retimed_filing(
+        0,
+        filed_at="2024-02-01T12:00:00Z",
+        available_at="2024-02-01T12:01:00Z",
+        fetched_at="2024-02-01T12:02:00Z",
+        ingested_at="2024-04-01T00:00:00Z",
+        revision=0,
+        filing_id="AAPL-2023-10K-r0-repository-late-ingest",
+        accession_id="0000320193-24-000025",
+    )
+    cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+
+    assert filing.manifest.ingested_at > cutoff
+    assert _query(_repository(filing), knowledge_cutoff=cutoff) == filing
+
+
 def test_repository_public_errors_and_as_of_signature_are_stable() -> None:
     assert issubclass(FilingMissingError, FilingRepositoryError)
     assert issubclass(FilingFutureError, FilingRepositoryError)
@@ -607,6 +698,7 @@ def test_repository_public_errors_and_as_of_signature_are_stable() -> None:
     assert tuple(signature.parameters) == (
         "self",
         "instrument_id",
+        "fiscal_period_start",
         "fiscal_period_end",
         "knowledge_cutoff",
         "source",
@@ -647,6 +739,7 @@ def test_repository_as_of_uses_inclusive_availability_and_highest_revision() -> 
     "overrides",
     [
         {"instrument_id": "MSFT"},
+        {"fiscal_period_start": "2023-04-01"},
         {"fiscal_period_end": "2022-12-31"},
         {"source": "other-source"},
         {"statement_type": StatementType.CASH_FLOW},
@@ -667,6 +760,8 @@ def test_repository_never_falls_back_across_any_explicit_selector(
     "overrides",
     [
         {"instrument_id": "not stable"},
+        {"fiscal_period_start": datetime(2023, 1, 1, tzinfo=timezone.utc)},
+        {"fiscal_period_start": "2023-01-01T00:00:00Z"},
         {"fiscal_period_end": datetime(2023, 12, 31, tzinfo=timezone.utc)},
         {"fiscal_period_end": "2023-12-31T00:00:00Z"},
         {"knowledge_cutoff": datetime(2024, 3, 1, 14, 10)},
@@ -729,6 +824,62 @@ def test_removed_fact_in_restatement_stays_absent_without_imputation() -> None:
     assert selected.manifest.revision == 1
     assert "discontinued_operations" not in {fact.name for fact in selected.facts}
     assert tuple(fact.name for fact in selected.facts) == ("assets", "liabilities")
+
+
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "empty_facts",
+        "nan_fact",
+        "missing_publication",
+        "event_mismatch",
+        "invalid_manifest",
+        "pre_period_publication",
+    ],
+)
+def test_public_selection_boundaries_revalidate_bypassed_filings(
+    invalid_case: str,
+) -> None:
+    valid = _filing(0)
+    invalid = valid
+    if invalid_case == "empty_facts":
+        invalid = valid.model_copy(update={"facts": ()})
+    elif invalid_case == "nan_fact":
+        nan_fact = FinancialFact.model_construct(
+            schema_version="v1",
+            name="assets",
+            value=Decimal("NaN"),
+        )
+        invalid = valid.model_copy(update={"facts": (nan_fact,)})
+    elif invalid_case == "missing_publication":
+        invalid_manifest = valid.manifest.model_copy(update={"published_at": None})
+        invalid = valid.model_copy(update={"manifest": invalid_manifest})
+    elif invalid_case == "event_mismatch":
+        invalid_manifest = valid.manifest.model_copy(
+            update={"event_time": datetime(2023, 12, 30, 21, tzinfo=timezone.utc)}
+        )
+        invalid = valid.model_copy(update={"manifest": invalid_manifest})
+    elif invalid_case == "invalid_manifest":
+        invalid_manifest = valid.manifest.model_copy(update={"checksum": "not-a-checksum"})
+        invalid = valid.model_copy(update={"manifest": invalid_manifest})
+    elif invalid_case == "pre_period_publication":
+        filed_at = datetime(2023, 12, 31, 20, 59, 59, tzinfo=timezone.utc)
+        invalid_manifest = valid.manifest.model_copy(
+            update={
+                "published_at": filed_at,
+                "available_at": filed_at,
+                "fetched_at": filed_at + timedelta(seconds=1),
+                "ingested_at": filed_at + timedelta(seconds=2),
+            }
+        )
+        invalid = valid.model_copy(update={"filed_at": filed_at, "manifest": invalid_manifest})
+
+    with pytest.raises(VintageConflictError):
+        VintageSelector().select((invalid,), knowledge_cutoff="2024-03-01T14:10:00Z")
+
+    bypassed_repository = _repository(valid).model_copy(update={"filings": (invalid,)})
+    with pytest.raises(FilingQueryError):
+        _query(bypassed_repository)
 
 
 def test_financial_vintage_selection_is_network_free(
