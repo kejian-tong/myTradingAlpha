@@ -294,6 +294,8 @@ class FilingRepository(ContractModel):
         instrument = _query_stable_id(instrument_id, field="instrument_id")
         period_start = _query_date(fiscal_period_start, field="fiscal_period_start")
         period_end = _query_date(fiscal_period_end, field="fiscal_period_end")
+        if period_start > period_end:
+            raise FilingQueryError("invalid_fiscal_period: start must not exceed end")
         cutoff = _query_cutoff(knowledge_cutoff)
         source_id = _query_stable_id(source, field="source")
         statement = _query_enum(statement_type, StatementType, field="statement_type")

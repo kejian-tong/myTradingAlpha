@@ -57,17 +57,14 @@ def _candidate_attributes(candidate: object) -> tuple[object, int, datetime]:
 
 
 def _normalize_candidate(candidate: _FilingT) -> _FilingT:
-    """Revalidate Pydantic candidates without depending on their concrete module."""
+    """Require and revalidate the concrete filing contract at the public boundary."""
 
-    candidate_type = type(candidate)
-    model_validate = getattr(candidate_type, "model_validate", None)
-    model_dump = getattr(candidate, "model_dump", None)
-    if model_validate is None and model_dump is None:
-        return candidate
-    if not callable(model_validate) or not callable(model_dump):
-        raise VintageConflictError("invalid_candidate: incomplete model validation boundary")
+    from .fundamentals import FinancialFiling
+
+    if not isinstance(candidate, FinancialFiling):
+        raise VintageConflictError("invalid_candidate: expected FinancialFiling")
     try:
-        normalized = model_validate(model_dump(mode="python"))
+        normalized = FinancialFiling.model_validate(candidate.model_dump(mode="python"))
     except (TypeError, ValidationError, ValueError) as exc:
         raise VintageConflictError("invalid_candidate: filing contract validation failed") from exc
     return cast(_FilingT, normalized)
