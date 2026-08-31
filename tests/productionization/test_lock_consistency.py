@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = REPOSITORY_ROOT / "pyproject.toml"
@@ -181,6 +182,35 @@ def test_ci_uses_the_locked_uv_matrix_and_current_foundation_gate() -> None:
     assert not [term for term in future_gate_terms if term in lowered]
 
 
+def test_ci_binds_uv_to_each_intended_interpreter_without_split_ownership() -> None:
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    expected_python = {
+        "test": "${{ matrix.python-version }}",
+        "smoke-install": "3.14",
+        "lint": "3.14",
+        "foundation-contract-docs-lock": "3.14",
+    }
+
+    assert set(expected_python) <= set(jobs)
+    for job_name, python_version in expected_python.items():
+        steps = jobs[job_name]["steps"]
+        uv_steps = [
+            step
+            for step in steps
+            if step.get("uses", "").startswith(f"astral-sh/setup-uv@{SETUP_UV_COMMIT}")
+        ]
+        assert len(uv_steps) == 1, job_name
+        assert uv_steps[0]["with"]["version"] == UV_VERSION
+        assert uv_steps[0]["with"]["python-version"] == python_version
+
+    assert not any(
+        step.get("uses", "").startswith("actions/setup-python@")
+        for job in jobs.values()
+        for step in job.get("steps", [])
+    )
+
+
 def test_readme_prefers_locked_uv_and_keeps_a_pip_fallback() -> None:
     readme_text = README_PATH.read_text(encoding="utf-8").lower()
 
@@ -191,6 +221,23 @@ def test_readme_prefers_locked_uv_and_keeps_a_pip_fallback() -> None:
     assert "python" in readme_text and ">=3.10" in readme_text
     assert "tradingagents" in readme_text
     assert "python -m cli.main" in readme_text
+
+
+def test_notice_is_optional_but_required_to_be_a_nonempty_tracked_record() -> None:
+    notice_path = REPOSITORY_ROOT / "NOTICE"
+    if not notice_path.exists():
+        return
+
+    assert notice_path.is_file()
+    assert notice_path.read_text(encoding="utf-8").strip()
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "NOTICE"],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert tracked.returncode == 0, tracked.stdout + tracked.stderr
 
 
 def test_lock_checker_runs_immutable_uv_check_without_rewriting_lock(tmp_path: Path) -> None:

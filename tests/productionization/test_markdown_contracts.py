@@ -303,3 +303,17 @@ def test_checker_rejects_a_nonroadmap_id_that_breaks_the_47_id_contract(tmp_path
 
     assert result.returncode != 0
     assert "FND-99" in output or "47" in output or "roadmap" in output.lower()
+
+
+def test_checker_rejects_duplicate_bold_roadmap_definition(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    plan_path = root / "docs" / "productionization" / "07_PR_IMPLEMENTATION_PLAN.md"
+    with plan_path.open("a", encoding="utf-8") as plan:
+        plan.write("- **FND-01 Duplicate definition**\n")
+    subprocess.run(["git", "-C", str(root), "add", str(plan_path.relative_to(root))], check=True)
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "FND-01" in output or "duplicate" in output.lower() or "47" in output
