@@ -7,6 +7,7 @@ import inspect
 import json
 import socket
 import time
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ from mytradingalpha.data.actions import (
     SplitAction,
     TickerChangeAction,
 )
-from mytradingalpha.data.bars import DailyBar
+from mytradingalpha.data.bars import BarFinality, DailyBar
 from mytradingalpha.data.bundle import (
     BundleReplayPolicy,
     EvidenceBundle,
@@ -58,7 +59,7 @@ from mytradingalpha.data.repository import (
     EvidenceRepository,
     EvidenceRepositoryError,
 )
-from mytradingalpha.data.social import SocialPost
+from mytradingalpha.data.social import SocialPlatform, SocialPost
 from mytradingalpha.data.universe import Instrument, SymbolAlias, UniverseMembership
 
 FIXTURE_DIRECTORY = Path(__file__).parents[1] / "fixtures" / "pit"
@@ -149,6 +150,29 @@ def _bars() -> tuple[DailyBar, ...]:
     return tuple(DailyBar.model_validate(item) for item in candidates)
 
 
+def _social_candidates(*indexes: int) -> tuple[SocialPost, ...]:
+    source = _fixture_mapping("events_social_macro")
+    candidates = source["social_posts"]
+    assert isinstance(candidates, list)
+    return tuple(SocialPost.model_validate(candidates[index]) for index in indexes)
+
+
+def _additional_instruments() -> tuple[Instrument, ...]:
+    fixture = _fixture()
+    candidates = fixture["additional_instruments"]
+    assert isinstance(candidates, list)
+    return tuple(Instrument.model_validate(item) for item in candidates)
+
+
+def _updated_manifest(
+    manifest: SourceManifest,
+    **updates: object,
+) -> SourceManifest:
+    return SourceManifest.model_validate(
+        {**manifest.model_dump(mode="python"), **updates}
+    )
+
+
 def _requirements() -> tuple[EvidenceRequirement, ...]:
     fixture = _fixture()
     requirements = fixture["requirements"]
@@ -166,7 +190,10 @@ def _missing_optional() -> tuple[MissingEvidence, ...]:
 def _candidate_fields() -> dict[str, object]:
     return {
         "calendar": _calendar(),
-        "instrument_candidates": _models("universe_actions", "instruments", Instrument),
+        "instrument_candidates": (
+            *_models("universe_actions", "instruments", Instrument),
+            *_additional_instruments(),
+        ),
         "alias_candidates": _models("universe_actions", "aliases", SymbolAlias),
         "membership_candidates": _models("universe_actions", "memberships", UniverseMembership),
         "action_candidates": _actions(),
@@ -732,6 +759,258 @@ def test_runtime_boundaries_reject_bypassed_bundle_and_context_mutation() -> Non
     object.__setattr__(tampered_bundle.bars[0].manifest, "revision", -1)
     with pytest.raises(EvidenceBundleCorruptionError):
         EvidenceRepository().seal(tampered_bundle)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "calendar_mismatch",
+        "preliminary",
+        "undated",
+        "event_time_mismatch",
+    ],
+)
+def test_bundle_revalidates_selected_bars_as_one_calendar_aggregate(defect: str) -> None:
+    bar = _bars()[1]
+    if defect == "calendar_mismatch":
+        invalid = bar.model_copy(update={"calendar_id": "OTHER.synthetic.v1"})
+    elif defect == "preliminary":
+        invalid = bar.model_copy(update={"finality": BarFinality.PRELIMINARY})
+    elif defect == "undated":
+        invalid = bar.model_copy(
+            update={
+                "manifest": _updated_manifest(bar.manifest, event_time=None),
+            }
+        )
+    else:
+        invalid = bar.model_copy(
+            update={
+                "manifest": _updated_manifest(
+                    bar.manifest,
+                    event_time="2024-03-08T20:59:00Z",
+                ),
+            }
+        )
+
+    with pytest.raises(InvalidEvidenceError, match="bars"):
+        _build(bar_candidates=(invalid,))
+
+
+@pytest.mark.parametrize("domain", ["aliases", "memberships"])
+def test_bundle_rejects_orphan_universe_records(domain: str) -> None:
+    candidates = _candidate_fields()
+    if domain == "aliases":
+        aliases = candidates["alias_candidates"]
+        assert isinstance(aliases, tuple)
+        orphan = aliases[0].model_copy(update={"instrument_id": "instrument-missing"})
+        overrides = {"alias_candidates": (orphan, *aliases[1:])}
+    else:
+        memberships = candidates["membership_candidates"]
+        assert isinstance(memberships, tuple)
+        orphan = memberships[0].model_copy(
+            update={"instrument_id": "instrument-missing"}
+        )
+        overrides = {"membership_candidates": (orphan, *memberships[1:])}
+
+    with pytest.raises(InvalidEvidenceError, match=domain):
+        _build(**overrides)
+
+
+@pytest.mark.parametrize(
+    "domain",
+    ["actions", "filings", "events", "social", "macro"],
+)
+def test_bundle_rejects_aggregate_revision_series_and_chronology_conflicts(
+    domain: str,
+) -> None:
+    if domain == "actions":
+        actions = list(_actions())
+        actions[3] = actions[3].model_copy(update={"instrument_id": "AAPL"})
+        overrides: dict[str, object] = {"action_candidates": tuple(actions)}
+    elif domain == "filings":
+        filings = _candidate_fields()["filing_candidates"]
+        assert isinstance(filings, tuple)
+        revision = filings[1]
+        regressed_manifest = _updated_manifest(
+            revision.manifest,
+            published_at="2024-02-14T13:00:00Z",
+            available_at="2024-02-14T13:05:00Z",
+            fetched_at="2024-02-14T13:06:00Z",
+            ingested_at="2024-02-14T13:07:00Z",
+        )
+        regressed = revision.model_copy(
+            update={
+                "filed_at": datetime(2024, 2, 14, 13, 0, tzinfo=timezone.utc),
+                "manifest": regressed_manifest,
+            }
+        )
+        overrides = {"filing_candidates": (filings[0], regressed)}
+    elif domain == "events":
+        events = _candidate_fields()["event_candidates"]
+        assert isinstance(events, tuple)
+        changed = events[1].model_copy(update={"instrument_id": "inst-acme"})
+        overrides = {"event_candidates": (events[0], changed, *events[2:])}
+    elif domain == "social":
+        posts = _social_candidates(0, 1)
+        changed = posts[1].model_copy(update={"platform": SocialPlatform.STOCKTWITS})
+        overrides = {
+            "social_post_candidates": (posts[0], changed),
+            "missing_optional": (),
+        }
+    else:
+        observations = _candidate_fields()["macro_observation_candidates"]
+        assert isinstance(observations, tuple)
+        changed = observations[1].model_copy(update={"units": "percent"})
+        overrides = {"macro_observation_candidates": (observations[0], changed)}
+
+    with pytest.raises(InvalidEvidenceError, match=domain):
+        _build(**overrides)
+
+
+@pytest.mark.parametrize(
+    "domain",
+    ["actions", "bars", "filings", "events", "social"],
+)
+def test_every_instrument_bearing_domain_references_a_selected_instrument(
+    domain: str,
+) -> None:
+    candidates = _candidate_fields()
+    if domain == "actions":
+        actions = candidates["action_candidates"]
+        assert isinstance(actions, tuple)
+        orphan = actions[0].model_copy(update={"instrument_id": "instrument-missing"})
+        overrides: dict[str, object] = {
+            "action_candidates": (orphan, *actions[1:]),
+        }
+    elif domain == "bars":
+        bars = candidates["bar_candidates"]
+        assert isinstance(bars, tuple)
+        orphan = bars[1].model_copy(update={"instrument_id": "instrument-missing"})
+        overrides = {"bar_candidates": (orphan,)}
+    elif domain == "filings":
+        filings = candidates["filing_candidates"]
+        assert isinstance(filings, tuple)
+        orphan = filings[1].model_copy(update={"instrument_id": "instrument-missing"})
+        overrides = {"filing_candidates": (orphan,)}
+    elif domain == "events":
+        events = candidates["event_candidates"]
+        assert isinstance(events, tuple)
+        orphan = events[1].model_copy(update={"instrument_id": "instrument-missing"})
+        overrides = {"event_candidates": (orphan, *events[2:])}
+    else:
+        orphan = _social_candidates(1)[0].model_copy(
+            update={"instrument_id": "instrument-missing"}
+        )
+        overrides = {
+            "social_post_candidates": (orphan,),
+            "missing_optional": (),
+        }
+
+    with pytest.raises(InvalidEvidenceError, match="instrument"):
+        _build(**overrides)
+
+
+def test_same_primary_id_from_different_sources_is_rejected_in_every_order() -> None:
+    event = _models("events_social_macro", "events", NewsEvent)[2]
+    assert isinstance(event, NewsEvent)
+    other_source = event.model_copy(
+        update={
+            "manifest": _updated_manifest(event.manifest, source="other-news-source"),
+        }
+    )
+
+    for candidates in ((event, other_source), (other_source, event)):
+        with pytest.raises(InvalidEvidenceError, match="events"):
+            _build(event_candidates=candidates)
+
+
+def test_nonempty_social_evidence_is_canonical_semantic_input() -> None:
+    posts = _social_candidates(0, 1, 2)
+    first = _build(social_post_candidates=posts, missing_optional=())
+    permuted = _build(
+        bundle_id="bundle-social-permuted",
+        created_at="2042-01-01T00:00:00Z",
+        social_post_candidates=tuple(reversed(posts)),
+        missing_optional=(),
+    )
+    without_tied_post = _build(
+        social_post_candidates=posts[:2],
+        missing_optional=(),
+    )
+
+    assert tuple(post.post_id for post in first.social_posts) == (
+        "reddit-aapl-thread",
+        "reddit-aapl-tied",
+    )
+    assert first.bundle_hash == permuted.bundle_hash
+    assert first.bundle_hash != without_tied_post.bundle_hash
+
+
+def test_replay_denies_repository_subclasses_before_overridable_get_or_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class HostileRepository(EvidenceRepository):
+        def get(self, bundle_id: str) -> EvidenceBundle:
+            socket.socket()
+            with builtins.open("ignored"):
+                pass
+            time.time()
+            return super().get(bundle_id)
+
+    repository = HostileRepository()
+    bundle = repository.seal(_build())
+    monkeypatch.setattr(socket, "socket", lambda *_args, **_kwargs: calls.append("socket"))
+    monkeypatch.setattr(
+        builtins,
+        "open",
+        lambda *_args, **_kwargs: calls.append("open") or nullcontext(),
+    )
+    monkeypatch.setattr(time, "time", lambda: calls.append("clock"))
+
+    with pytest.raises(HistoricalReplayDeniedError, match="repository"):
+        HistoricalDataGuard.replay(repository, bundle.bundle_id, _context(bundle))
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("requested_id", "context_id"),
+    [
+        ("bundle-requested-other", "bundle-2024-06-30"),
+        ("bundle-2024-06-30", "bundle-context-other"),
+    ],
+)
+def test_replay_rejects_requested_context_id_mismatch_before_repository_lookup(
+    requested_id: str,
+    context_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+
+    def unexpected_get(_bundle_id: str) -> EvidenceBundle:
+        raise AssertionError("repository lookup occurred before ID binding")
+
+    monkeypatch.setattr(repository, "get", unexpected_get)
+    with pytest.raises(HistoricalReplayMismatchError, match="ID"):
+        HistoricalDataGuard.replay(
+            repository,
+            requested_id,
+            _context(bundle, bundle_id=context_id),
+        )
+
+
+def test_serialized_nested_tamper_is_rejected_before_storage() -> None:
+    serialized = _build().model_dump(mode="json")
+    bars = serialized["bars"]
+    assert isinstance(bars, list)
+    bar = bars[0]
+    assert isinstance(bar, dict)
+    bar["close"] = "999.00"
+
+    with pytest.raises(EvidenceBundleCorruptionError):
+        EvidenceRepository().seal(serialized)  # type: ignore[arg-type]
 
 
 def test_pit_06_modules_do_not_import_research_graph_or_offer_io_adapters() -> None:

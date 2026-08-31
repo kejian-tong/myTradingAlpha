@@ -39,6 +39,33 @@
     "social_posts": [],
     "macro_observations": [0, 1]
   },
+  "additional_instruments": [
+    {
+      "schema_version": "v1",
+      "instrument_id": "AAPL",
+      "initial_symbol": "AAPL",
+      "asset_class": "equity",
+      "currency": "USD",
+      "exchange": "XNAS",
+      "active_from": "1980-12-12",
+      "active_to": null,
+      "lot_size": 1,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "instrument-aapl-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/instruments/AAPL/r0",
+        "fetched_at": "1980-12-11T13:02:00Z",
+        "event_time": "1980-12-12T00:00:00Z",
+        "published_at": "1980-12-11T13:00:00Z",
+        "available_at": "1980-12-11T13:00:00Z",
+        "ingested_at": "1980-12-11T13:03:00Z",
+        "checksum": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    }
+  ],
   "bar_candidates": [
     {
       "schema_version": "v1",
@@ -108,5 +135,5 @@
     "events": {"news-aapl-earnings": 1},
     "macro_observations": {"gdp-2023q4": 1}
   },
-  "expected_bundle_hash": "sha256:7e2377628b2dc7b75ea00100840c2c409fdf7c015896ce7e55cd8c4c94a743a3"
+  "expected_bundle_hash": "sha256:6919ef1d0db4d2bd8f11c209fcf35edc84ab0ad1008857f57a1bc7e3d8f4e335"
 }
