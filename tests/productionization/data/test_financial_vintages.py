@@ -9,9 +9,10 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 import mytradingalpha.data.fundamentals as fundamentals_module
 from mytradingalpha.data.fundamentals import (
@@ -26,6 +27,7 @@ from mytradingalpha.data.fundamentals import (
     StatementType,
     UnitScale,
 )
+from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.vintages import (
     VintageConflictError,
     VintageFutureError,
@@ -781,6 +783,15 @@ def test_repository_rejects_malformed_queries_as_query_errors(
         _query(_repository(_filing(0), _filing(1)), **overrides)
 
 
+def test_repository_rejects_reversed_query_fiscal_period() -> None:
+    with pytest.raises(FilingQueryError, match="fiscal_period"):
+        _query(
+            _repository(_filing(0), _filing(1)),
+            fiscal_period_start="2024-01-01",
+            fiscal_period_end="2023-12-31",
+        )
+
+
 def test_repository_distinguishes_missing_series_from_future_exact_series() -> None:
     repository = _repository(_filing(0))
 
@@ -880,6 +891,51 @@ def test_public_selection_boundaries_revalidate_bypassed_filings(
     bypassed_repository = _repository(valid).model_copy(update={"filings": (invalid,)})
     with pytest.raises(FilingQueryError):
         _query(bypassed_repository)
+
+
+@pytest.mark.parametrize(
+    "candidate_kind",
+    [
+        "attribute_only",
+        "unrelated_pydantic",
+        "incomplete_validation_methods",
+        "bypassed_financial_filing",
+    ],
+)
+def test_vintage_selector_requires_concrete_validated_financial_filings(
+    candidate_kind: str,
+) -> None:
+    valid = _filing(0)
+
+    class FilingLookalike(BaseModel):
+        vintage_key: tuple[object, ...]
+        manifest: SourceManifest
+
+    class IncompleteValidationLookalike:
+        vintage_key = valid.vintage_key
+        manifest = valid.manifest
+
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            return {"vintage_key": self.vintage_key, "manifest": self.manifest}
+
+    candidates: dict[str, object] = {
+        "attribute_only": SimpleNamespace(
+            vintage_key=valid.vintage_key,
+            manifest=valid.manifest,
+        ),
+        "unrelated_pydantic": FilingLookalike(
+            vintage_key=valid.vintage_key,
+            manifest=valid.manifest,
+        ),
+        "incomplete_validation_methods": IncompleteValidationLookalike(),
+        "bypassed_financial_filing": valid.model_copy(update={"facts": ()}),
+    }
+
+    with pytest.raises(VintageConflictError):
+        VintageSelector().select(
+            (candidates[candidate_kind],),  # type: ignore[arg-type]
+            knowledge_cutoff="2024-03-01T14:10:00Z",
+        )
 
 
 def test_financial_vintage_selection_is_network_free(
