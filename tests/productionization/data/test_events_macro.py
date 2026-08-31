@@ -11,10 +11,12 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 import mytradingalpha.data.events as events_module
 import mytradingalpha.data.macro as macro_module
 import mytradingalpha.data.social as social_module
-import pytest
 from mytradingalpha.data.events import (
     EventFutureError,
     EventKind,
@@ -46,7 +48,6 @@ from mytradingalpha.data.social import (
     SocialRepository,
     SocialRepositoryError,
 )
-from pydantic import ValidationError
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "pit" / "events_social_macro_v1.json"
 
