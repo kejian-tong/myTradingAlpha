@@ -11,8 +11,10 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-import mytradingalpha.data.universe as universe_module
 import pytest
+from pydantic import ValidationError
+
+import mytradingalpha.data.universe as universe_module
 from mytradingalpha.data.actions import (
     ActionProjection,
     ActionType,
@@ -39,7 +41,6 @@ from mytradingalpha.data.universe import (
     UniverseQueryError,
     UniverseRepositoryError,
 )
-from pydantic import ValidationError
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "pit" / "universe_actions_v1.json"
 
