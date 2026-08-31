@@ -81,6 +81,8 @@ class MacroObservation(ContractModel):
             raise ValueError("macro_event_date_must_equal_observation_date")
         if self.manifest.published_at is None:
             raise ValueError("macro_publication_required")
+        if self.manifest.event_time > self.manifest.published_at:
+            raise ValueError("macro_publication_cannot_precede_event_time")
         return self
 
 

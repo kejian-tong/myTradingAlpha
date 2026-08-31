@@ -95,6 +95,8 @@ class NewsEvent(ContractModel):
             raise ValueError("event_time_required")
         if self.manifest.published_at is None:
             raise ValueError("event_publication_required")
+        if self.manifest.event_time > self.manifest.published_at:
+            raise ValueError("event_publication_cannot_precede_event_time")
         return self
 
 
