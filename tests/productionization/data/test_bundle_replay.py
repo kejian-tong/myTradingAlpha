@@ -507,13 +507,15 @@ def test_each_selected_domain_is_semantic(
     baseline = _build()
     candidates = _candidate_fields()[candidate_field]
     assert isinstance(candidates, tuple)
-    changed_candidates = candidates[:-1]
     if candidate_field == "instrument_candidates":
         changed_candidates = tuple(
-            candidate
+            candidate.model_copy(update={"exchange": "ARCX"})
+            if candidate.instrument_id == "AAPL"
+            else candidate
             for candidate in candidates
-            if candidate.instrument_id != "inst-survivor"
         )
+    else:
+        changed_candidates = candidates[:-1]
     changed = _build(**{candidate_field: changed_candidates})
 
     assert getattr(changed, bundle_field) != getattr(baseline, bundle_field)
