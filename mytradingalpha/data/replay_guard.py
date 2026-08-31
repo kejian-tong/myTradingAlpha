@@ -34,12 +34,12 @@ class HistoricalReplayMismatchError(HistoricalDataGuardError):
 
 
 def _validated_context(context: object) -> RunContext:
-    try:
-        payload = (
-            context.model_dump(mode="python")
-            if isinstance(context, RunContext)
-            else context
+    if type(context) is not RunContext:
+        raise HistoricalReplayDeniedError(
+            "historical replay requires the exact frozen RunContext type"
         )
+    try:
+        payload = context.model_dump(mode="python")
         validated = RunContext.model_validate(payload)
     except (TypeError, ValidationError, ValueError) as exc:
         raise HistoricalReplayDeniedError("invalid historical RunContext") from exc
