@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, Field, StrictInt, StrictStr, model_validator
+from pydantic import BeforeValidator, Field, StrictInt, StrictStr, WithJsonSchema, model_validator
 
 from mytradingalpha.contracts.common import StableId, UtcDateTime
 from mytradingalpha.contracts.schemas import ContractModel
@@ -20,9 +20,21 @@ def _validate_required_reference(value: object) -> object:
     return value
 
 
+def _validate_checksum(value: object) -> object:
+    if not isinstance(value, str) or _CHECKSUM_PATTERN.fullmatch(value) is None:
+        raise ValueError("invalid_checksum: expected canonical SHA-256")
+    return value
+
+
 RequiredReference = Annotated[
     StrictStr,
     BeforeValidator(_validate_required_reference),
+]
+
+CanonicalChecksum = Annotated[
+    StrictStr,
+    BeforeValidator(_validate_checksum),
+    WithJsonSchema({"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}),
 ]
 
 
@@ -38,7 +50,7 @@ class SourceManifest(ContractModel):
     published_at: UtcDateTime | None
     available_at: UtcDateTime
     ingested_at: UtcDateTime
-    checksum: StrictStr = Field(pattern=_CHECKSUM_PATTERN.pattern)
+    checksum: CanonicalChecksum
     terms: RequiredReference
     revision: StrictInt = Field(ge=0)
 

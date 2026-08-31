@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import errno
 import fcntl
 import hashlib
 import json
 import os
+import secrets
 import stat
-import tempfile
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,13 @@ from .provenance import SourceManifest
 _STABLE_ID_ADAPTER = TypeAdapter(StableId)
 _SHA256_PREFIX = "sha256:"
 _MANIFEST_ENVELOPE_KEYS = frozenset({"manifest", "manifest_checksum"})
+_DIRECTORY_OPEN_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+_FILE_READ_FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
 class RawStoreError(Exception):
@@ -44,6 +52,23 @@ class RawStoreNotFoundError(RawStoreError):
 
 class RawStoreInvalidKeyError(RawStoreError):
     """A manifest key is invalid or could escape the store root."""
+
+
+@dataclass(frozen=True)
+class _WriteDirectories:
+    root: int
+    objects: int
+    sha256: int
+    manifests: int
+    locks: int
+
+
+@dataclass(frozen=True)
+class _ReadDirectories:
+    root: int
+    objects: int
+    sha256: int
+    manifests: int
 
 
 def _canonical_json(value: object) -> bytes:
@@ -72,76 +97,97 @@ class RawStore:
     """Local immutable manifests plus checksum-addressed arbitrary raw bytes."""
 
     def __init__(self, root: str | Path) -> None:
-        self._root = Path(root)
-
-    @property
-    def _objects_dir(self) -> Path:
-        return self._root / "objects" / "sha256"
-
-    @property
-    def _manifests_dir(self) -> Path:
-        return self._root / "manifests"
-
-    @property
-    def _locks_dir(self) -> Path:
-        return self._root / "locks"
+        configured = Path(root)
+        self._configured_root = Path(os.path.abspath(os.fspath(configured)))
+        try:
+            self._physical_root = self._configured_root.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise RawStoreCorruptionError("cannot resolve the configured raw-store root") from exc
+        self._operation_lock = threading.RLock()
+        self._identity_lock = threading.Lock()
+        self._directory_identities: dict[str, tuple[int, int]] = {}
 
     def put(self, captured: CapturedPayload) -> None:
         """Create a manifest and raw object, or accept an identical prior write."""
 
         manifest_id = self._validated_key_from_capture(captured)
         normalized = self._revalidate_capture(captured)
-        self._ensure_storage_directories()
-
         manifest_bytes = self._manifest_envelope_bytes(normalized.manifest)
-        manifest_path = self._manifest_path(manifest_id)
-        object_path = self._object_path(normalized.manifest.checksum)
+        object_name = self._object_name(normalized.manifest.checksum)
+        manifest_name = self._manifest_name(manifest_id)
 
-        with self._manifest_lock(manifest_id):
-            if self._entry_exists(manifest_path):
-                existing = self._read_captured(manifest_id)
-                if existing == normalized:
-                    return
-                raise RawStoreConflictError(
-                    f"manifest_id already stores different content: {manifest_id}"
-                )
-
-            if self._entry_exists(object_path):
-                existing_object = self._read_regular_file(
-                    object_path,
-                    missing_error=RawStoreCorruptionError,
-                    missing_message="manifest references a missing raw object",
-                )
-                if existing_object != normalized.raw_bytes or _sha256(existing_object) != (
-                    normalized.manifest.checksum
-                ):
-                    raise RawStoreCorruptionError(
-                        "content-addressed object does not match its checksum path"
+        # The file-lock context depends on the verified directory descriptor yielded here.
+        with self._operation_lock, self._write_directories() as directories:  # noqa: SIM117
+            with self._manifest_lock(directories.locks, manifest_id):
+                if self._entry_exists(directories.manifests, manifest_name):
+                    existing = self._read_captured_from_directories(
+                        directories.manifests,
+                        directories.sha256,
+                        manifest_id,
                     )
-            else:
-                published = self._publish_no_clobber(object_path, normalized.raw_bytes)
-                if not published:
+                    if existing == normalized:
+                        return
+                    raise RawStoreConflictError(
+                        f"manifest_id already stores different content: {manifest_id}"
+                    )
+
+                if self._entry_exists(directories.sha256, object_name):
                     existing_object = self._read_regular_file(
-                        object_path,
+                        directories.sha256,
+                        object_name,
                         missing_error=RawStoreCorruptionError,
-                        missing_message="raw object disappeared during publication",
+                        missing_message="manifest references a missing raw object",
                     )
-                    if existing_object != normalized.raw_bytes:
+                    if existing_object != normalized.raw_bytes or _sha256(existing_object) != (
+                        normalized.manifest.checksum
+                    ):
                         raise RawStoreCorruptionError(
-                            "competing object publication produced different bytes"
+                            "content-addressed object does not match its checksum name"
                         )
+                else:
+                    published = self._publish_no_clobber(
+                        directories.sha256,
+                        object_name,
+                        normalized.raw_bytes,
+                    )
+                    if not published:
+                        existing_object = self._read_regular_file(
+                            directories.sha256,
+                            object_name,
+                            missing_error=RawStoreCorruptionError,
+                            missing_message="raw object disappeared during publication",
+                        )
+                        if existing_object != normalized.raw_bytes:
+                            raise RawStoreCorruptionError(
+                                "competing object publication produced different bytes"
+                            )
 
-            if not self._publish_no_clobber(manifest_path, manifest_bytes):
-                existing = self._read_captured(manifest_id)
-                if existing == normalized:
-                    return
-                raise RawStoreConflictError(f"manifest_id was concurrently claimed: {manifest_id}")
+                if not self._publish_no_clobber(
+                    directories.manifests,
+                    manifest_name,
+                    manifest_bytes,
+                ):
+                    existing = self._read_captured_from_directories(
+                        directories.manifests,
+                        directories.sha256,
+                        manifest_id,
+                    )
+                    if existing == normalized:
+                        return
+                    raise RawStoreConflictError(
+                        f"manifest_id was concurrently claimed: {manifest_id}"
+                    )
 
     def get(self, manifest_id: str) -> CapturedPayload:
         """Load a capture only after revalidating every persisted boundary."""
 
         validated_id = self._validate_key(manifest_id)
-        return self._read_captured(validated_id)
+        with self._operation_lock, self._read_directories() as directories:
+            return self._read_captured_from_directories(
+                directories.manifests,
+                directories.sha256,
+                validated_id,
+            )
 
     def _validated_key_from_capture(self, captured: CapturedPayload) -> str:
         try:
@@ -168,16 +214,18 @@ class RawStore:
         except (AttributeError, TypeError, ValidationError, ValueError) as exc:
             raise RawStoreCorruptionError("captured payload failed boundary validation") from exc
 
-    def _manifest_path(self, manifest_id: str) -> Path:
-        return self._manifests_dir / f"{manifest_id}.json"
+    @staticmethod
+    def _manifest_name(manifest_id: str) -> str:
+        return f"{manifest_id}.json"
 
-    def _object_path(self, checksum: str) -> Path:
+    @staticmethod
+    def _object_name(checksum: str) -> str:
         if not checksum.startswith(_SHA256_PREFIX):
             raise RawStoreCorruptionError("manifest checksum uses an unsupported algorithm")
         digest = checksum.removeprefix(_SHA256_PREFIX)
         if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise RawStoreCorruptionError("manifest checksum is not canonical SHA-256")
-        return self._objects_dir / digest
+        return digest
 
     @staticmethod
     def _manifest_envelope_bytes(manifest: SourceManifest) -> bytes:
@@ -189,18 +237,22 @@ class RawStore:
         }
         return _canonical_json(envelope)
 
-    def _read_captured(self, manifest_id: str) -> CapturedPayload:
-        self._require_read_directories()
+    def _read_captured_from_directories(
+        self,
+        manifests_fd: int,
+        sha256_fd: int,
+        manifest_id: str,
+    ) -> CapturedPayload:
         manifest_bytes = self._read_regular_file(
-            self._manifest_path(manifest_id),
+            manifests_fd,
+            self._manifest_name(manifest_id),
             missing_error=RawStoreNotFoundError,
             missing_message=f"manifest not found: {manifest_id}",
         )
         manifest = self._decode_manifest(manifest_bytes, manifest_id)
-        self._require_directory(self._root / "objects")
-        self._require_directory(self._objects_dir)
         raw_bytes = self._read_regular_file(
-            self._object_path(manifest.checksum),
+            sha256_fd,
+            self._object_name(manifest.checksum),
             missing_error=RawStoreCorruptionError,
             missing_message="manifest references a missing raw object",
         )
@@ -227,62 +279,149 @@ class RawStore:
             if manifest.manifest_id != requested_id:
                 raise ValueError("manifest ID does not match its store key")
             return manifest
-        except (
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            TypeError,
-            ValidationError,
-            ValueError,
-        ) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValidationError, ValueError) as exc:
             raise RawStoreCorruptionError("manifest failed integrity validation") from exc
 
-    def _ensure_storage_directories(self) -> None:
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._require_directory(self._root)
-        for directory in (
-            self._root / "objects",
-            self._objects_dir,
-            self._manifests_dir,
-            self._locks_dir,
-        ):
-            directory.mkdir(exist_ok=True)
-            self._require_directory(directory)
-
-    def _require_read_directories(self) -> None:
-        if not self._entry_exists(self._root) or not self._entry_exists(self._manifests_dir):
-            raise RawStoreNotFoundError("raw store or manifest directory does not exist")
-        self._require_directory(self._root)
-        self._require_directory(self._manifests_dir)
-
-    @staticmethod
-    def _require_directory(path: Path) -> None:
+    @contextmanager
+    def _write_directories(self) -> Iterator[_WriteDirectories]:
+        self._assert_configured_target()
+        descriptors: list[int] = []
         try:
-            entry = path.lstat()
-        except FileNotFoundError as exc:
-            raise RawStoreCorruptionError(
-                f"required store directory is missing: {path.name}"
-            ) from exc
-        if stat.S_ISLNK(entry.st_mode) or not stat.S_ISDIR(entry.st_mode):
-            raise RawStoreCorruptionError(f"store path is not a safe directory: {path.name}")
-
-    @staticmethod
-    def _entry_exists(path: Path) -> bool:
-        try:
-            path.lstat()
-        except FileNotFoundError:
-            return False
-        return True
+            root = self._open_physical_root(create=True, missing_error=RawStoreCorruptionError)
+            descriptors.append(root)
+            self._verify_directory_identity("root", root)
+            objects = self._open_child_directory(root, "objects", create=True)
+            descriptors.append(objects)
+            self._verify_directory_identity("objects", objects)
+            sha256 = self._open_child_directory(objects, "sha256", create=True)
+            descriptors.append(sha256)
+            self._verify_directory_identity("objects/sha256", sha256)
+            manifests = self._open_child_directory(root, "manifests", create=True)
+            descriptors.append(manifests)
+            self._verify_directory_identity("manifests", manifests)
+            locks = self._open_child_directory(root, "locks", create=True)
+            descriptors.append(locks)
+            self._verify_directory_identity("locks", locks)
+            yield _WriteDirectories(root, objects, sha256, manifests, locks)
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+            self._assert_configured_target()
 
     @contextmanager
-    def _manifest_lock(self, manifest_id: str) -> Iterator[None]:
-        lock_path = self._locks_dir / f"{manifest_id}.lock"
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    def _read_directories(self) -> Iterator[_ReadDirectories]:
+        self._assert_configured_target()
+        descriptors: list[int] = []
         try:
-            descriptor = os.open(lock_path, flags, 0o600)
+            root = self._open_physical_root(create=False, missing_error=RawStoreNotFoundError)
+            descriptors.append(root)
+            self._verify_directory_identity("root", root)
+            manifests = self._open_child_directory(
+                root,
+                "manifests",
+                create=False,
+                missing_error=RawStoreNotFoundError,
+            )
+            descriptors.append(manifests)
+            self._verify_directory_identity("manifests", manifests)
+            objects = self._open_child_directory(root, "objects", create=False)
+            descriptors.append(objects)
+            self._verify_directory_identity("objects", objects)
+            sha256 = self._open_child_directory(objects, "sha256", create=False)
+            descriptors.append(sha256)
+            self._verify_directory_identity("objects/sha256", sha256)
+            yield _ReadDirectories(root, objects, sha256, manifests)
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+            self._assert_configured_target()
+
+    def _assert_configured_target(self) -> None:
+        try:
+            current_target = self._configured_root.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise RawStoreCorruptionError("configured raw-store root no longer resolves") from exc
+        if current_target != self._physical_root:
+            raise RawStoreCorruptionError("configured raw-store root was retargeted")
+
+    def _open_physical_root(
+        self,
+        *,
+        create: bool,
+        missing_error: type[RawStoreError],
+    ) -> int:
+        try:
+            descriptor = os.open(self._physical_root.anchor, _DIRECTORY_OPEN_FLAGS)
         except OSError as exc:
-            if exc.errno in {errno.ELOOP, errno.EISDIR}:
-                raise RawStoreCorruptionError("manifest lock is not a regular file") from exc
+            raise RawStoreCorruptionError("cannot open filesystem anchor") from exc
+        try:
+            for component in self._physical_root.parts[1:]:
+                next_descriptor = self._open_child_directory(
+                    descriptor,
+                    component,
+                    create=create,
+                    missing_error=missing_error,
+                )
+                os.close(descriptor)
+                descriptor = next_descriptor
+            return descriptor
+        except Exception:
+            os.close(descriptor)
             raise
+
+    @staticmethod
+    def _open_child_directory(
+        parent_fd: int,
+        name: str,
+        *,
+        create: bool,
+        missing_error: type[RawStoreError] = RawStoreCorruptionError,
+    ) -> int:
+        try:
+            return os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_fd)
+        except FileNotFoundError as exc:
+            if not create:
+                raise missing_error(f"required store directory is missing: {name}") from exc
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+            except OSError as mkdir_error:
+                raise RawStoreCorruptionError(
+                    f"cannot create required store directory: {name}"
+                ) from mkdir_error
+            try:
+                return os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_fd)
+            except OSError as open_error:
+                raise RawStoreCorruptionError(
+                    f"created store path is not a safe directory: {name}"
+                ) from open_error
+        except OSError as exc:
+            raise RawStoreCorruptionError(f"store path is not a safe directory: {name}") from exc
+
+    def _verify_directory_identity(self, name: str, descriptor: int) -> None:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened.st_mode):
+            raise RawStoreCorruptionError(f"store path is not a directory: {name}")
+        identity = (opened.st_dev, opened.st_ino)
+        with self._identity_lock:
+            expected = self._directory_identities.setdefault(name, identity)
+        if expected != identity:
+            raise RawStoreCorruptionError(f"store directory was replaced: {name}")
+
+    @contextmanager
+    def _manifest_lock(self, locks_fd: int, manifest_id: str) -> Iterator[None]:
+        lock_name = f"{manifest_id}.lock"
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            descriptor = os.open(lock_name, flags, 0o600, dir_fd=locks_fd)
+        except OSError as exc:
+            raise RawStoreCorruptionError("manifest lock is not a safe regular file") from exc
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise RawStoreCorruptionError("manifest lock is not a regular file")
@@ -295,52 +434,98 @@ class RawStore:
                 os.close(descriptor)
 
     @staticmethod
-    def _publish_no_clobber(path: Path, value: bytes) -> bool:
-        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        temporary_path = Path(temporary_name)
+    def _entry_exists(directory_fd: int, name: str) -> bool:
         try:
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(value)
-                handle.flush()
-                os.fsync(handle.fileno())
+            os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise RawStoreCorruptionError(f"cannot inspect store entry: {name}") from exc
+        return True
+
+    @staticmethod
+    def _publish_no_clobber(directory_fd: int, name: str, value: bytes) -> bool:
+        temporary_name: str | None = None
+        descriptor: int | None = None
+        for _attempt in range(100):
+            candidate = f".{name}.{secrets.token_hex(12)}.tmp"
             try:
-                os.link(temporary_path, path)
+                descriptor = os.open(
+                    candidate,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=directory_fd,
+                )
+            except FileExistsError:
+                continue
+            except OSError as exc:
+                raise RawStoreCorruptionError("cannot create atomic temporary entry") from exc
+            temporary_name = candidate
+            break
+        if descriptor is None or temporary_name is None:
+            raise RawStoreCorruptionError("cannot allocate a unique atomic temporary entry")
+
+        try:
+            remaining = memoryview(value)
+            while remaining:
+                written = os.write(descriptor, remaining)
+                if written <= 0:
+                    raise RawStoreCorruptionError("short write while publishing store entry")
+                remaining = remaining[written:]
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = None
+            try:
+                os.link(
+                    temporary_name,
+                    name,
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
             except FileExistsError:
                 return False
-            directory_descriptor = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
+            except OSError as exc:
+                raise RawStoreCorruptionError("cannot publish atomic store entry") from exc
+            os.fsync(directory_fd)
             return True
         finally:
-            temporary_path.unlink(missing_ok=True)
+            if descriptor is not None:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise RawStoreCorruptionError("cannot remove atomic temporary entry") from exc
 
     @staticmethod
     def _read_regular_file(
-        path: Path,
+        directory_fd: int,
+        name: str,
         *,
         missing_error: type[RawStoreError],
         missing_message: str,
     ) -> bytes:
         try:
-            before = path.lstat()
-        except FileNotFoundError as exc:
-            raise missing_error(missing_message) from exc
-        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
-            raise RawStoreCorruptionError(f"store entry is not a regular file: {path.name}")
-
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            descriptor = os.open(path, flags)
+            before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         except FileNotFoundError as exc:
             raise missing_error(missing_message) from exc
         except OSError as exc:
-            if exc.errno in {errno.ELOOP, errno.EISDIR}:
-                raise RawStoreCorruptionError(
-                    f"store entry became unsafe while opening: {path.name}"
-                ) from exc
-            raise
+            raise RawStoreCorruptionError(f"cannot inspect store entry: {name}") from exc
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise RawStoreCorruptionError(f"store entry is not a regular file: {name}")
+
+        try:
+            descriptor = os.open(name, _FILE_READ_FLAGS, dir_fd=directory_fd)
+        except FileNotFoundError as exc:
+            raise missing_error(missing_message) from exc
+        except OSError as exc:
+            raise RawStoreCorruptionError(f"store entry became unsafe while opening: {name}") from exc
 
         try:
             opened = os.fstat(descriptor)
@@ -349,7 +534,7 @@ class RawStore:
                 or opened.st_dev != before.st_dev
                 or opened.st_ino != before.st_ino
             ):
-                raise RawStoreCorruptionError(f"store entry changed while opening: {path.name}")
+                raise RawStoreCorruptionError(f"store entry changed while opening: {name}")
             chunks: list[bytes] = []
             while chunk := os.read(descriptor, 1024 * 1024):
                 chunks.append(chunk)
