@@ -10,8 +10,10 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-import mytradingalpha.data.fundamentals as fundamentals_module
 import pytest
+from pydantic import ValidationError
+
+import mytradingalpha.data.fundamentals as fundamentals_module
 from mytradingalpha.data.fundamentals import (
     FilingFutureError,
     FilingMissingError,
@@ -31,7 +33,6 @@ from mytradingalpha.data.vintages import (
     VintageSelectionError,
     VintageSelector,
 )
-from pydantic import ValidationError
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "pit" / "financial_vintages_v1.json"
 
