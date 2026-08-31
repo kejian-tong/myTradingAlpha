@@ -364,6 +364,11 @@ def test_every_record_rejects_explicitly_undated_event_or_publication(
         model.model_validate(payload)
 
 
+def test_news_publication_cannot_precede_event_time() -> None:
+    with pytest.raises(ValidationError):
+        _event(manifest_overrides={"published_at": "2024-02-01T13:59:59Z"})
+
+
 def test_social_post_time_is_the_equal_nested_event_and_publication_time() -> None:
     post = _social_post()
     assert post.manifest.event_time == post.manifest.published_at
@@ -407,6 +412,31 @@ def test_macro_observation_date_is_an_exact_date(observation_date: object) -> No
 def test_macro_event_utc_date_must_equal_observation_date() -> None:
     with pytest.raises(ValidationError):
         _macro_observation(manifest_overrides={"event_time": "2023-09-30T23:59:59Z"})
+
+
+def test_macro_publication_cannot_precede_event_time() -> None:
+    with pytest.raises(ValidationError):
+        _macro_observation(
+            manifest_overrides={
+                "published_at": "2023-09-30T23:59:59Z",
+                "available_at": "2023-10-01T00:00:00Z",
+            }
+        )
+
+
+def test_macro_query_cannot_select_bypassed_observation_before_its_event_time() -> None:
+    valid = _macro_observation()
+    before_event = datetime(2023, 9, 30, 23, 59, 59, tzinfo=timezone.utc)
+    invalid_manifest = valid.manifest.model_copy(
+        update={"published_at": before_event, "available_at": before_event}
+    )
+    invalid = valid.model_copy(update={"manifest": invalid_manifest})
+    bypassed_repository = _macro_repository(valid).model_copy(
+        update={"observations": (invalid,)}
+    )
+
+    with pytest.raises(MacroQueryError):
+        _macro_query(bypassed_repository, knowledge_cutoff=before_event)
 
 
 def test_repositories_are_tuples_canonically_sorted_and_round_trip() -> None:
