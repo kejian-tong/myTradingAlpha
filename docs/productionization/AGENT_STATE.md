@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc`
-- `roadmap_status`: `active_fnd_04`
+- `roadmap_status`: `active_fnd_04_repair`
 - `current_pr_id`: `FND-04`
 - `next_pr_id`: `FND-04`
 - `current_phase`: `00-foundation`
@@ -83,7 +83,7 @@ on evidence, not intent.
 | FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge `2993820d473c84b674de1f4e11f137e89b2c04d1` | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | MERGED / next: FND-02 |
 | FND-02 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | `codex/fnd-02-contract-registry` | #10 | implementation `e1ee41fd638069770c842234242265eee47ea2c8`; repaired `bc7a2e51a60a9df3ae10f45de2f32c3915fcb9e6`; merge `09bb07689483b5a3507f2b230a32b90c6dd788b6` | `high` — escalated from `normal` after reviewer found numeric-string timestamp coercion and silent extra-field loss; initial implementer requested/actual GPT-5.6 Luna / max; repair implementer requested GPT-5.6 Sol / high, actual unknown/not exposed by repair runtime; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — focused 71 on Python 3.10; productionization 85; full 661 passed, 2 skipped; checker; Ruff; repaired wheel-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — both prior HIGH findings resolved; no remaining findings | none | MERGED / next: FND-03 |
 | FND-03 | `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` | `codex/fnd-03-config-observability` | #13 | RED/JIT/GREEN `190cd46e` / `ab7ab281` / `694a6a6e`; repair RED/GREEN `9985c909` / `7ec49ebe`, `f494fb07` / `27da22ce`, `dc1ff090` / `1b515315`, `98ef29ea` / `db78553c`; final head `f650ff916755f083945f4bc0fb9c216d6acc1db8`; merge `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | `high`, escalated for secret-redaction leakage and fail-closed mode gaps; initial `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; repairs `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — focused 125; productionization 165; full 741 passed, 2 skipped; checker; Ruff; fresh Python 3.14 wheel/import smoke; diff | PASS — ten exact-head checks; CI `33342200220`; CodeQL `33342200218`; Dependency Review `33342200321`; status `99339857169` | APPROVE — definitive artifact PR comment `#issuecomment-5472021183`; master gate `#issuecomment-5472024626`; all prior findings closed | none | MERGED / next: FND-04 |
-| FND-04 | `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | `codex/fnd-04-lock-ci-doc-gates` | #14 | RED `e37aaff3e946dd7eb9337a0ba74a88d6448dfe46`; GREEN `eaf04029948d9902b30471978371bc9c53eb9c0b`; repair RED/GREEN `b409643bb3ff261515e1acd38dcb262f36d0a180` / `06ed13ce81b08a9f7ce736a1da0b6b07c05310b1`; merge pending | `normal`; implementer `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; reviewer `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — RED 17 failed/2 passed; repair RED 2 failed/20 passed; final focused 22; productionization 187; full 763 passed, 2 skipped; uv lock/checkers; locked temp sync/import/tests; Ruff/diff | PENDING exact-head GitHub checks | PENDING exact-head independent review | none | REVIEW PENDING / next after merge: PIT-01 |
+| FND-04 | `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | `codex/fnd-04-lock-ci-doc-gates` | #14 | RED `e37aaff3e946dd7eb9337a0ba74a88d6448dfe46`; GREEN `eaf04029948d9902b30471978371bc9c53eb9c0b`; repair RED/GREEN `b409643bb3ff261515e1acd38dcb262f36d0a180` / `06ed13ce81b08a9f7ce736a1da0b6b07c05310b1`; reviewed head `42d0f7dff26838198be88532831c6d1097ffd0b2`; merge pending | `high`, escalated after reviewer found NOTICE compatibility and Markdown semantics gaps; initial implementer `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; repair `high_implementer` / `.codex/agents/high-implementer.toml` / configured GPT-5.6 Sol / high; reviewer `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS at `42d0f7d` — focused 22; productionization 187; full 763 passed, 2 skipped; uv/checkers/locked temp/Ruff/diff; repair pending | PASS at stale `42d0f7d` — 11 checks; new exact-head CI required | REQUEST CHANGES at `42d0f7d` — HIGH FND04-REV-01 and MEDIUM FND04-REV-02; artifact `#issuecomment-5472340186` | none | CHANGES REQUIRED / next after merge: PIT-01 |
 
 Recommended compact representation in agent summaries:
 
@@ -139,9 +139,10 @@ PR IDs.
 ## Open blockers and deferred work
 
 - No FND-03 blocker remains; PR #13 merged after definitive approval, exact-head CI, and master gate.
-- FND-04 PR #14 has durable JIT, RED/repair history, implementation, real checker/lock validation,
-  locked temporary-environment evidence, and passing local regression. Exact-head CI/review and the
-  master gate remain.
+- FND-04 PR #14 is escalated to `high`. Review artifact
+  `https://github.com/kejian-tong/myTradingAlpha/pull/14#issuecomment-5472340186` records HIGH
+  FND04-REV-01 (future NOTICE incompatibility) and MEDIUM FND04-REV-02 (reference-link/fence
+  semantics). Test-first repair, exact-head CI/review, and master gate are required.
 - PIT-01 and all later roadmap work remain deferred until FND-04 merges.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
