@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import socket
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -479,3 +480,192 @@ def test_raw_store_put_translates_non_directory_boundaries(
 
 def test_raw_store_exposes_no_mutation_or_enumeration_api() -> None:
     assert not {"delete", "list", "repair"}.intersection(vars(RawStore))
+
+
+def test_independent_raw_store_instances_serialize_repeated_conflicting_writers(
+    tmp_path: Path,
+) -> None:
+    for iteration in range(20):
+        root = tmp_path / f"contention-{iteration}"
+        stores = (RawStore(root), RawStore(root))
+        candidates = (
+            _capture(payload=f"candidate-one-{iteration}".encode()),
+            _capture(payload=f"candidate-two-{iteration}".encode()),
+        )
+        start = threading.Barrier(2)
+
+        def put(
+            store_and_candidate: tuple[RawStore, CapturedPayload],
+            barrier: threading.Barrier = start,
+        ) -> str:
+            store, candidate = store_and_candidate
+            barrier.wait(timeout=5)
+            try:
+                store.put(candidate)
+            except RawStoreConflictError:
+                return "conflict"
+            except RawStoreCorruptionError:
+                return "corruption"
+            return "stored"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(put, zip(stores, candidates, strict=True)))
+
+        assert sorted(outcomes) == ["conflict", "stored"]
+        assert RawStore(root).get(candidates[0].manifest.manifest_id) in candidates
+
+
+def _replace_with_empty_directory(path: Path, detached: Path) -> None:
+    path.rename(detached)
+    path.mkdir()
+
+
+@pytest.mark.parametrize("operation", ["put", "get"])
+def test_raw_store_rejects_inflight_physical_root_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    root = tmp_path / "raw-store"
+    detached = tmp_path / "detached-root"
+    store = RawStore(root)
+    original = _capture()
+    store.put(original)
+    triggered = False
+
+    if operation == "put":
+        original_helper = RawStore._publish_no_clobber
+
+        def replace_during_publish(directory_fd: int, name: str, value: bytes) -> bool:
+            nonlocal triggered
+            if not triggered:
+                triggered = True
+                _replace_with_empty_directory(root, detached)
+            return original_helper(directory_fd, name, value)
+
+        monkeypatch.setattr(
+            RawStore,
+            "_publish_no_clobber",
+            staticmethod(replace_during_publish),
+        )
+        def action() -> object:
+            return store.put(
+                _capture(payload=b"inflight-root-put", manifest_id="capture-inflight-root")
+            )
+    else:
+        original_helper = RawStore._read_regular_file
+
+        def replace_during_read(
+            directory_fd: int,
+            name: str,
+            *,
+            missing_error: type[Exception],
+            missing_message: str,
+        ) -> bytes:
+            nonlocal triggered
+            if not triggered:
+                triggered = True
+                _replace_with_empty_directory(root, detached)
+            return original_helper(
+                directory_fd,
+                name,
+                missing_error=missing_error,
+                missing_message=missing_message,
+            )
+
+        monkeypatch.setattr(
+            RawStore,
+            "_read_regular_file",
+            staticmethod(replace_during_read),
+        )
+        def action() -> object:
+            return store.get(original.manifest.manifest_id)
+
+    with pytest.raises(RawStoreCorruptionError):
+        action()
+
+    assert triggered
+    assert not list(root.rglob("*"))
+    assert list(detached.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    ("operation", "child"),
+    [
+        ("put", "objects"),
+        ("put", "objects/sha256"),
+        ("put", "manifests"),
+        ("put", "locks"),
+        ("get", "objects"),
+        ("get", "objects/sha256"),
+        ("get", "manifests"),
+    ],
+)
+def test_raw_store_rejects_inflight_child_directory_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    child: str,
+) -> None:
+    root = tmp_path / "raw-store"
+    store = RawStore(root)
+    original = _capture()
+    store.put(original)
+    child_path = root / child
+    detached = root / f"detached-{child.replace('/', '-')}"
+    triggered = False
+
+    def replace_child() -> None:
+        nonlocal triggered
+        if not triggered:
+            triggered = True
+            _replace_with_empty_directory(child_path, detached)
+
+    if operation == "put":
+        original_helper = RawStore._publish_no_clobber
+
+        def replace_during_publish(directory_fd: int, name: str, value: bytes) -> bool:
+            replace_child()
+            return original_helper(directory_fd, name, value)
+
+        monkeypatch.setattr(
+            RawStore,
+            "_publish_no_clobber",
+            staticmethod(replace_during_publish),
+        )
+        def action() -> object:
+            return store.put(
+                _capture(payload=b"inflight-child-put", manifest_id="capture-inflight-child")
+            )
+    else:
+        original_helper = RawStore._read_regular_file
+
+        def replace_during_read(
+            directory_fd: int,
+            name: str,
+            *,
+            missing_error: type[Exception],
+            missing_message: str,
+        ) -> bytes:
+            replace_child()
+            return original_helper(
+                directory_fd,
+                name,
+                missing_error=missing_error,
+                missing_message=missing_message,
+            )
+
+        monkeypatch.setattr(
+            RawStore,
+            "_read_regular_file",
+            staticmethod(replace_during_read),
+        )
+        def action() -> object:
+            return store.get(original.manifest.manifest_id)
+
+    with pytest.raises(RawStoreCorruptionError):
+        action()
+
+    assert triggered
+    assert not list(child_path.rglob("*"))
+    assert list(detached.rglob("*"))
