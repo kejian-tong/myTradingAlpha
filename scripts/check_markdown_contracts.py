@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import stat
 import subprocess
 import sys
 from collections import Counter
@@ -204,8 +205,15 @@ def _record_diagnostics(root: Path) -> list[str]:
             diagnostics.append("LICENSE is not the Apache License 2.0 record")
 
     notice_path = root / "NOTICE"
-    if notice_path.exists():
-        if not notice_path.is_file():
+    try:
+        notice_stat = notice_path.lstat()
+    except FileNotFoundError:
+        notice_stat = None
+    except OSError as error:
+        diagnostics.append(f"NOTICE could not be inspected: {error}")
+        notice_stat = None
+    if notice_stat is not None:
+        if not stat.S_ISREG(notice_stat.st_mode):
             diagnostics.append("NOTICE is not a regular file")
         else:
             notice_is_tracked, tracking_error = _is_tracked(root, "NOTICE")
