@@ -11,8 +11,19 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
-import mytradingalpha.data.replay_guard as replay_guard_module
 import pytest
+from pydantic import TypeAdapter, ValidationError
+
+import mytradingalpha.data.replay_guard as replay_guard_module
+from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
+from mytradingalpha.data.actions import (
+    CorporateAction,
+    DelistingAction,
+    DividendAction,
+    SplitAction,
+    TickerChangeAction,
+)
+from mytradingalpha.data.bars import DailyBar
 from mytradingalpha.data.bundle import (
     BundleReplayPolicy,
     EvidenceBundle,
@@ -24,6 +35,16 @@ from mytradingalpha.data.bundle import (
     MissingRequiredEvidenceError,
     build_evidence_bundle,
 )
+from mytradingalpha.data.calendar import (
+    CalendarClosure,
+    CalendarCoverageRange,
+    TradingCalendar,
+    TradingSession,
+)
+from mytradingalpha.data.events import NewsEvent
+from mytradingalpha.data.fundamentals import FinancialFiling
+from mytradingalpha.data.macro import MacroObservation
+from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.replay_guard import (
     HistoricalDataGuard,
     HistoricalDataGuardError,
@@ -37,27 +58,6 @@ from mytradingalpha.data.repository import (
     EvidenceRepository,
     EvidenceRepositoryError,
 )
-from pydantic import TypeAdapter, ValidationError
-
-from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
-from mytradingalpha.data.actions import (
-    CorporateAction,
-    DelistingAction,
-    DividendAction,
-    SplitAction,
-    TickerChangeAction,
-)
-from mytradingalpha.data.bars import DailyBar
-from mytradingalpha.data.calendar import (
-    CalendarClosure,
-    CalendarCoverageRange,
-    TradingCalendar,
-    TradingSession,
-)
-from mytradingalpha.data.events import NewsEvent
-from mytradingalpha.data.fundamentals import FinancialFiling
-from mytradingalpha.data.macro import MacroObservation
-from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.social import SocialPost
 from mytradingalpha.data.universe import Instrument, SymbolAlias, UniverseMembership
 
@@ -504,13 +504,12 @@ def test_required_missing_fails_and_optional_missing_must_be_explicit() -> None:
     with pytest.raises(InvalidEvidenceError, match="social"):
         _build(missing_optional=())
 
-    social_requirement = next(
-        item for item in _requirements() if item.domain is EvidenceDomain.SOCIAL
-    )
     with pytest.raises(MissingRequiredEvidenceError, match="social"):
         _build(
             requirements=tuple(
-                item.model_copy(update={"required": True}) if item is social_requirement else item
+                item.model_copy(update={"required": True})
+                if item.domain is EvidenceDomain.SOCIAL
+                else item
                 for item in _requirements()
             ),
             missing_optional=(),
