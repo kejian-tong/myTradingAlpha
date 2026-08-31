@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
+
 from mytradingalpha.data.capture import CaptureClient, CapturedPayload
 from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.raw_store import (
@@ -20,7 +22,6 @@ from mytradingalpha.data.raw_store import (
     RawStoreInvalidKeyError,
     RawStoreNotFoundError,
 )
-from pydantic import ValidationError
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "pit" / "provider_payload.bin"
 FIXTURE_SHA256 = "b01abc35a90c73e160dd26c1694a0c4759921534f8c41637f9c143f3006b7569"
@@ -190,6 +191,22 @@ def test_source_manifest_requires_canonical_sha256_checksum(checksum: str) -> No
     fields = _manifest_fields()
     with pytest.raises(ValidationError):
         SourceManifest(**fields, checksum=checksum)
+
+
+@pytest.mark.parametrize(
+    "checksum",
+    [
+        f"prefix-sha256:{'0' * 64}",
+        f"sha256:{'0' * 64}-suffix",
+        f" sha256:{'0' * 64}",
+        f"sha256:{'0' * 64} ",
+        f"\nsha256:{'0' * 64}",
+        f"sha256:{'0' * 64}\n",
+    ],
+)
+def test_source_manifest_rejects_content_around_canonical_checksum(checksum: str) -> None:
+    with pytest.raises(ValidationError):
+        SourceManifest(**_manifest_fields(), checksum=checksum)
 
 
 def test_capture_defensively_copies_mutable_bytes_and_accepts_memoryview() -> None:
@@ -406,6 +423,58 @@ def test_raw_store_rejects_nonregular_manifest_entry(tmp_path: Path) -> None:
 
     with pytest.raises(RawStoreCorruptionError):
         store.get(captured.manifest.manifest_id)
+
+
+@pytest.mark.parametrize("operation", ["put", "get"])
+def test_raw_store_rejects_retargeted_ancestor_symlink(
+    tmp_path: Path, operation: str
+) -> None:
+    original_parent = tmp_path / "original-parent"
+    outside_parent = tmp_path / "outside-parent"
+    original_parent.mkdir()
+    outside_parent.mkdir()
+    alias = tmp_path / "store-alias"
+    alias.symlink_to(original_parent, target_is_directory=True)
+    store = RawStore(alias / "raw-store")
+    original = _capture()
+    store.put(original)
+    original_root = original_parent / "raw-store"
+    before = _regular_file_snapshot(original_root)
+
+    alias.unlink()
+    alias.symlink_to(outside_parent, target_is_directory=True)
+
+    with pytest.raises(RawStoreCorruptionError):
+        if operation == "put":
+            store.put(_capture(manifest_id="capture-after-retarget"))
+        else:
+            store.get(original.manifest.manifest_id)
+
+    assert _regular_file_snapshot(original_root) == before
+    assert not list(outside_parent.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    "non_directory",
+    [
+        "root",
+        "objects",
+        "objects/sha256",
+        "manifests",
+        "locks",
+    ],
+)
+def test_raw_store_put_translates_non_directory_boundaries(
+    tmp_path: Path, non_directory: str
+) -> None:
+    root = tmp_path / "raw-store"
+    store = RawStore(root)
+    boundary = root if non_directory == "root" else root / non_directory
+    boundary.parent.mkdir(parents=True, exist_ok=True)
+    boundary.write_bytes(b"not a directory")
+
+    with pytest.raises(RawStoreCorruptionError):
+        store.put(_capture())
 
 
 def test_raw_store_exposes_no_mutation_or_enumeration_api() -> None:
