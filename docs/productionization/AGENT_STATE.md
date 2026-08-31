@@ -10,13 +10,13 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `cbd1bb7a4d57143423509debe5aa2a737c4f8a07`
-- `roadmap_status`: `active_fnd_03_repair`
-- `current_pr_id`: `FND-03`
-- `next_pr_id`: `FND-03`
+- `last_reconciled_main_sha`: `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc`
+- `roadmap_status`: `active_fnd_04`
+- `current_pr_id`: `FND-04`
+- `next_pr_id`: `FND-04`
 - `current_phase`: `00-foundation`
 - `autonomy_mode`: `autonomous_master_active`
-- `last_completed_roadmap_pr`: `FND-02`
+- `last_completed_roadmap_pr`: `FND-03`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_reviewer_route`: `GPT-5.6 Sol / high`
@@ -82,7 +82,8 @@ on evidence, not intent.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FND-01 | `8e1274a8c46a14e67266a135268252c328e724c2` | `codex/fnd-01-package-boundary` | #8 | implementation `b47b01526843b1601530cc2fabc148aa2e66191f` / merge `2993820d473c84b674de1f4e11f137e89b2c04d1` | `normal`; implementer requested/actual GPT-5.6 Luna / max; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — checker; focused 13; full 589 passed, 2 skipped; Ruff; clean-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — no BLOCKER/HIGH/MEDIUM; LOW state-head label corrected | none | MERGED / next: FND-02 |
 | FND-02 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | `codex/fnd-02-contract-registry` | #10 | implementation `e1ee41fd638069770c842234242265eee47ea2c8`; repaired `bc7a2e51a60a9df3ae10f45de2f32c3915fcb9e6`; merge `09bb07689483b5a3507f2b230a32b90c6dd788b6` | `high` — escalated from `normal` after reviewer found numeric-string timestamp coercion and silent extra-field loss; initial implementer requested/actual GPT-5.6 Luna / max; repair implementer requested GPT-5.6 Sol / high, actual unknown/not exposed by repair runtime; reviewer requested GPT-5.6 Sol / high, actual unknown/not exposed by reviewer runtime; master requested GPT-5.6 Sol / xhigh, actual unknown/not exposed by runtime | PASS — focused 71 on Python 3.10; productionization 85; full 661 passed, 2 skipped; checker; Ruff; repaired wheel-install smoke; diff check | PASS — required Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency review checks | APPROVE — both prior HIGH findings resolved; no remaining findings | none | MERGED / next: FND-03 |
-| FND-03 | `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` | `codex/fnd-03-config-observability` | #13 | RED/JIT/GREEN `190cd46e` / `ab7ab281` / `694a6a6e`; safety RED/GREEN `9985c909` / `7ec49ebe`; reviewed `a401672e`; escalated RED/GREEN `f494fb07` / `27da22ce`; re-reviewed `28efe6ca`; prefixed RED/GREEN `dc1ff090` / `1b515315`; reviewed `3a2501d9`; lazy-format RED/GREEN `98ef29ea` / `db78553c`; merge pending | `high`, escalated for secret-redaction leakage and fail-closed mode gaps; initial implementer `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; repairs `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; reviewers `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master configured GPT-5.6 Sol / xhigh | PASS — lazy RED 6 failed/62 passed as expected; repaired focused 125; productionization 165; full 741 passed, 2 skipped; checker; Ruff; fresh Python 3.14 wheel/import smoke; diff | PENDING new exact-head GitHub checks | prior REQUEST CHANGES artifacts `#issuecomment-5471685772`, `#issuecomment-5471814370`, `#issuecomment-5471917384`; FND03-FINAL-01 repaired; exact-head review pending | none | RE-REVIEW PENDING / next after merge: FND-04 |
+| FND-03 | `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` | `codex/fnd-03-config-observability` | #13 | RED/JIT/GREEN `190cd46e` / `ab7ab281` / `694a6a6e`; repair RED/GREEN `9985c909` / `7ec49ebe`, `f494fb07` / `27da22ce`, `dc1ff090` / `1b515315`, `98ef29ea` / `db78553c`; final head `f650ff916755f083945f4bc0fb9c216d6acc1db8`; merge `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | `high`, escalated for secret-redaction leakage and fail-closed mode gaps; initial `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; repairs `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — focused 125; productionization 165; full 741 passed, 2 skipped; checker; Ruff; fresh Python 3.14 wheel/import smoke; diff | PASS — ten exact-head checks; CI `33342200220`; CodeQL `33342200218`; Dependency Review `33342200321`; status `99339857169` | APPROVE — definitive artifact PR comment `#issuecomment-5472021183`; master gate `#issuecomment-5472024626`; all prior findings closed | none | MERGED / next: FND-04 |
+| FND-04 | `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | `codex/fnd-04-lock-ci-doc-gates` | #14 | RED `e37aaff3e946dd7eb9337a0ba74a88d6448dfe46`; merge pending | `normal`; implementer `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; reviewer `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | RED PASS — focused command exit 1 with 17 expected failures, 2 passes; Ruff/diff pass; GREEN pending | PENDING | PENDING | none observed | IN PROGRESS / next after merge: PIT-01 |
 
 Recommended compact representation in agent summaries:
 
@@ -123,27 +124,24 @@ PR IDs.
 
 ## Current master pre-flight evidence
 
-- GitHub and `origin/main` were reconciled at `cbd1bb7a4d57143423509debe5aa2a737c4f8a07`;
-  exact-main Python 3.10–3.14, clean-install, Ruff, and CodeQL checks passed.
+- GitHub and `origin/main` were reconciled at `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc`;
+  exact-main Python 3.10–3.14, clean-install, Ruff, CodeQL, and dependency graph checks passed.
 - `.python-version` declares Python `3.14.7`; `pyproject.toml` remains `requires-python = ">=3.10"`.
 - The startup shell's bare `python` was `/Users/oliver/opt/anaconda3/bin/python` 3.8.5 and was not
   used for roadmap validation. The project environment used for FND-03 is
   `/Users/oliver/Desktop/myTradingAlpha/.venv/bin/python` 3.14.6, the available local Python 3.14.x
   interpreter.
-- FND-03 JIT implementation spec: PR #13 body; RED evidence: commits `190cd46eb7043f8640957860266d0a3b6c571d5a`
-  and `ab7ab2816799d35c46a982233cc9e51ee925dc89`; repaired implementation head:
-  `7ec49ebe1df3adabf7415c68be0878fdc0c50b9e`.
+- FND-03 merged as `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc`; final review and master-gate
+  artifacts are PR #13 comments `#issuecomment-5472021183` and `#issuecomment-5472024626`.
+- FND-04 JIT implementation spec: PR #14 body; RED evidence:
+  `e37aaff3e946dd7eb9337a0ba74a88d6448dfe46`.
 
 ## Open blockers and deferred work
 
-- No prerequisite blocker remains for FND-03: FND-01, FND-02, FND-02 state reconciliation, the
-  project-scoped audit harness, and Python 3.14 default alignment are merged and are ancestors of
-  current `main`.
-- FND-03 PR #13 remains `high`. HIGH FND03-FINAL-01 from
-  `https://github.com/kejian-tong/myTradingAlpha/pull/13#issuecomment-5471917384` was repaired in
-  test-first commits `98ef29e` / `db78553`; local validation passes. Exact-head CI/re-review and the
-  master gate are required.
-- FND-04 and all later roadmap work remain deferred until FND-03 merges.
+- No FND-03 blocker remains; PR #13 merged after definitive approval, exact-head CI, and master gate.
+- FND-04 is active as draft PR #14. Its RED history is durable; GREEN remains blocked until the JIT
+  spec is persisted in the PR body. Validation, exact-head CI/review, and master gate then remain.
+- PIT-01 and all later roadmap work remain deferred until FND-04 merges.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
