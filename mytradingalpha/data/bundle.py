@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Literal, TypeVar
@@ -15,15 +16,15 @@ from mytradingalpha.contracts.common import StableId, UtcDateTime
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 
-from .actions import CorporateAction
-from .bars import DailyBar
+from .actions import CorporateAction, CorporateActionRepository
+from .bars import BarRepository, DailyBar
 from .calendar import TradingCalendar
-from .events import NewsEvent, ReplayPolicy
-from .fundamentals import FinancialFiling
-from .macro import MacroObservation
+from .events import EventRepository, NewsEvent, ReplayPolicy
+from .fundamentals import FilingRepository, FinancialFiling
+from .macro import MacroObservation, MacroRepository
 from .provenance import CanonicalChecksum, SourceManifest
-from .social import SocialPost
-from .universe import Instrument, SymbolAlias, UniverseMembership
+from .social import SocialPost, SocialRepository
+from .universe import Instrument, SymbolAlias, UniverseManifest, UniverseMembership
 
 
 class EvidenceBundleError(ValueError):
@@ -168,6 +169,14 @@ def _eligible(
     )
 
 
+def _eligible_records(
+    records: Sequence[_Record],
+    cutoff: datetime,
+    policy: BundleReplayPolicy,
+) -> tuple[_Record, ...]:
+    return tuple(record for record in records if _eligible(record, cutoff, policy))
+
+
 def _select_revisions(
     records: Sequence[_Record],
     *,
@@ -198,16 +207,63 @@ def _instrument_identity(record: Instrument) -> tuple[object, ...]:
     return (record.instrument_id, record.manifest.source)
 
 
+def _instrument_sort_key(record: Instrument) -> tuple[object, ...]:
+    return (
+        record.instrument_id,
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
+
+
 def _alias_identity(record: SymbolAlias) -> tuple[object, ...]:
     return (record.alias_id, record.manifest.source)
+
+
+def _alias_sort_key(record: SymbolAlias) -> tuple[object, ...]:
+    return (
+        record.alias_id,
+        record.instrument_id,
+        record.symbol,
+        record.valid_from.isoformat(),
+        record.valid_to.isoformat() if record.valid_to is not None else "",
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
 
 
 def _membership_identity(record: UniverseMembership) -> tuple[object, ...]:
     return (record.membership_id, record.manifest.source)
 
 
+def _membership_sort_key(record: UniverseMembership) -> tuple[object, ...]:
+    return (
+        record.membership_id,
+        record.universe_id,
+        record.instrument_id,
+        record.valid_from.isoformat(),
+        record.valid_to.isoformat() if record.valid_to is not None else "",
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
+
+
 def _action_identity(record: CorporateAction) -> tuple[object, ...]:
     return (record.action_id, record.manifest.source)
+
+
+def _action_sort_key(record: CorporateAction) -> tuple[object, ...]:
+    return (
+        record.action_id,
+        record.instrument_id,
+        record.action_type.value,
+        record.effective_date,
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
 
 
 def _bar_identity(record: DailyBar) -> tuple[object, ...]:
@@ -219,6 +275,21 @@ def _bar_identity(record: DailyBar) -> tuple[object, ...]:
         record.adjustment_basis.value,
         record.adjustment_version,
         record.manifest.source,
+    )
+
+
+def _bar_sort_key(record: DailyBar) -> tuple[object, ...]:
+    return (
+        record.bar_id,
+        record.instrument_id,
+        record.calendar_id,
+        record.session_date,
+        record.interval,
+        record.adjustment_basis.value,
+        record.adjustment_version or "",
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
     )
 
 
@@ -236,16 +307,63 @@ def _filing_identity(record: FinancialFiling) -> tuple[object, ...]:
     )
 
 
+def _filing_sort_key(record: FinancialFiling) -> tuple[object, ...]:
+    return (
+        record.filing_id,
+        record.accession_id,
+        *_filing_identity(record),
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
+
+
 def _event_identity(record: NewsEvent) -> tuple[object, ...]:
     return (record.event_id, record.manifest.source)
+
+
+def _event_sort_key(record: NewsEvent) -> tuple[object, ...]:
+    return (
+        record.event_id,
+        record.instrument_id or "",
+        record.kind.value,
+        record.manifest.event_time,
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
 
 
 def _social_identity(record: SocialPost) -> tuple[object, ...]:
     return (record.post_id, record.manifest.source)
 
 
+def _social_sort_key(record: SocialPost) -> tuple[object, ...]:
+    return (
+        record.post_id,
+        record.instrument_id,
+        record.platform.value,
+        record.manifest.event_time,
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
+
+
 def _macro_identity(record: MacroObservation) -> tuple[object, ...]:
     return (record.observation_id, record.manifest.source)
+
+
+def _macro_sort_key(record: MacroObservation) -> tuple[object, ...]:
+    return (
+        record.observation_id,
+        record.series_id,
+        record.observation_date,
+        record.units,
+        record.frequency.value,
+        record.manifest.source,
+        record.manifest.revision,
+        record.manifest.manifest_id,
+    )
 
 
 def _ensure_unique_selected(
@@ -260,6 +378,176 @@ def _ensure_unique_selected(
         if key in identities:
             raise ValueError(f"multiple_selected_revisions_for_{domain}_identity")
         identities.add(key)
+
+
+@dataclass(frozen=True)
+class _ValidatedSelectedEvidence:
+    instruments: tuple[Instrument, ...]
+    aliases: tuple[SymbolAlias, ...]
+    memberships: tuple[UniverseMembership, ...]
+    actions: tuple[CorporateAction, ...]
+    bars: tuple[DailyBar, ...]
+    filings: tuple[FinancialFiling, ...]
+    events: tuple[NewsEvent, ...]
+    social_posts: tuple[SocialPost, ...]
+    macro_observations: tuple[MacroObservation, ...]
+
+
+def _validate_revision_histories(
+    *,
+    actions: Sequence[CorporateAction],
+    filings: Sequence[FinancialFiling],
+    events: Sequence[NewsEvent],
+    social_posts: Sequence[SocialPost],
+    macro_observations: Sequence[MacroObservation],
+) -> tuple[
+    tuple[CorporateAction, ...],
+    tuple[FinancialFiling, ...],
+    tuple[NewsEvent, ...],
+    tuple[SocialPost, ...],
+    tuple[MacroObservation, ...],
+]:
+    try:
+        action_history = CorporateActionRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            actions=actions,
+        ).actions
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_actions_aggregate") from exc
+    try:
+        filing_history = FilingRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            filings=filings,
+        ).filings
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_filings_aggregate") from exc
+    try:
+        event_history = EventRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            events=events,
+        ).events
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_events_aggregate") from exc
+    try:
+        social_history = SocialRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            posts=social_posts,
+        ).posts
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_social_aggregate") from exc
+    try:
+        macro_history = MacroRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            observations=macro_observations,
+        ).observations
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_macro_aggregate") from exc
+    return (
+        action_history,
+        filing_history,
+        event_history,
+        social_history,
+        macro_history,
+    )
+
+
+def _validate_selected_aggregates(
+    *,
+    calendar: TradingCalendar,
+    instruments: Sequence[Instrument],
+    aliases: Sequence[SymbolAlias],
+    memberships: Sequence[UniverseMembership],
+    actions: Sequence[CorporateAction],
+    bars: Sequence[DailyBar],
+    filings: Sequence[FinancialFiling],
+    events: Sequence[NewsEvent],
+    social_posts: Sequence[SocialPost],
+    macro_observations: Sequence[MacroObservation],
+) -> _ValidatedSelectedEvidence:
+    try:
+        universe = UniverseManifest(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            instruments=instruments,
+            aliases=aliases,
+            memberships=memberships,
+        )
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError(
+            "invalid_aliases_memberships_universe_aggregate"
+        ) from exc
+    try:
+        canonical_bars = BarRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            calendar=calendar,
+            bars=bars,
+        ).bars
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_bars_aggregate") from exc
+    try:
+        canonical_actions = CorporateActionRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            actions=actions,
+        ).actions
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_actions_aggregate") from exc
+    try:
+        canonical_filings = FilingRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            filings=filings,
+        ).filings
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_filings_aggregate") from exc
+    try:
+        canonical_events = EventRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            events=events,
+        ).events
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_events_aggregate") from exc
+    try:
+        canonical_social = SocialRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            posts=social_posts,
+        ).posts
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_social_aggregate") from exc
+    try:
+        canonical_macro = MacroRepository(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            observations=macro_observations,
+        ).observations
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise InvalidEvidenceError("invalid_macro_aggregate") from exc
+
+    instrument_ids = {instrument.instrument_id for instrument in universe.instruments}
+    referenced_instruments = (
+        *(action.instrument_id for action in canonical_actions),
+        *(bar.instrument_id for bar in canonical_bars),
+        *(filing.instrument_id for filing in canonical_filings),
+        *(
+            event.instrument_id
+            for event in canonical_events
+            if event.instrument_id is not None
+        ),
+        *(post.instrument_id for post in canonical_social),
+    )
+    unknown = sorted(set(referenced_instruments) - instrument_ids)
+    if unknown:
+        raise InvalidEvidenceError(
+            f"unselected_instrument_reference: {unknown[0]}"
+        )
+
+    return _ValidatedSelectedEvidence(
+        instruments=tuple(sorted(universe.instruments, key=_instrument_sort_key)),
+        aliases=tuple(sorted(universe.aliases, key=_alias_sort_key)),
+        memberships=tuple(sorted(universe.memberships, key=_membership_sort_key)),
+        actions=tuple(sorted(canonical_actions, key=_action_sort_key)),
+        bars=tuple(sorted(canonical_bars, key=_bar_sort_key)),
+        filings=tuple(sorted(canonical_filings, key=_filing_sort_key)),
+        events=tuple(sorted(canonical_events, key=_event_sort_key)),
+        social_posts=tuple(sorted(canonical_social, key=_social_sort_key)),
+        macro_observations=tuple(sorted(canonical_macro, key=_macro_sort_key)),
+    )
 
 
 def _requirements_by_domain(
@@ -448,7 +736,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, Instrument, domain="instruments"),
-                key=lambda item: item.instrument_id,
+                key=_instrument_sort_key,
             )
         )
 
@@ -458,7 +746,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, SymbolAlias, domain="aliases"),
-                key=lambda item: item.alias_id,
+                key=_alias_sort_key,
             )
         )
 
@@ -468,14 +756,14 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, UniverseMembership, domain="memberships"),
-                key=lambda item: item.membership_id,
+                key=_membership_sort_key,
             )
         )
 
     @field_validator("actions", mode="before")
     @classmethod
     def revalidate_actions(cls, value: object) -> tuple[CorporateAction, ...]:
-        return tuple(sorted(_revalidate_actions(value), key=lambda item: item.action_id))
+        return tuple(sorted(_revalidate_actions(value), key=_action_sort_key))
 
     @field_validator("bars", mode="before")
     @classmethod
@@ -483,7 +771,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, DailyBar, domain="bars"),
-                key=lambda item: item.bar_id,
+                key=_bar_sort_key,
             )
         )
 
@@ -493,7 +781,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, FinancialFiling, domain="filings"),
-                key=lambda item: item.filing_id,
+                key=_filing_sort_key,
             )
         )
 
@@ -503,7 +791,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, NewsEvent, domain="events"),
-                key=lambda item: item.event_id,
+                key=_event_sort_key,
             )
         )
 
@@ -513,7 +801,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, SocialPost, domain="social"),
-                key=lambda item: item.post_id,
+                key=_social_sort_key,
             )
         )
 
@@ -523,7 +811,7 @@ class EvidenceBundle(ContractModel):
         return tuple(
             sorted(
                 _revalidate_sequence(value, MacroObservation, domain="macro"),
-                key=lambda item: item.observation_id,
+                key=_macro_sort_key,
             )
         )
 
@@ -559,6 +847,31 @@ class EvidenceBundle(ContractModel):
                 for record in records
             ):
                 raise ValueError(f"ineligible_{domain}_evidence_in_sealed_bundle")
+
+        validated = _validate_selected_aggregates(
+            calendar=self.calendar,
+            instruments=self.instruments,
+            aliases=self.aliases,
+            memberships=self.memberships,
+            actions=self.actions,
+            bars=self.bars,
+            filings=self.filings,
+            events=self.events,
+            social_posts=self.social_posts,
+            macro_observations=self.macro_observations,
+        )
+        if (
+            validated.instruments != self.instruments
+            or validated.aliases != self.aliases
+            or validated.memberships != self.memberships
+            or validated.actions != self.actions
+            or validated.bars != self.bars
+            or validated.filings != self.filings
+            or validated.events != self.events
+            or validated.social_posts != self.social_posts
+            or validated.macro_observations != self.macro_observations
+        ):
+            raise ValueError("noncanonical_selected_evidence_order")
 
         present = _presence(
             calendar=self.calendar,
@@ -676,78 +989,123 @@ def build_evidence_bundle(
     ):
         _reject_non_historical_candidates(records, domain=domain)
 
+    eligible_instruments = _eligible_records(instruments, cutoff, policy)
+    eligible_aliases = _eligible_records(aliases, cutoff, policy)
+    eligible_memberships = _eligible_records(memberships, cutoff, policy)
+    eligible_actions = _eligible_records(actions, cutoff, policy)
+    eligible_bars = _eligible_records(bars, cutoff, policy)
+    eligible_filings = _eligible_records(filings, cutoff, policy)
+    eligible_events = _eligible_records(events, cutoff, policy)
+    eligible_social = _eligible_records(social_posts, cutoff, policy)
+    eligible_macro = _eligible_records(macro_observations, cutoff, policy)
+    (
+        eligible_actions,
+        eligible_filings,
+        eligible_events,
+        eligible_social,
+        eligible_macro,
+    ) = _validate_revision_histories(
+        actions=eligible_actions,
+        filings=eligible_filings,
+        events=eligible_events,
+        social_posts=eligible_social,
+        macro_observations=eligible_macro,
+    )
+
     selected_instruments = _select_revisions(
-        instruments,
+        eligible_instruments,
         identity=_instrument_identity,
-        sort_key=lambda item: (item.instrument_id,),
+        sort_key=_instrument_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="instruments",
     )
     selected_aliases = _select_revisions(
-        aliases,
+        eligible_aliases,
         identity=_alias_identity,
-        sort_key=lambda item: (item.alias_id,),
+        sort_key=_alias_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="aliases",
     )
     selected_memberships = _select_revisions(
-        memberships,
+        eligible_memberships,
         identity=_membership_identity,
-        sort_key=lambda item: (item.membership_id,),
+        sort_key=_membership_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="memberships",
     )
     selected_actions = _select_revisions(
-        actions,
+        eligible_actions,
         identity=_action_identity,
-        sort_key=lambda item: (item.action_id,),
+        sort_key=_action_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="actions",
     )
     selected_bars = _select_revisions(
-        bars,
+        eligible_bars,
         identity=_bar_identity,
-        sort_key=lambda item: (item.bar_id,),
+        sort_key=_bar_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="bars",
     )
     selected_filings = _select_revisions(
-        filings,
+        eligible_filings,
         identity=_filing_identity,
-        sort_key=lambda item: (item.filing_id,),
+        sort_key=_filing_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="filings",
     )
     selected_events = _select_revisions(
-        events,
+        eligible_events,
         identity=_event_identity,
-        sort_key=lambda item: (item.event_id,),
+        sort_key=_event_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="events",
     )
     selected_social = _select_revisions(
-        social_posts,
+        eligible_social,
         identity=_social_identity,
-        sort_key=lambda item: (item.post_id,),
+        sort_key=_social_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="social",
     )
     selected_macro = _select_revisions(
-        macro_observations,
+        eligible_macro,
         identity=_macro_identity,
-        sort_key=lambda item: (item.observation_id,),
+        sort_key=_macro_sort_key,
         cutoff=cutoff,
         policy=policy,
         domain="macro",
     )
+
+    validated_selected = _validate_selected_aggregates(
+        calendar=validated_calendar,
+        instruments=selected_instruments,
+        aliases=selected_aliases,
+        memberships=selected_memberships,
+        actions=selected_actions,
+        bars=selected_bars,
+        filings=selected_filings,
+        events=selected_events,
+        social_posts=selected_social,
+        macro_observations=selected_macro,
+    )
+    selected_instruments = validated_selected.instruments
+    selected_aliases = validated_selected.aliases
+    selected_memberships = validated_selected.memberships
+    selected_actions = validated_selected.actions
+    selected_bars = validated_selected.bars
+    selected_filings = validated_selected.filings
+    selected_events = validated_selected.events
+    selected_social = validated_selected.social_posts
+    selected_macro = validated_selected.macro_observations
 
     present = _presence(
         calendar=validated_calendar,

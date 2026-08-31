@@ -77,13 +77,15 @@ class HistoricalDataGuard:
 
         validated_context = _validated_context(context)
         HistoricalDataGuard.assert_network_denied(validated_context)
-        if not isinstance(repository, EvidenceRepository):
+        if type(repository) is not EvidenceRepository:
             raise HistoricalReplayDeniedError(
-                "historical replay requires an in-memory EvidenceRepository"
+                "historical replay requires the exact in-memory evidence repository"
             )
+        if validated_context.bundle_id != bundle_id:
+            raise HistoricalReplayMismatchError("historical bundle ID mismatch")
 
         bundle = repository.get(bundle_id)
-        if validated_context.bundle_id != bundle_id or bundle.bundle_id != bundle_id:
+        if bundle.bundle_id != bundle_id:
             raise HistoricalReplayMismatchError("historical bundle ID mismatch")
         if validated_context.bundle_hash != bundle.bundle_hash:
             raise HistoricalReplayMismatchError("historical bundle hash mismatch")
