@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -56,6 +56,23 @@ def _candidate_attributes(candidate: object) -> tuple[object, int, datetime]:
     return vintage_key, revision, available_at
 
 
+def _normalize_candidate(candidate: _FilingT) -> _FilingT:
+    """Revalidate Pydantic candidates without depending on their concrete module."""
+
+    candidate_type = type(candidate)
+    model_validate = getattr(candidate_type, "model_validate", None)
+    model_dump = getattr(candidate, "model_dump", None)
+    if model_validate is None and model_dump is None:
+        return candidate
+    if not callable(model_validate) or not callable(model_dump):
+        raise VintageConflictError("invalid_candidate: incomplete model validation boundary")
+    try:
+        normalized = model_validate(model_dump(mode="python"))
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise VintageConflictError("invalid_candidate: filing contract validation failed") from exc
+    return cast(_FilingT, normalized)
+
+
 class VintageSelector:
     """Select the highest revision available at an explicit knowledge cutoff."""
 
@@ -75,7 +92,8 @@ class VintageSelector:
         first_key: object | None = None
         seen_revisions: set[int] = set()
         eligible: list[tuple[int, _FilingT]] = []
-        for index, candidate in enumerate(items):
+        for index, supplied_candidate in enumerate(items):
+            candidate = _normalize_candidate(supplied_candidate)
             vintage_key, revision, available_at = _candidate_attributes(candidate)
             if index == 0:
                 first_key = vintage_key

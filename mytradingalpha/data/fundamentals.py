@@ -14,7 +14,7 @@ from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 
 from .calendar import ExactDate
 from .provenance import SourceManifest
-from .vintages import VintageFutureError, VintageSelector
+from .vintages import VintageConflictError, VintageFutureError, VintageSelector
 
 _STABLE_ID_ADAPTER = TypeAdapter(StableId)
 _EXACT_DATE_ADAPTER = TypeAdapter(ExactDate)
@@ -127,6 +127,8 @@ class FinancialFiling(ContractModel):
             raise ValueError("filing_event_time_required")
         if self.manifest.event_time.date() != self.fiscal_period_end:
             raise ValueError("filing_event_time_must_match_fiscal_period_end")
+        if self.manifest.event_time >= self.filed_at:
+            raise ValueError("filing_event_time_must_be_before_filed_at")
         return self
 
     @property
@@ -135,6 +137,7 @@ class FinancialFiling(ContractModel):
 
         return (
             self.instrument_id,
+            self.fiscal_period_start,
             self.fiscal_period_end,
             self.manifest.source,
             self.statement_type,
@@ -160,11 +163,11 @@ def _query_stable_id(value: object, *, field: str) -> str:
         raise FilingQueryError(f"invalid_{field}: expected a stable identifier") from exc
 
 
-def _query_date(value: object) -> date:
+def _query_date(value: object, *, field: str) -> date:
     try:
         return _EXACT_DATE_ADAPTER.validate_python(value)
     except ValidationError as exc:
-        raise FilingQueryError("invalid_fiscal_period_end: expected an exact ISO date") from exc
+        raise FilingQueryError(f"invalid_{field}: expected an exact ISO date") from exc
 
 
 def _query_cutoff(value: object) -> datetime:
@@ -237,6 +240,7 @@ class FilingRepository(ContractModel):
     def as_of(
         self,
         instrument_id: str,
+        fiscal_period_start: date | str,
         fiscal_period_end: date | str,
         *,
         knowledge_cutoff: datetime | str,
@@ -249,8 +253,47 @@ class FilingRepository(ContractModel):
     ) -> FinancialFiling:
         """Select the highest revision in one exact filing series by cutoff."""
 
+        repository = self._revalidate_for_query()
+        return repository._select_as_of(
+            instrument_id,
+            fiscal_period_start,
+            fiscal_period_end,
+            knowledge_cutoff=knowledge_cutoff,
+            source=source,
+            statement_type=statement_type,
+            reporting_period=reporting_period,
+            form_type=form_type,
+            currency=currency,
+            unit_scale=unit_scale,
+        )
+
+    def _revalidate_for_query(self) -> FilingRepository:
+        try:
+            return type(self).model_validate(self.model_dump(mode="python"))
+        except (TypeError, ValidationError, ValueError) as exc:
+            raise FilingQueryError(
+                "invalid_repository_state: filing repository validation failed"
+            ) from exc
+
+    def _select_as_of(
+        self,
+        instrument_id: str,
+        fiscal_period_start: date | str,
+        fiscal_period_end: date | str,
+        *,
+        knowledge_cutoff: datetime | str,
+        source: str,
+        statement_type: StatementType | str,
+        reporting_period: ReportingPeriod | str,
+        form_type: str,
+        currency: str,
+        unit_scale: UnitScale | str,
+    ) -> FinancialFiling:
+        """Select from an already revalidated and canonical repository."""
+
         instrument = _query_stable_id(instrument_id, field="instrument_id")
-        period_end = _query_date(fiscal_period_end)
+        period_start = _query_date(fiscal_period_start, field="fiscal_period_start")
+        period_end = _query_date(fiscal_period_end, field="fiscal_period_end")
         cutoff = _query_cutoff(knowledge_cutoff)
         source_id = _query_stable_id(source, field="source")
         statement = _query_enum(statement_type, StatementType, field="statement_type")
@@ -263,6 +306,7 @@ class FilingRepository(ContractModel):
             filing
             for filing in self.filings
             if filing.instrument_id == instrument
+            and filing.fiscal_period_start == period_start
             and filing.fiscal_period_end == period_end
             and filing.manifest.source == source_id
             and filing.statement_type is statement
@@ -279,6 +323,10 @@ class FilingRepository(ContractModel):
         except VintageFutureError as exc:
             raise FilingFutureError(
                 "matching filing revisions exist but none is available by the cutoff"
+            ) from exc
+        except VintageConflictError as exc:
+            raise FilingQueryError(
+                "invalid_repository_state: filing vintage selection conflicted"
             ) from exc
 
 
