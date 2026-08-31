@@ -6,6 +6,7 @@ import argparse
 import re
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -23,6 +24,9 @@ PHASES = (
     "09-live-pilot",
 )
 ROADMAP_ID_PATTERN = re.compile(r"\b(?:FND|PIT|SIG|BT|RSK|EXC|EXP|OMS|FWD|LIVE)-\d{2}\b")
+ROADMAP_DEFINITION_PATTERN = re.compile(
+    r"\*\*(?P<id>(?:FND|PIT|SIG|BT|RSK|EXC|EXP|OMS|FWD|LIVE)-\d{2})\b[^*\n]*\*\*"
+)
 ROADMAP_IDS = frozenset(
     f"{prefix}-{number:02d}"
     for prefix, count in (
@@ -205,6 +209,31 @@ def _record_diagnostics(root: Path) -> list[str]:
     else:
         roadmap_text = roadmap_path.read_text(encoding="utf-8")
         roadmap_ids = set(ROADMAP_ID_PATTERN.findall(roadmap_text))
+        roadmap_definitions = ROADMAP_DEFINITION_PATTERN.findall(roadmap_text)
+        definition_counts = Counter(roadmap_definitions)
+        duplicate_definitions = sorted(
+            roadmap_id for roadmap_id, count in definition_counts.items() if count > 1
+        )
+        unexpected_definitions = sorted(set(roadmap_definitions) - ROADMAP_IDS)
+        missing_definitions = sorted(ROADMAP_IDS - set(roadmap_definitions))
+        if (
+            len(roadmap_definitions) != len(ROADMAP_IDS)
+            or len(definition_counts) != len(ROADMAP_IDS)
+            or duplicate_definitions
+            or unexpected_definitions
+            or missing_definitions
+        ):
+            details = [f"definition count: {len(roadmap_definitions)}"]
+            if duplicate_definitions:
+                details.append(f"duplicates: {', '.join(duplicate_definitions)}")
+            if missing_definitions:
+                details.append(f"missing definitions: {', '.join(missing_definitions)}")
+            if unexpected_definitions:
+                details.append(f"unexpected definitions: {', '.join(unexpected_definitions)}")
+            diagnostics.append(
+                "roadmap must contain exactly 47 unique bold slice definitions"
+                f" ({'; '.join(details)})"
+            )
         if roadmap_ids != ROADMAP_IDS:
             missing = ", ".join(sorted(ROADMAP_IDS - roadmap_ids))
             unexpected = ", ".join(sorted(roadmap_ids - ROADMAP_IDS))

@@ -22,8 +22,6 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.12.7"
-      - uses: actions/setup-python@v5
-        with:
           python-version: ${{ matrix.python-version }}
       - name: Install locked environment (with dev extras)
         run: uv sync --locked --extra dev
@@ -38,8 +36,6 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.12.7"
-      - uses: actions/setup-python@v5
-        with:
           python-version: "3.14"
       - name: Fresh locked install (no dev extras) and import
         run: uv sync --locked --no-dev --no-editable
@@ -57,8 +53,6 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.12.7"
-      - uses: actions/setup-python@v5
-        with:
           python-version: "3.14"
       - name: Install locked development environment
         run: uv sync --locked --extra dev
@@ -75,8 +69,6 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.12.7"
-      - uses: actions/setup-python@v5
-        with:
           python-version: "3.14"
       - name: Install locked development environment
         run: uv sync --locked --extra dev
