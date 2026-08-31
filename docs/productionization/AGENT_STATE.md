@@ -11,9 +11,9 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `47f2c325e4d71a3d79c601f9f3e25eb722df3809`
-- `roadmap_status`: `pit_03_in_progress`
+- `roadmap_status`: `pit_03_ready_for_final_state_head_gates`
 - `current_pr_id`: `PIT-03`
-- `next_pr_id`: `PIT-03`
+- `next_pr_id`: `PIT-04` (blocked until PIT-03 merges)
 - `current_phase`: `01-point-in-time-data`
 - `autonomy_mode`: `autonomous_active`
 - `last_completed_roadmap_pr`: `PIT-02`
@@ -86,7 +86,7 @@ on evidence, not intent.
 | FND-04 | `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | `codex/fnd-04-lock-ci-doc-gates` | #14 | RED/GREEN `e37aaff3` / `eaf04029`; interpreter/roadmap RED/GREEN `b409643b` / `06ed13ce`; Markdown/NOTICE RED/GREEN `a36e8be7` / `abf42642`; NOTICE type RED/GREEN `6fcfadd1` / `b4a7878b`; final head `cb91948ffee10cc8c32c93975c0c00d2239ab1f4`; merge `0fbd318c4421eb303b6aa090458b9e844e0416e6` | `high`, escalated for NOTICE compatibility and Markdown semantics; initial `normal_implementer` / `.codex/agents/normal-implementer.toml` / configured actual GPT-5.6 Luna / max; repairs `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — focused 34; productionization 199; full and locked full 775 passed, 2 skipped; uv/checkers/Ruff/diff | PASS — 11 exact-head checks; CI `33347588879`; CodeQL `33347588858`; Dependency Review `33347588862`; status `99354684326` | APPROVE — definitive artifact `#issuecomment-5472655443`; master gate `#issuecomment-5472659493`; all prior findings closed | none | MERGED / next: PIT-01 (not started) |
 | PIT-01 | `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd` | `codex/pit-01-capture-provenance` | #18 | RED `4113a5b2ad5c6674bdc4495894da391784625f61`; GREEN `ddd68bbb364b87107be97c03688f5201cc52f26b`; repair RED/GREEN `db733f826f37f50268f21768f9f76f155ec82e69` / `db0c689887b9ac8faadc7dc072371490b1be4b74`; second repair RED/GREEN `f04aa79c905c1f2595f9b4bfadaae7f0387f4a88` / `ef0c2cdcc99551b67ffc7945937882ba12d15500`; final head `16b653b86b401c59d04c33ec138663812bbc4db2`; merge `9f706c4242825fe0c6b46fab54d559c9370c2700` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final escalated `reviewer_xhigh` / `.codex/agents/reviewer-xhigh.toml` / configured actual GPT-5.6 Sol / xhigh; master GPT-5.6 Sol / xhigh | PASS — three auditable RED stages; focused 81; productionization 280; full 856 passed, 2 skipped, 69 subtests; PIT regressions 15/41; Ruff/checkers/diff; wheel/import smoke | PASS — 11 final-state-head checks; CI `33353584557`; CodeQL `33353584567`; Dependency Review `33353584546` | APPROVE — exact-head follow-up `#issuecomment-5473302443`; Master gate `#issuecomment-5473305733`; all prior findings closed | none | MERGED / next: PIT-02 |
 | PIT-02 | `9f706c4242825fe0c6b46fab54d559c9370c2700` | `codex/pit-02-bars-calendar` | #19 | RED/GREEN `56291c5eeed922ac7bc50f6a0b554ecb7cc7dcf3` / `31c4a1d327676cbbcf0395f871b9f19ba6e876d3`; repair RED/GREEN `1839270d3f67c959f7a8757375c94b4a2b09acc4` / `4ed95c5b2e8bb71b0471144f3000fac1a60875d3`; final repair RED/GREEN `33e98e07a758413d986244ee7f06b2303a66660d` / `969adfe4291c0ae613e66724cb0bffffe5c08db4`; final head `dd57e43f8b9b1659caf41db9bcf427c650ae5b3d`; merge `47f2c325e4d71a3d79c601f9f3e25eb722df3809` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — three auditable RED stages; focused 85; productionization data 166; productionization 365; legacy 44; full 941 passed, 2 skipped, 69 subtests; Ruff/checkers/diff; wheel/import | PASS — 11 final-state-head checks; CI `33356996757`; CodeQL `33356996771`; Dependency Review `33356996764` | APPROVE — exact-head follow-up `#issuecomment-5473721046`; Master gate `#issuecomment-5473724757`; all prior findings closed | none | MERGED / next: PIT-03 |
-| PIT-03 | `47f2c325e4d71a3d79c601f9f3e25eb722df3809` | `codex/pit-03-financial-vintages` | #20 | RED `d496043150fbfc66655e864687d140d048737dfb`; implementation/final head pending | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; reviewer planned `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | RED PASS — test/fixture-only commit; focused command fails as expected with missing PIT-03 module; GREEN validation pending | PENDING | PENDING — JIT spec is PR #20 body; exact-head review required after GREEN | none observed in RED | IN PROGRESS / next: PIT-03 merge gate |
+| PIT-03 | `47f2c325e4d71a3d79c601f9f3e25eb722df3809` | `codex/pit-03-financial-vintages` | #20 | RED `d496043150fbfc66655e864687d140d048737dfb`; hygiene `fecf6f0366c606f271951474e583e55bf7b25321`; GREEN `8818726cd4a9da8f0ddb92780f2fde294c489fe0`; repair RED/GREEN `55404f0ede3dbfa9d0b02510429db79766337879` / `de7208cbdc6abf1ee069fccbcfac3b21a31cbd73`; final repair RED/correction/GREEN `38d687474b74da49498de3e68d0f6ee214f2cc76` / `2b98a260cfd9bd7ee528519eefed9935f3e3703a` / `c3b07a52f5dc7eedc1f95610a9ad049326b57398`; merge pending | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — three auditable RED stages; focused 110; productionization data 276; productionization 475; legacy 22; full 1051 passed, 2 skipped, 69 subtests; Ruff/checkers/lock/diff; wheel/import | PASS on implementation head `c3b07a52` — 11 exact-head checks; CI `33359884902`; CodeQL `33359884918`; Dependency Review `33359884893`; state-only recheck pending | APPROVE on implementation head — artifact `#issuecomment-5474101049`; state-only exact-head follow-up pending | none | READY FOR FINAL STATE-HEAD RECHECK / merge pending; next after merge: PIT-04 |
 
 Recommended compact representation in agent summaries:
 
@@ -158,7 +158,11 @@ PR IDs.
 - PIT-03 pre-flight used two read-only specialist lanes plus Master boundary synthesis against exact
   base `47f2c32`; a stale runtime thread prevented the optional third specialist spawn but did not
   affect the required implementer/reviewer roles. PR #20 contains the durable JIT spec; RED `d4960431`
-  is test/fixture-only with the expected missing-module failure. GREEN and all later gates are pending.
+  is test/fixture-only with the expected missing-module failure. Two review/repair cycles added strict
+  fiscal/event chronology, complete fiscal interval identity, concrete selector revalidation, and
+  malformed query handling. Implementation head `c3b07a52` passed local validation, exact-head CI,
+  and `reviewer_high` APPROVE in `#issuecomment-5474101049`; the state-only recheck and Master gate are
+  pending.
 
 ## Open blockers and deferred work
 
@@ -167,8 +171,8 @@ PR IDs.
   PIT correctness, alpha, paper readiness, or live readiness.
 - Autonomous orchestration remains active by explicit user instruction. PIT-01 is merged with no
   unresolved finding or scope leak. PIT-02 is merged with no unresolved finding or scope leak. PIT-03
-  is active on PR #20; no blocker is known, but GREEN, exact-head review/CI, and the Master merge
-  artifact are not yet complete.
+  is active on PR #20 with no unresolved finding or scope leak. State-only exact-head CI/review and the
+  Master merge artifact remain required; PIT-04 is blocked until PIT-03 merges.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
