@@ -1,0 +1,90 @@
+{
+  "schema_version": "v1",
+  "filings": [
+    {
+      "schema_version": "v1",
+      "filing_id": "AAPL-2023-10K-r0",
+      "accession_id": "0000320193-24-000001",
+      "instrument_id": "AAPL",
+      "statement_type": "balance_sheet",
+      "reporting_period": "annual",
+      "form_type": "10-K",
+      "fiscal_period_start": "2023-01-01",
+      "fiscal_period_end": "2023-12-31",
+      "filed_at": "2024-02-15T13:00:00Z",
+      "currency": "USD",
+      "unit_scale": "millions",
+      "facts": [
+        {
+          "schema_version": "v1",
+          "name": "assets",
+          "value": "352583.000"
+        },
+        {
+          "schema_version": "v1",
+          "name": "discontinued_operations",
+          "value": "12.500"
+        },
+        {
+          "schema_version": "v1",
+          "name": "liabilities",
+          "value": "290437.000"
+        }
+      ],
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "AAPL-2023-10K-capture-r0",
+        "source": "synthetic-sec",
+        "source_locator": "fixture://sec/AAPL/2023/10-K/r0",
+        "fetched_at": "2024-02-15T13:06:00Z",
+        "event_time": "2023-12-31T21:00:00Z",
+        "published_at": "2024-02-15T13:00:00Z",
+        "available_at": "2024-02-15T13:05:00Z",
+        "ingested_at": "2024-02-15T13:07:00Z",
+        "checksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "terms": "synthetic-fixture-v1",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "filing_id": "AAPL-2023-10K-r1",
+      "accession_id": "0000320193-24-000002",
+      "instrument_id": "AAPL",
+      "statement_type": "balance_sheet",
+      "reporting_period": "annual",
+      "form_type": "10-K",
+      "fiscal_period_start": "2023-01-01",
+      "fiscal_period_end": "2023-12-31",
+      "filed_at": "2024-03-01T14:00:00Z",
+      "currency": "USD",
+      "unit_scale": "millions",
+      "facts": [
+        {
+          "schema_version": "v1",
+          "name": "assets",
+          "value": "352600.125"
+        },
+        {
+          "schema_version": "v1",
+          "name": "liabilities",
+          "value": "290400.500"
+        }
+      ],
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "AAPL-2023-10K-capture-r1",
+        "source": "synthetic-sec",
+        "source_locator": "fixture://sec/AAPL/2023/10-K/r1",
+        "fetched_at": "2024-03-01T14:11:00Z",
+        "event_time": "2023-12-31T21:00:00Z",
+        "published_at": "2024-03-01T14:00:00Z",
+        "available_at": "2024-03-01T14:10:00Z",
+        "ingested_at": "2024-03-01T14:12:00Z",
+        "checksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "terms": "synthetic-fixture-v1",
+        "revision": 1
+      }
+    }
+  ]
+}
