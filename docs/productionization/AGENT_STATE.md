@@ -174,9 +174,13 @@ PR IDs.
 - Foundation FND-01 through FND-04 is complete as implementation/CI evidence only; this does not prove
   PIT correctness, alpha, paper readiness, or live readiness.
 - Autonomous orchestration remains active by explicit user instruction. PIT-01 is merged with no
-  unresolved finding or scope leak. PIT-02 and PIT-03 are merged with no unresolved finding or scope
-  leak. PIT-04 is merged and PIT-05 is active on PR #22; its code head passed implementation/review/CI
-  gates. State-only recheck and the Master merge artifact remain pending; PIT-06 is blocked.
+  unresolved finding or scope leak. PIT-02 through PIT-05 are merged; PIT-06 is active on PR #23 and
+  its code head passed implementation/review/CI gates. Final state-head review/CI and the Master merge
+  artifact remain pending; SIG-01 is blocked until PIT-06 merges.
+- PIT-06 trusted-input boundary: bundle/domain APIs require concrete validated project models. Hostile
+  subclasses overriding `model_dump()` are a nonblocking future hardening item before exposing these
+  constructors outside the trusted in-process contract; exact repository and RunContext subclasses
+  are already denied at replay boundaries.
 
 Agents should record unrelated technical debt here only when it materially affects a future slice. Do
 not use this section as permission to widen the active PR.
