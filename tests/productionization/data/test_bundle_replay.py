@@ -468,7 +468,14 @@ def test_every_semantic_control_changes_the_hash() -> None:
             ),
         }
     )
-    changed_calendar = _build(calendar=alternate_calendar)
+    alternate_bars = tuple(
+        bar.model_copy(update={"calendar_id": "XNYS.synthetic.v2"})
+        for bar in _bars()
+    )
+    changed_calendar = _build(
+        calendar=alternate_calendar,
+        bar_candidates=alternate_bars,
+    )
 
     hashes = {
         baseline.bundle_hash,
@@ -500,7 +507,14 @@ def test_each_selected_domain_is_semantic(
     baseline = _build()
     candidates = _candidate_fields()[candidate_field]
     assert isinstance(candidates, tuple)
-    changed = _build(**{candidate_field: candidates[:-1]})
+    changed_candidates = candidates[:-1]
+    if candidate_field == "instrument_candidates":
+        changed_candidates = tuple(
+            candidate
+            for candidate in candidates
+            if candidate.instrument_id != "inst-survivor"
+        )
+    changed = _build(**{candidate_field: changed_candidates})
 
     assert getattr(changed, bundle_field) != getattr(baseline, bundle_field)
     assert changed.bundle_hash != baseline.bundle_hash
