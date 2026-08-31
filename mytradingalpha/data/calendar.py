@@ -194,8 +194,13 @@ class TradingCalendar(ContractModel):
         previous_range_end: date | None = None
         classified_day_count = 0
         for coverage_range in self.coverage_ranges:
-            if previous_range_end is not None and coverage_range.start <= previous_range_end:
-                raise ValueError("invalid_coverage: ranges must be sorted and nonoverlapping")
+            if (
+                previous_range_end is not None
+                and (coverage_range.start - previous_range_end).days <= 1
+            ):
+                raise ValueError(
+                    "invalid_coverage: ranges must be sorted, nonoverlapping, and nonadjacent"
+                )
             classified_day_count += (coverage_range.end - coverage_range.start).days + 1
             previous_range_end = coverage_range.end
 
