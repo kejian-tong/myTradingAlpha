@@ -1,0 +1,354 @@
+{
+  "instruments": [
+    {
+      "schema_version": "v1",
+      "instrument_id": "inst-acme",
+      "initial_symbol": "OLD",
+      "asset_class": "equity",
+      "currency": "USD",
+      "exchange": "XNYS",
+      "active_from": "2020-01-02",
+      "active_to": "2024-07-01",
+      "lot_size": 1,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "instrument-acme-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/instruments/inst-acme/r0",
+        "fetched_at": "2020-01-01T13:02:00Z",
+        "event_time": "2020-01-02T00:00:00Z",
+        "published_at": "2020-01-01T13:00:00Z",
+        "available_at": "2020-01-01T13:00:00Z",
+        "ingested_at": "2020-01-01T13:03:00Z",
+        "checksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "instrument_id": "inst-survivor",
+      "initial_symbol": "KEEP",
+      "asset_class": "equity",
+      "currency": "USD",
+      "exchange": "XNAS",
+      "active_from": "2019-01-02",
+      "active_to": null,
+      "lot_size": 1,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "instrument-survivor-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/instruments/inst-survivor/r0",
+        "fetched_at": "2019-01-01T13:02:00Z",
+        "event_time": "2019-01-02T00:00:00Z",
+        "published_at": "2019-01-01T13:00:00Z",
+        "available_at": "2019-01-01T13:00:00Z",
+        "ingested_at": "2019-01-01T13:03:00Z",
+        "checksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "instrument_id": "inst-market-etf",
+      "initial_symbol": "MKT",
+      "asset_class": "etf",
+      "currency": "USD",
+      "exchange": "ARCX",
+      "active_from": "2018-01-02",
+      "active_to": null,
+      "lot_size": 1,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "instrument-market-etf-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/instruments/inst-market-etf/r0",
+        "fetched_at": "2018-01-01T13:02:00Z",
+        "event_time": "2018-01-02T00:00:00Z",
+        "published_at": "2018-01-01T13:00:00Z",
+        "available_at": "2018-01-01T13:00:00Z",
+        "ingested_at": "2018-01-01T13:03:00Z",
+        "checksum": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    }
+  ],
+  "aliases": [
+    {
+      "schema_version": "v1",
+      "alias_id": "alias-acme-old",
+      "instrument_id": "inst-acme",
+      "symbol": "OLD",
+      "valid_from": "2020-01-02",
+      "valid_to": "2024-03-15",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "alias-acme-old-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/aliases/alias-acme-old/r0",
+        "fetched_at": "2020-01-01T13:02:00Z",
+        "event_time": "2020-01-02T00:00:00Z",
+        "published_at": "2020-01-01T13:00:00Z",
+        "available_at": "2020-01-01T13:00:00Z",
+        "ingested_at": "2020-01-01T13:03:00Z",
+        "checksum": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "alias_id": "alias-acme-new",
+      "instrument_id": "inst-acme",
+      "symbol": "NEW",
+      "valid_from": "2024-03-15",
+      "valid_to": "2024-07-01",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "alias-acme-new-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/aliases/alias-acme-new/r0",
+        "fetched_at": "2024-03-10T13:02:00Z",
+        "event_time": "2024-03-15T00:00:00Z",
+        "published_at": "2024-03-10T13:00:00Z",
+        "available_at": "2024-03-10T13:00:00Z",
+        "ingested_at": "2024-03-10T13:03:00Z",
+        "checksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "alias_id": "alias-survivor",
+      "instrument_id": "inst-survivor",
+      "symbol": "KEEP",
+      "valid_from": "2019-01-02",
+      "valid_to": null,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "alias-survivor-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/aliases/alias-survivor/r0",
+        "fetched_at": "2019-01-01T13:02:00Z",
+        "event_time": "2019-01-02T00:00:00Z",
+        "published_at": "2019-01-01T13:00:00Z",
+        "available_at": "2019-01-01T13:00:00Z",
+        "ingested_at": "2019-01-01T13:03:00Z",
+        "checksum": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "alias_id": "alias-market-etf",
+      "instrument_id": "inst-market-etf",
+      "symbol": "MKT",
+      "valid_from": "2018-01-02",
+      "valid_to": null,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "alias-market-etf-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/aliases/alias-market-etf/r0",
+        "fetched_at": "2018-01-01T13:02:00Z",
+        "event_time": "2018-01-02T00:00:00Z",
+        "published_at": "2018-01-01T13:00:00Z",
+        "available_at": "2018-01-01T13:00:00Z",
+        "ingested_at": "2018-01-01T13:03:00Z",
+        "checksum": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    }
+  ],
+  "memberships": [
+    {
+      "schema_version": "v1",
+      "membership_id": "membership-us-liquid-acme",
+      "universe_id": "us-liquid-v1",
+      "instrument_id": "inst-acme",
+      "valid_from": "2020-01-02",
+      "valid_to": "2024-07-01",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "membership-us-liquid-acme-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/memberships/membership-us-liquid-acme/r0",
+        "fetched_at": "2020-01-01T13:02:00Z",
+        "event_time": "2020-01-02T00:00:00Z",
+        "published_at": "2020-01-01T13:00:00Z",
+        "available_at": "2020-01-01T13:00:00Z",
+        "ingested_at": "2020-01-01T13:03:00Z",
+        "checksum": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "membership_id": "membership-us-liquid-survivor",
+      "universe_id": "us-liquid-v1",
+      "instrument_id": "inst-survivor",
+      "valid_from": "2019-01-02",
+      "valid_to": null,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "membership-us-liquid-survivor-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/memberships/membership-us-liquid-survivor/r0",
+        "fetched_at": "2019-01-01T13:02:00Z",
+        "event_time": "2019-01-02T00:00:00Z",
+        "published_at": "2019-01-01T13:00:00Z",
+        "available_at": "2019-01-01T13:00:00Z",
+        "ingested_at": "2019-01-01T13:03:00Z",
+        "checksum": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "membership_id": "membership-us-liquid-market-etf",
+      "universe_id": "us-liquid-v1",
+      "instrument_id": "inst-market-etf",
+      "valid_from": "2018-01-02",
+      "valid_to": null,
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "membership-us-liquid-market-etf-r0",
+        "source": "synthetic-universe",
+        "source_locator": "fixture://universe/memberships/membership-us-liquid-market-etf/r0",
+        "fetched_at": "2018-01-01T13:02:00Z",
+        "event_time": "2018-01-02T00:00:00Z",
+        "published_at": "2018-01-01T13:00:00Z",
+        "available_at": "2018-01-01T13:00:00Z",
+        "ingested_at": "2018-01-01T13:03:00Z",
+        "checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    }
+  ],
+  "actions": [
+    {
+      "schema_version": "v1",
+      "action_type": "ticker_change",
+      "action_id": "action-acme-ticker",
+      "instrument_id": "inst-acme",
+      "effective_date": "2024-03-15",
+      "old_symbol": "OLD",
+      "new_symbol": "NEW",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "action-acme-ticker-r0",
+        "source": "synthetic-actions",
+        "source_locator": "fixture://actions/action-acme-ticker/r0",
+        "fetched_at": "2024-03-10T13:02:00Z",
+        "event_time": "2024-03-15T00:00:00Z",
+        "published_at": "2024-03-10T13:00:00Z",
+        "available_at": "2024-03-10T13:00:00Z",
+        "ingested_at": "2024-03-10T13:03:00Z",
+        "checksum": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "action_type": "split",
+      "action_id": "action-acme-split",
+      "instrument_id": "inst-acme",
+      "effective_date": "2024-04-01",
+      "new_shares_per_old_share": "2.000000",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "action-acme-split-r0",
+        "source": "synthetic-actions",
+        "source_locator": "fixture://actions/action-acme-split/r0",
+        "fetched_at": "2024-03-20T13:02:00Z",
+        "event_time": "2024-04-01T00:00:00Z",
+        "published_at": "2024-03-20T13:00:00Z",
+        "available_at": "2024-03-20T13:00:00Z",
+        "ingested_at": "2024-03-20T13:03:00Z",
+        "checksum": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "action_type": "dividend",
+      "action_id": "action-acme-dividend",
+      "instrument_id": "inst-acme",
+      "effective_date": "2024-05-15",
+      "amount_per_share": "0.1000",
+      "currency": "USD",
+      "payable_date": "2024-05-31",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "action-acme-dividend-r0",
+        "source": "synthetic-actions",
+        "source_locator": "fixture://actions/action-acme-dividend/r0",
+        "fetched_at": "2024-05-01T13:02:00Z",
+        "event_time": "2024-05-15T00:00:00Z",
+        "published_at": "2024-05-01T13:00:00Z",
+        "available_at": "2024-05-01T13:00:00Z",
+        "ingested_at": "2024-05-01T13:03:00Z",
+        "checksum": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "action_type": "dividend",
+      "action_id": "action-acme-dividend",
+      "instrument_id": "inst-acme",
+      "effective_date": "2024-05-15",
+      "amount_per_share": "0.1250",
+      "currency": "USD",
+      "payable_date": "2024-05-31",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "action-acme-dividend-r1",
+        "source": "synthetic-actions",
+        "source_locator": "fixture://actions/action-acme-dividend/r1",
+        "fetched_at": "2024-05-20T13:02:00Z",
+        "event_time": "2024-05-15T00:00:00Z",
+        "published_at": "2024-05-20T13:00:00Z",
+        "available_at": "2024-05-20T13:00:00Z",
+        "ingested_at": "2024-06-10T13:00:00Z",
+        "checksum": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "terms": "synthetic fixture",
+        "revision": 1
+      }
+    },
+    {
+      "schema_version": "v1",
+      "action_type": "delisting",
+      "action_id": "action-acme-delisting",
+      "instrument_id": "inst-acme",
+      "effective_date": "2024-07-01",
+      "reason": "merger completed",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "action-acme-delisting-r0",
+        "source": "synthetic-actions",
+        "source_locator": "fixture://actions/action-acme-delisting/r0",
+        "fetched_at": "2024-06-25T13:02:00Z",
+        "event_time": "2024-07-01T00:00:00Z",
+        "published_at": "2024-06-25T13:00:00Z",
+        "available_at": "2024-06-25T13:00:00Z",
+        "ingested_at": "2024-06-25T13:03:00Z",
+        "checksum": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "terms": "synthetic fixture",
+        "revision": 0
+      }
+    }
+  ]
+}
