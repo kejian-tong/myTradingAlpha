@@ -742,7 +742,7 @@ def test_repository_as_of_uses_inclusive_availability_and_highest_revision() -> 
     [
         {"instrument_id": "MSFT"},
         {"fiscal_period_start": "2023-04-01"},
-        {"fiscal_period_end": "2022-12-31"},
+        {"fiscal_period_start": "2022-01-01", "fiscal_period_end": "2022-12-31"},
         {"source": "other-source"},
         {"statement_type": StatementType.CASH_FLOW},
         {"reporting_period": ReportingPeriod.QUARTERLY},
@@ -798,7 +798,11 @@ def test_repository_distinguishes_missing_series_from_future_exact_series() -> N
     with pytest.raises(FilingFutureError):
         _query(repository, knowledge_cutoff="2024-01-01T00:00:00Z")
     with pytest.raises(FilingMissingError):
-        _query(repository, fiscal_period_end="2022-12-31")
+        _query(
+            repository,
+            fiscal_period_start="2022-01-01",
+            fiscal_period_end="2022-12-31",
+        )
 
 
 def test_repository_delegates_exact_series_vintage_selection(
