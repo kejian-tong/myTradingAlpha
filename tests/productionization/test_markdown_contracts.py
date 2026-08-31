@@ -173,7 +173,43 @@ def test_repository_retains_apache_license_and_independent_upstream_records() ->
     assert "independently maintained" in upstream_text
     assert "cherry-pick" in upstream_text
     assert "No production" in changes_text
-    assert not (REPOSITORY_ROOT / "NOTICE").exists()
+
+
+def test_checker_accepts_an_optional_tracked_nonempty_notice(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "NOTICE", "Reviewed third-party notice record.\n")
+
+    result = _run_checker(root)
+
+    assert result.returncode == 0, _combined_output(result)
+
+
+@pytest.mark.parametrize("notice_content", ("", "   \n"))
+def test_checker_rejects_an_empty_tracked_notice(
+    tmp_path: Path,
+    notice_content: str,
+) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "NOTICE", notice_content)
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "NOTICE" in output
+    assert "empty" in output.lower()
+
+
+def test_checker_rejects_an_untracked_notice(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _write_fixture_file(root, "NOTICE", "Untracked notice record.\n", tracked=False)
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "NOTICE" in output
+    assert "tracked" in output.lower()
 
 
 def test_roadmap_has_exactly_47_unique_ids_and_all_phase_document_pairs() -> None:
@@ -205,6 +241,55 @@ def test_checker_rejects_missing_local_relative_link(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "does-not-exist.md" in output
     assert "missing-link.md" in output
+
+
+def test_checker_accepts_valid_local_reference_definitions(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "docs/reference-target.md", "# Target\n")
+    _add_tracked(
+        root,
+        "docs/reference-links.md",
+        "[plain]: reference-target.md\n"
+        "[angled]: <reference-target.md>\n"
+        "[external]: https://example.com/reference\n"
+        "[email]: mailto:maintainer@example.com\n"
+        "[section]: #local-section\n",
+    )
+
+    result = _run_checker(root)
+
+    assert result.returncode == 0, _combined_output(result)
+
+
+@pytest.mark.parametrize("target", ("missing-local.md", "<missing-angle.md>"))
+def test_checker_rejects_missing_local_reference_definition(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "docs/broken-reference.md", f"[target]: {target}\n")
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "broken-reference.md" in output
+    assert target.strip("<>") in output
+
+
+def test_checker_rejects_local_reference_definition_path_escape(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "docs/reference-escape.md", "[target]: <../../outside.md>\n")
+
+    first = _run_checker(root)
+    second = _run_checker(root)
+    first_output = _combined_output(first)
+
+    assert first.returncode != 0
+    assert second.returncode != 0
+    assert first_output == _combined_output(second)
+    assert "reference-escape.md" in first_output
+    assert re.search(r"(?i)(escape|outside|repository|root)", first_output)
 
 
 def test_checker_rejects_relative_path_escape(tmp_path: Path) -> None:
@@ -245,6 +330,23 @@ def test_checker_rejects_mismatched_fence_markers(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "mismatched.md" in output
     assert "fence" in output.lower()
+
+
+def test_checker_treats_nonclosing_fence_markers_as_literal_content(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(
+        root,
+        "docs/fence-content.md",
+        "````python\n"
+        "~~~\n"
+        "```\n"
+        "```` still literal content\n"
+        "````\n",
+    )
+
+    result = _run_checker(root)
+
+    assert result.returncode == 0, _combined_output(result)
 
 
 def test_checker_ignores_untracked_markdown(tmp_path: Path) -> None:
