@@ -475,6 +475,25 @@ def test_calendar_requires_complete_disjoint_classification_windows() -> None:
             _calendar(**overrides)
 
 
+def test_calendar_rejects_adjacent_coverage_ranges_that_should_be_merged() -> None:
+    calendar = _calendar()
+    ranges = calendar.coverage_ranges
+    july_first = calendar_module.CalendarCoverageRange(
+        start="2024-07-02",
+        end="2024-07-03",
+    )
+    july_second = calendar_module.CalendarCoverageRange(
+        start="2024-07-04",
+        end="2024-07-05",
+    )
+
+    assert _calendar().coverage_ranges == ranges
+    with pytest.raises(ValidationError):
+        _calendar(
+            coverage_ranges=(ranges[0], july_first, july_second, ranges[2]),
+        )
+
+
 def test_fixture_classifies_every_date_in_each_coverage_window_once() -> None:
     calendar = _calendar()
     session_dates = {session.session_date for session in calendar.schedule}
@@ -912,6 +931,28 @@ def test_as_of_does_not_fabricate_stale_distance_across_unverified_gap() -> None
             adjustment_basis=AdjustmentBasis.UNADJUSTED,
             adjustment_version=None,
         )
+
+
+def test_as_of_reports_multiple_verified_session_transitions_from_latest_prior() -> None:
+    calendar = _calendar()
+    repository = _repository(
+        calendar,
+        (
+            _bar(calendar, session_date="2024-03-08"),
+            _bar(calendar, session_date="2024-07-02"),
+        ),
+    )
+
+    with pytest.raises(BarStaleError) as stale:
+        repository.as_of(
+            "AAPL",
+            "2024-07-05",
+            knowledge_cutoff="2024-07-05T21:00:00Z",
+            source="synthetic-bars",
+            adjustment_basis=AdjustmentBasis.UNADJUSTED,
+            adjustment_version=None,
+        )
+    assert stale.value.prior_matching_session_count == 2
 
 
 def test_repository_errors_are_public_typed_failures() -> None:
