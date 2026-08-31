@@ -48,6 +48,9 @@ LINK_PATTERN = re.compile(
     r"!?\[[^\]\n]*\]\(\s*(?:<([^>\n]*)>|([^\s)]+))"
     r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
 )
+REFERENCE_DEFINITION_PATTERN = re.compile(
+    r"^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^>\n]*)>|([^\s]+))"
+)
 
 
 def _relative_path(root: Path, path: Path) -> str:
@@ -75,6 +78,19 @@ def _tracked_markdown(root: Path) -> tuple[list[Path], list[str]]:
 
     paths = [root / entry for entry in result.stdout.decode().split("\0") if entry]
     return sorted(paths, key=lambda path: path.as_posix()), []
+
+
+def _is_tracked(root: Path, relative_path: str) -> tuple[bool, str | None]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", relative_path],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        return False, f"could not inspect tracked files: {error}"
+    return result.returncode == 0, None
 
 
 def _is_ignored_target(target: str) -> bool:
@@ -141,20 +157,13 @@ def _markdown_file_diagnostics(root: Path, path: Path) -> list[str]:
             if fence_match is None:
                 continue
             marker, info = fence_match.groups()
-            opening_marker, opening_length, opening_line = open_fence
-            if marker[0] != opening_marker:
-                diagnostics.append(
-                    f"{_relative_path(root, path)}:{line_number}: mismatched fence "
-                    f"{marker[0]} for {opening_marker} opened at line {opening_line}"
-                )
-                continue
-            if len(marker) < opening_length or info.strip():
-                diagnostics.append(
-                    f"{_relative_path(root, path)}:{line_number}: mismatched fence "
-                    f"for {opening_marker} opened at line {opening_line}"
-                )
-                continue
-            open_fence = None
+            opening_marker, opening_length, _ = open_fence
+            if (
+                marker[0] == opening_marker
+                and len(marker) >= opening_length
+                and not info.strip()
+            ):
+                open_fence = None
             continue
 
         if fence_match is not None:
@@ -164,6 +173,15 @@ def _markdown_file_diagnostics(root: Path, path: Path) -> list[str]:
 
         for match in LINK_PATTERN.finditer(line):
             target = match.group(1) if match.group(1) is not None else match.group(2)
+            diagnostics.extend(_link_diagnostics(root, path, line_number, target))
+
+        reference_match = REFERENCE_DEFINITION_PATTERN.match(line)
+        if reference_match is not None:
+            target = (
+                reference_match.group(1)
+                if reference_match.group(1) is not None
+                else reference_match.group(2)
+            )
             diagnostics.extend(_link_diagnostics(root, path, line_number, target))
 
     if open_fence is not None:
@@ -184,6 +202,22 @@ def _record_diagnostics(root: Path) -> list[str]:
         license_text = license_path.read_text(encoding="utf-8")
         if "Apache License" not in license_text or "Version 2.0" not in license_text:
             diagnostics.append("LICENSE is not the Apache License 2.0 record")
+
+    notice_path = root / "NOTICE"
+    if notice_path.exists():
+        if not notice_path.is_file():
+            diagnostics.append("NOTICE is not a regular file")
+        else:
+            notice_is_tracked, tracking_error = _is_tracked(root, "NOTICE")
+            if tracking_error is not None:
+                diagnostics.append(tracking_error)
+            elif not notice_is_tracked:
+                diagnostics.append("NOTICE exists but is not tracked")
+            try:
+                if not notice_path.read_text(encoding="utf-8").strip():
+                    diagnostics.append("NOTICE is empty")
+            except (OSError, UnicodeError) as error:
+                diagnostics.append(f"NOTICE could not be read: {error}")
 
     for filename, label in (("UPSTREAM.md", "UPSTREAM.md"), ("CHANGES_FROM_UPSTREAM.md", "CHANGES_FROM_UPSTREAM.md")):
         path = root / filename
