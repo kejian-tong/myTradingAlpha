@@ -1,0 +1,112 @@
+{
+  "schema_version": "v1",
+  "bundle_id": "bundle-2024-06-30",
+  "created_at": "2030-01-01T00:00:00Z",
+  "knowledge_cutoff": "2024-06-30T23:59:59Z",
+  "replay_policy": "archive_realistic",
+  "requirements": [
+    {"schema_version": "v1", "domain": "calendar", "required": true},
+    {"schema_version": "v1", "domain": "instruments", "required": true},
+    {"schema_version": "v1", "domain": "aliases", "required": true},
+    {"schema_version": "v1", "domain": "memberships", "required": true},
+    {"schema_version": "v1", "domain": "actions", "required": true},
+    {"schema_version": "v1", "domain": "bars", "required": true},
+    {"schema_version": "v1", "domain": "filings", "required": true},
+    {"schema_version": "v1", "domain": "events", "required": true},
+    {"schema_version": "v1", "domain": "social", "required": false},
+    {"schema_version": "v1", "domain": "macro", "required": true}
+  ],
+  "missing_optional": [
+    {
+      "schema_version": "v1",
+      "domain": "social",
+      "reason": "optional_source_not_captured"
+    }
+  ],
+  "source_fixtures": {
+    "calendar": "xnys_bars_calendar_v1.json",
+    "universe_actions": "universe_actions_v1.json",
+    "financial_vintages": "financial_vintages_v1.json",
+    "events_social_macro": "events_social_macro_v1.json"
+  },
+  "candidate_indexes": {
+    "instruments": [0, 1],
+    "aliases": [0, 1, 2],
+    "memberships": [0, 1],
+    "actions": [0, 1, 2, 3],
+    "filings": [0, 1],
+    "events": [0, 1, 2],
+    "social_posts": [],
+    "macro_observations": [0, 1]
+  },
+  "bar_candidates": [
+    {
+      "schema_version": "v1",
+      "bar_id": "bar-inst-acme-2024-03-08",
+      "instrument_id": "inst-acme",
+      "calendar_id": "XNYS.synthetic.v1",
+      "session_date": "2024-03-08",
+      "interval": "1d",
+      "open": "100.00",
+      "high": "105.00",
+      "low": "98.00",
+      "close": "103.00",
+      "volume": 1000000,
+      "adjustment_basis": "unadjusted",
+      "adjustment_version": null,
+      "finality": "final",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "bar-inst-acme-2024-03-08-r0",
+        "source": "synthetic-bars",
+        "source_locator": "fixture://bars/inst-acme/2024-03-08/r0",
+        "fetched_at": "2024-03-08T21:02:00Z",
+        "event_time": "2024-03-08T21:00:00Z",
+        "published_at": null,
+        "available_at": "2024-03-08T21:01:00Z",
+        "ingested_at": "2024-03-08T21:03:00Z",
+        "checksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "terms": "synthetic-fixture-v1",
+        "revision": 0
+      }
+    },
+    {
+      "schema_version": "v1",
+      "bar_id": "bar-inst-acme-2024-03-08",
+      "instrument_id": "inst-acme",
+      "calendar_id": "XNYS.synthetic.v1",
+      "session_date": "2024-03-08",
+      "interval": "1d",
+      "open": "100.00",
+      "high": "106.00",
+      "low": "98.00",
+      "close": "104.00",
+      "volume": 1000100,
+      "adjustment_basis": "unadjusted",
+      "adjustment_version": null,
+      "finality": "final",
+      "manifest": {
+        "schema_version": "v1",
+        "manifest_id": "bar-inst-acme-2024-03-08-r1",
+        "source": "synthetic-bars",
+        "source_locator": "fixture://bars/inst-acme/2024-03-08/r1",
+        "fetched_at": "2024-03-08T21:12:00Z",
+        "event_time": "2024-03-08T21:00:00Z",
+        "published_at": null,
+        "available_at": "2024-03-08T21:11:00Z",
+        "ingested_at": "2024-03-08T21:13:00Z",
+        "checksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "terms": "synthetic-fixture-v1",
+        "revision": 1
+      }
+    }
+  ],
+  "expected_selected_revisions": {
+    "actions": {"action-acme-dividend": 1},
+    "bars": {"bar-inst-acme-2024-03-08": 1},
+    "filings": {"AAPL-2023-10K": 1},
+    "events": {"news-aapl-earnings": 1},
+    "macro_observations": {"gdp-2023q4": 1}
+  },
+  "expected_bundle_hash": "sha256:7e2377628b2dc7b75ea00100840c2c409fdf7c015896ce7e55cd8c4c94a743a3"
+}
