@@ -212,6 +212,45 @@ def test_checker_rejects_an_untracked_notice(tmp_path: Path) -> None:
     assert "tracked" in output.lower()
 
 
+def test_checker_rejects_a_tracked_notice_symlink_to_a_regular_file(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "NOTICE_TARGET", "Nonempty notice target.\n")
+    (root / "NOTICE").symlink_to("NOTICE_TARGET")
+    subprocess.run(["git", "-C", str(root), "add", "NOTICE"], check=True)
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "NOTICE" in output
+    assert "regular file" in output.lower()
+
+
+def test_checker_rejects_a_tracked_broken_notice_symlink(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    (root / "NOTICE").symlink_to("missing-notice-target")
+    subprocess.run(["git", "-C", str(root), "add", "NOTICE"], check=True)
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "NOTICE" in output
+    assert "regular file" in output.lower()
+
+
+def test_checker_rejects_a_notice_directory(tmp_path: Path) -> None:
+    root = _valid_markdown_fixture(tmp_path)
+    _add_tracked(root, "NOTICE/record.txt", "Nested notice record.\n")
+
+    result = _run_checker(root)
+    output = _combined_output(result)
+
+    assert result.returncode != 0
+    assert "NOTICE" in output
+    assert "regular file" in output.lower()
+
+
 def test_roadmap_has_exactly_47_unique_ids_and_all_phase_document_pairs() -> None:
     roadmap_text = _require_file(ROADMAP_PATH, "47-slice roadmap").read_text(encoding="utf-8")
     roadmap_ids = set(ROADMAP_ID_PATTERN.findall(roadmap_text))
