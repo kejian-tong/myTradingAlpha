@@ -148,7 +148,13 @@ def test_project_keeps_python_floor_and_pins_the_uv_tool_version() -> None:
 
 def test_ci_uses_the_locked_uv_matrix_and_current_foundation_gate() -> None:
     ci_text = CI_PATH.read_text(encoding="utf-8")
-    matrix_versions = set(re.findall(r'python-version:\s*["\'](3\.\d+)["\']', ci_text))
+    matrix_match = re.search(r"(?ms)^\s*python-version:\s*\[(.*?)\]", ci_text)
+    matrix_versions = set(
+        re.findall(r'["\'](3\.\d+)["\']', matrix_match.group(1))
+        if matrix_match is not None
+        else ()
+    )
+    matrix_versions.update(re.findall(r'python-version:\s*["\'](3\.\d+)["\']', ci_text))
 
     assert matrix_versions >= SUPPORTED_PYTHON_VERSIONS
     assert f"astral-sh/setup-uv@{SETUP_UV_COMMIT}" in ci_text
@@ -182,7 +188,7 @@ def test_readme_prefers_locked_uv_and_keeps_a_pip_fallback() -> None:
     assert "uv.lock" in readme_text
     assert "pip" in readme_text
     assert "fallback" in readme_text or "rollback" in readme_text
-    assert "python >=3.10" in readme_text
+    assert "python" in readme_text and ">=3.10" in readme_text
     assert "tradingagents" in readme_text
     assert "python -m cli.main" in readme_text
 

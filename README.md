@@ -97,13 +97,30 @@ python -m pip install --upgrade pip
 pip install .
 ```
 
-For development and testing:
+The preferred development and CI workflow uses the reviewed `uv.lock` with uv `0.12.7`:
+
+```bash
+uv sync --locked --extra dev
+uv run --no-sync pytest -q
+uv run --no-sync ruff check .
+```
+
+Change dependency declarations only through a reviewed lock refresh with the pinned uv version; do
+not edit `uv.lock` by hand. CI uses `uv sync --locked` and fails closed when the lock is stale.
+
+For end-user installation or environments where uv is unavailable, the pip workflow remains a
+supported fallback:
 
 ```bash
 pip install -e ".[dev]"
 pytest -q
 ruff check .
 ```
+
+If a lock migration or refresh needs to be rolled back, keep using the pip fallback while restoring
+the prior dependency declarations and repair the lock in a reviewed change. Once repaired, return to
+the locked uv workflow; the package name, CLI, Python support, and Research Graph behavior do not
+change.
 
 The project declares Python `>=3.10` for backward compatibility and continuously tests Python 3.10 through 3.14. The Docker runtime and default CI smoke/lint lanes use Python 3.14.
 
