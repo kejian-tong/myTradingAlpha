@@ -990,6 +990,42 @@ def test_replay_denies_repository_subclasses_before_overridable_get_or_io(
     assert calls == []
 
 
+@pytest.mark.parametrize("entrypoint", ["assert_network_denied", "replay"])
+def test_historical_guard_denies_run_context_subclasses_before_model_dump_or_io(
+    entrypoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class HostileRunContext(RunContext):
+        def model_dump(self, *args: object, **kwargs: object) -> dict[str, object]:
+            socket.socket()
+            with builtins.open("ignored"):
+                pass
+            time.time()
+            return super().model_dump(*args, **kwargs)
+
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    hostile = HostileRunContext.model_validate(
+        _context(bundle).model_dump(mode="python")
+    )
+    monkeypatch.setattr(socket, "socket", lambda *_args, **_kwargs: calls.append("socket"))
+    monkeypatch.setattr(
+        builtins,
+        "open",
+        lambda *_args, **_kwargs: calls.append("open") or nullcontext(),
+    )
+    monkeypatch.setattr(time, "time", lambda: calls.append("clock"))
+
+    with pytest.raises(HistoricalReplayDeniedError, match="RunContext"):
+        if entrypoint == "assert_network_denied":
+            HistoricalDataGuard.assert_network_denied(hostile)
+        else:
+            HistoricalDataGuard.replay(repository, bundle.bundle_id, hostile)
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("requested_id", "context_id"),
     [
