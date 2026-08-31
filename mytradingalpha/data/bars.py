@@ -59,6 +59,13 @@ class AdjustmentBasis(str, Enum):
     PROVIDER_ADJUSTED = "provider_adjusted"
 
 
+class BarFinality(str, Enum):
+    """Whether a daily bar is complete for its exchange session."""
+
+    PRELIMINARY = "preliminary"
+    FINAL = "final"
+
+
 class DailyBar(ContractModel):
     """One immutable daily bar bound to capture provenance."""
 
@@ -75,6 +82,7 @@ class DailyBar(ContractModel):
     volume: StrictInt = Field(ge=0)
     adjustment_basis: AdjustmentBasis
     adjustment_version: StableId | None
+    finality: BarFinality
     manifest: SourceManifest
 
     @field_validator("manifest", mode="before")
@@ -198,6 +206,8 @@ class BarRepository(ContractModel):
 
             if bar.calendar_id != self.calendar.calendar_id:
                 raise ValueError("calendar_mismatch")
+            if bar.finality is not BarFinality.FINAL:
+                raise ValueError("bar_must_be_final")
             try:
                 session = self.calendar.session(bar.session_date)
             except CalendarError as exc:
@@ -256,15 +266,26 @@ class BarRepository(ContractModel):
             and bar.manifest.available_at <= cutoff
         }
         if prior_session_dates:
+            latest_prior = max(prior_session_dates)
+            try:
+                session_distance = self.calendar.session_distance(
+                    latest_prior,
+                    requested_session.session_date,
+                )
+            except CalendarError as exc:
+                raise BarMissingError(
+                    "prior matching data is separated by unverified calendar coverage"
+                ) from exc
             raise BarStaleError(
                 "only prior matching sessions are available",
-                prior_matching_session_count=len(prior_session_dates),
+                prior_matching_session_count=session_distance,
             )
         raise BarMissingError("no bar matches every explicit selector")
 
 
 __all__ = [
     "AdjustmentBasis",
+    "BarFinality",
     "BarFutureError",
     "BarMissingError",
     "BarQueryError",
