@@ -92,13 +92,23 @@ AUTHORITY_FIELDS = {
     "target_weight",
     "target_weights",
     "portfolio_allocation",
+    "portfolio",
+    "portfolio_weights",
     "order",
+    "orders",
     "order_intent",
+    "order_intents",
+    "order_type",
     "quantity",
+    "quantities",
     "broker",
+    "broker_fields",
     "broker_id",
+    "broker_credentials",
+    "credential",
     "credentials",
     "risk_authorization",
+    "risk_authorizations",
 }
 
 
@@ -568,6 +578,60 @@ def test_runtime_output_cannot_gain_portfolio_order_broker_or_risk_authority(
     with pytest.raises(HistoricalRuntimeOutputError):
         run_historical(
             runtime,
+            bundle,
+            context,
+            company_name="NEW",
+            trade_date="2024-06-30",
+            asset_type="stock",
+            instrument_context=str(initial["instrument_context"]),
+        )
+
+
+def test_runtime_output_recursively_rejects_nested_authority_fields() -> None:
+    bundle, context, _, _, _ = _sealed_adapter()
+    initial = historical_module.create_historical_initial_state(
+        company_name="NEW",
+        trade_date="2024-06-30",
+        asset_type="stock",
+        instrument_context=(
+            "Symbol: NEW; instrument_id: inst-acme; asset_class: equity; "
+            "exchange: XNYS; currency: USD"
+        ),
+    )
+    hostile_state = _final_state(initial)
+    hostile_state["messages"].append(
+        {"metadata": {"order_intents": ["forbidden"]}}
+    )
+
+    with pytest.raises(HistoricalRuntimeOutputError):
+        run_historical(
+            OfflineGraphRuntime(RecordingRunner(output=hostile_state)),
+            bundle,
+            context,
+            company_name="NEW",
+            trade_date="2024-06-30",
+            asset_type="stock",
+            instrument_context=str(initial["instrument_context"]),
+        )
+
+
+def test_runtime_output_rejects_unknown_top_level_state_fields() -> None:
+    bundle, context, _, _, _ = _sealed_adapter()
+    initial = historical_module.create_historical_initial_state(
+        company_name="NEW",
+        trade_date="2024-06-30",
+        asset_type="stock",
+        instrument_context=(
+            "Symbol: NEW; instrument_id: inst-acme; asset_class: equity; "
+            "exchange: XNYS; currency: USD"
+        ),
+    )
+    hostile_state = _final_state(initial)
+    hostile_state["cash"] = "1000000"
+
+    with pytest.raises(HistoricalRuntimeOutputError):
+        run_historical(
+            OfflineGraphRuntime(RecordingRunner(output=hostile_state)),
             bundle,
             context,
             company_name="NEW",
