@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `1a185d4035db8807c12c5070c30cfe6d2979d968`
-- `roadmap_status`: `sig_01_red_jit_architecture_state_ready_for_green`
+- `roadmap_status`: `sig_01_candidate_local_pass_pending_exact_head_gates`
 - `current_pr_id`: `SIG-01`
 - `next_pr_id`: `SIG-02` (not authorized in the current SIG-01-only run; blocked until SIG-01 merges)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -90,7 +90,7 @@ on evidence, not intent.
 | PIT-04 | `f7d96ccfc311d4e48cf32748b4645343272eeb21` | `codex/pit-04-events-social-macro` | #21 | RED/hygiene/GREEN `3d2a8dd8dfb1001f22ff627267b88170913f8460` / `1ff3a81265f63dbaa70f79e4eca4336644280f2f` / `68d2d0bfe0a2e18b9bff3430943f721daa9e63cb`; repair RED/GREEN `b64a32566352cdd8938d4b5c7afe0bc2bf89b62d` / `d3891ba811245fc3e505389d88e2ea13d98cc362`; final head `6753b6da4b12a08bfda43d494681d2bac1ffd658`; merge `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — two RED stages; focused 111; data 387; productionization 586; legacy 61; full 1162 passed, 2 skipped, 69 subtests; Ruff/checkers/lock/diff/wheel | PASS — CI `33362962359`; CodeQL `33362962349`; Dependency Review `33362962320` | APPROVE — exact-head `#issuecomment-5474461389`; Master `#issuecomment-5474461558`; nonblocking MEDIUM test hardening deferred | none | MERGED / next: PIT-05 |
 | PIT-05 | `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `codex/pit-05-universe-actions` | #22 | RED/hygiene/GREEN `02305814650fedff1e5bc91dd37b4a5a61e541a7` / `955fe503ba1a9908efa54131347dd4a57bdcacfd` / `f56ebfdbfbc993bde22b834dd125cb3b891d25ab`; final head `d0ea37014258d96dc6ab75e4ec2f805f9fabc1c9`; merge `4782754746e02efb28b3078707d7c266728b0970` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / Sol high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / Sol high; master Sol/xhigh | PASS — focused 80; data 467; productionization 666; legacy 30; full 1242 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33365435326`; CodeQL `33365435294`; Dependency Review `33365435310` | APPROVE exact-head `#issuecomment-5474785612`; Master `#issuecomment-5474785805`; nonblocking deferred findings recorded | none | MERGED / next PIT-06 |
 | PIT-06 | `4782754746e02efb28b3078707d7c266728b0970` | `codex/pit-06-evidence-bundle` | #23 | RED/hygiene/GREEN `4c3c40a85d9a44b485301839b35091d93537d240` / `0fd46cad906e75ff4f635e92cfc110ab55964211` / `bbb17f25b754db59b1db401e8390adba807a1d4f`; repair RED/corrections/GREEN `986ded3f05a0099d8d7291a8e3fe4b69145cc237` / `fb92e80f259832af4e55c66b76efbab311e4e24e`,`d648809b3a2dc58f9c54640a4ede7be290694ce0` / `239c5424224187328784dfa1ffa5d139a2fb95fc`; final RED/GREEN `029be583d13b539142278f1758ed0f9da5fe6372` / `31cdd058d1189bbff0f9ae28df83d0d789f71d32`; final state head `7a9340be1e8d6997d7f5dfa6ba0e36befb05b153`; merge `1a185d4035db8807c12c5070c30cfe6d2979d968` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured Sol/high; final escalated `reviewer_xhigh` / `.codex/agents/reviewer-xhigh.toml` / configured Sol/xhigh; master configured Sol/xhigh | PASS — focused 54; data 521; productionization 720; regressions 15; full 1296 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — exact final head CI `33370017680`; CodeQL `33370017614`; Dependency Review `33370017652` | APPROVE — code review `#issuecomment-5475348104`; exact final-head follow-up `#issuecomment-5475399753`; Master MERGE `#issuecomment-5475399932` | none | MERGED / next SIG-01 |
-| SIG-01 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | `codex/sig-01-research-adapter` | #24 | RED `6d4327c7e83189c7f2faae57eb0d97c24e0858d1`; architecture `bf9e700e`; GREEN/final head/merge pending | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured GPT-5.6 Sol / high; reviewer requested `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured GPT-5.6 Sol / high; master configured GPT-5.6 Sol / xhigh | RED PASS — base-to-RED test-only; focused exit 2 with expected missing adapter module; GREEN validation pending | PENDING | PENDING; JIT is PR #24 body | none | ACTIVE — docs/state before GREEN; SIG-02 not authorized in this run |
+| SIG-01 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | `codex/sig-01-research-adapter` | #24 | RED `6d4327c7e83189c7f2faae57eb0d97c24e0858d1`; architecture/state `bf9e700d45dcb05b4f3fe202a235408765ca664f` / `1aeb262`; GREEN `04c2dd6dc7abd383335e536a29d356fc179aec33`; repair RED/GREEN `c5178e3eaaa2d1be85defdc8239aa5d8d35892e6` / `6edc92b22cd94b402bb542683aa68039c9ecea36`; merge pending | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured GPT-5.6 Sol / high; reviewer requested `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured GPT-5.6 Sol / high; master configured GPT-5.6 Sol / xhigh | PASS — original RED exit 2 expected missing module; repair RED 12 expected failures/43 passes; focused 55; legacy 26; productionization 775; full 1351 passed, 2 skipped, 18 warnings, 69 subtests; Ruff/dependency/lock/Markdown/diff/direct-import/clean-wheel PASS | PENDING exact final state head | PENDING; JIT is PR #24 body | none | CANDIDATE LOCAL PASS — exact-head review/CI required; SIG-02 not authorized in this run |
 
 Recommended compact representation in agent summaries:
 
@@ -178,8 +178,15 @@ PR IDs.
   repository-bound adapter under `mytradingalpha.research`; ordinary graph construction, CLI, and
   `propagate()` remain unchanged. PR #24 contains the complete 20-section JIT spec. Test-only RED
   `6d4327c7e83189c7f2faae57eb0d97c24e0858d1` produced the expected missing-adapter collection error;
-  architecture commit `bf9e700e` records the SIG-01/SIG-02 boundary. GREEN has not started at this
-  checkpoint.
+  architecture commit `bf9e700d45dcb05b4f3fe202a235408765ca664f` records the SIG-01/SIG-02
+  boundary. GREEN `04c2dd6dc7abd383335e536a29d356fc179aec33` added only the generic historical
+  seam, production research adapter, additive graph exports, and mechanical RED import ordering. A
+  Master-found output-authority gap was closed with test-only repair RED
+  `c5178e3eaaa2d1be85defdc8239aa5d8d35892e6` (12 expected failures/43 passes) and
+  production-only repair GREEN `6edc92b22cd94b402bb542683aa68039c9ecea36`. Master-replayed local
+  validation passed: focused 55, legacy 26, productionization 775, full 1351 passed/2 skipped, Ruff,
+  dependency/lock/Markdown/diff/direct imports, and a clean Python 3.14 wheel build/install/import.
+  Exact final state-head review and CI remain pending.
 
 ## Open blockers and deferred work
 
@@ -187,9 +194,9 @@ PR IDs.
   exact-head implementation/review/CI evidence. This proves local/CI contracts only; it does not prove
   provider historical completeness, alpha, paper readiness, or live readiness.
 - Autonomous orchestration remains active only for SIG-01 by explicit user instruction. SIG-01 is
-  active on PR #24 after durable RED, JIT, and architecture documentation; GREEN, exact-head validation,
-  independent review, CI, Master artifact, and merge remain pending. This run must stop after SIG-01
-  merges and must not start SIG-02.
+  active on PR #24 after durable original/repair RED, GREEN, JIT, architecture documentation, state
+  reconciliation, and local validation. Exact final state-head review, CI, Master artifact, and merge
+  remain pending. This run must stop after SIG-01 merges and must not start SIG-02.
 - SIG-01 evidence boundary: a deterministic fake offline runner may prove exact adapter/runtime binding
   and zero-egress contract behavior. No approved deployable real offline model runtime is supplied, so
   real historical model inference remains `insufficient_evidence`; this never permits a remote model,
