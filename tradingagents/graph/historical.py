@@ -49,13 +49,38 @@ _AUTHORITY_FIELDS = {
     "target_weight",
     "target_weights",
     "portfolio_allocation",
+    "portfolio",
+    "portfolio_weights",
     "order",
+    "orders",
     "order_intent",
+    "order_intents",
+    "order_type",
     "quantity",
+    "quantities",
     "broker",
+    "broker_fields",
     "broker_id",
+    "broker_credentials",
+    "credential",
     "credentials",
     "risk_authorization",
+    "risk_authorizations",
+}
+_ALLOWED_FINAL_STATE_FIELDS = {
+    "messages",
+    "company_of_interest",
+    "asset_type",
+    "instrument_context",
+    "trade_date",
+    "sender",
+    *_REPORT_FIELDS,
+    "investment_debate_state",
+    "investment_plan",
+    "trader_investment_plan",
+    "risk_debate_state",
+    "final_trade_decision",
+    "past_context",
 }
 
 
@@ -171,6 +196,10 @@ def _validated_final_state(
         raise HistoricalRuntimeOutputError(
             "historical research output cannot contain authority fields"
         )
+    if not final_state.keys() <= _ALLOWED_FINAL_STATE_FIELDS:
+        raise HistoricalRuntimeOutputError(
+            "historical runtime output contains fields outside AgentState"
+        )
 
     for field in _PROSE_FIELDS:
         if not isinstance(final_state.get(field), str):
@@ -180,6 +209,10 @@ def _validated_final_state(
     if not isinstance(final_state.get("messages"), list):
         raise HistoricalRuntimeOutputError(
             "historical runtime output requires the current messages list"
+        )
+    if "sender" in final_state and not isinstance(final_state["sender"], str):
+        raise HistoricalRuntimeOutputError(
+            "historical runtime output requires a string sender"
         )
 
     _assert_string_mapping(
