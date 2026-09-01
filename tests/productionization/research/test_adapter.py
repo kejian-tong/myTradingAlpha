@@ -12,21 +12,9 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
-import mytradingalpha.research.tradingagents_adapter as adapter_module
 import pytest
-import tradingagents.graph.historical as historical_module
-from mytradingalpha.research.tradingagents_adapter import (
-    HistoricalInstrumentError,
-    ResearchAdapter,
-)
-from tradingagents.graph.historical import (
-    HistoricalRuntimeOutputError,
-    HistoricalRuntimeTypeError,
-    HistoricalRuntimeUnavailableError,
-    OfflineGraphRuntime,
-    run_historical,
-)
 
+import mytradingalpha.research.tradingagents_adapter as adapter_module
 import tradingagents.agents.analysts.sentiment_analyst as sentiment_module
 import tradingagents.agents.utils.agent_utils as agent_utils_module
 import tradingagents.dataflows.fred as fred_module
@@ -34,6 +22,7 @@ import tradingagents.dataflows.polymarket as polymarket_module
 import tradingagents.dataflows.reddit as reddit_module
 import tradingagents.dataflows.stocktwits as stocktwits_module
 import tradingagents.graph.checkpointer as checkpointer_module
+import tradingagents.graph.historical as historical_module
 import tradingagents.graph.trading_graph as trading_graph_module
 import tradingagents.llm_clients as llm_clients_module
 from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
@@ -42,12 +31,23 @@ from mytradingalpha.data.replay_guard import (
     HistoricalReplayMismatchError,
 )
 from mytradingalpha.data.repository import EvidenceBundleNotFoundError, EvidenceRepository
+from mytradingalpha.research.tradingagents_adapter import (
+    HistoricalInstrumentError,
+    ResearchAdapter,
+)
 from tests.productionization.data.test_bundle_replay import (
     _build as build_fixture_bundle,
     _candidate_fields as fixture_candidate_fields,
 )
 from tradingagents.agents.utils.memory import TradingMemoryLog
 from tradingagents.graph import TradingAgentsGraph
+from tradingagents.graph.historical import (
+    HistoricalRuntimeOutputError,
+    HistoricalRuntimeTypeError,
+    HistoricalRuntimeUnavailableError,
+    OfflineGraphRuntime,
+    run_historical,
+)
 from tradingagents.graph.reflection import Reflector
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
