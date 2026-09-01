@@ -25,7 +25,9 @@ Depends on Phase 01 sealed EvidenceBundle and Phase 00 contracts. Current graph 
 ```text
 EvidenceBundle ───────────────> Quant feature service ───> QuantSignal
       |
-      +-> read-only Research adapter ───> ResearchNote ───> optional LLMOverlay
+      +-> SIG-01 read-only adapter ───> legacy prose graph state
+                                            |
+                                            +-> SIG-02 ResearchNote ───> optional LLMOverlay
 QuantSignal + optional overlay ─────────> SignalEnvelope
 ```
 
@@ -38,6 +40,36 @@ The two branches are independent: QuantSignal does not depend on LLM output, and
 - [`TraderProposal`](../../../../tradingagents/agents/schemas.py#L121-L180) has string `position_sizing`, and [`PortfolioDecision`](../../../../tradingagents/agents/schemas.py#L188-L223) is rating/prose.
 - [`SignalProcessor`](../../../../tradingagents/graph/signal_processing.py#L20-L30) returns a five-tier string and is not a target-weight service.
 - [`TradingAgentsGraph._resolve_pending_entries`](../../../../tradingagents/graph/trading_graph.py#L296-L334) performs current-time outcome fetches at run start; the historical adapter must bypass it.
+
+## SIG-01 historical execution decision
+
+SIG-01 adds a separate, typed, explicitly opt-in historical execution seam under
+`tradingagents.graph`; it does not add a historical flag inside the ordinary `TradingAgentsGraph`
+path. The normal constructor, CLI, and `propagate()` continue to create and use the configured model
+clients, current research tools, memory, reporting, and optional checkpoints exactly as before.
+
+The production-owned `ResearchAdapter` is constructed with one exact in-memory `EvidenceRepository`
+and an explicitly supplied concrete `OfflineGraphRuntime`. Its run entry point accepts a bundle ID,
+an exact historical `RunContext`, ticker, trade date, and asset type. It first calls
+`HistoricalDataGuard.replay()` to bind the exact sealed bundle ID/hash/cutoff/calendar and require every
+egress flag to be false. It then resolves the instrument only from sealed aliases/instruments, creates
+the current graph initial-state shape with empty past context, and calls the injected offline runtime
+once. The generic seam receives the sealed bundle as an opaque caller-owned input and never imports
+`mytradingalpha`.
+
+The historical seam never constructs or calls ordinary `TradingAgentsGraph.propagate()`, pending
+outcome/reflection logic, current identity or vendor helpers, memory, reports, caches, checkpoints, or a
+configured remote model. Missing, wrong, or subclassed runtime objects fail closed before overridable
+runtime methods. Malformed output and new target/order/broker/credential/risk-authority fields also
+fail closed. Existing prose plan language remains legacy research output, not numeric production
+portfolio or order authority.
+
+SIG-01 supplies only the minimal bundle-backed input boundary needed for offline graph invocation. The
+public `EvidenceToolset`, citation enumeration/completeness, prompt-injection rendering policy,
+`ResearchNote`, and `ResearchNoteBuilder` remain SIG-02. A deterministic fake runner proves the
+adapter/execution-seam contract in tests; it is not evidence that a deployable real offline model
+runtime exists or that historical inference, alpha, paper, or live execution is ready. The adapter
+returns typed unavailable rather than falling back to a remote model or ordinary graph.
 
 ## Interfaces and invariants
 
