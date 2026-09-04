@@ -34,7 +34,9 @@ Do not infer configured actual routing when a generic/default agent was used.
 | Complexity | Implementer | Independent reviewer | Configured route |
 | --- | --- | --- | --- |
 | `normal` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
-| `high` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
+| `high` initial | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
+| high implementation-only escalation | `high_implementer` | `reviewer_high` | Sol/high implementation and review |
+| high review-only escalation | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
 | `critical` | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
 | difficult escalation | `high_implementer` | `reviewer_xhigh` | Sol/high implementation; Sol/xhigh review |
 | hardest escalation | `critical_implementer` | `reviewer_astra_high` | Sol/xhigh implementation; Astra/high review |
@@ -51,6 +53,11 @@ Astra/high review. Review-only escalation advances `reviewer_high -> reviewer_xh
 Record the route reason and affected roles in the JIT/state before spawning. Preserve the underlying
 normal/high/critical safety class, one writer, and all stop conditions; escalation is not permission
 to choose a new architecture or pass a human gate. See AGENTS.md Section 5.2.1.
+
+Normal and high intentionally share the initial route. Normal stays there unless reclassified. High
+implementation complexity alone selects `high_implementer` while retaining `reviewer_high`; review
+ambiguity alone retains `normal_implementer` and selects `reviewer_xhigh`; both select difficult
+escalation. Each replacement requires an evidence-backed JIT/state update.
 
 This model/configuration upgrade applies after merge, checkout refresh, and fresh session loading.
 Already running agents retain their loaded routes. A paused roadmap PR may resume on new routes after

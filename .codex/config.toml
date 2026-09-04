@@ -13,6 +13,8 @@ Use the project-scoped named Codex agents under `.codex/agents/` for every new r
 policy is present on the checked-out base branch:
 - normal: `normal_implementer` + controlling `reviewer_high`
 - high: `normal_implementer` + controlling `reviewer_high`
+- high implementation-only escalation: replace the writer with `high_implementer`; keep `reviewer_high`
+- high review-only escalation: retain `normal_implementer`; replace review with `reviewer_xhigh`
 - critical: `normal_implementer` + controlling `reviewer_xhigh`
 - difficult escalation: `high_implementer` + controlling `reviewer_xhigh`
 - hardest escalation: `critical_implementer` + controlling `reviewer_astra_high`
@@ -27,6 +29,11 @@ layer uses Sol/xhigh implementation with Astra/high review. Record the selected 
 reason, and affected roles in the JIT and AGENT_STATE.md before spawning. These tiers do not replace
 normal/high/critical safety classification, raise concurrency, resolve a human architecture decision,
 or waive any stop/promotion gate.
+
+Normal and high intentionally share the initial Luna/max + Sol/high route. Normal remains there unless
+new evidence requires reclassification. For high work, implementation complexity alone escalates only
+the writer to Sol/high; review ambiguity alone escalates only the reviewer to Sol/xhigh; both together
+select the difficult route. Stop the prior writer/reviewer before replacement and record the reason.
 
 Use hybrid concurrency rather than concurrent production writers:
 - before the JIT spec, parallelize independent read-only exploration/audit lanes when useful;

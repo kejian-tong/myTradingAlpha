@@ -210,6 +210,9 @@ Requested routing:
 - reviewer: **GPT-5.6 Sol / high** (`reviewer_high`);
 - master: **GPT-5.6 Sol / xhigh**.
 
+Keep normal work on this route unless new evidence changes its complexity classification. A routine
+finding alone is not a reason to spend a stronger route.
+
 #### `high`
 
 Use when the PR contains materially elevated algorithmic, temporal, accounting, concurrency,
@@ -220,6 +223,16 @@ Requested routing:
 - implementer: **GPT-5.6 Luna / max**;
 - reviewer: **GPT-5.6 Sol / high** (`reviewer_high`);
 - master: **GPT-5.6 Sol / xhigh**.
+
+High work intentionally shares the normal starting route to control credits, but has explicit
+follow-up rules:
+
+- implementation complexity beyond the bounded Luna assignment: stop the prior writer, record the
+  evidence, and use `high_implementer` / Sol high while keeping `reviewer_high` unless review also needs
+  escalation;
+- review ambiguity or subtle unresolved correctness risk: retain the current implementer and run a
+  fresh `reviewer_xhigh` / Sol xhigh;
+- both conditions: use the difficult-escalation route, Sol/high implementation plus Sol/xhigh review.
 
 Typical `high` candidates include:
 
@@ -240,7 +253,7 @@ reconciliation/idempotency guarantees, or invalidate a promotion gate.
 
 Requested routing:
 
-- implementer: **GPT-5.6 Sol / xhigh**;
+- implementer: **GPT-5.6 Luna / max**;
 - reviewer: **GPT-5.6 Sol / xhigh** (`reviewer_xhigh`) in a fresh independent context;
 - master: **GPT-5.6 Sol / xhigh**.
 
@@ -262,7 +275,9 @@ Complexity (`normal|high|critical`) describes correctness and safety risk. The r
 | Task route | Implementer | Reviewer | Intended trigger |
 | --- | --- | --- | --- |
 | normal | `normal_implementer` — Luna/max | `reviewer_high` — Sol/high | ordinary work; keep this route unchanged |
-| high | `normal_implementer` — Luna/max | `reviewer_high` — Sol/high | higher correctness risk with clear scope |
+| high initial | `normal_implementer` — Luna/max | `reviewer_high` — Sol/high | same cost-conscious start as normal; explicit follow-up rules above |
+| high implementation-only escalation | `high_implementer` — Sol/high | `reviewer_high` — Sol/high | implementation complexity only |
+| high review-only escalation | `normal_implementer` — Luna/max | `reviewer_xhigh` — Sol/xhigh | review ambiguity only |
 | critical | `normal_implementer` — Luna/max | `reviewer_xhigh` — Sol/xhigh | critical boundaries with a known implementation path |
 | difficult escalation | `high_implementer` — Sol/high | `reviewer_xhigh` — Sol/xhigh | implementation needs more reasoning after high/critical analysis |
 | hardest escalation | `critical_implementer` — Sol/xhigh | `reviewer_astra_high` — Astra/high | deepest approved work where the reviewer needs stronger model capability |

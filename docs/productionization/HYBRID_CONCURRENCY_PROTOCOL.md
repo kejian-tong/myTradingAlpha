@@ -70,6 +70,11 @@ Writer and controlling-review routes:
 - `reviewer_xhigh` — Sol/xhigh (critical/adjudication role);
 - hardest route: `critical_implementer` — Sol/xhigh plus `reviewer_astra_high` — Astra/high;
 
+Normal and high share the initial Luna/max writer plus Sol/high reviewer. For high work,
+implementation-only escalation replaces the writer with `high_implementer`; review-only escalation
+retains the Luna writer and replaces the reviewer with `reviewer_xhigh`; both changes select the
+difficult route. Normal does not escalate without reclassification evidence.
+
 Select the least expensive adequate route under AGENTS.md Section 5.2.1. Review-only escalation
 retains the existing implementer. Keep normal/high/critical risk classification and its gates. A
 replacement writer never runs alongside the previous writer. The concurrency budget is unchanged.

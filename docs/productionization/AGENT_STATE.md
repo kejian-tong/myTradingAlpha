@@ -22,6 +22,8 @@ phase DESIGN/IMPLEMENTATION documents.
 - `default_high_implementer_route`: `GPT-5.6 Luna / max`
 - `default_critical_implementer_route`: `GPT-5.6 Luna / max`
 - `default_reviewer_route`: `GPT-5.6 Sol / high; reviewer_xhigh / Sol xhigh when escalated`
+- `high_implementation_only_route`: `high_implementer Sol/high + reviewer_high Sol/high`
+- `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
 - `hardest_escalation_route`: `critical_implementer Sol/xhigh + reviewer_astra_high GPT-6 Astra/high`
 
@@ -53,7 +55,9 @@ The master classifies each PR from actual scope/current code before implementati
 | Task route | Implementer request | Reviewer request | Master request | Intended use |
 | --- | --- | --- | --- | --- |
 | `normal` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | bounded, well-specified ordinary-risk implementation |
-| `high` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | higher correctness risk with clear scope |
+| `high initial` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | same starting cost as normal; explicit escalation rules |
+| `high implementation-only` | GPT-5.6 Sol / high | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | implementation complexity only |
+| `high review-only` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | review ambiguity only |
 | `critical` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | critical boundary with a known implementation path |
 | `difficult escalation` | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | implementation needs more reasoning |
 | `hardest escalation` | GPT-5.6 Sol / xhigh | GPT-6 Astra / high | GPT-5.6 Sol / xhigh | deepest approved work; stronger independent reviewer |
@@ -63,6 +67,10 @@ through Sol/high, Sol/xhigh, then Astra/high only as evidence requires. Review-o
 the implementer unchanged. New routes take effect after merge and fresh session loading, not
 retroactively. Prior ledger entries below retain the model/effort actually used. This routing change
 is not approval of any unresolved SIG-01 architecture decision.
+
+Normal and high intentionally share the initial route. Normal remains there unless reclassified. High
+implementation complexity alone selects the Sol/high writer; review ambiguity alone selects the
+Sol/xhigh reviewer; both select difficult escalation. Record the evidence before replacement.
 
 Typical reasons to classify or escalate `high` include PIT cutoff/revision semantics, EvidenceBundle
 canonical hashing, deterministic replay/event ordering, ledger/NAV accounting, corporate actions,
