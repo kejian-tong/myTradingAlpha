@@ -24,7 +24,7 @@ For one active roadmap PR:
 - at most **one production-code writer** may be active at a time;
 - RED, GREEN, REFACTOR, and each repair cycle are owned by one named implementer/repair implementer;
 - read-only specialists may run concurrently when their questions are independent;
-- the controlling reviewer follows the recorded model tier from `reviewer_high` through `reviewer_astra_xhigh`;
+- the controlling reviewer follows the recorded route from `reviewer_high` through `reviewer_astra_high`;
 - specialist reviews add evidence; they do not replace the controlling independent-review artifact;
 - no agent may start a dependency-ordered later roadmap PR before the current PR is merged;
 - no concurrency rule waives paper/live or other explicit human promotion gates.
@@ -68,13 +68,11 @@ Writer and controlling-review routes:
 - `critical_implementer` — Sol/xhigh;
 - `reviewer_high` — Sol/high;
 - `reviewer_xhigh` — Sol/xhigh (critical/adjudication role);
-- optional `astra_high_implementer` and `reviewer_astra_high` — Astra/high;
-- optional `astra_xhigh_implementer` and `reviewer_astra_xhigh` — Astra/xhigh;
+- hardest route: `critical_implementer` — Sol/xhigh plus `reviewer_astra_high` — Astra/high;
 
-Select the least expensive adequate `model_tier` under AGENTS.md Section 5.2.1. Review-only escalation
-retains the existing implementer. Astra implementation requires independent review at the same or
-stronger Astra tier. Keep normal/high/critical risk classification and its gates. A replacement writer
-never runs alongside the previous writer. The concurrency budget is unchanged.
+Select the least expensive adequate route under AGENTS.md Section 5.2.1. Review-only escalation
+retains the existing implementer. Keep normal/high/critical risk classification and its gates. A
+replacement writer never runs alongside the previous writer. The concurrency budget is unchanged.
 
 ## 5. Phase A — concurrent pre-flight before JIT
 
@@ -150,9 +148,9 @@ If triage finds a material defect:
    new SHA.
 
 For ambiguity, advance review only as evidence requires:
-`reviewer_high -> reviewer_xhigh -> reviewer_astra_high -> reviewer_astra_xhigh`.
+`reviewer_high -> reviewer_xhigh -> reviewer_astra_high`.
 Re-review count alone does not make a PR `critical` or justify Astra. Safety classification remains
-tied to correctness/external-effect risk under `AGENTS.md`; model-tier escalation requires a separate
+tied to correctness/external-effect risk under `AGENTS.md`; route escalation requires a separate
 recorded reason.
 
 There is no fixed `N` for repair/re-review attempts. Continue only while the scope remains valid and the

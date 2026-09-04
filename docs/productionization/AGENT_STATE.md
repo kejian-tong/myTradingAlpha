@@ -19,11 +19,11 @@ phase DESIGN/IMPLEMENTATION documents.
 - `last_completed_roadmap_pr`: `PIT-06`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
-- `default_high_implementer_route`: `GPT-5.6 Sol / high`
-- `default_critical_implementer_route`: `GPT-5.6 Sol / xhigh`
+- `default_high_implementer_route`: `GPT-5.6 Luna / max`
+- `default_critical_implementer_route`: `GPT-5.6 Luna / max`
 - `default_reviewer_route`: `GPT-5.6 Sol / high; reviewer_xhigh / Sol xhigh when escalated`
-- `optional_astra_high_route`: `astra_high_implementer + reviewer_astra_high / GPT-6 Astra / high`
-- `optional_astra_xhigh_route`: `astra_xhigh_implementer + reviewer_astra_xhigh / GPT-6 Astra / xhigh`
+- `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
+- `hardest_escalation_route`: `critical_implementer Sol/xhigh + reviewer_astra_high GPT-6 Astra/high`
 
 The state above must be reconciled against GitHub before every implementation session. GitHub/main is
 authoritative if this file is stale. Model names/effort tiers here describe requested policy; each PR
@@ -50,20 +50,19 @@ Keep these invariants visible across fresh sessions:
 
 The master classifies each PR from actual scope/current code before implementation.
 
-| Safety class / model tier | Implementer request | Reviewer request | Master request | Intended use |
+| Task route | Implementer request | Reviewer request | Master request | Intended use |
 | --- | --- | --- | --- | --- |
 | `normal` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | bounded, well-specified ordinary-risk implementation |
-| `high` | GPT-5.6 Sol / high | GPT-5.6 Sol / high, xhigh if needed | GPT-5.6 Sol / xhigh | temporal/accounting/numerical/statistical/state-machine correctness |
-| `critical` | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | safety/external-side-effect/idempotency/reconciliation/promotion boundaries |
-| existing class + `model_tier: astra_high` | GPT-6 Astra / high | GPT-6 Astra / high | GPT-5.6 Sol / xhigh | difficult cross-module work with resolved architecture |
-| existing class + `model_tier: astra_xhigh` | GPT-6 Astra / xhigh | GPT-6 Astra / xhigh | GPT-5.6 Sol / xhigh | deeply coupled invariants, repeated material findings, or technical ambiguity |
+| `high` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | higher correctness risk with clear scope |
+| `critical` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | critical boundary with a known implementation path |
+| `difficult escalation` | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | implementation needs more reasoning |
+| `hardest escalation` | GPT-5.6 Sol / xhigh | GPT-6 Astra / high | GPT-5.6 Sol / xhigh | deepest approved work; stronger independent reviewer |
 
-The Astra tiers are optional and preserve the underlying safety class. Escalate review through
-Sol/high, Sol/xhigh, Astra/high, then Astra/xhigh only as evidence requires. Review-only
-escalation leaves the implementer unchanged. An Astra implementer requires fresh independent review
-at the same or stronger Astra tier; only one writer may run. New routes take effect after merge and
-fresh session loading, not retroactively. Prior ledger entries below retain the model/effort actually
-used. This routing change is not approval of any unresolved SIG-01 architecture decision.
+The difficult and hardest routes are optional and preserve the underlying safety class. Escalate review
+through Sol/high, Sol/xhigh, then Astra/high only as evidence requires. Review-only escalation leaves
+the implementer unchanged. New routes take effect after merge and fresh session loading, not
+retroactively. Prior ledger entries below retain the model/effort actually used. This routing change
+is not approval of any unresolved SIG-01 architecture decision.
 
 Typical reasons to classify or escalate `high` include PIT cutoff/revision semantics, EvidenceBundle
 canonical hashing, deterministic replay/event ordering, ledger/NAV accounting, corporate actions,
@@ -149,9 +148,8 @@ PR IDs.
 - 2026-09-04 cost-balanced harness reconciliation: PR #25 merged as current main
   `7af14f3bba7078f78cc807885b3c169acc6b7da5`. The user requested a new harness-only PR that restores
   Sol for the default Master, high/critical implementers, and standard/escalated reviewers while
-  retaining Luna/max for ordinary work and adding explicit Astra/high and Astra/xhigh
-  implementation/review steps for increasingly difficult work. The prior Astra/max tier is removed
-  to control credit use.
+  retaining Luna/max for normal/high/critical work and adding explicit Sol escalation plus a final
+  Astra/high review step for the hardest approved work. Astra/max is removed to control credit use.
   SIG-01 PR #24 was observed open at `9f1d0b4614fbb77acdd14933d904d8588fd84eb9` during kickoff and is
   being modified outside this isolated worktree. This task does not inspect, edit, review, merge, or
   draw a new verdict about that head. Its owning session must reconcile the latest head and evidence.

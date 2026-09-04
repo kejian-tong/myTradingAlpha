@@ -34,24 +34,23 @@ Do not infer configured actual routing when a generic/default agent was used.
 | Complexity | Implementer | Independent reviewer | Configured route |
 | --- | --- | --- | --- |
 | `normal` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
-| `high` | `high_implementer` | `reviewer_high` | Sol/high implementation and review; Sol/xhigh review escalation when needed |
-| `critical` | `critical_implementer` | `reviewer_xhigh` | Sol/xhigh implementation and review |
-| existing class + `model_tier: astra_high` | `astra_high_implementer` | `reviewer_astra_high` | Astra/high implementation and independent review |
-| existing class + `model_tier: astra_xhigh` | `astra_xhigh_implementer` | `reviewer_astra_xhigh` | Astra/xhigh implementation and independent review |
+| `high` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
+| `critical` | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
+| difficult escalation | `high_implementer` | `reviewer_xhigh` | Sol/high implementation; Sol/xhigh review |
+| hardest escalation | `critical_implementer` | `reviewer_astra_high` | Sol/xhigh implementation; Astra/high review |
 
 `gpt-5.6-sol` is the default Master and demanding-work model ID. The Master uses Sol/xhigh (Extra
 High); `reviewer_high` and the boundary reviewer use Sol/high, while `reviewer_xhigh` uses Sol/xhigh.
 The normal implementer, code explorer, and test auditor retain `gpt-5.6-luna` / max. GPT-6 Astra is
-available through explicit high and xhigh tiers. Historical records retain the routes actually
-used.
+reserved for the hardest route as an independent Astra/high reviewer. Historical records retain the
+routes actually used.
 
-Use the least expensive adequate tier and normally escalate review in this order:
-`reviewer_high -> reviewer_xhigh -> reviewer_astra_high -> reviewer_astra_xhigh`.
-Record every Astra-tier reason and affected role in the JIT/state before spawning. A review-only
-escalation leaves the implementer unchanged. An Astra implementer requires an independent reviewer at
-the same or stronger Astra tier. Preserve the underlying normal/high/critical safety class, one writer,
-and all stop conditions; escalation is not permission to choose a new architecture or pass a human
-gate. See AGENTS.md Section 5.2.1.
+Use the least expensive adequate route. Normal/high/critical use Luna implementation; difficult
+escalation uses Sol/high implementation; the hardest route uses Sol/xhigh implementation and
+Astra/high review. Review-only escalation advances `reviewer_high -> reviewer_xhigh -> reviewer_astra_high`.
+Record the route reason and affected roles in the JIT/state before spawning. Preserve the underlying
+normal/high/critical safety class, one writer, and all stop conditions; escalation is not permission
+to choose a new architecture or pass a human gate. See AGENTS.md Section 5.2.1.
 
 This model/configuration upgrade applies after merge, checkout refresh, and fresh session loading.
 Already running agents retain their loaded routes. A paused roadmap PR may resume on new routes after
@@ -174,9 +173,9 @@ INDEPENDENT AGENT REVIEW
 PR ID: <id>
 PR: #<n>
 reviewed head: <exact SHA>
-reviewer role: reviewer_high|reviewer_xhigh|reviewer_astra_high|reviewer_astra_xhigh
+reviewer role: reviewer_high|reviewer_xhigh|reviewer_astra_high
 reviewer config: .codex/agents/<file>.toml
-model tier: luna|sol_high|sol_xhigh|astra_high|astra_xhigh
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_astra_high
 configured model/effort: <model> / <effort>
 JIT implementation spec: <GitHub PR body/comment reference>
 RED evidence: PASS|FAIL|INSUFFICIENT_EVIDENCE
@@ -206,7 +205,7 @@ PR ID: <id>
 final head: <exact SHA>
 base main: <exact SHA>
 complexity: normal|high|critical
-model tier: luna|sol_high|sol_xhigh|astra_high|astra_xhigh
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_astra_high
 JIT implementation spec: <GitHub PR body/comment reference>
 implementer role/configured route: <role> / <model> / <effort>
 reviewer role/configured route: <role> / <model> / <effort>

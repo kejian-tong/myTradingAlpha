@@ -12,21 +12,21 @@ For myTradingAlpha productionization work, read and follow root AGENTS.md,
 Use the project-scoped named Codex agents under `.codex/agents/` for every new roadmap PR after this
 policy is present on the checked-out base branch:
 - normal: `normal_implementer` + controlling `reviewer_high`
-- high: `high_implementer` + controlling `reviewer_high`; use `reviewer_xhigh` first when audit ambiguity remains
-- critical: `critical_implementer` + controlling `reviewer_xhigh`
-- Astra high escalation: `astra_high_implementer` + `reviewer_astra_high`
-- Astra xhigh escalation: `astra_xhigh_implementer` + `reviewer_astra_xhigh`
+- high: `normal_implementer` + controlling `reviewer_high`
+- critical: `normal_implementer` + controlling `reviewer_xhigh`
+- difficult escalation: `high_implementer` + controlling `reviewer_xhigh`
+- hardest escalation: `critical_implementer` + controlling `reviewer_astra_high`
 - review-only escalation: retain the existing implementer and advance through `reviewer_xhigh`,
-  `reviewer_astra_high`, then `reviewer_astra_xhigh` as evidence requires
+  then `reviewer_astra_high` as evidence requires
 - hybrid read-only specialists: `code_explorer`, `test_auditor`, `boundary_reviewer`
 
 Master uses GPT-5.6 Sol / xhigh (Extra High). reviewer_high and boundary_reviewer use Sol/high;
-reviewer_xhigh uses Sol/xhigh. Normal implementation stays on Luna/max; high implementation uses
-Sol/high and critical implementation uses Sol/xhigh. The graduated Astra tiers use GPT-6 Astra at
-high and xhigh for increasingly difficult implementation and review. Record the selected
-`model_tier`, evidence-based reason, and affected roles in the JIT and AGENT_STATE.md before spawning.
-These tiers do not replace normal/high/critical safety classification, raise concurrency, resolve a
-human architecture decision, or waive any stop/promotion gate.
+reviewer_xhigh uses Sol/xhigh; reviewer_astra_high uses GPT-6 Astra / high. Normal and critical
+implementation stays on Luna/max. Difficult escalation uses Sol/high implementation, and the hardest
+layer uses Sol/xhigh implementation with Astra/high review. Record the selected route, evidence-based
+reason, and affected roles in the JIT and AGENT_STATE.md before spawning. These tiers do not replace
+normal/high/critical safety classification, raise concurrency, resolve a human architecture decision,
+or waive any stop/promotion gate.
 
 Use hybrid concurrency rather than concurrent production writers:
 - before the JIT spec, parallelize independent read-only exploration/audit lanes when useful;
