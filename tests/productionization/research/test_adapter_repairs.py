@@ -268,3 +268,23 @@ def test_json_looking_research_prose_remains_prose():
                         response_metadata={"description": '{"order_intents": []}'})
     final, _ = _run_with_message(message)
     assert final["messages"][-1] is message
+
+
+@pytest.mark.parametrize(
+    "additional_kwargs",
+    [
+        {"tool_calls": ({"function": {"arguments": '{"order_intents": []}'}},)},
+        {"tool_calls": {"function": {"arguments": '{"order_intents": []}'}}},
+        {"tool_calls": ["malformed"]},
+        {"tool_calls": [{}]},
+        {"tool_calls": [{"function": "malformed"}]},
+        {"tool_calls": [{"function": {"name": "research"}}]},
+        {"function_call": "malformed"},
+        {"function_call": {"name": "research"}},
+    ],
+)
+def test_present_known_call_shapes_fail_closed_instead_of_skipping(additional_kwargs):
+    message = AIMessage(content="Research", additional_kwargs=additional_kwargs,
+                        tool_calls=[{"name": "research", "id": "call-1", "args": {}}])
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
