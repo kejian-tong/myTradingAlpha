@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `7af14f3bba7078f78cc807885b3c169acc6b7da5`
-- `roadmap_status`: `sig_01_bounded_repairs_active_runtime_and_horizon_blocked`
+- `roadmap_status`: `sig_01_repaired_candidate_runtime_and_horizon_blocked`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -200,6 +200,36 @@ PR IDs.
   `33927880124`, CodeQL `33927880150`, Dependency Review `33927880171`.
 - Next: one repair RED then GREEN, exact-head independent review/CI, durable Master DO NOT MERGE
   if H4/M1 remain open, and concrete human amendment request. Do not start SIG-02.
+
+## SIG-01 repaired candidate — 2026-09-04
+
+- New writer loading confirmed: `/root/sig01_bounded_repair`, named `high_implementer`,
+  `.codex/agents/high-implementer.toml`, configured-actual `gpt-6-astra / high`. Writer has stopped.
+  No other production writer ran; Master owns documentation/state only.
+- Repair REDs: `bb30bd129ee471e9d5066fd257464291139431b0` (19 expected failures/130 passes),
+  `192bba8295f8e1d234cbe5d1195ff468815e1a57` (9 failures/4 passes/39 deselected),
+  `8958453a53cc0ba7b2955c29cb0f6dac21205746` (8 failures/52 deselected). All are test-only,
+  pushed before corresponding GREEN; later REDs were isolated from existing production WIP.
+- GREEN `9e3875035d585c77e8d2632ad08e94b161521232` changes only historical output/state validation,
+  the research adapter, and an additive guard-owned canonical binding API. H1/H2/H3/H5 are locally
+  repaired. H5 includes known JSON call arguments and malformed call-container denial; the
+  [JIT clarification](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547575426)
+  preserves prose, performs no tool execution, and does not claim confinement.
+- Final implementation validation: focused 170, legacy 26, productionization 836, full 1412 passed,
+  2 skipped, 27 warnings, 69 subtests in 99.16s. Ruff/dependency/lock/Markdown/diff/import checks
+  passed. Final wheel built and installed offline into a fresh environment; installed imports and
+  canonical guard rejection smoke passed. New warnings arise from deliberately unvalidated test
+  contexts. Optional Bedrock and live DeepSeek checks remain skipped as reported, not passed.
+- This checkpoint precedes fresh exact-head controlling review/CI for the documented candidate.
+  The existing max-review reason and `high` class remain in force; requested controlling role is
+  fresh `reviewer_max` / `gpt-6-astra / max`. No max implementer escalation was needed for these
+  bounded repairs. Historical model/review evidence remains unchanged.
+- H4 enforced runtime remains HIGH; M1 horizon remains an unresolved human decision. The
+  [amendment proposal](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md) is unapproved.
+  Master disposition remains DO NOT MERGE. No closed runtime, cached-response schema, or UTC date
+  rule has been implemented. Completing them requires approval before dependent implementation.
+- Scope remains existing SIG-01 PR #24 only; SIG-02 has no branch, RED, JIT, PR, or implementation.
+  Current/next work is blocked SIG-01; last completed roadmap PR remains PIT-06.
 
 ## Current master pre-flight evidence
 

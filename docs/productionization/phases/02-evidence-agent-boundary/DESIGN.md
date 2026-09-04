@@ -51,25 +51,47 @@ clients, current research tools, memory, reporting, and optional checkpoints exa
 The production-owned `ResearchAdapter` is constructed with one exact in-memory `EvidenceRepository`
 and an explicitly supplied concrete `OfflineGraphRuntime`. Its run entry point accepts a bundle ID,
 an exact historical `RunContext`, ticker, trade date, and asset type. It first calls
-`HistoricalDataGuard.replay()` to bind the exact sealed bundle ID/hash/cutoff/calendar and require every
-egress flag to be false. It then resolves the instrument only from sealed aliases/instruments, creates
-the current graph initial-state shape with empty past context, and calls the injected offline runtime
-once. The generic seam receives the sealed bundle as an opaque caller-owned input and never imports
+`HistoricalDataGuard.replay_bound()` to bind the exact sealed bundle ID/hash/cutoff/calendar and
+require every egress flag to be false. The guard returns both the bundle and its defensive canonical
+`RunContext`; the adapter passes that validated context onward. The legacy `replay()` API continues
+to return only the bundle. Instrument resolution uses only date-valid sealed aliases and active
+instruments, never the descriptive `initial_symbol` as a fallback. The adapter creates the current
+graph initial-state shape with empty past context and retains an untouched bound-field baseline
+separate from the runner-owned mutable state. The generic seam receives the sealed bundle as an opaque caller-owned input and never imports
 `mytradingalpha`.
 
-The historical seam never constructs or calls ordinary `TradingAgentsGraph.propagate()`, pending
+The adapter-owned path never constructs or calls ordinary `TradingAgentsGraph.propagate()`, pending
 outcome/reflection logic, current identity or vendor helpers, memory, reports, caches, checkpoints, or a
 configured remote model. Missing, wrong, or subclassed runtime objects fail closed before overridable
 runtime methods. Malformed output and new target/order/broker/credential/risk-authority fields also
-fail closed. Existing prose plan language remains legacy research output, not numeric production
+fail closed. Supported concrete LangChain messages are checked as data, including metadata and
+structured tool-call arguments; unknown/custom opaque message objects fail closed before custom
+serialization. No tool call is executed by this validation. Existing prose plan language remains legacy research output, not numeric production
 portfolio or order authority.
 
 SIG-01 supplies only the minimal bundle-backed input boundary needed for offline graph invocation. The
 public `EvidenceToolset`, citation enumeration/completeness, prompt-injection rendering policy,
 `ResearchNote`, and `ResearchNoteBuilder` remain SIG-02. A deterministic fake runner proves the
-adapter/execution-seam contract in tests; it is not evidence that a deployable real offline model
-runtime exists or that historical inference, alpha, paper, or live execution is ready. The adapter
+adapter binding, output, and cooperative-path behavior in tests; it does not prove enforced zero
+egress against an attempting runner, a deployable real offline model runtime, historical inference,
+alpha, paper, or live readiness. The adapter
 returns typed unavailable rather than falling back to a remote model or ordinary graph.
+
+## SIG-01 unresolved runtime and date decisions
+
+Enforced zero egress remains required. The current caller-supplied Python callable wrapper does not
+meet that requirement: the independent max audit reproduced host clock access, bounded host file
+read/write, and socket creation through an accepted runner. Exact-type checks and test monkeypatches
+are insufficient. The four independent state/identity/context/message repairs do not close this
+runtime finding or authorize merge.
+
+The relationship between `trade_date` and the sealed cutoff also remains undefined. The proposed UTC
+snapshot-label rule has not been approved or implemented. Earlier/later alias-boundary tests exercise
+identity selection only; they do not establish a research-horizon policy or trading-session readiness.
+
+The [SIG-01 amendment proposal](SIG_01_AMENDMENT_PROPOSAL.md) records the recommended closed cached
+replay direction and date clarification. It is explicitly unapproved; runtime/data-contract expansion
+and date-policy implementation require human approval before dependent work. SIG-02 remains deferred.
 
 ## Interfaces and invariants
 

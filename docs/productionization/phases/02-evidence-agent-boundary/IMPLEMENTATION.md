@@ -19,6 +19,7 @@ Commands are planned until a PR records exact output.
 ## Proposed files, classes, and APIs
 
 - `tradingagents/graph/historical.py`: concrete exact-type `OfflineGraphRuntime`, typed unavailable/type/output failures, pure current-shape state construction, and `run_historical(...) -> tuple[dict[str, object], str]`.
+- `mytradingalpha/data/replay_guard.py`: additive `HistoricalDataGuard.replay_bound(...) -> tuple[EvidenceBundle, RunContext]` returns the guard-validated canonical binding; existing `replay(...) -> EvidenceBundle` remains compatible.
 - `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact `EvidenceRepository` and offline runtime; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
 - `mytradingalpha/research/evidence_tools.py`: `EvidenceToolset.get/list_citations()`.
 - `mytradingalpha/research/notes.py`: `ResearchNoteBuilder.build()`.
@@ -57,6 +58,7 @@ The validator rejects extra output fields that represent weights, quantity, orde
 ## Exact tests and fixtures
 
 - `tests/productionization/research/test_adapter.py`: exact sealed bundle/context invocation through an injected offline runtime; historical provider/pending-memory/persistence/file/socket/clock denial; current initial/final/five-tier compatibility; fail-closed runtime/output/authority boundaries.
+- `tests/productionization/research/test_adapter_repairs.py`: independent bound-field mutation denial, sealed alias intervals, defensive canonical context handoff, and authority checks in supported messages/structured call arguments. These tests do not prove runtime enforcement or select a date horizon.
 - `tests/productionization/research/test_evidence_tools.py`: citation completeness, immutable item, prompt-injection text treated as data.
 - `tests/productionization/quant/test_signal.py`: feature golden file, deterministic repeat, missing-feature status, model hash.
 - `tests/productionization/research/test_overlay.py`: attenuate/veto/abstain, timeout/schema error no-trade, forbidden fields, multiplier bounds.
@@ -78,10 +80,12 @@ These commands are planned; the PR report must state whether each ran and includ
 
 The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The SIG-01 adapter is opt-in, preserves the legacy prose state and five-tier string, and requires an exact sealed bundle plus explicitly supplied local/offline runtime. It does not emit a `ResearchNote` or `SignalEnvelope`; those remain later SIG slices. Disable the new path to roll back without deleting bundles or changing current memory records. Forward-paper behavior remains outside SIG-01.
 
-SIG-01 local tests may use a deterministic fake runner to prove binding and zero-egress behavior. That
-is contract proof only: absence of an approved real offline model runtime remains explicit
-insufficient evidence and never enables a remote, current-vendor, Quant-only, or ordinary-graph
-fallback.
+SIG-01 local tests use a deterministic fake runner to prove binding, output validation, and the
+adapter-owned path's avoidance of patched side-effect functions. They do not enforce zero egress in
+production. Independent adversarial runtime evidence remains required and currently fails. Runtime
+enforcement and the trade-date policy remain blocking human decisions under the
+[unapproved SIG-01 amendment proposal](SIG_01_AMENDMENT_PROPOSAL.md). No missing-runtime evidence permits
+a remote, current-vendor, Quant-only, or ordinary-graph fallback.
 
 ## Definition of done
 
