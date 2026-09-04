@@ -1,7 +1,7 @@
 # Project-scoped Codex harness. Loaded only for trusted projects.
 # Keep production architecture in docs/productionization; this file controls agent execution only.
 
-model = "gpt-6-astra"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 
 developer_instructions = """
@@ -12,18 +12,21 @@ For myTradingAlpha productionization work, read and follow root AGENTS.md,
 Use the project-scoped named Codex agents under `.codex/agents/` for every new roadmap PR after this
 policy is present on the checked-out base branch:
 - normal: `normal_implementer` + controlling `reviewer_high`
-- high: `high_implementer` + controlling `reviewer_high`; use `reviewer_max` when audit ambiguity remains
+- high: `high_implementer` + controlling `reviewer_high`; use `reviewer_xhigh` first when audit ambiguity remains
 - critical: `critical_implementer` + controlling `reviewer_xhigh`
-- exceptional difficulty, explicitly selected max tier: `max_implementer` + `reviewer_max`
-- review-only max escalation: retain the existing implementer and use `reviewer_max`
+- Astra high escalation: `astra_high_implementer` + `reviewer_astra_high`
+- Astra xhigh escalation: `astra_xhigh_implementer` + `reviewer_astra_xhigh`
+- review-only escalation: retain the existing implementer and advance through `reviewer_xhigh`,
+  `reviewer_astra_high`, then `reviewer_astra_xhigh` as evidence requires
 - hybrid read-only specialists: `code_explorer`, `test_auditor`, `boundary_reviewer`
 
-Master, reviewer_high, reviewer_xhigh, and boundary_reviewer use GPT-6 Astra / xhigh (Extra High).
-Normal implementation stays on Luna/max; high implementation uses Astra/high and critical
-implementation uses Astra/xhigh. The optional max tier uses GPT-6 Astra / max for max_implementer
-and reviewer_max; record its reason and affected roles in the
-JIT and AGENT_STATE.md before spawning. It does not replace normal/high/critical safety classification,
-raise concurrency, resolve a human architecture decision, or waive any stop/promotion gate.
+Master uses GPT-5.6 Sol / xhigh (Extra High). reviewer_high and boundary_reviewer use Sol/high;
+reviewer_xhigh uses Sol/xhigh. Normal implementation stays on Luna/max; high implementation uses
+Sol/high and critical implementation uses Sol/xhigh. The graduated Astra tiers use GPT-6 Astra at
+high and xhigh for increasingly difficult implementation and review. Record the selected
+`model_tier`, evidence-based reason, and affected roles in the JIT and AGENT_STATE.md before spawning.
+These tiers do not replace normal/high/critical safety classification, raise concurrency, resolve a
+human architecture decision, or waive any stop/promotion gate.
 
 Use hybrid concurrency rather than concurrent production writers:
 - before the JIT spec, parallelize independent read-only exploration/audit lanes when useful;

@@ -10,20 +10,20 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `1a185d4035db8807c12c5070c30cfe6d2979d968`
-- `roadmap_status`: `sig_01_blocked_harness_routing_upgrade_only`
+- `last_reconciled_main_sha`: `7af14f3bba7078f78cc807885b3c169acc6b7da5`
+- `roadmap_status`: `sig_01_open_cost_balanced_harness_update_only`
 - `current_pr_id`: `SIG-01` (PR #24 remains open; this task changes the harness only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: `roadmap_paused_harness_pr_only`
+- `autonomy_mode`: `roadmap_work_out_of_scope_harness_pr_only`
 - `last_completed_roadmap_pr`: `PIT-06`
-- `default_master_route`: `GPT-6 Astra / xhigh`
+- `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
-- `default_high_implementer_route`: `GPT-6 Astra / high`
-- `default_critical_implementer_route`: `GPT-6 Astra / xhigh`
-- `default_reviewer_route`: `GPT-6 Astra / xhigh`
-- `optional_max_implementer_route`: `max_implementer / GPT-6 Astra / max`
-- `optional_max_reviewer_route`: `reviewer_max / GPT-6 Astra / max`
+- `default_high_implementer_route`: `GPT-5.6 Sol / high`
+- `default_critical_implementer_route`: `GPT-5.6 Sol / xhigh`
+- `default_reviewer_route`: `GPT-5.6 Sol / high; reviewer_xhigh / Sol xhigh when escalated`
+- `optional_astra_high_route`: `astra_high_implementer + reviewer_astra_high / GPT-6 Astra / high`
+- `optional_astra_xhigh_route`: `astra_xhigh_implementer + reviewer_astra_xhigh / GPT-6 Astra / xhigh`
 
 The state above must be reconciled against GitHub before every implementation session. GitHub/main is
 authoritative if this file is stale. Model names/effort tiers here describe requested policy; each PR
@@ -50,18 +50,20 @@ Keep these invariants visible across fresh sessions:
 
 The master classifies each PR from actual scope/current code before implementation.
 
-| Complexity | Implementer request | Reviewer request | Master request | Intended use |
+| Safety class / model tier | Implementer request | Reviewer request | Master request | Intended use |
 | --- | --- | --- | --- | --- |
-| `normal` | GPT-5.6 Luna / max | GPT-6 Astra / xhigh | GPT-6 Astra / xhigh | bounded, well-specified ordinary-risk implementation |
-| `high` | GPT-6 Astra / high | GPT-6 Astra / xhigh | GPT-6 Astra / xhigh | temporal/accounting/numerical/statistical/state-machine correctness |
-| `critical` | GPT-6 Astra / xhigh | GPT-6 Astra / xhigh | GPT-6 Astra / xhigh | safety/external-side-effect/idempotency/reconciliation/promotion boundaries |
-| existing class + explicit `execution_tier: max` | GPT-6 Astra / max | GPT-6 Astra / max | GPT-6 Astra / xhigh | exceptional implementation difficulty; max-tier reason recorded before spawning |
+| `normal` | GPT-5.6 Luna / max | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | bounded, well-specified ordinary-risk implementation |
+| `high` | GPT-5.6 Sol / high | GPT-5.6 Sol / high, xhigh if needed | GPT-5.6 Sol / xhigh | temporal/accounting/numerical/statistical/state-machine correctness |
+| `critical` | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | safety/external-side-effect/idempotency/reconciliation/promotion boundaries |
+| existing class + `model_tier: astra_high` | GPT-6 Astra / high | GPT-6 Astra / high | GPT-5.6 Sol / xhigh | difficult cross-module work with resolved architecture |
+| existing class + `model_tier: astra_xhigh` | GPT-6 Astra / xhigh | GPT-6 Astra / xhigh | GPT-5.6 Sol / xhigh | deeply coupled invariants, repeated material findings, or technical ambiguity |
 
-The max tier is optional and preserves the underlying safety class. Review-only escalation selects
-`reviewer_max` without changing the current implementer. `max_implementer` requires fresh independent
-`reviewer_max`; only one writer may run. New routes take effect after merge and fresh session loading,
-not retroactively. Prior ledger entries below retain the model/effort actually used. This routing
-change is not approval of SIG-01's unresolved offline-runtime architecture decision.
+The Astra tiers are optional and preserve the underlying safety class. Escalate review through
+Sol/high, Sol/xhigh, Astra/high, then Astra/xhigh only as evidence requires. Review-only
+escalation leaves the implementer unchanged. An Astra implementer requires fresh independent review
+at the same or stronger Astra tier; only one writer may run. New routes take effect after merge and
+fresh session loading, not retroactively. Prior ledger entries below retain the model/effort actually
+used. This routing change is not approval of any unresolved SIG-01 architecture decision.
 
 Typical reasons to classify or escalate `high` include PIT cutoff/revision semantics, EvidenceBundle
 canonical hashing, deterministic replay/event ordering, ledger/NAV accounting, corporate actions,
@@ -140,18 +142,29 @@ PR IDs.
 | Project-scoped runtime/audit hardening | #9 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | Add the Codex runtime-routing and PR-audit harness | merged as `0dc55016db0a8b972855d3e3e6b9db5f2b1a7708` |
 | Python 3.14 default alignment | #12 | `0dc55016db0a8b972855d3e3e6b9db5f2b1a7708` | Pin the preferred default runtime while preserving Python `>=3.10` compatibility | merged as `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` |
 | Hybrid concurrent agent harness | #17 | `70e4a9af5f040c10fa13b49f3dffc9e68573b7b2` | Add read-only pre-flight/review specialist lanes while preserving serialized production writes | merged as `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd` |
+| GPT-6 Astra max-tier harness | #25 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | Add Astra routing and an optional max implementation/review tier | merged as `7af14f3bba7078f78cc807885b3c169acc6b7da5` |
 
 ## Current master pre-flight evidence
 
-- 2026-09-04 harness-only reconciliation: GitHub main remains `1a185d4035db8807c12c5070c30cfe6d2979d968`.
+- 2026-09-04 cost-balanced harness reconciliation: PR #25 merged as current main
+  `7af14f3bba7078f78cc807885b3c169acc6b7da5`. The user requested a new harness-only PR that restores
+  Sol for the default Master, high/critical implementers, and standard/escalated reviewers while
+  retaining Luna/max for ordinary work and adding explicit Astra/high and Astra/xhigh
+  implementation/review steps for increasingly difficult work. The prior Astra/max tier is removed
+  to control credit use.
+  SIG-01 PR #24 was observed open at `9f1d0b4614fbb77acdd14933d904d8588fd84eb9` during kickoff and is
+  being modified outside this isolated worktree. This task does not inspect, edit, review, merge, or
+  draw a new verdict about that head. Its owning session must reconcile the latest head and evidence.
+
+- Historical PR #25 harness reconciliation: GitHub main was `1a185d4035db8807c12c5070c30cfe6d2979d968`.
   PIT-06 PR #23 is merged. SIG-01 PR #24 remains open at `ba228571c91d17648375d574450454006b66c55b`.
   [Independent review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5487705172)
   is REQUEST CHANGES and the
   [Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5487707009)
-  is DO NOT MERGE. The current user request authorizes an independent routing/configuration PR only;
-  no SIG-01 code, architecture resolution, re-review, or SIG-02 work is performed in this task.
-  Configuration declares Astra routes; successful loading of new named roles must be verified in a
-  fresh session before using them for roadmap work. No max-tier role has been run by this PR.
+  is DO NOT MERGE. That task authorized an independent routing/configuration PR only and performed no
+  SIG-01 code, architecture resolution, re-review, or SIG-02 work. PR #25 declared Astra routes;
+  successful named-role loading remained a fresh-session requirement. This paragraph is preserved as
+  historical evidence and is superseded by the current cost-balanced routing policy above.
 
 - GitHub and `origin/main` were reconciled through post-FND-04 state PR #16 and hybrid-harness PR #17
   at `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd`; no project PR was open before PIT-01.
@@ -195,11 +208,11 @@ PR IDs.
 - No FND-03 or FND-04 blocker remains; both are merged with final exact-head evidence.
 - Foundation FND-01 through FND-04 is complete as implementation/CI evidence only; this does not prove
   PIT correctness, alpha, paper readiness, or live readiness.
-- PIT-01 through PIT-06 are merged. SIG-01 PR #24 remains blocked by HIGH findings: mutable initial
-  state binding, stale ticker alias acceptance, discarded canonical RunContext, and the unrestricted
-  callable runtime boundary. The trade-date horizon also needs an explicit rule. The authoritative
-  review and DO NOT MERGE artifacts are linked above; green CI does not clear them. The pending human
-  architecture decision is preserved. This harness upgrade does not resolve it or authorize SIG-02.
+- PIT-01 through PIT-06 are merged. SIG-01 PR #24 has moved beyond the previously reviewed
+  `ba228571c91d17648375d574450454006b66c55b` head. The prior REQUEST CHANGES and DO NOT MERGE
+  artifacts remain historical evidence but cannot approve or reject the newer head. Its owning
+  session must reconcile the current diff, findings, review, and CI. This harness-only task does not
+  resolve SIG-01 or authorize SIG-02.
 - PIT-06 trusted-input boundary: bundle/domain APIs require concrete validated project models. Hostile
   subclasses overriding `model_dump()` are a nonblocking future hardening item before exposing these
   constructors outside the trusted in-process contract; exact repository and RunContext subclasses

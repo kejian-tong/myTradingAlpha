@@ -24,7 +24,7 @@ For one active roadmap PR:
 - at most **one production-code writer** may be active at a time;
 - RED, GREEN, REFACTOR, and each repair cycle are owned by one named implementer/repair implementer;
 - read-only specialists may run concurrently when their questions are independent;
-- the controlling reviewer is `reviewer_high`, `reviewer_xhigh`, or explicitly escalated `reviewer_max`;
+- the controlling reviewer follows the recorded model tier from `reviewer_high` through `reviewer_astra_xhigh`;
 - specialist reviews add evidence; they do not replace the controlling independent-review artifact;
 - no agent may start a dependency-ordered later roadmap PR before the current PR is merged;
 - no concurrency rule waives paper/live or other explicit human promotion gates.
@@ -59,21 +59,22 @@ it does not occupy a concurrency slot unnecessarily.
 | --- | --- | --- | --- |
 | `code_explorer` | GPT-5.6 Luna / max | read-only | current code paths, symbols, interfaces, doc/code drift |
 | `test_auditor` | GPT-5.6 Luna / max | read-only | TDD contract, tests, negative cases, validation and CI |
-| `boundary_reviewer` | GPT-6 Astra / xhigh | read-only | architecture, scope, compatibility, security and side-effect boundaries |
+| `boundary_reviewer` | GPT-5.6 Sol / high | read-only | architecture, scope, compatibility, security and side-effect boundaries |
 
 Writer and controlling-review routes:
 
 - `normal_implementer` — Luna/max;
-- `high_implementer` — Astra/high;
-- `critical_implementer` — Astra/xhigh;
-- `reviewer_high` — Astra/xhigh;
-- `reviewer_xhigh` — Astra/xhigh (critical/adjudication role);
-- optional `max_implementer` and independent `reviewer_max` — Astra/max.
+- `high_implementer` — Sol/high;
+- `critical_implementer` — Sol/xhigh;
+- `reviewer_high` — Sol/high;
+- `reviewer_xhigh` — Sol/xhigh (critical/adjudication role);
+- optional `astra_high_implementer` and `reviewer_astra_high` — Astra/high;
+- optional `astra_xhigh_implementer` and `reviewer_astra_xhigh` — Astra/xhigh;
 
-For the hardest approved implementation or audits, select `execution_tier: max` with a JIT/state
-reason under AGENTS.md Section 5.2.1. Review-only escalation retains the existing implementer;
-max implementation requires max review. Keep normal/high/critical risk classification and its gates.
-The max writer replaces, never runs alongside, another writer. The concurrency budget is unchanged.
+Select the least expensive adequate `model_tier` under AGENTS.md Section 5.2.1. Review-only escalation
+retains the existing implementer. Astra implementation requires independent review at the same or
+stronger Astra tier. Keep normal/high/critical risk classification and its gates. A replacement writer
+never runs alongside the previous writer. The concurrency budget is unchanged.
 
 ## 5. Phase A — concurrent pre-flight before JIT
 
@@ -114,7 +115,7 @@ Once a candidate PR head is frozen, review lanes may run concurrently **against 
 
 Required lane:
 
-- controlling `reviewer_high`, `reviewer_xhigh`, or `reviewer_max` according to complexity and execution tier.
+- controlling reviewer named by the complexity and recorded model tier.
 
 Default specialist lanes when material to the PR:
 
@@ -148,9 +149,11 @@ If triage finds a material defect:
    irrelevant to the changed surface — but never reuse an old exact-head approval as approval of the
    new SHA.
 
-For repeated ambiguity on a `high` PR, escalate the controlling review to `reviewer_max`. Re-review
-count alone does not make a PR `critical`; critical classification remains tied to safety/external-effect
-risk under `AGENTS.md`.
+For ambiguity, advance review only as evidence requires:
+`reviewer_high -> reviewer_xhigh -> reviewer_astra_high -> reviewer_astra_xhigh`.
+Re-review count alone does not make a PR `critical` or justify Astra. Safety classification remains
+tied to correctness/external-effect risk under `AGENTS.md`; model-tier escalation requires a separate
+recorded reason.
 
 There is no fixed `N` for repair/re-review attempts. Continue only while the scope remains valid and the
 system is converging. Stop under the existing autonomous stop conditions when evidence cannot be made
@@ -175,7 +178,7 @@ Only then may autonomous mode merge an ordinary roadmap PR.
 ## 10. Recommended lifecycle
 
 ```text
-                         MASTER / Astra xhigh
+                          MASTER / Sol xhigh
                                |
               +----------------+----------------+
               |                |                |
