@@ -6,13 +6,40 @@ the opaque evidence/context objects and supplies the only runner that may be inv
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from langchain_core.messages import (
+    AIMessage,
+    ChatMessage,
+    FunctionMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
+
 from .propagation import Propagator
 from .signal_processing import SignalProcessor
 
+_BOUND_FIELDS = (
+    "company_of_interest",
+    "asset_type",
+    "instrument_context",
+    "trade_date",
+    "past_context",
+)
+_SUPPORTED_MESSAGE_TYPES = (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    FunctionMessage,
+    ChatMessage,
+    RemoveMessage,
+)
 _REPORT_FIELDS = (
     "market_report",
     "fundamentals_report",
@@ -170,22 +197,75 @@ def _assert_string_mapping(
             )
 
 
+def _contains_encoded_argument_authority(call: object, field: str) -> bool:
+    if type(call) is not dict or field not in call:
+        raise HistoricalRuntimeOutputError("historical call requires structured arguments")
+    arguments = call[field]
+    if type(arguments) is not str:
+        raise HistoricalRuntimeOutputError("historical call arguments require a JSON object")
+    try:
+        decoded = json.loads(arguments)
+    except ValueError as exc:
+        raise HistoricalRuntimeOutputError("invalid historical call argument JSON") from exc
+    if type(decoded) is not dict:
+        raise HistoricalRuntimeOutputError("historical call arguments require a JSON object")
+    return _contains_authority_field(decoded)
+
+
+def _contains_ai_call_authority(message: AIMessage) -> bool:
+    # Only these known structured argument locations encode JSON. Research prose
+    # and arbitrary metadata strings remain prose and are never parsed as calls.
+    additional = message.additional_kwargs
+    if type(additional) is not dict:
+        raise HistoricalRuntimeOutputError("historical AI metadata requires a plain mapping")
+    if "function_call" in additional and _contains_encoded_argument_authority(
+        additional["function_call"], "arguments"
+    ):
+        return True
+    raw_calls = additional.get("tool_calls", [])
+    if type(raw_calls) is not list or type(message.invalid_tool_calls) is not list:
+        raise HistoricalRuntimeOutputError("historical AI call collections require plain lists")
+    for call in raw_calls:
+        if type(call) is not dict or "function" not in call:
+            raise HistoricalRuntimeOutputError("historical AI call requires a function mapping")
+        if _contains_encoded_argument_authority(call["function"], "arguments"):
+            return True
+    return any(
+        _contains_encoded_argument_authority(call, "args")
+        for call in message.invalid_tool_calls
+    )
+
+
 def _contains_authority_field(value: object) -> bool:
-    if isinstance(value, Mapping):
+    if type(value) in _SUPPORTED_MESSAGE_TYPES:
+        # Inspect concrete message data, including Pydantic extras, without calling
+        # serializers that could execute opaque/custom payload methods.
+        if _contains_authority_field(value.__dict__) or _contains_authority_field(
+            value.__pydantic_extra__
+        ):
+            return True
+        return type(value) is AIMessage and _contains_ai_call_authority(value)
+    if type(value) is dict:
         for key, item in value.items():
-            if isinstance(key, str) and key.lower() in _AUTHORITY_FIELDS:
+            if type(key) is not str:
+                raise HistoricalRuntimeOutputError("historical output requires string data keys")
+            if key.lower() in _AUTHORITY_FIELDS:
                 return True
             if _contains_authority_field(item):
                 return True
-    elif isinstance(value, (list, tuple)):
+    elif type(value) in (list, tuple):
         return any(_contains_authority_field(item) for item in value)
+    elif type(value) not in (str, int, float, bool, type(None)):
+        raise HistoricalRuntimeOutputError(
+            "historical output contains an unsupported opaque data or message object"
+        )
     return False
 
 
 def _validated_final_state(
     output: object,
     *,
-    initial_state: dict[str, object],
+    bound_state: dict[str, object],
 ) -> dict[str, object]:
     if type(output) is not dict:
         raise HistoricalRuntimeOutputError(
@@ -226,14 +306,8 @@ def _validated_final_state(
         required_fields=_RISK_DEBATE_FIELDS,
     )
 
-    for field in (
-        "company_of_interest",
-        "asset_type",
-        "instrument_context",
-        "trade_date",
-        "past_context",
-    ):
-        if final_state.get(field) != initial_state[field]:
+    for field in _BOUND_FIELDS:
+        if final_state.get(field) != bound_state[field]:
             raise HistoricalRuntimeOutputError(
                 f"historical runtime changed bound state field {field}"
             )
@@ -259,8 +333,11 @@ def run_historical(
         asset_type=asset_type,
         instrument_context=instrument_context,
     )
+    # Bound values are strings; this private mapping shares no mutable state with
+    # the runner's input and is never passed to the runner.
+    bound_state = {field: initial_state[field] for field in _BOUND_FIELDS}
     output = checked_runtime.runner(bundle, context, initial_state)
-    final_state = _validated_final_state(output, initial_state=initial_state)
+    final_state = _validated_final_state(output, bound_state=bound_state)
     signal = SignalProcessor().process_signal(final_state["final_trade_decision"])
     return final_state, signal
 

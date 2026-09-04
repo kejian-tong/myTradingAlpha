@@ -54,12 +54,6 @@ def _resolve_instrument(
         if alias.symbol == ticker
         and _active_on(as_of, alias.valid_from, alias.valid_to)
     }
-    candidate_ids.update(
-        item.instrument_id
-        for item in bundle.instruments
-        if item.initial_symbol == ticker
-        and _active_on(as_of, item.active_from, item.active_to)
-    )
     candidates = [
         instrument_by_id[instrument_id]
         for instrument_id in sorted(candidate_ids)
@@ -118,7 +112,7 @@ class ResearchAdapter:
     ) -> tuple[dict[str, object], str]:
         """Replay the exact sealed bundle and invoke the offline seam once."""
 
-        bundle = HistoricalDataGuard.replay(
+        bundle, bound_context = HistoricalDataGuard.replay_bound(
             self._repository,
             bundle_id,
             context,
@@ -132,7 +126,7 @@ class ResearchAdapter:
         return run_historical(
             self._runtime,
             bundle,
-            context,
+            bound_context,
             company_name=ticker,
             trade_date=trade_date,
             asset_type=asset_type,

@@ -75,6 +75,17 @@ class HistoricalDataGuard:
     ) -> EvidenceBundle:
         """Return only the sealed bundle exactly named by a zero-egress context."""
 
+        bundle, _ = HistoricalDataGuard.replay_bound(repository, bundle_id, context)
+        return bundle
+
+    @staticmethod
+    def replay_bound(
+        repository: EvidenceRepository,
+        bundle_id: str,
+        context: RunContext,
+    ) -> tuple[EvidenceBundle, RunContext]:
+        """Return the sealed bundle and defensive canonical context bound to it."""
+
         validated_context = _validated_context(context)
         HistoricalDataGuard.assert_network_denied(validated_context)
         if type(repository) is not EvidenceRepository:
@@ -93,7 +104,7 @@ class HistoricalDataGuard:
             raise HistoricalReplayMismatchError("historical knowledge cutoff mismatch")
         if validated_context.calendar_id != bundle.calendar.calendar_id:
             raise HistoricalReplayMismatchError("historical calendar mismatch")
-        return bundle
+        return bundle, validated_context
 
 
 __all__ = [
