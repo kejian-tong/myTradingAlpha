@@ -227,3 +227,44 @@ def test_opaque_messages_fail_before_custom_serializer(placement):
     with pytest.raises(HistoricalRuntimeOutputError):
         _run_with_message(message)
     assert calls == []
+
+
+@pytest.mark.parametrize("location", ["function_call", "invalid_tool_calls", "raw_tool_calls"])
+@pytest.mark.parametrize("arguments", ['{"nested": [{"order_intents": []}]}', 'not-json', '[{"citation": "e1"}]'])
+def test_encoded_call_arguments_deny_authority_malformed_and_non_object(location, arguments):
+    message = _encoded_call_message(location, arguments)
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+@pytest.mark.parametrize("location", ["function_call", "invalid_tool_calls", "raw_tool_calls"])
+def test_known_encoded_call_arguments_preserve_benign_messages(location):
+    message = _encoded_call_message(location, '{"evidence_id": "e1", "nested": {"period": 2}}')
+    final, signal = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert signal == "Hold"
+
+
+def _encoded_call_message(location, arguments):
+    if location == "function_call":
+        return AIMessage(content="Research", additional_kwargs={
+            "function_call": {"name": "research", "arguments": arguments},
+        })
+    if location == "invalid_tool_calls":
+        return AIMessage(content="Research", invalid_tool_calls=[{
+            "name": "research", "id": "call-1", "args": arguments, "error": "invalid call",
+        }])
+    # A supplied normalized call prevents automatic parsing of the raw call. Both
+    # representations must be inspected even if they disagree.
+    return AIMessage(content="Research", additional_kwargs={"tool_calls": [{
+        "id": "raw-call", "type": "function", "function": {
+            "name": "research", "arguments": arguments,
+        },
+    }]}, tool_calls=[{"name": "research", "id": "call-1", "args": {"evidence_id": "e1"}}])
+
+
+def test_json_looking_research_prose_remains_prose():
+    message = AIMessage(content='Research discussion of {"quantity": 5}',
+                        response_metadata={"description": '{"order_intents": []}'})
+    final, _ = _run_with_message(message)
+    assert final["messages"][-1] is message
