@@ -592,3 +592,57 @@ def test_message_boundary_discarded_or_reclassified_call_content_still_denies(re
         message = _wire_message("constructor", {"role": "human", "content": [block]})
     with pytest.raises(HistoricalRuntimeOutputError):
         _run_with_message(message)
+
+
+@pytest.mark.parametrize("update", [
+    {"type": "function"}, {"type": "invalid_tool_call"}, {"name": None}, {"name": 7},
+    {"id": []},
+])
+def test_message_boundary_mutated_normalized_call_record_denies(update):
+    message = AIMessage(content="Research", tool_calls=[{
+        "type": "tool_call", "name": "research", "id": "call-1", "args": {},
+    }])
+    message.tool_calls[0].update(update)
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+@pytest.mark.parametrize("field", ["invalid_tool_calls", "tool_call_chunks"])
+@pytest.mark.parametrize("arguments", [{"evidence_id": "e1"}, None, []])
+def test_message_boundary_encoded_call_records_require_strings(field, arguments):
+    message = _wire_message("role", {field: [{
+        "name": "research", "id": "call-1", "args": arguments,
+    }]})
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+def test_message_boundary_mutated_concrete_discriminator_denies():
+    message = HumanMessage(content="Research")
+    message.type = "custom"
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+@pytest.mark.parametrize("kind", ["unknown_operation", "custom_tool"])
+def test_message_boundary_unknown_argument_bearing_content_denies(kind):
+    message = _content_message("role", {
+        "type": kind, "name": "research", "args": '{"evidence_id": "e1"}',
+    })
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+def test_message_boundary_cyclic_plain_metadata_denies_with_typed_error():
+    message = {"role": "assistant", "content": "Research", "additional_kwargs": {}}
+    message["additional_kwargs"]["cycle"] = message
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+def test_message_boundary_raw_object_arguments_preserve_original():
+    message = _wire_message("role", _wire_call_fields("tool_calls", {"evidence_id": "e1"}))
+    original = deepcopy(message)
+    final, _ = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert message == original
