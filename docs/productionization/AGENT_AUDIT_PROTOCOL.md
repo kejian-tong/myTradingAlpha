@@ -33,15 +33,31 @@ Do not infer configured actual routing when a generic/default agent was used.
 
 | Complexity | Implementer | Independent reviewer | Configured route |
 | --- | --- | --- | --- |
-| `normal` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
-| `high` | `high_implementer` | `reviewer_high` | Sol/high implementation and review; reviewer may escalate |
-| `critical` | `critical_implementer` | `reviewer_xhigh` | Sol/xhigh implementation and review |
+| `normal` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Astra/xhigh review |
+| `high` | `high_implementer` | `reviewer_high` | Astra/high implementation; Astra/xhigh review |
+| `critical` | `critical_implementer` | `reviewer_xhigh` | Astra/xhigh implementation and review |
+| existing class + explicit `execution_tier: max` | `max_implementer` | `reviewer_max` | Astra/max implementation and independent review |
 
-`gpt-5.6-sol` is the explicit Codex model ID used by the project configuration for GPT-5.6 Sol. The
-normal implementer uses the explicit `gpt-5.6-luna` model ID.
+`gpt-6-astra` is the explicit Codex model ID for GPT-6 Astra. The Master uses Astra/xhigh (Extra High).
+The normal implementer, code explorer, and test auditor retain `gpt-5.6-luna` / max. Existing
+`reviewer_high` and `reviewer_xhigh` names remain compatible; both now use Astra/xhigh, with the latter
+retaining critical/adjudication responsibilities. Historical records retain the routes actually used.
 
-For a high PR whose review remains ambiguous, rerun independent review with `reviewer_xhigh` before the
-master gate.
+For exceptional difficulty or unresolved audit ambiguity, record the max-tier reason and affected
+roles in the JIT/state before spawning. A review-only escalation uses `reviewer_max` and leaves the
+implementer unchanged. A `max_implementer` requires independent `reviewer_max`. Preserve the underlying
+normal/high/critical safety class, one writer, and all stop conditions; escalation is not permission
+to choose a new architecture or pass a human gate. See AGENTS.md Section 5.2.1.
+
+This model/configuration upgrade applies after merge, checkout refresh, and fresh session loading.
+Already running agents retain their loaded routes. A paused roadmap PR may resume on new routes after
+its stop conditions are resolved; the harness PR does not depend on that blocked PR merging first.
+Successful TOML validation alone is not evidence that a new named role was loaded by the runtime.
+
+Model and configuration references:
+
+- https://developers.openai.com/api/docs/models/gpt-6-astra
+- https://learn.chatgpt.com/docs/agent-configuration/subagents
 
 If a required named role cannot be spawned with its project configuration, do not silently substitute a
 generic worker and then claim the intended route. Record `insufficient_evidence` and stop before merge.
@@ -153,7 +169,7 @@ INDEPENDENT AGENT REVIEW
 PR ID: <id>
 PR: #<n>
 reviewed head: <exact SHA>
-reviewer role: reviewer_high|reviewer_xhigh
+reviewer role: reviewer_high|reviewer_xhigh|reviewer_max
 reviewer config: .codex/agents/<file>.toml
 configured model/effort: <model> / <effort>
 JIT implementation spec: <GitHub PR body/comment reference>
@@ -184,6 +200,7 @@ PR ID: <id>
 final head: <exact SHA>
 base main: <exact SHA>
 complexity: normal|high|critical
+execution tier: standard|max (record reason and escalated roles for max)
 JIT implementation spec: <GitHub PR body/comment reference>
 implementer role/configured route: <role> / <model> / <effort>
 reviewer role/configured route: <role> / <model> / <effort>
@@ -205,7 +222,7 @@ exact-head required CI, and this master-gate artifact all exist and pass.
 
 On the next normal `AGENT_STATE.md` update, record at least:
 
-- complexity;
+- complexity and execution tier, including max-tier reason and affected roles when selected;
 - named implementer role and config path;
 - configured actual implementer model/effort;
 - named reviewer role and config path;

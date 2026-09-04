@@ -24,7 +24,7 @@ For one active roadmap PR:
 - at most **one production-code writer** may be active at a time;
 - RED, GREEN, REFACTOR, and each repair cycle are owned by one named implementer/repair implementer;
 - read-only specialists may run concurrently when their questions are independent;
-- the required controlling reviewer remains `reviewer_high` or `reviewer_xhigh` according to complexity;
+- the controlling reviewer is `reviewer_high`, `reviewer_xhigh`, or explicitly escalated `reviewer_max`;
 - specialist reviews add evidence; they do not replace the controlling independent-review artifact;
 - no agent may start a dependency-ordered later roadmap PR before the current PR is merged;
 - no concurrency rule waives paper/live or other explicit human promotion gates.
@@ -59,15 +59,21 @@ it does not occupy a concurrency slot unnecessarily.
 | --- | --- | --- | --- |
 | `code_explorer` | GPT-5.6 Luna / max | read-only | current code paths, symbols, interfaces, doc/code drift |
 | `test_auditor` | GPT-5.6 Luna / max | read-only | TDD contract, tests, negative cases, validation and CI |
-| `boundary_reviewer` | GPT-5.6 Sol / high | read-only | architecture, scope, compatibility, security and side-effect boundaries |
+| `boundary_reviewer` | GPT-6 Astra / xhigh | read-only | architecture, scope, compatibility, security and side-effect boundaries |
 
-Existing writer and controlling-review roles remain unchanged:
+Writer and controlling-review routes:
 
 - `normal_implementer` — Luna/max;
-- `high_implementer` — Sol/high;
-- `critical_implementer` — Sol/xhigh;
-- `reviewer_high` — Sol/high;
-- `reviewer_xhigh` — Sol/xhigh.
+- `high_implementer` — Astra/high;
+- `critical_implementer` — Astra/xhigh;
+- `reviewer_high` — Astra/xhigh;
+- `reviewer_xhigh` — Astra/xhigh (critical/adjudication role);
+- optional `max_implementer` and independent `reviewer_max` — Astra/max.
+
+For the hardest approved implementation or audits, select `execution_tier: max` with a JIT/state
+reason under AGENTS.md Section 5.2.1. Review-only escalation retains the existing implementer;
+max implementation requires max review. Keep normal/high/critical risk classification and its gates.
+The max writer replaces, never runs alongside, another writer. The concurrency budget is unchanged.
 
 ## 5. Phase A — concurrent pre-flight before JIT
 
@@ -108,7 +114,7 @@ Once a candidate PR head is frozen, review lanes may run concurrently **against 
 
 Required lane:
 
-- controlling `reviewer_high` or `reviewer_xhigh` according to current complexity and escalation state.
+- controlling `reviewer_high`, `reviewer_xhigh`, or `reviewer_max` according to complexity and execution tier.
 
 Default specialist lanes when material to the PR:
 
@@ -142,7 +148,7 @@ If triage finds a material defect:
    irrelevant to the changed surface — but never reuse an old exact-head approval as approval of the
    new SHA.
 
-For repeated ambiguity on a `high` PR, escalate the controlling review to `reviewer_xhigh`. Re-review
+For repeated ambiguity on a `high` PR, escalate the controlling review to `reviewer_max`. Re-review
 count alone does not make a PR `critical`; critical classification remains tied to safety/external-effect
 risk under `AGENTS.md`.
 
@@ -169,7 +175,7 @@ Only then may autonomous mode merge an ordinary roadmap PR.
 ## 10. Recommended lifecycle
 
 ```text
-                         MASTER / Sol xhigh
+                         MASTER / Astra xhigh
                                |
               +----------------+----------------+
               |                |                |
@@ -212,9 +218,11 @@ This is a hybrid-concurrent workflow, not a multi-writer workflow.
 
 ## 11. Activation and migration
 
-This policy is prospective. A roadmap PR already running under the prior loaded harness should finish
-without mid-PR orchestration changes. After that PR merges, merge this harness change, refresh `main`,
-and start a **fresh master session** so project-scoped agent configuration is loaded from the new base.
+This policy is prospective. Running agents keep their loaded routes; prior model/review evidence is
+not relabeled. After this independent harness PR merges, refresh the relevant checkout with `main`
+and start a **fresh master session** to load the new configuration. A paused PR may resume with new
+agents after its stop conditions are resolved; do not require a blocked PR to merge before this
+harness update. Verify named-role availability on resume and record actual loading evidence.
 
 No production/runtime migration is involved. Rollback is simply reverting this harness/config change;
 production code and roadmap architecture remain unchanged.

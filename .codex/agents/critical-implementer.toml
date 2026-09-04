@@ -1,6 +1,6 @@
 name = "critical_implementer"
 description = "Required implementation agent for critical myTradingAlpha productionization PRs involving safety, reconciliation, idempotency, broker-write, or promotion boundaries."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "xhigh"
 
 developer_instructions = """

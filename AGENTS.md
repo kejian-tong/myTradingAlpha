@@ -185,10 +185,12 @@ appropriate model for each role and PR while avoiding unnecessary flagship-model
 
 | Role | Requested model | Requested reasoning effort |
 | --- | --- | --- |
-| Master/orchestrator | GPT-5.6 Sol | xhigh / Extra High |
+| Master/orchestrator | GPT-6 Astra | xhigh / Extra High |
 | Normal implementer | GPT-5.6 Luna | max |
-| Independent reviewer | GPT-5.6 Sol | high |
-| Escalated adjudication | GPT-5.6 Sol | xhigh / Extra High |
+| High implementer | GPT-6 Astra | high |
+| Critical implementer | GPT-6 Astra | xhigh / Extra High |
+| Independent reviewer / boundary reviewer | GPT-6 Astra | xhigh / Extra High |
+| Exceptional implementation / audit escalation (opt-in) | GPT-6 Astra | max |
 
 Reasoning-effort labels may differ by runtime. Treat `xhigh` and UI wording such as `Extra High` as the
 same intended tier when appropriate. Never falsely claim the runtime used a requested model/effort.
@@ -205,8 +207,8 @@ scaffolding, straightforward configuration plumbing, documentation/CI tooling, a
 Requested routing:
 
 - implementer: **GPT-5.6 Luna / max**;
-- reviewer: **GPT-5.6 Sol / high**;
-- master: **GPT-5.6 Sol / xhigh**.
+- reviewer: **GPT-6 Astra / xhigh** (`reviewer_high`);
+- master: **GPT-6 Astra / xhigh**.
 
 #### `high`
 
@@ -215,9 +217,9 @@ statistical, or architecture-correctness risk.
 
 Requested routing:
 
-- implementer: **GPT-5.6 Sol / high**;
-- reviewer: **GPT-5.6 Sol / high**; promote reviewer to xhigh when ambiguity remains;
-- master: **GPT-5.6 Sol / xhigh**.
+- implementer: **GPT-6 Astra / high**;
+- reviewer: **GPT-6 Astra / xhigh** (`reviewer_high`); use `reviewer_max` for unresolved audit ambiguity;
+- master: **GPT-6 Astra / xhigh**.
 
 Typical `high` candidates include:
 
@@ -238,9 +240,9 @@ reconciliation/idempotency guarantees, or invalidate a promotion gate.
 
 Requested routing:
 
-- implementer: **GPT-5.6 Sol / xhigh**;
-- reviewer: **GPT-5.6 Sol / xhigh** in a fresh independent context;
-- master: **GPT-5.6 Sol / xhigh**.
+- implementer: **GPT-6 Astra / xhigh**;
+- reviewer: **GPT-6 Astra / xhigh** (`reviewer_xhigh`) in a fresh independent context;
+- master: **GPT-6 Astra / xhigh**.
 
 Typical `critical` candidates include:
 
@@ -253,6 +255,32 @@ Typical `critical` candidates include:
 
 `critical` model routing does **not** waive any human paper/live approval gate.
 
+### 5.2.1 Exceptional difficulty: optional `max` execution tier
+
+Use Luna/max, Astra/high, and Astra/xhigh for the existing implementation classes. For exceptionally difficult
+implementation or audit work, the Master may explicitly select the additional `max` execution tier:
+
+- `max_implementer` / `.codex/agents/max-implementer.toml` — **GPT-6 Astra / max**;
+- `reviewer_max` / `.codex/agents/reviewer-max.toml` — **GPT-6 Astra / max**, fresh and independent;
+- Master remains **GPT-6 Astra / xhigh** unless the user explicitly changes its session setting.
+
+Use this tier when approved work has tightly coupled architecture/temporal/concurrency invariants,
+repeated subtle correctness findings, or conflicting audit evidence that needs deeper adjudication.
+Record `execution_tier: max`, the evidence-based reason, and which roles are escalated in the JIT and
+`AGENT_STATE.md` before spawning. A review-only escalation keeps the current implementer; selecting
+`max_implementer` requires `reviewer_max`. Stop the previous writer before dispatching a replacement.
+Do not choose max merely because a PR is large or slots are available.
+
+`max` is an execution tier, not a fourth safety class. Preserve `normal|high|critical` and every gate
+attached to that class. It does not authorize a redesign, clear a human decision, widen the PR, or
+change paper/live approval requirements. If the selected named route cannot be loaded, record
+`insufficient_evidence` and stop before merge; do not silently fall back to a weaker route.
+
+Keep `reviewer_high` and `reviewer_xhigh` as stable role names for existing orchestration calls. Both
+now configure Astra/xhigh; the latter retains critical/adjudication responsibilities. Use
+`reviewer_max` when stronger reasoning than xhigh is required. Historical Sol reviews keep their
+original model/effort labels.
+
 ### 5.3 Dynamic escalation rules
 
 The master chooses complexity from the actual current diff/scope, not merely the phase name. Do not
@@ -264,6 +292,9 @@ The master may escalate at any time when investigation/review reveals hidden com
 ```text
 normal -> high -> critical
 ```
+
+Separately, escalate execution from `standard` to `max` under Section 5.2.1 without changing the
+underlying safety class. Model escalation does not resolve any autonomous stop condition by itself.
 
 Examples that justify escalation:
 
@@ -280,9 +311,10 @@ record the reason in `AGENT_STATE.md`.
 ### 5.4 Reviewer independence and model diversity
 
 Fresh context independence is mandatory even when implementer and reviewer use the same model tier.
-For normal PRs, prefer model diversity by using Luna/max to implement and Sol/high to review. For
-high/critical PRs, stronger Sol-based implementation is acceptable, but the reviewer must still be a
-separate fresh context and must inspect the diff/tests/evidence independently.
+For normal PRs, use Luna/max implementation and Astra/xhigh review. For high/critical PRs, use the
+configured Astra/high or Astra/xhigh implementer and Astra/xhigh review. In the optional max tier, both roles may use
+Astra/max, but the reviewer must still be a separate fresh context and inspect diff/tests/evidence
+independently.
 
 The master is not a substitute for the independent reviewer; it is a final gate after review.
 
@@ -302,6 +334,17 @@ runtime cannot select the requested model or reasoning level:
 
 Model names and available effort tiers may evolve. Update this section when the supported model fleet
 changes; do not rewrite the 47 architecture PR definitions merely to change agent routing.
+
+### 5.6 Activating routing changes
+
+Model configuration edits apply to fresh sessions that actually load the updated trusted checkout.
+They do not switch a running agent's model. After the harness PR merges, refresh the relevant checkout
+with main and start a fresh Master session. Resume a paused PR with new agents only after its existing
+stop conditions are resolved and the loaded routes are recorded; a blocked PR need not merge before
+an independent harness update. Keep all previous review/model evidence intact and obtain new review
+and CI for any new head. A configured route is not proof of a successful spawn.
+Future PRs use these routes once loaded. Do not reopen, re-review, or rewrite completed PRs merely
+because the harness changed; reconcile only stale operational status from GitHub evidence.
 
 ---
 

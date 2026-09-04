@@ -1,7 +1,7 @@
 # Project-scoped Codex harness. Loaded only for trusted projects.
 # Keep production architecture in docs/productionization; this file controls agent execution only.
 
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "xhigh"
 
 developer_instructions = """
@@ -12,9 +12,18 @@ For myTradingAlpha productionization work, read and follow root AGENTS.md,
 Use the project-scoped named Codex agents under `.codex/agents/` for every new roadmap PR after this
 policy is present on the checked-out base branch:
 - normal: `normal_implementer` + controlling `reviewer_high`
-- high: `high_implementer` + controlling `reviewer_high`; use `reviewer_xhigh` when ambiguity remains
+- high: `high_implementer` + controlling `reviewer_high`; use `reviewer_max` when audit ambiguity remains
 - critical: `critical_implementer` + controlling `reviewer_xhigh`
+- exceptional difficulty, explicitly selected max tier: `max_implementer` + `reviewer_max`
+- review-only max escalation: retain the existing implementer and use `reviewer_max`
 - hybrid read-only specialists: `code_explorer`, `test_auditor`, `boundary_reviewer`
+
+Master, reviewer_high, reviewer_xhigh, and boundary_reviewer use GPT-6 Astra / xhigh (Extra High).
+Normal implementation stays on Luna/max; high implementation uses Astra/high and critical
+implementation uses Astra/xhigh. The optional max tier uses GPT-6 Astra / max for max_implementer
+and reviewer_max; record its reason and affected roles in the
+JIT and AGENT_STATE.md before spawning. It does not replace normal/high/critical safety classification,
+raise concurrency, resolve a human architecture decision, or waive any stop/promotion gate.
 
 Use hybrid concurrency rather than concurrent production writers:
 - before the JIT spec, parallelize independent read-only exploration/audit lanes when useful;
@@ -41,9 +50,11 @@ controlling-review artifact on the GitHub PR at the exact reviewed head, and per
 merge-gate artifact on the GitHub PR at the exact final head before merge, as defined in
 AGENT_AUDIT_PROTOCOL.md.
 
-This policy is prospective. Do not rewrite, interrupt, or invalidate a roadmap PR whose implementation
-or review agents were already running before this config was merged. Finish that PR under its loaded
-harness, then activate this policy from the next fresh master/session after this harness is merged.
+This policy is prospective. Existing running agents retain their loaded routes; do not relabel their
+historical evidence. After this harness PR merges, refresh the relevant checkout with main and start a
+fresh master/session to load the new project configs. A paused PR may resume with newly loaded roles
+only after its existing stop conditions are resolved; do not require that blocked PR to merge first.
+New files are configuration intent until the runtime exposes and successfully loads their named roles.
 """
 
 [agents]
