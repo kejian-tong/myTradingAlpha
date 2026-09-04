@@ -1110,3 +1110,35 @@ def test_action_union_remains_exactly_the_existing_pit_05_types() -> None:
         DividendAction,
     }
     assert DelistingAction not in {type(action) for action in _actions()}
+
+
+def test_replay_bound_returns_defensive_canonical_context_and_legacy_bundle(monkeypatch):
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    context = _context(bundle)
+    payload = context.model_dump(mode="json")
+    raw = RunContext.model_construct(**payload)
+
+    replayed, bound = HistoricalDataGuard.replay_bound(repository, bundle.bundle_id, raw)
+    assert type(replayed) is EvidenceBundle
+    assert replayed == bundle
+    assert type(bound) is RunContext
+    assert bound == context and bound is not raw
+    assert bound.mode is Mode.HISTORICAL
+    assert type(bound.network_policy) is NetworkPolicy
+    assert bound.knowledge_cutoff.tzinfo is timezone.utc
+    assert type(raw.network_policy) is dict
+    assert type(raw.knowledge_cutoff) is str
+    assert tuple(inspect.signature(HistoricalDataGuard.replay_bound).parameters) == (
+        "repository", "bundle_id", "context",
+    )
+    calls = []
+
+    def already_bound(supplied_repository, supplied_id, supplied_context):
+        calls.append((supplied_repository, supplied_id, supplied_context))
+        return replayed, bound
+
+    monkeypatch.setattr(HistoricalDataGuard, "replay_bound", staticmethod(already_bound))
+    legacy = HistoricalDataGuard.replay(repository, bundle.bundle_id, raw)
+    assert legacy is replayed
+    assert calls == [(repository, bundle.bundle_id, raw)]

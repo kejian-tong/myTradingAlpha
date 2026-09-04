@@ -684,9 +684,23 @@ def test_ambiguous_sealed_instrument_identity_fails_closed() -> None:
             ),
         }
     )
+    alias = baseline.aliases[0]
+    ambiguous_aliases = tuple(
+        alias.model_copy(update={
+            "alias_id": f"alias-{instrument_id}",
+            "instrument_id": instrument_id,
+            "symbol": "AAPL",
+            "manifest": alias.manifest.model_copy(update={
+                "manifest_id": f"alias-{instrument_id}-r0",
+                "source_locator": f"fixture://universe/aliases/{instrument_id}/r0",
+            }),
+        })
+        for instrument_id in ("AAPL", "AAPL-DUP")
+    )
     bundle = build_fixture_bundle(
         bundle_id="bundle-ambiguous-aapl",
         instrument_candidates=(*fixture_candidate_fields()["instrument_candidates"], duplicate),
+        alias_candidates=(*fixture_candidate_fields()["alias_candidates"], *ambiguous_aliases),
     )
     context = _context(bundle)
     repository = EvidenceRepository()
