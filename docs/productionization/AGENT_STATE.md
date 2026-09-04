@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `7af14f3bba7078f78cc807885b3c169acc6b7da5`
-- `roadmap_status`: `sig_01_repaired_candidate_runtime_and_horizon_blocked`
+- `roadmap_status`: `sig_01_max_h5_repair_runtime_and_horizon_blocked`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -230,6 +230,31 @@ PR IDs.
   rule has been implemented. Completing them requires approval before dependent implementation.
 - Scope remains existing SIG-01 PR #24 only; SIG-02 has no branch, RED, JIT, PR, or implementation.
   Current/next work is blocked SIG-01; last completed roadmap PR remains PIT-06.
+
+## SIG-01 max implementation escalation — 2026-09-04
+
+- [Fresh max review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547725878)
+  independently reviewed `f119f284fd2faa952364a7380b533fb8306bd117`: H1/H2/H3 CLOSED; H5 remains
+  HIGH for plain message dictionaries and mutated normalized call arguments. H4 remains HIGH;
+  M1 remains MEDIUM/human decision. This supersedes the prior provisional local H5 repair claim.
+- That fresh `reviewer_max` loaded `gpt-6-astra / max`, independently re-ran all five original/repair
+  REDs, focused 196, full 1412/2 skipped, static checks and a clean offline wheel. All 11 CI checks
+  passed at that head: CI `33929795577`, CodeQL `33929795487`, Dependency Review `33929795612`.
+- Complexity remains `high`; `execution_tier: max` now applies to implementation AND fresh
+  independent review. Reason: repeated concrete output-authority gaps across concrete messages,
+  plain/wire representations, encoded versus normalized call arguments, and normalization/shadowing
+  semantics require a coherent finite representation boundary. This does not change runtime trust,
+  clear a human gate, or expand beyond the H5 output invariant.
+- [Max H5 repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547726002)
+  authorizes only `tradingagents/graph/historical.py` and the existing adapter repair test file.
+  Selected writer: `max_implementer`, `.codex/agents/max-implementer.toml`, requested
+  `gpt-6-astra / max`; runtime catalog exposes the role, dispatch/loading pending at this checkpoint.
+  Previous `high_implementer` stopped after `9e3875035d585c77e8d2632ad08e94b161521232` and is not
+  running concurrently. Only one new production writer may run. Final reviewer must be a fresh
+  `reviewer_max`, configured `gpt-6-astra / max`; Master remains `gpt-6-astra / xhigh`.
+- Validation must cover original data before normalization, safe canonical views, exact normalized
+  argument shapes, shadowed call fields, compatible benign outputs, and no custom deserializers.
+  Repair RED must precede GREEN. H4/M1 and the unapproved amendment remain excluded; no SIG-02 work.
 
 ## Current master pre-flight evidence
 
