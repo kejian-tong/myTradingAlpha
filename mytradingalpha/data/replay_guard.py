@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime as _datetime, timezone as _timezone
 
 from pydantic import ValidationError
 
-from mytradingalpha.contracts.schemas import Mode, RunContext
+from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 
 from .bundle import EvidenceBundle
 from .repository import EvidenceRepository
@@ -18,6 +19,34 @@ _NETWORK_COMPONENTS = (
     "research_tool_egress",
     "paper_broker_egress",
     "live_broker_egress",
+)
+_RUN_CONTEXT_FIELDS = (
+    "schema_version",
+    "run_id",
+    "mode",
+    "variant_id",
+    "decision_time",
+    "knowledge_cutoff",
+    "earliest_execution_time",
+    "bundle_id",
+    "bundle_hash",
+    "calendar_id",
+    "base_currency",
+    "network_policy",
+)
+_RUN_CONTEXT_STRING_FIELDS = (
+    "schema_version",
+    "run_id",
+    "variant_id",
+    "bundle_id",
+    "bundle_hash",
+    "calendar_id",
+    "base_currency",
+)
+_RUN_CONTEXT_TIME_FIELDS = (
+    "decision_time",
+    "knowledge_cutoff",
+    "earliest_execution_time",
 )
 
 
@@ -33,21 +62,82 @@ class HistoricalReplayMismatchError(HistoricalDataGuardError):
     """Raised when a context does not bind the exact requested sealed bundle."""
 
 
-def _validated_context(context: object) -> RunContext:
+def _exact_fields(
+    value: dict[object, object], expected: tuple[str, ...], *, label: str
+) -> dict[str, object]:
+    keys = tuple(dict.keys(value))
+    if any(type(key) is not str for key in keys) or set(keys) != set(expected):
+        raise HistoricalReplayDeniedError(f"invalid {label} field set")
+    return {field: dict.__getitem__(value, field) for field in expected}
+
+
+def _is_exact_utc_datetime(value: object) -> bool:
+    return type(value) is _datetime and object.__getattribute__(value, "tzinfo") is _timezone.utc
+
+
+def _safe_network_policy(value: object) -> dict[str, bool]:
+    if type(value) is NetworkPolicy:
+        raw = object.__getattribute__(value, "__dict__")
+        if type(raw) is not dict:
+            raise HistoricalReplayDeniedError("invalid historical NetworkPolicy storage")
+        fields = _exact_fields(raw, _NETWORK_COMPONENTS, label="historical NetworkPolicy")
+    elif type(value) is dict:
+        fields = _exact_fields(value, _NETWORK_COMPONENTS, label="historical NetworkPolicy")
+    else:
+        raise HistoricalReplayDeniedError(
+            "historical replay requires an exact NetworkPolicy or dictionary"
+        )
+    if any(type(fields[field]) is not bool for field in _NETWORK_COMPONENTS):
+        raise HistoricalReplayDeniedError("historical NetworkPolicy requires exact boolean values")
+    return {field: fields[field] for field in _NETWORK_COMPONENTS}  # type: ignore[misc]
+
+
+def _safe_context_fields(context: object) -> dict[str, object]:
     if type(context) is not RunContext:
         raise HistoricalReplayDeniedError(
             "historical replay requires the exact frozen RunContext type"
         )
+    raw = object.__getattribute__(context, "__dict__")
+    if type(raw) is not dict:
+        raise HistoricalReplayDeniedError("invalid historical RunContext storage")
+    fields = _exact_fields(raw, _RUN_CONTEXT_FIELDS, label="historical RunContext")
+    if any(type(fields[field]) is not str for field in _RUN_CONTEXT_STRING_FIELDS):
+        raise HistoricalReplayDeniedError(
+            "historical RunContext scalar fields require exact strings"
+        )
+    if type(fields["mode"]) not in (str, Mode):
+        raise HistoricalReplayDeniedError(
+            "historical RunContext mode requires an exact string or Mode"
+        )
+    if any(
+        type(fields[field]) is not str and not _is_exact_utc_datetime(fields[field])
+        for field in _RUN_CONTEXT_TIME_FIELDS
+    ):
+        raise HistoricalReplayDeniedError(
+            "historical RunContext times require exact strings or UTC datetimes"
+        )
+    fields["network_policy"] = _safe_network_policy(fields["network_policy"])
+    return fields
+
+
+def _validated_context(context: object) -> RunContext:
     try:
-        payload = context.model_dump(mode="python")
-        validated = RunContext.model_validate(payload)
+        validated = RunContext.model_validate(_safe_context_fields(context))
     except (TypeError, ValidationError, ValueError) as exc:
         raise HistoricalReplayDeniedError("invalid historical RunContext") from exc
 
+    if type(validated) is not RunContext:
+        raise HistoricalReplayDeniedError("invalid canonical historical RunContext type")
+    canonical = _safe_context_fields(validated)
+    if type(canonical["mode"]) is not Mode:
+        raise HistoricalReplayDeniedError("historical RunContext mode did not normalize")
+    if any(not _is_exact_utc_datetime(canonical[field]) for field in _RUN_CONTEXT_TIME_FIELDS):
+        raise HistoricalReplayDeniedError("historical RunContext times did not normalize to UTC")
+    if type(object.__getattribute__(validated, "network_policy")) is not NetworkPolicy:
+        raise HistoricalReplayDeniedError("historical NetworkPolicy did not normalize")
+
     if _CANONICAL_HASH.fullmatch(validated.bundle_hash) is None:
-        raise HistoricalReplayDeniedError(
-            "historical RunContext requires a canonical bundle hash"
-        )
+        raise HistoricalReplayDeniedError("historical RunContext requires a canonical bundle hash")
     return validated
 
 
@@ -60,8 +150,7 @@ class HistoricalDataGuard:
 
         validated = _validated_context(context)
         if validated.mode is not Mode.HISTORICAL or any(
-            getattr(validated.network_policy, component)
-            for component in _NETWORK_COMPONENTS
+            getattr(validated.network_policy, component) for component in _NETWORK_COMPONENTS
         ):
             raise HistoricalReplayDeniedError(
                 "historical replay requires historical mode and zero network egress"
@@ -86,6 +175,10 @@ class HistoricalDataGuard:
     ) -> tuple[EvidenceBundle, RunContext]:
         """Return the sealed bundle and defensive canonical context bound to it."""
 
+        if type(bundle_id) is not str:
+            raise HistoricalReplayDeniedError(
+                "historical replay requires an exact bundle ID string"
+            )
         validated_context = _validated_context(context)
         HistoricalDataGuard.assert_network_denied(validated_context)
         if type(repository) is not EvidenceRepository:

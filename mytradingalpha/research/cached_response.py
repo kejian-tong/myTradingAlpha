@@ -72,6 +72,16 @@ _RESPONSE_STRING_FIELDS = (
     "runtime_manifest_hash",
     "output_hash",
 )
+_CACHED_SELECTION_FIELDS = (
+    "response_id",
+    "expected_response_hash",
+    "graph_artifact_id",
+    "graph_artifact_hash",
+    "model_artifact_id",
+    "model_artifact_hash",
+    "runtime_manifest_id",
+    "runtime_manifest_hash",
+)
 
 
 class CachedGraphResponseError(ValueError):
@@ -353,6 +363,46 @@ def _safe_response_input(value: object) -> dict[str, object]:
     fields["output"] = _bounded_plain(fields["output"])
     fields["capture_manifest"] = _safe_source_manifest(fields["capture_manifest"])
     return fields
+
+
+def _safe_cached_selection(value: object) -> CachedGraphSelection:
+    if type(value) is not CachedGraphSelection:
+        raise CachedGraphResponseMismatchError("cached response requires exact selection type")
+    raw = object.__getattribute__(value, "__dict__")
+    if type(raw) is not dict:
+        raise CachedGraphResponseMismatchError("invalid cached response selection storage")
+    try:
+        fields = _exact_dict_fields(
+            raw, _CACHED_SELECTION_FIELDS, label="cached response selection"
+        )
+    except CachedGraphResponseCorruptionError as exc:
+        raise CachedGraphResponseMismatchError("invalid cached response selection fields") from exc
+    if any(type(fields[field]) is not str for field in _CACHED_SELECTION_FIELDS):
+        raise CachedGraphResponseMismatchError(
+            "cached response selection requires exact string fields"
+        )
+    try:
+        selection = CachedGraphSelection.model_validate(dict(fields))
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise CachedGraphResponseMismatchError("invalid cached response selection") from exc
+    if type(selection) is not CachedGraphSelection:
+        raise CachedGraphResponseMismatchError(
+            "cached response selection did not normalize to an exact type"
+        )
+    safe_storage = object.__getattribute__(selection, "__dict__")
+    if type(safe_storage) is not dict:
+        raise CachedGraphResponseMismatchError("invalid cached response selection storage")
+    try:
+        safe_fields = _exact_dict_fields(
+            safe_storage, _CACHED_SELECTION_FIELDS, label="cached response selection"
+        )
+    except CachedGraphResponseCorruptionError as exc:
+        raise CachedGraphResponseMismatchError(
+            "invalid canonical cached response selection fields"
+        ) from exc
+    if any(type(safe_fields[field]) is not str for field in _CACHED_SELECTION_FIELDS):
+        raise CachedGraphResponseMismatchError("cached response selection fields did not normalize")
+    return selection
 
 
 def _duplicate_rejecting_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -666,8 +716,7 @@ class CachedGraphResponseRepository:
         asset_type: str,
         instrument_context: str,
     ) -> CachedGraphResponse:
-        if type(selection) is not CachedGraphSelection:
-            raise CachedGraphResponseMismatchError("cached response requires exact selection type")
+        checked_selection = _safe_cached_selection(selection)
         string_bindings = (
             bundle_id,
             bundle_hash,
@@ -683,7 +732,7 @@ class CachedGraphResponseRepository:
             raise CachedGraphResponseMismatchError(
                 "cached response replay bindings require exact strings"
             )
-        if type(knowledge_cutoff) is not datetime:
+        if not _is_exact_utc_datetime(knowledge_cutoff):
             raise CachedGraphResponseMismatchError(
                 "cached response replay requires exact UTC cutoff type"
             )
@@ -691,12 +740,6 @@ class CachedGraphResponseRepository:
             raise CachedGraphResponseMismatchError(
                 "cached response replay requires exact policy type"
             )
-        try:
-            checked_selection = CachedGraphSelection.model_validate(
-                selection.model_dump(mode="python")
-            )
-        except (TypeError, ValidationError, ValueError) as exc:
-            raise CachedGraphResponseMismatchError("invalid cached response selection") from exc
         with self._lock:
             raw = self._records.get(checked_selection.response_id)
             if raw is None:
