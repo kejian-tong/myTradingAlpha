@@ -655,3 +655,21 @@ def test_message_boundary_original_metadata_shape_denies_before_erasure(represen
     message = _wire_message(representation, {field: metadata})
     with pytest.raises(HistoricalRuntimeOutputError):
         _run_with_message(message)
+
+
+@pytest.mark.parametrize("event_type", ["earnings_call", "conference_call"])
+@pytest.mark.parametrize("encoded", [False, True], ids=["normalized", "encoded"])
+def test_message_boundary_benign_event_types_are_not_execution_blocks(event_type, encoded):
+    if encoded:
+        arguments = f'{{"type": "{event_type}", "evidence_id": "e1"}}'
+        message = _wire_message("role", _wire_call_fields("tool_calls", arguments))
+    else:
+        message = AIMessage(content="Research", tool_calls=[{
+            "name": "research", "id": "event-1",
+            "args": {"type": event_type, "evidence_id": "e1"},
+        }])
+    original = deepcopy(message)
+    final, signal = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert message == original
+    assert signal == "Hold"
