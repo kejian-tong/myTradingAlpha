@@ -7,12 +7,12 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `a614b8a27c6a822477235304f4749dc9c8163165`
+- `last_reconciled_main_sha`: `fcdebebbb1ea667b255d97f6350fad2e0d0ae2d8`
 - `roadmap_status`: `sig_01_merged_stopped`
 - `current_pr_id`: none (no active roadmap implementation)
 - `next_pr_id`: `SIG-02` (informational; requires fresh authorization and reconciled gates)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: disabled; no new roadmap authorization
+- `autonomy_mode`: disabled for roadmap execution
 - `last_completed_roadmap_pr`: `SIG-01`
 - `stop_after_pr_id`: `SIG-01` (satisfied; do not auto-start SIG-02)
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
@@ -24,11 +24,36 @@ contracts before any newly authorized roadmap work.
 - `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
 - `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
-- `active_gpt6_routes`: `none (temporarily disabled)`
+- `active_gpt6_routes`: `none (temporarily disabled in the project harness)`
 
-The user authorized audit remediation and PR creation on 2026-09-05, not roadmap continuation or
-merge. Maintenance PRs are outside the 47 slices. Their current exact heads, tests and CI belong in
-their PR conversations; this checkpoint does not claim they have merged or passed independent review.
+## Current maintenance checkpoint
+
+The user authorized audit remediation A01-A12 on 2026-09-05 and explicitly updated the instruction
+at `2026-09-05T18:20:41Z`: verify and merge one passing remediation PR, refresh main, then proceed to
+the next. Independent PR review is waived **only for this bounded remediation batch**. This is an
+explicit current-user exception, not an independent APPROVE, permanent routing change, or permission
+to execute SIG-02. It does not waive required CI, branch protections, architecture invariants or
+paper/live approval. The waiver expires when this batch stops or completes and is not inherited by
+a future roadmap session merely because it appears in this file.
+
+The current session directly implements/verifies through the GitHub connector; no named Codex spawn,
+reasoning-effort switch, independent reviewer or backend route telemetry is claimed. Project Luna/Sol
+configuration remains unchanged. Older PR bodies saying no merge authorized are superseded for this
+batch by the explicit user update and the recorded merge-gate comments.
+
+| Maintenance scope | PR | Exact validated head | Actual merge / current state |
+| --- | --- | --- | --- |
+| REM-01 / A01-A03 runtime boundaries | #28 | `f76e18b8669160df420c7fa51a0e95485f07c7d7` | `1d467cb4edfcbb322cbdd45baeefdbaede816495`; merged, main refreshed |
+| REM-02 / A04-A06 validation boundaries | #29 | `8624c9502258d7e06ec3a1229cae532021e3efbf` | `fcdebebbb1ea667b255d97f6350fad2e0d0ae2d8`; merged after fresh integration CI |
+| REM-03 / A07 and state reconciliation | #30 | frozen candidate recorded in PR conversation | current maintenance; final integrated CI/merge pending |
+| REM-04 / A08-A12 design handoffs | not started | none | only after REM-03 is verified and merged |
+
+REM-01 CI/CodeQL/Dependency Review: `33980970330` / `33980970259` / `33980970220`.
+REM-02 fresh integration CI/CodeQL/Dependency Review: `33984025011` / `33984025097` / `33984025007`.
+The complete diffs, RED/GREEN history, limits and merge decisions remain in the respective PRs.
+Optional live-provider/Bedrock skips are not passed integrations. Local focused results use a
+non-locked environment; the complete locked matrix comes from GitHub Actions. No alpha or promotion
+claim follows from these results.
 
 ## Roadmap PR ledger
 
@@ -36,8 +61,8 @@ The completed Foundation/PIT rows below are a compact index. Exact original base
 requested/configured-actual/unknown routes, tests, CI, reviews, Master gates and deferred findings
 remain in the [immutable pre-remediation ledger](https://github.com/kejian-tong/myTradingAlpha/blob/a614b8a27c6a822477235304f4749dc9c8163165/docs/productionization/AGENT_STATE.md#roadmap-pr-ledger)
 and linked PR conversations. No historical route or test is relabeled as a current run. FND-01/02
-unknown runtime fields remain unknown in that evidence; later configured-actual records retain their
-successful-loading scope, not a newly invented telemetry claim.
+unknown runtime fields remain unknown; later configured-actual records retain their successful-loading
+scope, not a newly invented telemetry claim.
 
 | Roadmap ID | PR | Actual merge SHA | Evidence status |
 | --- | --- | --- | --- |
@@ -88,14 +113,16 @@ still controls closed replay and the UTC cutoff-date rule.
 5. Do not create a duplicate PR. Adopt an existing authorized task only after its owner is stopped.
 6. Required named-role unavailability or conflicting runtime route evidence is insufficient_evidence.
    Do not substitute a generic worker; an alternative needs explicit user approval and fresh review.
-7. Freeze the candidate, independently review it, verify exact-head/base/tree CI and persist the Master
-   gate before any separately authorized merge. A state-only commit invalidates prior approval too.
+7. Under the normal roadmap policy, freeze and independently review the candidate, verify exact
+   head/base/tree CI and persist the Master gate before any separately authorized merge. Any explicit
+   current-user maintenance exception must be narrowly recorded, never forged as a review or reused.
 
 Review/CI results after a frozen checkpoint are recorded in its PR conversation. Reconcile them in
 the next authorized state update. Do not create a commit merely to record its own unknowable final
 SHA, and do not add a state-only PR after every merge solely to force a self-referential checkpoint.
-The offline harness checker tests policy predicates only; permissions, successful role loading,
-writer termination and evidence authenticity must be verified in the actual host/connector.
+The offline harness checker tests normal roadmap predicates only; permissions, successful role
+loading, writer termination and evidence authenticity must be verified in the actual host/connector.
+It is not the executor of this expressly waived maintenance batch.
 
 ## Architecture and deferred boundaries
 

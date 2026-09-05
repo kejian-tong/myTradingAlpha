@@ -1,9 +1,24 @@
-"""Shared pytest fixtures that prevent CI hangs when API keys are absent."""
+"""Default-off provider integrations and isolated per-test configuration."""
 
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-provider-integration", action="store_true", default=False,
+        help="Explicitly allow separately authorized integration tests to use provider keys",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--run-provider-integration"):
+        disabled = pytest.mark.skip(reason="provider integration requires explicit --run-provider-integration")
+        for item in items:
+            if item.get_closest_marker("integration") is not None:
+                item.add_marker(disabled)
 
 
 def pytest_configure(config):
@@ -30,11 +45,14 @@ _API_KEY_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def _dummy_api_keys(monkeypatch):
+def _dummy_api_keys(monkeypatch, request):
+    opted_in = (
+        request.config.getoption("--run-provider-integration")
+        and request.node.get_closest_marker("integration") is not None
+    )
     for env_var in _API_KEY_ENV_VARS:
-        # `or` not a .get default: an env var present but empty (e.g. a key left
-        # blank in a .env copied from .env.example) must still get the placeholder.
-        monkeypatch.setenv(env_var, os.environ.get(env_var) or "placeholder")
+        value = os.environ.get(env_var) if opted_in else None
+        monkeypatch.setenv(env_var, value or "placeholder")
 
 
 @pytest.fixture(autouse=True)
