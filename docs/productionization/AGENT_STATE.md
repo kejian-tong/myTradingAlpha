@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `62a5b5cf7393e5a83b10de69289ac72789dbd12d`
-- `roadmap_status`: `sig_01_closed_replay_candidate_pending_review_ci`
+- `roadmap_status`: `sig_01_closed_replay_repaired_pending_final_review_ci`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -112,7 +112,7 @@ on evidence, not intent.
 | PIT-04 | `f7d96ccfc311d4e48cf32748b4645343272eeb21` | `codex/pit-04-events-social-macro` | #21 | RED/hygiene/GREEN `3d2a8dd8dfb1001f22ff627267b88170913f8460` / `1ff3a81265f63dbaa70f79e4eca4336644280f2f` / `68d2d0bfe0a2e18b9bff3430943f721daa9e63cb`; repair RED/GREEN `b64a32566352cdd8938d4b5c7afe0bc2bf89b62d` / `d3891ba811245fc3e505389d88e2ea13d98cc362`; final head `6753b6da4b12a08bfda43d494681d2bac1ffd658`; merge `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — two RED stages; focused 111; data 387; productionization 586; legacy 61; full 1162 passed, 2 skipped, 69 subtests; Ruff/checkers/lock/diff/wheel | PASS — CI `33362962359`; CodeQL `33362962349`; Dependency Review `33362962320` | APPROVE — exact-head `#issuecomment-5474461389`; Master `#issuecomment-5474461558`; nonblocking MEDIUM test hardening deferred | none | MERGED / next: PIT-05 |
 | PIT-05 | `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `codex/pit-05-universe-actions` | #22 | RED/hygiene/GREEN `02305814650fedff1e5bc91dd37b4a5a61e541a7` / `955fe503ba1a9908efa54131347dd4a57bdcacfd` / `f56ebfdbfbc993bde22b834dd125cb3b891d25ab`; final head `d0ea37014258d96dc6ab75e4ec2f805f9fabc1c9`; merge `4782754746e02efb28b3078707d7c266728b0970` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / Sol high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / Sol high; master Sol/xhigh | PASS — focused 80; data 467; productionization 666; legacy 30; full 1242 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33365435326`; CodeQL `33365435294`; Dependency Review `33365435310` | APPROVE exact-head `#issuecomment-5474785612`; Master `#issuecomment-5474785805`; nonblocking deferred findings recorded | none | MERGED / next PIT-06 |
 | PIT-06 | `4782754746e02efb28b3078707d7c266728b0970` | `codex/pit-06-evidence-bundle` | #23 | RED/hygiene/GREEN `4c3c40a85d9a44b485301839b35091d93537d240` / `0fd46cad906e75ff4f635e92cfc110ab55964211` / `bbb17f25b754db59b1db401e8390adba807a1d4f`; repair RED/corrections/GREEN `986ded3f05a0099d8d7291a8e3fe4b69145cc237` / `fb92e80f259832af4e55c66b76efbab311e4e24e`,`d648809b3a2dc58f9c54640a4ede7be290694ce0` / `239c5424224187328784dfa1ffa5d139a2fb95fc`; final RED/GREEN `029be583d13b539142278f1758ed0f9da5fe6372` / `31cdd058d1189bbff0f9ae28df83d0d789f71d32`; final head `7a9340be1e8d6997d7f5dfa6ba0e36befb05b153`; merge `1a185d4035db8807c12c5070c30cfe6d2979d968` | `high`; `high_implementer` Sol/high; final escalated `reviewer_xhigh` Sol/xhigh; master Sol/xhigh | PASS — focused 54; data 521; productionization 720; regressions 15; full 1296 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33370017680`; CodeQL `33370017614`; Dependency Review `33370017652` | APPROVE `#issuecomment-5475399753`; Master MERGE `#issuecomment-5475399932` | none | MERGED; next SIG-01 |
-| SIG-01 | original `1a185d4035db8807c12c5070c30cfe6d2979d968`; current main `62a5b5cf7393e5a83b10de69289ac72789dbd12d` | `codex/sig-01-research-adapter` | #24 | approved RED `5d7720fb9ac2948055044c49d4f19ad03ab37809`; GREEN `85aa606c69d57b409940640f31147dcd74250b3b`; portability repair `adf5429e96b376d907d0ecc960f9edc50e999e0f`; merge none | `high`, difficult route; fresh `high_implementer` configured-actual Sol/high; fresh `reviewer_xhigh` Sol/xhigh pending; historical routes/correction preserved | PASS — focused 286, legacy 26, productionization 952, full 1528/2 skipped; static/lock/offline wheel | PENDING exact `adf5429`; initial GREEN CI found one test-order failure with production unaffected | PENDING fresh review; approved closed replay/date contract, no callable | none | CANDIDATE — exact-head review/CI/Master required; SIG-02 prohibited |
+| SIG-01 | original `1a185d4035db8807c12c5070c30cfe6d2979d968`; current main `62a5b5cf7393e5a83b10de69289ac72789dbd12d` | `codex/sig-01-research-adapter` | #24 | approved RED/GREEN `5d7720fb9ac2948055044c49d4f19ad03ab37809` / `85aa606c69d57b409940640f31147dcd74250b3b`; portability `adf5429e96b376d907d0ecc960f9edc50e999e0f`; final repair RED/GREEN `574e334714b8be3b5b1dbc8c41056f9cef57c305` / `bd77668dcc89108212764fb8e402a937b454f6b4`; merge none | `high`, difficult route; `high_implementer` configured-actual Sol/high; fresh final `reviewer_xhigh` Sol/xhigh pending; historical routes/correction preserved | PASS — targeted 12, focused 297, legacy 26, productionization 963, full 1539/2 skipped; static/lock/offline wheel | PENDING exact final state head; initial GREEN CI portability failure repaired with production unchanged | REQUEST CHANGES `#issuecomment-5549344146` repaired; final fresh review pending | none | REPAIRED CANDIDATE — exact-head review/CI/Master required; SIG-02 prohibited |
 
 Recommended compact representation in agent summaries:
 
@@ -285,11 +285,37 @@ approved implementation checkpoint and candidate evidence below.
   code and all other completed checks were unaffected. Repair `adf5429e96b376d907d0ecc960f9edc50e999e0f`
   sorts the observed paths before exact equality against the same two-entry allowlist. Single test and
   focused 286 passed; Ruff/diff passed. This repair neither weakens membership nor changes production.
-- Current candidate is `adf5429e96b376d907d0ecc960f9edc50e999e0f`. Exact-head CI and fresh
+- Candidate at this checkpoint was `adf5429e96b376d907d0ecc960f9edc50e999e0f`. Exact-head CI and fresh
   independent review are pending at this checkpoint. H1/H2/H3/H5/M1/M2/M3 and H4 have local closure
   evidence under the approved contract; no final PASS is claimed before reviewer/CI/Master gates.
 - Scope remains SIG-01 only. No capture service, durable cache storage, real transcript/model inference,
   EvidenceToolset/ResearchNote, quant, broker/paper/live, or SIG-02 implementation exists.
+
+## Closed-replay final repair candidate
+
+- [Independent review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549344146)
+  at `5f5ee5c650229accbf340b64d59781d951aa32bb` verified the new RED, local evidence, exact-head
+  CI, H4 callable removal, and M1 UTC-date enforcement, then requested changes for two HIGH findings:
+  the public model omitted cutoff eligibility and deeply encoded arguments leaked raw recursion. LOW
+  findings covered an ineffective shadowed-call tuple test and the PR overview.
+- [Repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549347328)
+  preserves the approved architecture and difficult Sol route. The retained sole `high_implementer`
+  was the only repair writer and is stopped.
+- Test-only repair RED `574e334714b8be3b5b1dbc8c41056f9cef57c305`: 9 expected failures,
+  3 controls passed, 175 deselected. It covers direct public cutoff/archive validation, deep argument
+  typed errors and exact depth/node/string limits; the corrected shadowed-call dict test already passed.
+- Production-only repair GREEN `bd77668dcc89108212764fb8e402a937b454f6b4` changes only
+  `cached_response.py` and `historical.py`. Public CachedGraphResponse now enforces intrinsic plus
+  cutoff integrity; private typed preflight preserves builder/parser Unavailable versus Corruption/
+  output error semantics. Outer and decoded argument data share exact depth 64, nodes 100,000, and
+  UTF-8 key/string 1,048,576-byte limits with typed recursion mapping.
+- Final repair validation: targeted 12; focused 297; legacy 26; productionization 963; full 1539
+  passed, 2 skipped, 28 warnings, 69 subtests in 99.81s. Ruff/dependency/lock/Markdown/diff passed.
+  Fresh offline wheel valid replay, direct future-cutoff denial, deep typed denial and parser corruption
+  smoke passed. Exact-head CI and a different fresh `reviewer_xhigh` remain required.
+- The Master owns the final state-only checkpoint and PR overview correction. Production/tests must
+  remain byte-identical after that checkpoint; final review/CI are SHA-specific. No known unresolved
+  implementation finding is claimed closed until the new reviewer confirms it.
 
 ## Current master pre-flight evidence
 
@@ -355,8 +381,9 @@ approved implementation checkpoint and candidate evidence below.
 - Foundation FND-01 through FND-04 is complete as implementation/CI evidence only; this does not prove
   PIT correctness, alpha, paper readiness, or live readiness.
 - PIT-01 through PIT-06 are merged. The user approved SIG-01's closed cached-response replay and UTC
-  cutoff-date rule. The candidate removes the host callable and implements the approved date binding;
-  fresh review/CI must adjudicate H4/M1 closure before merge. SIG-02 remains out of scope.
+  cutoff-date rule. The repaired candidate removes the host callable, implements the date binding,
+  and closes the latest cutoff/deep-argument findings locally. Fresh exact-head review/CI must confirm
+  every closure before merge. SIG-02 remains out of scope.
 - PIT-06 trusted-input boundary: bundle/domain APIs require concrete validated project models. Hostile
   subclasses overriding `model_dump()` are a nonblocking future hardening item before exposing these
   constructors outside the trusted in-process contract; exact repository and RunContext subclasses
