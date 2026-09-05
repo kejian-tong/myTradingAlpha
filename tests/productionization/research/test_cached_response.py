@@ -10,11 +10,11 @@ import hashlib
 import json
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from mytradingalpha.data.bundle import BundleReplayPolicy
 from mytradingalpha.data.provenance import SourceManifest
@@ -620,6 +620,133 @@ def test_valid_exact_manifest_and_manifest_dict_preserve_fixture_bytes() -> None
     assert build_cached_graph_response(
         **make_response_kwargs(capture_manifest=manifest.model_dump(mode="python"))
     ) == FIXTURE.read_bytes().removesuffix(b"\n")
+
+
+class ObservedTzInfo(tzinfo):
+    def __init__(self, effects: list[str]) -> None:
+        self.effects = effects
+
+    def utcoffset(self, value: datetime | None) -> timedelta:
+        self.effects.append("tzinfo.utcoffset")
+        return timedelta(0)
+
+    def dst(self, value: datetime | None) -> timedelta:
+        self.effects.append("tzinfo.dst")
+        return timedelta(0)
+
+    def tzname(self, value: datetime | None) -> str:
+        self.effects.append("tzinfo.tzname")
+        return "observed"
+
+    def fromutc(self, value: datetime) -> datetime:
+        self.effects.append("tzinfo.fromutc")
+        return value
+
+
+class DateTimeSubclass(datetime):
+    pass
+
+
+@pytest.mark.parametrize(
+    "invalid_cutoff",
+    [
+        datetime(2024, 6, 30, 23, 59, 59),
+        datetime(2024, 6, 30, 18, 59, 59, tzinfo=timezone(timedelta(hours=-5))),
+        DateTimeSubclass(2024, 6, 30, 23, 59, 59, tzinfo=timezone.utc),
+    ],
+    ids=["naive", "non-utc", "datetime-subclass"],
+)
+def test_builder_rejects_noncanonical_python_cutoff_datetimes(
+    invalid_cutoff: datetime,
+) -> None:
+    with pytest.raises(CachedGraphResponseCorruptionError):
+        build_cached_graph_response(**make_response_kwargs(knowledge_cutoff=invalid_cutoff))
+
+
+def test_builder_rejects_custom_tzinfo_cutoff_without_observation() -> None:
+    effects: list[str] = []
+    cutoff = datetime(2024, 6, 30, 23, 59, 59, tzinfo=ObservedTzInfo(effects))
+    effects.clear()
+    with pytest.raises(CachedGraphResponseCorruptionError):
+        build_cached_graph_response(**make_response_kwargs(knowledge_cutoff=cutoff))
+    assert effects == []
+
+
+def test_builder_accepts_exact_utc_datetime_and_offset_string_cutoff() -> None:
+    expected = FIXTURE.read_bytes().removesuffix(b"\n")
+    assert (
+        build_cached_graph_response(
+            **make_response_kwargs(
+                knowledge_cutoff=datetime(2024, 6, 30, 23, 59, 59, tzinfo=timezone.utc)
+            )
+        )
+        == expected
+    )
+    assert (
+        build_cached_graph_response(
+            **make_response_kwargs(knowledge_cutoff="2024-06-30T18:59:59-05:00")
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["fetched_at", "event_time", "published_at", "available_at", "ingested_at"]
+)
+@pytest.mark.parametrize("representation", ["manifest", "dict"])
+def test_manifest_custom_tzinfo_is_rejected_without_observation(
+    field: str, representation: str
+) -> None:
+    effects: list[str] = []
+    fields = make_capture_manifest(make_output()).model_dump(mode="python")
+    fields[field] = datetime(2024, 6, 30, 23, 59, 59, tzinfo=ObservedTzInfo(effects))
+    manifest: object = (
+        SourceManifest.model_construct(**fields) if representation == "manifest" else fields
+    )
+    effects.clear()
+    with pytest.raises(CachedGraphResponseCorruptionError):
+        build_cached_graph_response(
+            **make_response_kwargs(capture_manifest=manifest)  # type: ignore[arg-type]
+        )
+    assert effects == []
+
+
+def test_manifest_offset_strings_normalize_to_exact_utc_fixture() -> None:
+    fields = make_capture_manifest(make_output()).model_dump(mode="json")
+    for field in ("fetched_at", "event_time", "published_at", "available_at", "ingested_at"):
+        fields[field] = "2024-06-30T18:59:59-05:00"
+    assert build_cached_graph_response(
+        **make_response_kwargs(capture_manifest=fields)
+    ) == FIXTURE.read_bytes().removesuffix(b"\n")
+
+
+@pytest.mark.parametrize("surface", ["class", "type-adapter"])
+@pytest.mark.parametrize("subclass", [False, True], ids=["exact-model", "model-subclass"])
+def test_constructed_response_instances_revalidate_before_nested_access(
+    surface: str, subclass: bool
+) -> None:
+    effects: list[str] = []
+    record = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n"))
+    manifest_fields = record.capture_manifest.model_dump(mode="python")
+    manifest_fields["checksum"] = HookProbe(effects, "constructed-checksum")
+    payload = record.model_dump(mode="python")
+    payload["capture_manifest"] = SourceManifest.model_construct(**manifest_fields)
+
+    model_type = CachedGraphResponse
+    if subclass:
+
+        class ResponseSubclass(CachedGraphResponse):
+            pass
+
+        model_type = ResponseSubclass
+    constructed = model_type.model_construct(**payload)
+    effects.clear()
+    with pytest.raises(ValidationError):
+        if surface == "class":
+            CachedGraphResponse.model_validate(constructed)
+        else:
+            TypeAdapter(CachedGraphResponse).validate_python(constructed)
+    assert effects == []
 
 
 def cutoff_payload(*, policy: str, future_availability: bool) -> dict[str, object]:
