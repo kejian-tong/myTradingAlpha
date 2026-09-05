@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -423,6 +423,40 @@ def test_manifest_subclass_is_rejected_before_any_attribute_or_serializer_hook()
     assert effects == []
 
 
+def test_manifest_primitive_subclasses_and_bool_revision_are_rejected_without_hooks() -> None:
+    effects: list[str] = []
+
+    class DateTimeSubclass(datetime):
+        def __lt__(self, other: object) -> bool:
+            effects.append("datetime.lt")
+            return super().__lt__(other)  # type: ignore[arg-type]
+
+    for field, value in (
+        ("checksum", HookString(f"sha256:{'a' * 64}", effects)),
+        ("available_at", DateTimeSubclass(2024, 6, 30, tzinfo=timezone.utc)),
+        ("revision", True),
+    ):
+        hostile = constructed_manifest_with(field, value)
+        effects.clear()
+        with pytest.raises(CachedGraphResponseCorruptionError):
+            build_cached_graph_response(**make_response_kwargs(capture_manifest=hostile))
+        assert effects == []
+
+
+@pytest.mark.parametrize("kind", ["dict-subclass", "custom-mapping"])
+def test_manifest_mapping_subclasses_are_rejected_without_hooks(kind: str) -> None:
+    effects: list[str] = []
+    fields = make_capture_manifest(make_output()).model_dump(mode="python")
+    hostile: object = (
+        HookDict(fields, effects) if kind == "dict-subclass" else HookMapping(fields, effects)
+    )
+    with pytest.raises(CachedGraphResponseCorruptionError):
+        build_cached_graph_response(
+            **make_response_kwargs(capture_manifest=hostile)  # type: ignore[arg-type]
+        )
+    assert effects == []
+
+
 class HookDict(dict[object, object]):
     def __init__(self, value: Mapping[object, object], effects: list[str]) -> None:
         dict.__init__(self, value)
@@ -515,13 +549,13 @@ def test_nonexact_output_mapping_is_rejected_without_hooks(kind: str, surface: s
         HookDict(output, effects) if kind == "dict-subclass" else HookMapping(output, effects)
     )
     if surface == "builder":
+        kwargs = make_response_kwargs(
+            output=hostile,  # type: ignore[arg-type]
+            capture_manifest=make_capture_manifest(output),
+        )
+        effects.clear()
         with pytest.raises(CachedGraphResponseCorruptionError):
-            build_cached_graph_response(
-                **make_response_kwargs(
-                    output=hostile,  # type: ignore[arg-type]
-                    capture_manifest=make_capture_manifest(output),
-                )
-            )
+            build_cached_graph_response(**kwargs)
     else:
         payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
             mode="python"
