@@ -33,6 +33,11 @@ def _validate_utc_datetime(value: Any) -> datetime:
                 "invalid_timestamp: expected a full ISO timestamp with an explicit offset"
             )
         normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+        # Python 3.10 accepts only 3/6 fractional digits in fromisoformat.
+        # The validated grammar allows 1-6; zero-padding preserves the exact instant.
+        if normalized[19:20] == ".":
+            seconds, fraction = normalized[:-6].split(".")
+            normalized = f"{seconds}.{fraction.ljust(6, '0')}{normalized[-6:]}"
         try:
             parsed = datetime.fromisoformat(normalized)
         except (ValueError, OverflowError) as exc:
