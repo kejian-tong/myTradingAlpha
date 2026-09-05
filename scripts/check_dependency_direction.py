@@ -95,80 +95,178 @@ def _imported_modules(tree: ast.AST) -> Iterable[tuple[ast.AST, str]]:
             yield node, node.module
 
 
-class _DynamicImports(ast.NodeVisitor):
-    """Bounded lexical analysis of known loader forms, not arbitrary Python execution.
+def _local_names(body: Iterable[ast.AST]) -> set[str]:
+    """Collect function locals without descending into nested lexical scopes."""
+    names: set[str] = set()
+    external: set[str] = set()
+    pending = list(body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            continue
+        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            continue
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            external.update(node.names)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, ast.Import):
+            names.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        pending.extend(ast.iter_child_nodes(node))
+    return names - external
 
-    Literal names, import aliases, simple alias assignments and function-local
-    shadowing are covered. A recognized loader with a computed target is a
-    manual-review diagnostic, never an inferred safe dependency. Reflective code,
-    runtime monkeypatching and arbitrary callable dataflow still require review.
+
+class _DynamicImports(ast.NodeVisitor):
+    """Bounded lexical analysis, never evaluation of candidate source.
+
+    Recognized literal loaders, simple aliases, function/lambda/comprehension
+    locals and class-versus-closure lookup are covered. If branches retain all
+    possible loader bindings conservatively; this is not reachability proof.
+    Arbitrary reflective dispatch, mutations of module attributes, interprocedural
+    effects and unrestricted Python control flow still require manual review.
     """
 
+    _OTHER = frozenset({None})
+
     def __init__(self) -> None:
-        self.bindings: dict[str, str | None] = {"__import__": "__import__"}
+        self.bindings: dict[str, frozenset[str | None]] = {
+            "__import__": frozenset({"__import__"})
+        }
+        self.class_outer: dict[str, frozenset[str | None]] | None = None
         self.imports: list[tuple[ast.AST, str | None]] = []
 
-    def _binding(self, node: ast.AST) -> str | None:
+    def _binding(self, node: ast.AST) -> frozenset[str | None]:
         if isinstance(node, ast.Name):
-            return self.bindings.get(node.id)
+            return self.bindings.get(node.id, self._OTHER)
         if isinstance(node, ast.Attribute):
-            owner = self._binding(node.value)
-            if (owner, node.attr) == ("importlib", "import_module"):
-                return "import_module"
-            if (owner, node.attr) == ("builtins", "__import__"):
-                return "__import__"
-        return None
+            attributes = {("importlib", "import_module"): "import_module",
+                          ("builtins", "__import__"): "__import__"}
+            return frozenset(attributes.get((owner, node.attr)) for owner in self._binding(node.value))
+        return self._OTHER
+
+    def _closure(self) -> dict[str, frozenset[str | None]]:
+        # Python functions/comprehensions do not close over class namespaces.
+        return (self.class_outer if self.class_outer is not None else self.bindings).copy()
+
+    def _shadow(self, target: ast.AST) -> None:
+        for child in ast.walk(target):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                self.bindings[child.id] = self._OTHER
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             name = alias.asname or alias.name.split(".")[0]
             module = alias.name if alias.asname else alias.name.split(".")[0]
-            self.bindings[name] = module if module in {"importlib", "builtins"} else None
+            self.bindings[name] = frozenset({module}) if module in {"importlib", "builtins"} else self._OTHER
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         for alias in node.names:
-            loader = (node.module, alias.name)
-            allowed = node.level == 0 and loader in {
+            allowed = node.level == 0 and (node.module, alias.name) in {
                 ("importlib", "import_module"), ("builtins", "__import__")
             }
-            self.bindings[alias.asname or alias.name] = alias.name if allowed else None
+            self.bindings[alias.asname or alias.name] = frozenset({alias.name}) if allowed else self._OTHER
 
     def visit_Assign(self, node: ast.Assign) -> None:
         self.visit(node.value)
         binding = self._binding(node.value)
         for target in node.targets:
-            for child in ast.walk(target):
-                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-                    self.bindings[child.id] = binding if isinstance(target, ast.Name) else None
+            self._shadow(target)
+            if isinstance(target, ast.Name):
+                self.bindings[target.id] = binding
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # An annotation alone does not replace an existing module/class value.
+        # Function-local annotation names were already masked at scope entry.
         if node.value is not None:
             self.visit(node.value)
-        if isinstance(node.target, ast.Name):
-            self.bindings[node.target.id] = self._binding(node.value) if node.value else None
+            binding = self._binding(node.value)
+            self._shadow(node.target)
+            if isinstance(node.target, ast.Name):
+                self.bindings[node.target.id] = binding
 
-    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        for expression in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
-            if expression is not None:
-                self.visit(expression)
-        self.bindings[node.name] = None
-        outer = self.bindings.copy()
-        # Parameters shadow globals even when their names resemble an import API.
-        arguments = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
-        for argument in (*arguments, node.args.vararg, node.args.kwarg):
-            if argument is not None:
-                self.bindings[argument.arg] = None
+    def visit_If(self, node: ast.If) -> None:
+        self.visit(node.test)
+        before = self.bindings.copy()
         for statement in node.body:
             self.visit(statement)
-        self.bindings = outer
+        body = self.bindings
+        self.bindings = before.copy()
+        for statement in node.orelse:
+            self.visit(statement)
+        otherwise = self.bindings
+        self.bindings = {
+            name: body.get(name, self._OTHER) | otherwise.get(name, self._OTHER)
+            for name in body.keys() | otherwise.keys()
+        }
+
+    def _defaults(self, args: ast.arguments) -> None:
+        for expression in (*args.defaults, *args.kw_defaults):
+            if expression is not None:
+                self.visit(expression)
+
+    def _function_body(self, args: ast.arguments, body: list[ast.AST]) -> None:
+        outer, class_outer = self.bindings, self.class_outer
+        self.bindings = self._closure()
+        self.class_outer = None
+        for name in _local_names(body):
+            self.bindings[name] = self._OTHER
+        arguments = (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg)
+        for argument in arguments:
+            if argument is not None:
+                self.bindings[argument.arg] = self._OTHER
+        for statement in body:
+            self.visit(statement)
+        self.bindings, self.class_outer = outer, class_outer
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for expression in node.decorator_list:
+            self.visit(expression)
+        self._defaults(node.args)
+        self.bindings[node.name] = self._OTHER
+        self._function_body(node.args, list(node.body))
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._defaults(node.args)
+        self._function_body(node.args, [node.body])
+
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.bindings[node.name] = None
-        outer = self.bindings.copy()
-        self.generic_visit(node)
-        self.bindings = outer
+        for expression in (*node.decorator_list, *node.bases, *node.keywords):
+            self.visit(expression)
+        outer, previous_class = self.bindings, self.class_outer
+        self.bindings = self._closure()
+        self.class_outer = self.bindings.copy()
+        for statement in node.body:
+            self.visit(statement)
+        self.bindings, self.class_outer = outer, previous_class
+        self.bindings[node.name] = self._OTHER
+
+    def _comprehension(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp) -> None:
+        # Only the first iterable is evaluated in the enclosing namespace.
+        self.visit(node.generators[0].iter)
+        outer, class_outer = self.bindings, self.class_outer
+        self.bindings = self._closure()
+        self.class_outer = None
+        for index, generator in enumerate(node.generators):
+            if index:
+                self.visit(generator.iter)
+            self._shadow(generator.target)
+            for condition in generator.ifs:
+                self.visit(condition)
+        for expression in ((node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)):
+            self.visit(expression)
+        self.bindings, self.class_outer = outer, class_outer
+
+    visit_ListComp = _comprehension
+    visit_SetComp = _comprehension
+    visit_DictComp = _comprehension
+    visit_GeneratorExp = _comprehension
 
     @staticmethod
     def _argument(node: ast.Call, index: int, keyword: str) -> ast.AST | None:
@@ -177,8 +275,8 @@ class _DynamicImports(ast.NodeVisitor):
         return next((item.value for item in node.keywords if item.arg == keyword), None)
 
     def visit_Call(self, node: ast.Call) -> None:
-        loader = self._binding(node.func)
-        if loader in {"import_module", "__import__"}:
+        targets: set[str | None] = set()
+        for loader in sorted(self._binding(node.func) & {"import_module", "__import__"}):
             target = self._argument(node, 0, "name")
             name = target.value if isinstance(target, ast.Constant) and isinstance(target.value, str) else None
             if loader == "import_module" and name and name.startswith("."):
@@ -194,7 +292,9 @@ class _DynamicImports(ast.NodeVisitor):
                 level = self._argument(node, 4, "level")
                 if level is not None and not (isinstance(level, ast.Constant) and level.value == 0):
                     name = None
-            self.imports.append((node, name))
+            if name not in targets:
+                self.imports.append((node, name))
+                targets.add(name)
         self.generic_visit(node)
 
 
