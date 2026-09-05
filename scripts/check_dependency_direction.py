@@ -129,6 +129,9 @@ class _DynamicImports(ast.NodeVisitor):
     possible loader bindings conservatively; this is not reachability proof.
     Arbitrary reflective dispatch, mutations of module attributes, interprocedural
     effects and unrestricted Python control flow still require manual review.
+    Non-string module/class and signature annotations are conservatively scanned
+    across Python 3.10-3.14, not evaluated. Function-local variable annotations
+    are never evaluated; deferred lookup and type-parameter scopes need review.
     """
 
     _OTHER = frozenset({None})
@@ -139,6 +142,7 @@ class _DynamicImports(ast.NodeVisitor):
         }
         self.class_outer: dict[str, frozenset[str | None]] | None = None
         self.imports: list[tuple[ast.AST, str | None]] = []
+        self.in_function = False
 
     def _binding(self, node: ast.AST) -> frozenset[str | None]:
         if isinstance(node, ast.Name):
@@ -189,6 +193,9 @@ class _DynamicImports(ast.NodeVisitor):
             if isinstance(node.target, ast.Name):
                 self.bindings[node.target.id] = binding
 
+        if not self.in_function:
+            self.visit(node.annotation)
+
     def visit_If(self, node: ast.If) -> None:
         self.visit(node.test)
         before = self.bindings.copy()
@@ -210,7 +217,8 @@ class _DynamicImports(ast.NodeVisitor):
                 self.visit(expression)
 
     def _function_body(self, args: ast.arguments, body: list[ast.AST]) -> None:
-        outer, class_outer = self.bindings, self.class_outer
+        outer, class_outer, in_function = self.bindings, self.class_outer, self.in_function
+        self.in_function = True
         self.bindings = self._closure()
         self.class_outer = None
         for name in _local_names(body):
@@ -221,12 +229,21 @@ class _DynamicImports(ast.NodeVisitor):
                 self.bindings[argument.arg] = self._OTHER
         for statement in body:
             self.visit(statement)
-        self.bindings, self.class_outer = outer, class_outer
+        self.bindings, self.class_outer, self.in_function = outer, class_outer, in_function
 
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         for expression in node.decorator_list:
             self.visit(expression)
         self._defaults(node.args)
+        # Signature annotations belong to the defining scope, before parameters
+        # shadow names in the body. Quoted strings remain inert AST constants.
+        arguments = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
+                     node.args.vararg, node.args.kwarg)
+        for argument in arguments:
+            if argument is not None and argument.annotation is not None:
+                self.visit(argument.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
         self.bindings[node.name] = self._OTHER
         self._function_body(node.args, list(node.body))
 
@@ -239,12 +256,13 @@ class _DynamicImports(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for expression in (*node.decorator_list, *node.bases, *node.keywords):
             self.visit(expression)
-        outer, previous_class = self.bindings, self.class_outer
+        outer, previous_class, in_function = self.bindings, self.class_outer, self.in_function
+        self.in_function = False
         self.bindings = self._closure()
         self.class_outer = self.bindings.copy()
         for statement in node.body:
             self.visit(statement)
-        self.bindings, self.class_outer = outer, previous_class
+        self.bindings, self.class_outer, self.in_function = outer, previous_class, in_function
         self.bindings[node.name] = self._OTHER
 
     def _comprehension(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp) -> None:
