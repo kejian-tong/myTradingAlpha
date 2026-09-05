@@ -13,7 +13,7 @@ _STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$"
 _UTC_DATETIME_STRING_PATTERN = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T"
     r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
-    r"(?:\.[0-9]+)?"
+    r"(?:\.[0-9]{1,6})?"
     r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
 )
 
@@ -93,7 +93,11 @@ UtcDateTime = Annotated[
     PlainSerializer(_serialize_utc_datetime, return_type=str, when_used="json"),
     WithJsonSchema({"type": "string", "format": "date-time"}),
 ]
-"""A timezone-aware datetime normalized to :data:`datetime.timezone.utc`."""
+"""An aware UTC datetime; ISO inputs support at most six fractional digits.
+
+Excess precision (including extra zero digits) is rejected, never silently truncated
+across a point-in-time cutoff. Existing microsecond-level wire values are unchanged.
+"""
 
 DecimalString = Annotated[
     Decimal,
