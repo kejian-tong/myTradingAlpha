@@ -15,7 +15,10 @@ from mytradingalpha.contracts.common import StableId, UtcDateTime
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.data.bundle import BundleReplayPolicy
 from mytradingalpha.data.provenance import CanonicalChecksum, RequiredReference, SourceManifest
-from tradingagents.graph.historical import validate_historical_response
+from tradingagents.graph.historical import (
+    HistoricalRuntimeOutputError,
+    validate_historical_response,
+)
 
 CACHED_RESPONSE_SCHEMA_VERSION = "v1"
 MAX_CACHED_RESPONSE_BYTES = 4_194_304
@@ -59,8 +62,8 @@ class CachedGraphSelection(ContractModel):
     runtime_manifest_hash: CanonicalChecksum
 
 
-class CachedGraphResponse(ContractModel):
-    """One immutable cached Research Graph output and its complete provenance."""
+class _CachedGraphResponseFields(ContractModel):
+    """Shared response fields used for typed preflight without error reclassification."""
 
     schema_version: Literal["v1"]
     response_id: StableId
@@ -86,9 +89,14 @@ class CachedGraphResponse(ContractModel):
     output: dict[str, object]
     output_hash: CanonicalChecksum
 
+
+class CachedGraphResponse(_CachedGraphResponseFields):
+    """One immutable, cutoff-eligible cached Research Graph response."""
+
     @model_validator(mode="after")
-    def validate_intrinsic_integrity(self) -> CachedGraphResponse:
+    def validate_public_contract(self) -> CachedGraphResponse:
         _validate_intrinsic_record(self)
+        _validate_availability(self)
         return self
 
 
@@ -190,11 +198,11 @@ def _parse_float(value: str) -> float:
     return parsed
 
 
-def _response_payload(record: CachedGraphResponse) -> dict[str, object]:
+def _response_payload(record: _CachedGraphResponseFields) -> dict[str, object]:
     return record.model_dump(mode="json", exclude={"response_hash"})
 
 
-def _expected_response_hash(record: CachedGraphResponse) -> str:
+def _expected_response_hash(record: _CachedGraphResponseFields) -> str:
     return _sha256(_RESPONSE_HASH_DOMAIN + _canonical_bytes(_response_payload(record)))
 
 
@@ -215,7 +223,7 @@ def _validate_trade_date(trade_date: object, cutoff: datetime) -> None:
         )
 
 
-def _validate_intrinsic_record(record: CachedGraphResponse) -> None:
+def _validate_intrinsic_record(record: _CachedGraphResponseFields) -> None:
     if type(record.capture_manifest) is not SourceManifest:
         raise CachedGraphResponseCorruptionError("cached response requires exact SourceManifest")
     normalised_output = _bounded_plain(record.output)
@@ -242,7 +250,7 @@ def _validate_intrinsic_record(record: CachedGraphResponse) -> None:
     )
 
 
-def _validate_availability(record: CachedGraphResponse) -> None:
+def _validate_availability(record: _CachedGraphResponseFields) -> None:
     if record.capture_manifest.available_at > record.knowledge_cutoff:
         raise CachedGraphResponseUnavailableError(
             "cached response was unavailable at knowledge cutoff"
@@ -281,13 +289,24 @@ def parse_cached_graph_response(raw_record: bytes) -> CachedGraphResponse:
     if _canonical_bytes(canonical_payload) != raw_record:
         raise CachedGraphResponseCorruptionError("cached response bytes are not canonical")
     try:
-        record = CachedGraphResponse.model_validate(canonical_payload)
+        fields = _CachedGraphResponseFields.model_validate(canonical_payload)
     except (TypeError, ValidationError, ValueError) as exc:
         raise CachedGraphResponseCorruptionError(
             "cached response schema validation failed"
         ) from exc
-    _validate_availability(record)
-    return record
+    try:
+        _validate_intrinsic_record(fields)
+    except HistoricalRuntimeOutputError as exc:
+        raise CachedGraphResponseCorruptionError(
+            "cached response output validation failed"
+        ) from exc
+    _validate_availability(fields)
+    try:
+        return CachedGraphResponse.model_validate(fields.model_dump(mode="python"))
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise CachedGraphResponseCorruptionError(
+            "cached response public contract validation failed"
+        ) from exc
 
 
 def build_cached_graph_response(
@@ -410,10 +429,18 @@ def build_cached_graph_response(
         "response_hash": _sha256(_RESPONSE_HASH_DOMAIN + _canonical_bytes(hash_payload)),
     }
     try:
-        record = CachedGraphResponse.model_validate(payload)
+        fields = _CachedGraphResponseFields.model_validate(payload)
     except (TypeError, ValidationError, ValueError) as exc:
         raise CachedGraphResponseCorruptionError(
             "cached response schema validation failed"
+        ) from exc
+    _validate_intrinsic_record(fields)
+    _validate_availability(fields)
+    try:
+        record = CachedGraphResponse.model_validate(fields.model_dump(mode="python"))
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise CachedGraphResponseCorruptionError(
+            "cached response public contract validation failed"
         ) from exc
     raw = _canonical_bytes(record.model_dump(mode="json"))
     if len(raw) > MAX_CACHED_RESPONSE_BYTES:

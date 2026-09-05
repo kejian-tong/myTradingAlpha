@@ -98,6 +98,9 @@ _MESSAGE_ROLES = {
 }
 _OBJECT_CALL_BLOCKS = {"tool_call", "server_tool_call"}
 _ENCODED_CALL_BLOCKS = {"invalid_tool_call", "tool_call_chunk", "server_tool_call_chunk"}
+_MAX_PLAIN_DEPTH = 64
+_MAX_PLAIN_NODES = 100_000
+_MAX_PLAIN_STRING_BYTES = 1_048_576
 
 
 class HistoricalRuntimeError(ValueError):
@@ -126,11 +129,33 @@ def create_historical_initial_state(
     )
 
 
-def _plain_data(value: object, *, seen: set[int]) -> None:
+def _utf8_size(value: str) -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise HistoricalRuntimeOutputError("historical output strings must be valid UTF-8") from exc
+
+
+def _plain_data(
+    value: object,
+    *,
+    seen: set[int],
+    depth: int,
+    counter: list[int],
+) -> None:
+    if depth > _MAX_PLAIN_DEPTH:
+        raise HistoricalRuntimeOutputError("historical output exceeds maximum depth")
+    counter[0] += 1
+    if counter[0] > _MAX_PLAIN_NODES:
+        raise HistoricalRuntimeOutputError("historical output exceeds maximum node count")
     value_type = type(value)
+    if value_type is str:
+        if _utf8_size(value) > _MAX_PLAIN_STRING_BYTES:
+            raise HistoricalRuntimeOutputError("historical output string exceeds maximum size")
+        return
     if value_type is float and not isfinite(value):
         raise HistoricalRuntimeOutputError("historical output requires finite numbers")
-    if value_type in (str, int, float, bool, type(None)):
+    if value_type in (int, float, bool, type(None)):
         return
     if value_type not in (dict, list):
         raise HistoricalRuntimeOutputError("historical output requires plain JSON data")
@@ -145,12 +170,33 @@ def _plain_data(value: object, *, seen: set[int]) -> None:
                     raise HistoricalRuntimeOutputError(
                         "historical output requires string data keys"
                     )
-                _plain_data(item, seen=seen)
+                if _utf8_size(key) > _MAX_PLAIN_STRING_BYTES:
+                    raise HistoricalRuntimeOutputError(
+                        "historical output key exceeds maximum string size"
+                    )
+                _plain_data(
+                    item,
+                    seen=seen,
+                    depth=depth + 1,
+                    counter=counter,
+                )
         else:
             for item in value:
-                _plain_data(item, seen=seen)
+                _plain_data(
+                    item,
+                    seen=seen,
+                    depth=depth + 1,
+                    counter=counter,
+                )
     finally:
         seen.remove(identity)
+
+
+def _bounded_plain_data(value: object) -> None:
+    try:
+        _plain_data(value, seen=set(), depth=1, counter=[0])
+    except RecursionError as exc:
+        raise HistoricalRuntimeOutputError("historical output exceeds maximum depth") from exc
 
 
 def _contains_authority_field(value: object) -> bool:
@@ -181,12 +227,9 @@ def _parse_argument_object(value: object) -> dict[str, object]:
         raise HistoricalRuntimeOutputError("encoded historical call arguments require JSON strings")
     try:
         parsed = json.loads(value, object_pairs_hook=_json_object, parse_constant=_reject_constant)
-    except (ValueError, OverflowError) as exc:
+    except (ValueError, OverflowError, RecursionError) as exc:
         raise HistoricalRuntimeOutputError("invalid historical call argument JSON") from exc
-    try:
-        _plain_data(parsed, seen=set())
-    except HistoricalRuntimeOutputError:
-        raise
+    _bounded_plain_data(parsed)
     if type(parsed) is not dict:
         raise HistoricalRuntimeOutputError("historical call arguments require a JSON object")
     if _contains_authority_field(parsed):
@@ -197,7 +240,7 @@ def _parse_argument_object(value: object) -> dict[str, object]:
 def _validate_object_arguments(value: object) -> None:
     if type(value) is not dict:
         raise HistoricalRuntimeOutputError("historical call arguments require a plain object")
-    _plain_data(value, seen=set())
+    _bounded_plain_data(value)
     if _contains_authority_field(value):
         raise HistoricalRuntimeOutputError("historical calls cannot contain authority fields")
 
@@ -354,7 +397,7 @@ def validate_historical_response(
 ) -> tuple[dict[str, object], str]:
     """Validate plain cached output and return a defensive legacy state/signal."""
 
-    _plain_data(output, seen=set())
+    _bounded_plain_data(output)
     if type(output) is not dict:
         raise HistoricalRuntimeOutputError("historical response must be a plain final-state object")
     if _contains_authority_field(output):
