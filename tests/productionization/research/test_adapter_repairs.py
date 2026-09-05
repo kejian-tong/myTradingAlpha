@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
-from mytradingalpha.data.replay_guard import HistoricalDataGuard, HistoricalReplayDeniedError
+from mytradingalpha.contracts.schemas import RunContext
+from mytradingalpha.data.replay_guard import HistoricalReplayDeniedError
 from mytradingalpha.research.cached_response import (
     CachedGraphResponseCorruptionError,
     CachedGraphResponseMismatchError,
@@ -17,17 +17,20 @@ from mytradingalpha.research.cached_response import (
 )
 from mytradingalpha.research.tradingagents_adapter import HistoricalInstrumentError, ResearchAdapter
 from tests.productionization.research.test_adapter import (
-    make_context,
     run_adapter,
     sealed_adapter,
 )
 from tests.productionization.research.test_cached_response import (
+    canonical,
     make_capture_manifest,
     make_output,
     make_response_kwargs,
     make_selection,
 )
-from tradingagents.graph.historical import HistoricalRuntimeOutputError, validate_historical_response
+from tradingagents.graph.historical import (
+    HistoricalRuntimeOutputError,
+    validate_historical_response,
+)
 
 
 def validate(output: object):
@@ -40,15 +43,21 @@ def validate(output: object):
     )
 
 
-@pytest.mark.parametrize(("field", "replacement"), [
-    ("company_of_interest", "UNSEALED"), ("asset_type", "crypto"),
-    ("instrument_context", "unsealed identity"), ("trade_date", "2099-01-01"),
-    ("past_context", "current unsealed memory"),
-])
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("company_of_interest", "UNSEALED"),
+        ("asset_type", "crypto"),
+        ("instrument_context", "unsealed identity"),
+        ("trade_date", "2099-01-01"),
+        ("past_context", "current unsealed memory"),
+    ],
+)
 def test_cached_output_cannot_mutate_bound_state(field: str, replacement: object) -> None:
     output = make_output()
     output[field] = replacement
-    with pytest.raises(HistoricalRuntimeOutputError, match=field): validate(output)
+    with pytest.raises(HistoricalRuntimeOutputError, match=field):
+        validate(output)
 
 
 def test_plain_prose_and_debate_updates_remain_supported() -> None:
@@ -64,7 +73,9 @@ def test_plain_prose_and_debate_updates_remain_supported() -> None:
 @pytest.mark.parametrize("ticker", ["OLD", "AAPL"])
 def test_expired_or_missing_alias_denies_before_response_access(monkeypatch, ticker: str) -> None:
     bundle, context, _, responses, _, adapter = sealed_adapter()
-    monkeypatch.setattr(responses, "get_bound", lambda *args, **kwargs: pytest.fail("response accessed"))
+    monkeypatch.setattr(
+        responses, "get_bound", lambda *args, **kwargs: pytest.fail("response accessed")
+    )
     with pytest.raises(HistoricalInstrumentError, match="missing"):
         run_adapter(adapter, bundle, context, ticker=ticker)
 
@@ -89,26 +100,41 @@ def test_adapter_passes_guard_bound_canonical_context_to_response_repository(mon
     assert raw.knowledge_cutoff == "2024-06-30T23:59:59Z"
 
 
-@pytest.mark.parametrize("update", [
-    {"mode": "unknown"}, {"mode": "forward_paper"},
-    {"network_policy": {"research_tool_egress": True}},
-    {"network_policy": {"unexpected": False}}, {"decision_time": "not-a-time"},
-    {"knowledge_cutoff": "2024-06-30T23:59:59"}, {"bundle_hash": "not-a-hash"},
-])
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"mode": "unknown"},
+        {"mode": "forward_paper"},
+        {"network_policy": {"research_tool_egress": True}},
+        {"network_policy": {"unexpected": False}},
+        {"decision_time": "not-a-time"},
+        {"knowledge_cutoff": "2024-06-30T23:59:59"},
+        {"bundle_hash": "not-a-hash"},
+    ],
+)
 def test_invalid_raw_context_is_denied_before_response_access(monkeypatch, update) -> None:
     bundle, context, _, responses, _, adapter = sealed_adapter()
     raw = RunContext.model_construct(**{**context.model_dump(mode="json"), **update})
-    monkeypatch.setattr(responses, "get_bound", lambda *args, **kwargs: pytest.fail("response accessed"))
-    with pytest.raises(HistoricalReplayDeniedError): run_adapter(adapter, bundle, raw)
+    monkeypatch.setattr(
+        responses, "get_bound", lambda *args, **kwargs: pytest.fail("response accessed")
+    )
+    with pytest.raises(HistoricalReplayDeniedError):
+        run_adapter(adapter, bundle, raw)
 
 
 def test_context_subclass_is_denied_before_serializer_or_response_access(monkeypatch) -> None:
     bundle, context, _, responses, _, adapter = sealed_adapter()
+
     class HostileContext(RunContext):
-        def model_dump(self, *args: object, **kwargs: object) -> object: raise AssertionError("serializer")
+        def model_dump(self, *args: object, **kwargs: object) -> object:
+            raise AssertionError("serializer")
+
     raw = HostileContext.model_construct(**context.model_dump(mode="python"))
-    monkeypatch.setattr(responses, "get_bound", lambda *args, **kwargs: pytest.fail("response accessed"))
-    with pytest.raises(HistoricalReplayDeniedError): run_adapter(adapter, bundle, raw)
+    monkeypatch.setattr(
+        responses, "get_bound", lambda *args, **kwargs: pytest.fail("response accessed")
+    )
+    with pytest.raises(HistoricalReplayDeniedError):
+        run_adapter(adapter, bundle, raw)
 
 
 def with_message(message: object) -> dict[str, object]:
@@ -117,59 +143,125 @@ def with_message(message: object) -> dict[str, object]:
     return output
 
 
-@pytest.mark.parametrize("message", [
-    "Research prose", ["assistant", "Research prose"],
-    {"role": "assistant", "content": "Research", "response_metadata": {"model": "cached"}},
-    {"role": "assistant", "content": [{"type": "text", "text": "Research"}]},
-    {"role": "assistant", "content": [{"type": "image_url", "image_url": {"url": "fixture:data"}}]},
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Research prose",
+        ["assistant", "Research prose"],
+        {"role": "assistant", "content": "Research", "response_metadata": {"model": "cached"}},
+        {"type": "ai", "content": "Research", "response_metadata": {}},
+        {"role": "assistant", "content": [{"type": "text", "text": "Research"}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "image_url", "image_url": {"url": "fixture:data"}}],
+        },
+    ],
+)
 def test_selected_plain_message_representations_preserve_output(message: object) -> None:
     original = deepcopy(message)
     final, signal = validate(with_message(message))
     assert final["messages"][-1] == original and signal == "Hold"
 
 
-@pytest.mark.parametrize("message", [
-    {}, {"role": "assistant"}, {"role": "unknown", "content": "Research"},
-    ["assistant"], ["assistant", "Research", "extra"],
-    {"lc": 1, "type": "constructor", "id": ["custom", "AIMessage"], "kwargs": {"content": "Research"}},
-    {"role": "assistant", "content": [{"type": "custom_tool_call", "args": "{}"}]},
-    {"role": "assistant", "content": [{"type": "tool_use", "input": "{}"}]},
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        {},
+        {"role": "assistant"},
+        {"role": "unknown", "content": "Research"},
+        {"type": "unknown", "content": "Research"},
+        {"role": "assistant", "type": "ai", "content": "Research"},
+        ["assistant"],
+        ["assistant", "Research", "extra"],
+        {
+            "lc": 1,
+            "type": "constructor",
+            "id": ["custom", "AIMessage"],
+            "kwargs": {"content": "Research"},
+        },
+        {"role": "assistant", "content": [{"type": "custom_tool_call", "args": "{}"}]},
+        {"role": "assistant", "content": [{"type": "tool_use", "input": "{}"}]},
+    ],
+)
 def test_unknown_constructor_or_execution_bearing_messages_are_denied(message: object) -> None:
-    with pytest.raises(HistoricalRuntimeOutputError): validate(with_message(message))
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(message))
 
 
 def raw_function_call(arguments: object) -> dict[str, object]:
-    return {"role": "assistant", "content": "Research", "additional_kwargs": {"function_call": {"name": "research", "arguments": arguments}}}
+    return {
+        "role": "assistant",
+        "content": "Research",
+        "additional_kwargs": {"function_call": {"name": "research", "arguments": arguments}},
+    }
 
 
 def encoded_call(location: str, arguments: object) -> dict[str, object]:
     if location == "function_call":
         fields = {"function_call": {"name": "research", "arguments": arguments}}
     elif location == "raw_tool_calls":
-        fields = {"tool_calls": [{"id": "c1", "type": "function", "function": {"name": "research", "arguments": arguments}}]}
+        fields = {
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "research", "arguments": arguments},
+                }
+            ]
+        }
     else:
         fields = {location: [{"id": "c1", "name": "research", "args": arguments, "error": None}]}
     return {"role": "assistant", "content": "Research", "additional_kwargs": fields}
 
 
-@pytest.mark.parametrize("arguments", [
-    '{"nested":[{"order_intents":[]}]}', "not-json", "[]", "null",
-    '{"nested":{"x":1,"x":2}}', '{"x":NaN}', '{"x":Infinity}', '{"x":1e400}',
-])
-def test_encoded_call_arguments_deny_authority_malformed_duplicate_and_nonfinite(arguments: str) -> None:
-    with pytest.raises(HistoricalRuntimeOutputError): validate(with_message(raw_function_call(arguments)))
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        '{"nested":[{"order_intents":[]}]}',
+        "not-json",
+        "[]",
+        "null",
+        '{"nested":{"x":1,"x":2}}',
+        '{"x":NaN}',
+        '{"x":Infinity}',
+        '{"x":1e400}',
+    ],
+)
+def test_encoded_call_arguments_deny_authority_malformed_duplicate_and_nonfinite(
+    arguments: str,
+) -> None:
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(raw_function_call(arguments)))
 
 
-@pytest.mark.parametrize("location", ["function_call", "raw_tool_calls", "invalid_tool_calls", "tool_call_chunks", "server_tool_call_chunks"])
-@pytest.mark.parametrize("arguments", ['{"nested":[{"quantity":5}]}', "not-json", "[]", '{"x":NaN}', '{"x":1e400}'])
+@pytest.mark.parametrize(
+    "location",
+    [
+        "function_call",
+        "raw_tool_calls",
+        "invalid_tool_calls",
+        "tool_call_chunks",
+        "server_tool_call_chunks",
+    ],
+)
+@pytest.mark.parametrize(
+    "arguments", ['{"nested":[{"quantity":5}]}', "not-json", "[]", '{"x":NaN}', '{"x":1e400}']
+)
 def test_all_selected_encoded_call_locations_fail_closed(location: str, arguments: str) -> None:
     with pytest.raises(HistoricalRuntimeOutputError):
         validate(with_message(encoded_call(location, arguments)))
 
 
-@pytest.mark.parametrize("location", ["function_call", "raw_tool_calls", "invalid_tool_calls", "tool_call_chunks", "server_tool_call_chunks"])
+@pytest.mark.parametrize(
+    "location",
+    [
+        "function_call",
+        "raw_tool_calls",
+        "invalid_tool_calls",
+        "tool_call_chunks",
+        "server_tool_call_chunks",
+    ],
+)
 def test_all_selected_encoded_call_locations_preserve_benign_data(location: str) -> None:
     message = encoded_call(location, '{"evidence_id":"e1","period":2}')
     final, signal = validate(with_message(message))
@@ -178,24 +270,51 @@ def test_all_selected_encoded_call_locations_preserve_benign_data(location: str)
 
 @pytest.mark.parametrize("kind", ["tool_call", "server_tool_call"])
 @pytest.mark.parametrize("arguments", [{"quantity": 5}, "not-an-object", []])
-def test_object_argument_content_calls_reject_authority_or_wrong_shape(kind: str, arguments: object) -> None:
-    message = {"role": "assistant", "content": [{"type": kind, "id": "c1", "name": "research", "args": arguments}]}
-    with pytest.raises(HistoricalRuntimeOutputError): validate(with_message(message))
+def test_object_argument_content_calls_reject_authority_or_wrong_shape(
+    kind: str, arguments: object
+) -> None:
+    message = {
+        "role": "assistant",
+        "content": [{"type": kind, "id": "c1", "name": "research", "args": arguments}],
+    }
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(message))
 
 
 @pytest.mark.parametrize("kind", ["invalid_tool_call", "tool_call_chunk", "server_tool_call_chunk"])
 @pytest.mark.parametrize("arguments", ['{"quantity":5}', "not-json", "[]"])
-def test_encoded_argument_content_calls_reject_authority_or_malformed(kind: str, arguments: str) -> None:
-    message = {"role": "assistant", "content": [{"type": kind, "id": "c1", "name": "research", "args": arguments}]}
-    with pytest.raises(HistoricalRuntimeOutputError): validate(with_message(message))
+def test_encoded_argument_content_calls_reject_authority_or_malformed(
+    kind: str, arguments: str
+) -> None:
+    message = {
+        "role": "assistant",
+        "content": [{"type": kind, "id": "c1", "name": "research", "args": arguments}],
+    }
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(message))
 
 
-@pytest.mark.parametrize("kind", ["tool_call", "server_tool_call", "invalid_tool_call", "tool_call_chunk", "server_tool_call_chunk", "function_call"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "tool_call",
+        "server_tool_call",
+        "invalid_tool_call",
+        "tool_call_chunk",
+        "server_tool_call_chunk",
+        "function_call",
+    ],
+)
 def test_selected_content_call_records_preserve_benign_data(kind: str) -> None:
     if kind in {"tool_call", "server_tool_call"}:
         block = {"type": kind, "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}
     elif kind == "function_call":
-        block = {"type": kind, "call_id": "c1", "name": "research", "arguments": '{"evidence_id":"e1"}'}
+        block = {
+            "type": kind,
+            "call_id": "c1",
+            "name": "research",
+            "arguments": '{"evidence_id":"e1"}',
+        }
     else:
         block = {"type": kind, "id": "c1", "name": "research", "args": '{"evidence_id":"e1"}'}
     message = {"role": "assistant", "content": [{"type": "non_standard", "value": block}]}
@@ -203,23 +322,40 @@ def test_selected_content_call_records_preserve_benign_data(kind: str) -> None:
     assert final["messages"][-1] == message and signal == "Hold"
 
 
-@pytest.mark.parametrize("block", [
-    {"type": "tool_call", "id": [], "name": "research", "args": {}},
-    {"type": "server_tool_call", "id": None, "name": "research", "args": {}},
-    {"type": "invalid_tool_call", "id": {}, "name": [], "args": "{}"},
-    {"type": "tool_call_chunk", "id": "c1", "name": 7, "args": "{}"},
-    {"type": "server_tool_call_chunk", "id": None, "args": "{}"},
-    {"type": "function_call", "call_id": None, "name": "research", "arguments": "{}"},
-    {"type": "function_call", "call_id": "c1", "name": "research", "arguments": {}},
-])
-def test_selected_call_record_identity_and_argument_types_fail_closed(block: dict[str, object]) -> None:
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"type": "tool_call", "id": [], "name": "research", "args": {}},
+        {"type": "server_tool_call", "id": None, "name": "research", "args": {}},
+        {"type": "invalid_tool_call", "id": {}, "name": [], "args": "{}"},
+        {"type": "tool_call_chunk", "id": "c1", "name": 7, "args": "{}"},
+        {"type": "server_tool_call_chunk", "id": None, "args": "{}"},
+        {"type": "function_call", "call_id": None, "name": "research", "arguments": "{}"},
+        {"type": "function_call", "call_id": "c1", "name": "research", "arguments": {}},
+        {
+            "role": "assistant",
+            "content": "Research",
+            "tool_calls": [{"name": "research", "args": {}}],
+        },
+    ],
+)
+def test_selected_call_record_identity_and_argument_types_fail_closed(
+    block: dict[str, object],
+) -> None:
     with pytest.raises(HistoricalRuntimeOutputError):
         validate(with_message({"role": "assistant", "content": [block]}))
 
 
-@pytest.mark.parametrize(("field", "value"), [
-    ("index", True), ("index", 1.5), ("extras", []), ("extras", None), ("error", 7),
-])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("index", True),
+        ("index", 1.5),
+        ("extras", []),
+        ("extras", None),
+        ("error", 7),
+    ],
+)
 def test_optional_call_metadata_requires_declared_types(field: str, value: object) -> None:
     block = {"type": "invalid_tool_call", "id": None, "name": None, "args": "{}", field: value}
     with pytest.raises(HistoricalRuntimeOutputError):
@@ -227,17 +363,31 @@ def test_optional_call_metadata_requires_declared_types(field: str, value: objec
 
 
 def test_shadowed_raw_and_normalized_call_fields_are_both_checked() -> None:
-    message = {
-        "role": "assistant", "content": "Research",
-        "tool_calls": [{"type": "tool_call", "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}],
-        "additional_kwargs": {"function_call": {"name": "research", "arguments": '{"order_intents":[]}'}}},
-    with pytest.raises(HistoricalRuntimeOutputError): validate(with_message(message))
+    message = (
+        {
+            "role": "assistant",
+            "content": "Research",
+            "tool_calls": [
+                {"type": "tool_call", "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}
+            ],
+            "additional_kwargs": {
+                "function_call": {"name": "research", "arguments": '{"order_intents":[]}'}
+            },
+        },
+    )
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(message))
 
 
 def test_benign_encoded_and_object_call_arguments_are_preserved_as_data() -> None:
     messages = [
         raw_function_call('{"evidence_id":"e1","period":2}'),
-        {"role": "assistant", "content": [{"type": "tool_call", "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_call", "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}
+            ],
+        },
     ]
     output = make_output()
     output["messages"].extend(messages)
@@ -247,26 +397,50 @@ def test_benign_encoded_and_object_call_arguments_are_preserved_as_data() -> Non
 
 @pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")])
 def test_nested_nonfinite_plain_call_arguments_are_denied(number: float) -> None:
-    message = {"role": "assistant", "content": [{"type": "tool_call", "id": "c1", "name": "research", "args": {"scores": [1.5, number]}}]}
-    with pytest.raises(HistoricalRuntimeOutputError): validate(with_message(message))
+    message = {
+        "role": "assistant",
+        "content": [
+            {"type": "tool_call", "id": "c1", "name": "research", "args": {"scores": [1.5, number]}}
+        ],
+    }
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(message))
 
 
 def test_json_looking_prose_is_never_reclassified_as_executable_arguments() -> None:
-    message = {"role": "assistant", "content": 'Discussion of {"quantity":999}', "response_metadata": {"description": '{"order_intents":[]}'}}
+    message = {
+        "role": "assistant",
+        "content": 'Discussion of {"quantity":999}',
+        "response_metadata": {"description": '{"order_intents":[]}'},
+    }
     final, _ = validate(with_message(message))
     assert final["messages"][-1] == message
 
 
 def test_opaque_callback_import_and_host_handle_inputs_fail_before_hooks() -> None:
     calls: list[str] = []
+
     class Opaque:
-        def __str__(self): calls.append("str"); raise AssertionError("hook")
-        def __deepcopy__(self, memo): calls.append("copy"); raise AssertionError("hook")
-        def model_dump(self, *args, **kwargs): calls.append("dump"); raise AssertionError("hook")
+        def __str__(self):
+            calls.append("str")
+            raise AssertionError("hook")
+
+        def __deepcopy__(self, memo):
+            calls.append("copy")
+            raise AssertionError("hook")
+
+        def model_dump(self, *args, **kwargs):
+            calls.append("dump")
+            raise AssertionError("hook")
+
     for value in (Opaque(), lambda: None, __import__, object()):
         output = with_message(value)
         with pytest.raises(CachedGraphResponseCorruptionError):
-            build_cached_graph_response(**make_response_kwargs(output=output, capture_manifest=make_capture_manifest(make_output())))
+            build_cached_graph_response(
+                **make_response_kwargs(
+                    output=output, capture_manifest=make_capture_manifest(make_output())
+                )
+            )
     assert calls == []
 
 
@@ -274,14 +448,35 @@ def test_response_provenance_fields_are_hash_bound_and_cannot_be_backdated() -> 
     raw = build_cached_graph_response(**make_response_kwargs())
     record = CachedGraphResponseRepository().seal(raw)
     selection = make_selection(expected_response_hash=record.response_hash)
-    payload = record.model_dump(mode="python")
+    payload = record.model_dump(mode="json")
     for field, value in (
-        ("response_id", "different-response"), ("graph_artifact_id", "different-graph"),
-        ("model_artifact_id", "different-model"), ("runtime_manifest_id", "different-runtime"),
-        ("capture_manifest", record.capture_manifest.model_copy(update={"manifest_id": "different-capture"})),
+        ("response_id", "different-response"),
+        ("graph_artifact_id", "different-graph"),
+        ("model_artifact_id", "different-model"),
+        ("runtime_manifest_id", "different-runtime"),
+        (
+            "capture_manifest",
+            {
+                **record.capture_manifest.model_dump(mode="json"),
+                "manifest_id": "different-capture",
+            },
+        ),
     ):
         changed = {**payload, field: value}
         repository = CachedGraphResponseRepository()
-        repository._records[record.response_id] = __import__("json").dumps(changed, default=str, sort_keys=True, separators=(",", ":")).encode()
+        repository._records[record.response_id] = canonical(changed)
         with pytest.raises((CachedGraphResponseCorruptionError, CachedGraphResponseMismatchError)):
-            repository.get_bound(selection, bundle_id=record.bundle_id, bundle_hash=record.bundle_hash, knowledge_cutoff=record.knowledge_cutoff, calendar_id=record.calendar_id, replay_policy=record.replay_policy, variant_id=record.variant_id, trade_date=record.trade_date, ticker=record.ticker, instrument_id=record.instrument_id, asset_type=record.asset_type, instrument_context=record.instrument_context)
+            repository.get_bound(
+                selection,
+                bundle_id=record.bundle_id,
+                bundle_hash=record.bundle_hash,
+                knowledge_cutoff=record.knowledge_cutoff,
+                calendar_id=record.calendar_id,
+                replay_policy=record.replay_policy,
+                variant_id=record.variant_id,
+                trade_date=record.trade_date,
+                ticker=record.ticker,
+                instrument_id=record.instrument_id,
+                asset_type=record.asset_type,
+                instrument_context=record.instrument_context,
+            )

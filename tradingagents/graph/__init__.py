@@ -4,11 +4,8 @@ from .conditional_logic import ConditionalLogic
 from .historical import (
     HistoricalRuntimeError,
     HistoricalRuntimeOutputError,
-    HistoricalRuntimeTypeError,
-    HistoricalRuntimeUnavailableError,
-    OfflineGraphRuntime,
     create_historical_initial_state,
-    run_historical,
+    validate_historical_response,
 )
 from .propagation import Propagator
 from .reflection import Reflector
@@ -22,12 +19,9 @@ __all__ = [
     "GraphSetup",
     "HistoricalRuntimeError",
     "HistoricalRuntimeOutputError",
-    "HistoricalRuntimeTypeError",
-    "HistoricalRuntimeUnavailableError",
-    "OfflineGraphRuntime",
     "Propagator",
     "Reflector",
     "SignalProcessor",
     "create_historical_initial_state",
-    "run_historical",
+    "validate_historical_response",
 ]
