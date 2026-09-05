@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `62a5b5cf7393e5a83b10de69289ac72789dbd12d`
-- `roadmap_status`: `sig_01_replay_boundary_safe_candidate_pending_final_review_ci`
+- `roadmap_status`: `sig_01_exact_input_candidate_pending_final_review_ci`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -112,7 +112,7 @@ on evidence, not intent.
 | PIT-04 | `f7d96ccfc311d4e48cf32748b4645343272eeb21` | `codex/pit-04-events-social-macro` | #21 | RED/hygiene/GREEN `3d2a8dd8dfb1001f22ff627267b88170913f8460` / `1ff3a81265f63dbaa70f79e4eca4336644280f2f` / `68d2d0bfe0a2e18b9bff3430943f721daa9e63cb`; repair RED/GREEN `b64a32566352cdd8938d4b5c7afe0bc2bf89b62d` / `d3891ba811245fc3e505389d88e2ea13d98cc362`; final head `6753b6da4b12a08bfda43d494681d2bac1ffd658`; merge `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — two RED stages; focused 111; data 387; productionization 586; legacy 61; full 1162 passed, 2 skipped, 69 subtests; Ruff/checkers/lock/diff/wheel | PASS — CI `33362962359`; CodeQL `33362962349`; Dependency Review `33362962320` | APPROVE — exact-head `#issuecomment-5474461389`; Master `#issuecomment-5474461558`; nonblocking MEDIUM test hardening deferred | none | MERGED / next: PIT-05 |
 | PIT-05 | `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `codex/pit-05-universe-actions` | #22 | RED/hygiene/GREEN `02305814650fedff1e5bc91dd37b4a5a61e541a7` / `955fe503ba1a9908efa54131347dd4a57bdcacfd` / `f56ebfdbfbc993bde22b834dd125cb3b891d25ab`; final head `d0ea37014258d96dc6ab75e4ec2f805f9fabc1c9`; merge `4782754746e02efb28b3078707d7c266728b0970` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / Sol high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / Sol high; master Sol/xhigh | PASS — focused 80; data 467; productionization 666; legacy 30; full 1242 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33365435326`; CodeQL `33365435294`; Dependency Review `33365435310` | APPROVE exact-head `#issuecomment-5474785612`; Master `#issuecomment-5474785805`; nonblocking deferred findings recorded | none | MERGED / next PIT-06 |
 | PIT-06 | `4782754746e02efb28b3078707d7c266728b0970` | `codex/pit-06-evidence-bundle` | #23 | RED/hygiene/GREEN `4c3c40a85d9a44b485301839b35091d93537d240` / `0fd46cad906e75ff4f635e92cfc110ab55964211` / `bbb17f25b754db59b1db401e8390adba807a1d4f`; repair RED/corrections/GREEN `986ded3f05a0099d8d7291a8e3fe4b69145cc237` / `fb92e80f259832af4e55c66b76efbab311e4e24e`,`d648809b3a2dc58f9c54640a4ede7be290694ce0` / `239c5424224187328784dfa1ffa5d139a2fb95fc`; final RED/GREEN `029be583d13b539142278f1758ed0f9da5fe6372` / `31cdd058d1189bbff0f9ae28df83d0d789f71d32`; final head `7a9340be1e8d6997d7f5dfa6ba0e36befb05b153`; merge `1a185d4035db8807c12c5070c30cfe6d2979d968` | `high`; `high_implementer` Sol/high; final escalated `reviewer_xhigh` Sol/xhigh; master Sol/xhigh | PASS — focused 54; data 521; productionization 720; regressions 15; full 1296 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33370017680`; CodeQL `33370017614`; Dependency Review `33370017652` | APPROVE `#issuecomment-5475399753`; Master MERGE `#issuecomment-5475399932` | none | MERGED; next SIG-01 |
-| SIG-01 | original `1a185d4035db8807c12c5070c30cfe6d2979d968`; current main `62a5b5cf7393e5a83b10de69289ac72789dbd12d` | `codex/sig-01-research-adapter` | #24 | approved RED/GREEN `5d7720fb` / `85aa606c`; portability `adf5429e`; cutoff/depth RED/GREEN `574e3347` / `bd77668d`; hook RED/refinement/GREEN `6c0f093b` / `f620f930` / `7253457d`; time/instance RED/GREEN `85e836f3` / `e1600933`; context/boundary RED/GREEN `351a4acb` / `35cf6d84`; merge none | `high`, difficult route; sole `high_implementer` configured-actual Sol/high; different fresh final `reviewer_xhigh` Sol/xhigh pending; historical routes/correction preserved | PASS — latest targeted 44, cached 130, focused 387, legacy 26, productionization 1053, full 1629/2 skipped; static/lock/offline wheel | PENDING exact final state head; repair-head CI running | REQUEST CHANGES `#issuecomment-5549730432` repaired; final fresh review pending | none | REPLAY-BOUNDARY-SAFE CANDIDATE — exact-head review/CI/Master required; SIG-02 prohibited |
+| SIG-01 | original `1a185d4035db8807c12c5070c30cfe6d2979d968`; current main `62a5b5cf7393e5a83b10de69289ac72789dbd12d` | `codex/sig-01-research-adapter` | #24 | approved RED/GREEN `5d7720fb` / `85aa606c`; portability `adf5429e`; cutoff/depth RED/GREEN `574e3347` / `bd77668d`; hook RED/refinement/GREEN `6c0f093b` / `f620f930` / `7253457d`; time/instance RED/GREEN `85e836f3` / `e1600933`; context/boundary RED/GREEN `351a4acb` / `35cf6d84`; bound-string RED/GREEN `4e73febe` / `ebb59b99`; merge none | `high`, difficult route; sole `high_implementer` configured-actual Sol/high; different fresh final `reviewer_xhigh` Sol/xhigh pending; historical routes/correction preserved | PASS — latest targeted 17, adapter/cached 324, focused 404, legacy 26, productionization 1070, full 1646/2 skipped; static/lock/offline wheel | PENDING exact final state head; repair-head CI running | REQUEST CHANGES `#issuecomment-5549850684` repaired; final fresh review pending | none | EXACT-INPUT CANDIDATE — exact-head review/CI/Master required; SIG-02 prohibited |
 
 Recommended compact representation in agent summaries:
 
@@ -394,6 +394,33 @@ approved implementation checkpoint and candidate evidence below.
   full 1629 passed, 2 skipped, 18 warnings, 69 subtests in 100.76s. Ruff, dependency direction, lock,
   Markdown, diff, imports/config, and a fresh offline wheel valid/zero-observation smoke passed. The
   Master independently inspected the production diff and reran all 44 H9 selections successfully.
+- This final state-only checkpoint changes no production/tests. Another different fresh
+  `reviewer_xhigh`, all 11 exact checkpoint-head checks, and the Master merge artifact remain
+  mandatory. No final PASS is claimed before those gates complete.
+
+## Historical bound-string final candidate
+
+- Another fresh `reviewer_xhigh` / configured-actual Sol/xhigh reviewed exact state-only head
+  `f2cdd48a4c2b37ba89355a5a6912fcd507dc0ad7`, confirmed H1–H9 and M1–M3 closed,
+  but issued
+  [REQUEST CHANGES](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549850684)
+  for HIGH H10. The two exported historical plain-data entry points accepted non-exact bound string
+  arguments before Propagator conversion/comparison; a recording `trade_date.__str__` ran and the
+  response was accepted.
+- The durable
+  [H10 repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549850773)
+  kept the approved architecture and one writer. Test-only RED
+  `4e73febefa4a3754abfd5b0b86daeff7b7544707`, parent `f2cdd48`, produced all 16
+  expected hostile failures and one passing exact-string control with no production change.
+- Production-only GREEN `ebb59b99bbfe2a6b107f89bf7c90320af14b3c98` changes only
+  `tradingagents/graph/historical.py`. One internal guard requires exact strings for company, date,
+  asset type and instrument context as the first executable line in both exported entry points,
+  before output traversal or Propagator. Public signatures, state shape and signal behavior remain.
+- H10 validation: targeted 17; adapter/cached 324; focused 404; legacy 26; productionization 1070;
+  full 1646 passed, 2 skipped, 18 warnings, 69 subtests in 99.84s. Ruff, dependency direction, lock,
+  Markdown, diff and a fresh offline wheel matrix over both exports/four arguments/object and string
+  subclass zero-observation denial passed. The Master independently inspected the production diff and
+  reran the 16 hostile selections successfully.
 - This final state-only checkpoint changes no production/tests. Another different fresh
   `reviewer_xhigh`, all 11 exact checkpoint-head checks, and the Master merge artifact remain
   mandatory. No final PASS is claimed before those gates complete.
