@@ -10,13 +10,14 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `9dde1955484b793c4d8dba9c62794ae85b181bcf`
-- `roadmap_status`: `sig_01_open_gpt6_disabled_harness_update_only`
-- `current_pr_id`: `SIG-01` (PR #24 remains open; this task changes the harness only)
+- `last_reconciled_main_sha`: `62a5b5cf7393e5a83b10de69289ac72789dbd12d`
+- `roadmap_status`: `sig_01_exact_input_candidate_pending_final_review_ci`
+- `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: `roadmap_work_out_of_scope_harness_pr_only`
+- `autonomy_mode`: `autonomous_sig_01_only_active`
 - `last_completed_roadmap_pr`: `PIT-06`
+- `stop_after_pr_id`: `SIG-01` (do not start SIG-02)
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_high_implementer_route`: `GPT-5.6 Luna / max`
@@ -111,7 +112,7 @@ on evidence, not intent.
 | PIT-04 | `f7d96ccfc311d4e48cf32748b4645343272eeb21` | `codex/pit-04-events-social-macro` | #21 | RED/hygiene/GREEN `3d2a8dd8dfb1001f22ff627267b88170913f8460` / `1ff3a81265f63dbaa70f79e4eca4336644280f2f` / `68d2d0bfe0a2e18b9bff3430943f721daa9e63cb`; repair RED/GREEN `b64a32566352cdd8938d4b5c7afe0bc2bf89b62d` / `d3891ba811245fc3e505389d88e2ea13d98cc362`; final head `6753b6da4b12a08bfda43d494681d2bac1ffd658`; merge `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / configured actual GPT-5.6 Sol / high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / configured actual GPT-5.6 Sol / high; master GPT-5.6 Sol / xhigh | PASS — two RED stages; focused 111; data 387; productionization 586; legacy 61; full 1162 passed, 2 skipped, 69 subtests; Ruff/checkers/lock/diff/wheel | PASS — CI `33362962359`; CodeQL `33362962349`; Dependency Review `33362962320` | APPROVE — exact-head `#issuecomment-5474461389`; Master `#issuecomment-5474461558`; nonblocking MEDIUM test hardening deferred | none | MERGED / next: PIT-05 |
 | PIT-05 | `63a167f6fa737f48a7a5525ab19384afdca9fc37` | `codex/pit-05-universe-actions` | #22 | RED/hygiene/GREEN `02305814650fedff1e5bc91dd37b4a5a61e541a7` / `955fe503ba1a9908efa54131347dd4a57bdcacfd` / `f56ebfdbfbc993bde22b834dd125cb3b891d25ab`; final head `d0ea37014258d96dc6ab75e4ec2f805f9fabc1c9`; merge `4782754746e02efb28b3078707d7c266728b0970` | `high`; `high_implementer` / `.codex/agents/high-implementer.toml` / Sol high; final `reviewer_high` / `.codex/agents/reviewer-high.toml` / Sol high; master Sol/xhigh | PASS — focused 80; data 467; productionization 666; legacy 30; full 1242 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33365435326`; CodeQL `33365435294`; Dependency Review `33365435310` | APPROVE exact-head `#issuecomment-5474785612`; Master `#issuecomment-5474785805`; nonblocking deferred findings recorded | none | MERGED / next PIT-06 |
 | PIT-06 | `4782754746e02efb28b3078707d7c266728b0970` | `codex/pit-06-evidence-bundle` | #23 | RED/hygiene/GREEN `4c3c40a85d9a44b485301839b35091d93537d240` / `0fd46cad906e75ff4f635e92cfc110ab55964211` / `bbb17f25b754db59b1db401e8390adba807a1d4f`; repair RED/corrections/GREEN `986ded3f05a0099d8d7291a8e3fe4b69145cc237` / `fb92e80f259832af4e55c66b76efbab311e4e24e`,`d648809b3a2dc58f9c54640a4ede7be290694ce0` / `239c5424224187328784dfa1ffa5d139a2fb95fc`; final RED/GREEN `029be583d13b539142278f1758ed0f9da5fe6372` / `31cdd058d1189bbff0f9ae28df83d0d789f71d32`; final head `7a9340be1e8d6997d7f5dfa6ba0e36befb05b153`; merge `1a185d4035db8807c12c5070c30cfe6d2979d968` | `high`; `high_implementer` Sol/high; final escalated `reviewer_xhigh` Sol/xhigh; master Sol/xhigh | PASS — focused 54; data 521; productionization 720; regressions 15; full 1296 passed, 2 skipped, 69 subtests; static/lock/wheel | PASS — CI `33370017680`; CodeQL `33370017614`; Dependency Review `33370017652` | APPROVE `#issuecomment-5475399753`; Master MERGE `#issuecomment-5475399932` | none | MERGED; next SIG-01 |
-| SIG-01 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | `codex/sig-01-research-adapter` | #24 | reviewed head `ba228571c91d17648375d574450454006b66c55b`; merge pending | `high`; prior `high_implementer` / Sol high; prior `reviewer_high` / Sol high; prior Master / Sol xhigh (historical routes, not relabeled by this upgrade) | recorded PASS — focused 55, productionization 775, full 1351/2 skipped; RED histories independently verified | recorded PASS — `33460701725`, CodeQL `33460701701`, Dependency Review `33460701670` at the reviewed head | REQUEST CHANGES `#issuecomment-5487705172`; Master DO NOT MERGE `#issuecomment-5487707009` | none reported | BLOCKED on findings and human architecture decision; resume existing SIG-01 only |
+| SIG-01 | original `1a185d4035db8807c12c5070c30cfe6d2979d968`; current main `62a5b5cf7393e5a83b10de69289ac72789dbd12d` | `codex/sig-01-research-adapter` | #24 | approved RED/GREEN `5d7720fb` / `85aa606c`; portability `adf5429e`; cutoff/depth RED/GREEN `574e3347` / `bd77668d`; hook RED/refinement/GREEN `6c0f093b` / `f620f930` / `7253457d`; time/instance RED/GREEN `85e836f3` / `e1600933`; context/boundary RED/GREEN `351a4acb` / `35cf6d84`; bound-string RED/GREEN `4e73febe` / `ebb59b99`; merge none | `high`, difficult route; sole `high_implementer` configured-actual Sol/high; different fresh final `reviewer_xhigh` Sol/xhigh pending; historical routes/correction preserved | PASS — latest targeted 17, adapter/cached 324, focused 404, legacy 26, productionization 1070, full 1646/2 skipped; static/lock/offline wheel | PENDING exact final state head; repair-head CI running | REQUEST CHANGES `#issuecomment-5549850684` repaired; final fresh review pending | none | EXACT-INPUT CANDIDATE — exact-head review/CI/Master required; SIG-02 prohibited |
 
 Recommended compact representation in agent summaries:
 
@@ -151,18 +152,282 @@ PR IDs.
 | Python 3.14 default alignment | #12 | `0dc55016db0a8b972855d3e3e6b9db5f2b1a7708` | Pin the preferred default runtime while preserving Python `>=3.10` compatibility | merged as `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` |
 | Hybrid concurrent agent harness | #17 | `70e4a9af5f040c10fa13b49f3dffc9e68573b7b2` | Add read-only pre-flight/review specialist lanes while preserving serialized production writes | merged as `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd` |
 | GPT-6 Astra max-tier harness | #25 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | Add Astra routing and an optional max implementation/review tier | merged as `7af14f3bba7078f78cc807885b3c169acc6b7da5` |
-| Cost-balanced agent routing | #26 | `7af14f3bba7078f78cc807885b3c169acc6b7da5` | Restore Luna/Sol defaults and retain Astra/high only for the hardest review tier | merged as `9dde1955484b793c4d8dba9c62794ae85b181bcf` |
+| Cost-balanced routing ladder | #26 | `7af14f3bba7078f78cc807885b3c169acc6b7da5` | Prospective Luna/Sol/Astra-high routes; existing loaded/historical routes preserved | merged as `9dde1955484b793c4d8dba9c62794ae85b181bcf` |
+| GPT-6 routes disabled | #27 | `9dde1955484b793c4d8dba9c62794ae85b181bcf` | Current defaults use Luna/Sol only; historical routes preserved | merged as `62a5b5cf7393e5a83b10de69289ac72789dbd12d` |
+
+## Historical SIG-01 pre-approval checkpoint — 2026-09-04
+
+This section preserves the state before the user approved closed replay. It is superseded by the
+approved implementation checkpoint and candidate evidence below.
+
+- Existing PR #24 only; no duplicate, SIG-02 branch, RED, JIT, PR, implementation, or promotion.
+  Current main `62a5b5cf7393e5a83b10de69289ac72789dbd12d`; original SIG-01 base `1a185d4035db8807c12c5070c30cfe6d2979d968`.
+  PR25 was verified merged at startup. Concurrent PR26/27 harness changes were later integrated
+  without production/test changes, preserving all merge parents and original RED/GREEN history.
+- Harness integrations: PR25 main via `9f1d0b4614fbb77acdd14933d904d8588fd84eb9`; PR26 main via
+  `55cf4381a0cb4b2c5caa4e54347e875d5866deda`; PR27 main via `c40c855c974fafa74bf377b522b888058b03ae51`.
+  Current config/AGENTS/protocol/template defaults match main. Retired max/Astra role files are absent.
+- Latest user steering explicitly replaced the max-review request with the current harness and
+  authorized direct merge only if all gates pass. Fresh named `reviewer_xhigh` successfully loaded
+  current `.codex/agents/reviewer-xhigh.toml`: configured-actual `gpt-5.6-sol / xhigh`, matching the
+  runtime's fixed route. Review-only escalation was justified by concrete representation/serialization
+  findings. Both production writers are stopped; only one wrote at a time. No new GPT-6 child is used.
+- Historical max implementation/review configuration reports remain preserved with PR25 provenance.
+  [Initial high-route correction](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548196904):
+  file requested Astra/high but exposed fixed role specified Sol/high, so actual Astra/high was not
+  verified. Successful spawn/instruction matching did not settle that conflict. No old report or
+  completed FND/PIT model evidence was relabeled. This running Master was not hot-switched by config.
+- [Max availability failure](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548286323)
+  was resolved by the user's new route selection, not a silent fallback. A temporary untracked role
+  file was removed unchanged before any further max spawn; no retired role was committed/restored.
+- Durable contracts: original PR body; [bounded repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547525453),
+  [max H5 JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547726002),
+  [final repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548126743), and
+  [current Sol review JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548348098).
+  Earlier reviews, decoding refinements, matrix audit and all original/repair REDs remain in Git/PR
+  history; reasons and actual/requested roles were recorded before their applicable dispatches.
+- Final repair RED `2026529c9fdefcd9765dc3b14708ddea67157bfe`: test-only, 138 expected failures / 126
+  passing controls against durable production. GREEN `3f492251dd8844af19cccc8fa00a5ad21775ac1b`
+  changes historical.py only (56 additions / 8 deletions); tests are in the preceding commit.
+  Earlier compatibility control `285ea6f` passed its durable baseline and is not falsely called RED.
+- [Fresh Sol review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548422047)
+  at `c40c855c974fafa74bf377b522b888058b03ae51`: REQUEST CHANGES. H1/H2/H3/H5/M2/M3 CLOSED for
+  the selected contract. HIGH H4 remains: arbitrary host callable is not an enforced zero-egress
+  runtime. MEDIUM M1 remains: trade-date horizon needs an approved rule. These are human architecture
+  decisions, not model/CI issues. LOW L1 prospective reviewer_max wording is corrected in this
+  checkpoint; current-harness named review is required instead.
+- Independent validation at c40c855: matrix 264; focused 746; legacy 26; full 1988 passed, 2 skipped,
+  27 warnings, 69 subtests in 110.19s. Original and latest repair RED independently reproduced.
+  Ruff/dependency/lock/Markdown/diff and exact repaired-code offline wheel evidence passed.
+  All 11 exact-c40c855 checks passed: CI `33935610539`, CodeQL `33935610547`, Dependency Review
+  `33935610591`. Skipped optional Bedrock/live DeepSeek checks are not successful integrations.
+- This final documentation/state correction changes no production/tests. Exact-head follow-up review,
+  CI, and the final Master DO NOT MERGE artifact are recorded in the PR conversation after its commit;
+  prior CI and review never approve a new SHA. SIG-01 has no merge SHA and remains open.
+- The runtime/date amendment was unapproved at this checkpoint. The later user approval and exact
+  closed-replay implementation checkpoint supersede that stop condition while preserving its audit
+  evidence.
+
+## Approved SIG-01 closed-replay implementation checkpoint
+
+- On 2026-09-04 the user approved the reviewed closed cached-response replay and UTC cutoff-date
+  amendment and instructed the Master to continue. Conditional merge authorization remains active
+  after all review, CI, and Master gates pass. Scope remains existing PR #24 only; stop after SIG-01
+  and do not start SIG-02.
+- Exact base main remains `62a5b5cf7393e5a83b10de69289ac72789dbd12d`; current branch pre-RED
+  head is `28bb74b829e240db52191340d7754aff864448fc`. PR #24 is open and cleanly mergeable. No
+  duplicate PR is created. Existing FND/PIT and SIG-01 history/model evidence remains unchanged.
+- The approved architecture is recorded in
+  [SIG_01_AMENDMENT_PROPOSAL.md](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md),
+  Phase 02 design/implementation, the SIG-01 roadmap row, and appendices A/B before repair RED.
+  EvidenceBundle and RunContext v1 fields/hashes/readers remain unchanged.
+- Exact response design: a separate v1 production-owned cached-response contract, immutable selection,
+  canonical byte sealer/parser, and append-only in-memory repository. Selection requires exact response
+  ID/hash plus graph/model/runtime artifact IDs and hashes. The record binds bundle ID/hash, UTC cutoff,
+  calendar, replay policy, variant, UTC snapshot date, ticker, instrument/asset, capture provenance,
+  canonical output hash, and response hash. Repository access is exact, never implicit/latest.
+- The repository stores bounded canonical UTF-8 JSON bytes. The production sealer rejects duplicate
+  keys, non-finite values, opaque/custom objects, authority fields, malformed message/call records,
+  excessive total bytes, depth, nodes, or string size. Capture availability must be at/before cutoff;
+  archive-realistic ingestion must also be at/before cutoff. Typed missing/corrupt/mismatch/unavailable
+  failures return no state/signal and have no retry, synthesis, callable, dynamic load, or fallback.
+- `trade_date` is approved as exactly the canonical UTC `knowledge_cutoff` date. Reject earlier/later
+  values before alias resolution or response lookup. This is a research snapshot label; it does not
+  infer session/execution behavior.
+- `tradingagents.graph.historical` becomes a pure cached plain-state validator/five-tier renderer. It
+  accepts no bundle/context/callable/plugin/import target or object deserializer and never imports
+  `mytradingalpha`. The only reverse importers are the approved cached-response sealer and production
+  adapter under `mytradingalpha.research`. Ordinary graph,
+  CLI, setup/propagation, provider config, persistence, and existing artifacts stay compatible.
+- Complexity remains `high`. Selected current-harness route is difficult escalation: sole
+  `high_implementer`, `.codex/agents/high-implementer.toml`, configured `gpt-5.6-sol / high`, followed
+  by fresh independent `reviewer_xhigh`, `.codex/agents/reviewer-xhigh.toml`, configured
+  `gpt-5.6-sol / xhigh`. Reason: canonical hashing, temporal cutoff/provenance, bounded parsing, and
+  removal of a safety-boundary callable require elevated implementation and review. This is not a
+  `critical` broker/live boundary. Both names/configs are present in the current runtime catalog;
+  actual loading requires successful dispatch. Master uses current Sol/xhigh policy.
+- One production writer only. Repair RED rewrites callable-oriented tests to the approved response
+  contract and adds a test-only canonical raw response fixture before GREEN. GREEN may add
+  `mytradingalpha/research/cached_response.py`, modify the adapter/pure validator/exports/research
+  namespace, and update only focused SIG-01 tests. No EvidenceToolset/ResearchNote, quant, durable
+  cache storage/capture service, broker/paper/live, dependency, or SIG-02 implementation.
+- Required evidence: callable API removal/static denial; exact canonical round-trip/hash/repeat;
+  ID/hash/bundle/context/date/instrument/artifact/provenance/cutoff mutation denial; no file/socket/
+  clock/environment/provider/subprocess/import-hook effects without monkeypatch-based confinement;
+  legacy state/five-tier and ordinary graph/CLI compatibility; unchanged EvidenceBundle v1 golden
+  hashes; full local validation, fresh current-harness review, exact-head CI, and Master gate.
+
+## Approved SIG-01 closed-replay candidate evidence
+
+- Successful fresh named implementation dispatch loaded `high_implementer` from current
+  `.codex/agents/high-implementer.toml`, configured-actual `gpt-5.6-sol / high`. It was the sole
+  production writer and is now stopped. Fresh `reviewer_xhigh` / Sol xhigh remains required.
+- [Approved JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549088824)
+  was durable before RED. A later
+  [file-placement clarification](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549157165)
+  allows exactly `cached_response.py` and `tradingagents_adapter.py` to import the pure
+  `tradingagents` validator; no other dependency-direction rule changed.
+- Test/fixture-only RED `5d7720fb9ac2948055044c49d4f19ad03ab37809` produced exactly three
+  expected missing-module collection errors. It rewrote obsolete callable-object tests to the closed
+  canonical byte/repository/date contract without changing production code. All prior RED/GREEN
+  history remains intact.
+- GREEN `85aa606c69d57b409940640f31147dcd74250b3b` adds the separate v1 response
+  contract/sealer/parser/repository and exact selection, rewires the adapter, removes every callable
+  runtime surface, and reduces `tradingagents.graph.historical` to pure plain-data state validation.
+  Existing EvidenceBundle/RunContext v1 code, ordinary graph/CLI, dependencies, workflows, providers,
+  persistence, and SIG-02 files are unchanged.
+- Local GREEN validation: focused research/PIT-06 286; legacy 26; productionization 952; full 1528
+  passed, 2 skipped, 28 warnings, 69 subtests in 99.46s. Ruff/dependency/lock/Markdown/diff/imports
+  passed. An exact-head wheel built and installed offline; valid cached replay and wrong-hash denial
+  smoke passed. Fixtures are explicitly test-only and do not prove real model inference.
+- Initial exact-head CI `33944006459` found one test-only portability bug: reverse-import paths were
+  compared in filesystem traversal order. Foundation failed with 951 passes/1 failure; production
+  code and all other completed checks were unaffected. Repair `adf5429e96b376d907d0ecc960f9edc50e999e0f`
+  sorts the observed paths before exact equality against the same two-entry allowlist. Single test and
+  focused 286 passed; Ruff/diff passed. This repair neither weakens membership nor changes production.
+- Candidate at this checkpoint was `adf5429e96b376d907d0ecc960f9edc50e999e0f`. Exact-head CI and fresh
+  independent review are pending at this checkpoint. H1/H2/H3/H5/M1/M2/M3 and H4 have local closure
+  evidence under the approved contract; no final PASS is claimed before reviewer/CI/Master gates.
+- Scope remains SIG-01 only. No capture service, durable cache storage, real transcript/model inference,
+  EvidenceToolset/ResearchNote, quant, broker/paper/live, or SIG-02 implementation exists.
+
+## Closed-replay final repair candidate
+
+- [Independent review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549344146)
+  at `5f5ee5c650229accbf340b64d59781d951aa32bb` verified the new RED, local evidence, exact-head
+  CI, H4 callable removal, and M1 UTC-date enforcement, then requested changes for two HIGH findings:
+  the public model omitted cutoff eligibility and deeply encoded arguments leaked raw recursion. LOW
+  findings covered an ineffective shadowed-call tuple test and the PR overview.
+- [Repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549347328)
+  preserves the approved architecture and difficult Sol route. The retained sole `high_implementer`
+  was the only repair writer and is stopped.
+- Test-only repair RED `574e334714b8be3b5b1dbc8c41056f9cef57c305`: 9 expected failures,
+  3 controls passed, 175 deselected. It covers direct public cutoff/archive validation, deep argument
+  typed errors and exact depth/node/string limits; the corrected shadowed-call dict test already passed.
+- Production-only repair GREEN `bd77668dcc89108212764fb8e402a937b454f6b4` changes only
+  `cached_response.py` and `historical.py`. Public CachedGraphResponse now enforces intrinsic plus
+  cutoff integrity; private typed preflight preserves builder/parser Unavailable versus Corruption/
+  output error semantics. Outer and decoded argument data share exact depth 64, nodes 100,000, and
+  UTF-8 key/string 1,048,576-byte limits with typed recursion mapping.
+- Final repair validation: targeted 12; focused 297; legacy 26; productionization 963; full 1539
+  passed, 2 skipped, 28 warnings, 69 subtests in 99.81s. Ruff/dependency/lock/Markdown/diff passed.
+  Fresh offline wheel valid replay, direct future-cutoff denial, deep typed denial and parser corruption
+  smoke passed. Exact-head CI and a different fresh `reviewer_xhigh` remain required.
+- The Master owns the final state-only checkpoint and PR overview correction. Production/tests must
+  remain byte-identical after that checkpoint; final review/CI are SHA-specific. No known unresolved
+  implementation finding is claimed closed until the new reviewer confirms it.
+
+## Hook-safe final candidate
+
+- [Independent review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549485895)
+  at `45fa224826ed2ad56378e60e1cb0ba99adec064b` confirmed H1–H7 and M1–M3, then found HIGH H8:
+  an exact `SourceManifest.model_construct()` could hide hook-bearing fields used before defensive
+  revalidation; public Pydantic validation could also iterate non-exact outer/output mappings.
+- [H8 repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549486025)
+  preserves the closed replay architecture and difficult Sol route. The retained `high_implementer`
+  remained the sole writer and is stopped.
+- Test-only H8 RED `6c0f093b14ed97b3944c7f0cd7bb26f52cf2bd24`: 20 expected failures,
+  8 controls passed, 67 deselected. Test refinement `f620f930769bd3d47f3b3aa65d43f084e1532092`
+  clears setup effects and adds primitive/manifest-mapping controls; it remains test-only and precedes
+  production GREEN.
+- Production-only GREEN `7253457d69bb2d1b9df88c83328886da511d3d67` changes only
+  `cached_response.py`. A shared mode-before raw gate rejects non-exact outer/output mappings before
+  Pydantic iteration. Exact SourceManifest/dict input is checked through built-in attribute/dict
+  operations and exact primitive types, reconstructed as a fresh SourceManifest, and only the safe
+  copy reaches comparisons, hash, availability, and serialization.
+- H8 validation: hostile targeted 28; complete cached-response 98; focused 327; legacy 26;
+  productionization 993; full 1569 passed, 2 skipped, 28 warnings, 69 subtests in 99.52s.
+  Ruff/dependency/lock/Markdown/diff passed. A fresh offline wheel proved valid exact-manifest/dict
+  bytes and hostile manifest/outer-mapping zero-hook denial.
+- The Master will create one final state-only candidate with identical production/tests. A DIFFERENT
+  fresh `reviewer_xhigh` and all 11 exact-head checks must pass before the Master artifact and merge.
+  No known unresolved implementation finding remains, but no final PASS is claimed yet.
+
+## Time/instance-safe final candidate
+
+- A different fresh `reviewer_xhigh` loaded the current Sol/xhigh configuration and found two further
+  HIGH H8 entries at `f522dbb16bf25a1032f24eca14ae333430303505`: an exact Python `datetime`
+  could carry a custom `tzinfo` whose methods ran during normalization, and Pydantic's default model
+  instance reuse let constructed `CachedGraphResponse` instances bypass the raw exact-dictionary gate.
+  Its turn ended before a final structured verdict, so the
+  [interim finding](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549584518)
+  is evidence only and cannot approve merge.
+- The durable
+  [time/instance repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549584614)
+  preserves the approved closed replay architecture and difficult Sol route. The retained
+  `high_implementer` remained the only production writer.
+- Test-only RED `85e836f38516b8e549d2d5adaccd5fa3ada47ccb`, parent `f522dbb`: 16 expected
+  failures and 4 passing controls. Production-only GREEN
+  `e1600933356c646bb48040e34df49954568f999b` accepts Python datetimes only when their exact type is
+  `datetime` and stored timezone identity is `timezone.utc`, before Pydantic/datetime operations;
+  timestamp strings remain freshly validated and normalized. Response models always revalidate
+  instances, so class and TypeAdapter paths reject constructed records at the inherited raw gate.
+- Repair validation: targeted 20; cached-response 118; focused 347; legacy 26; productionization 1013;
+  full 1589 passed, 2 skipped, 28 warnings, 69 subtests in 100.07s. Ruff, dependency direction, lock,
+  Markdown, diff, import/config, and a fresh offline wheel replay/zero-observation smoke passed.
+- The Master independently reran the focused repaired selection: 18 passed, 100 deselected. Exact
+  repair-head CI was triggered. This state-only checkpoint changes no production or tests. A new
+  different fresh `reviewer_xhigh`, all 11 exact checkpoint-head checks, and the Master merge artifact
+  remain mandatory. No final PASS is claimed before those gates complete.
+
+## Run-context/bound-lookup final candidate
+
+- Fresh independent `reviewer_xhigh` / configured-actual Sol/xhigh reviewed exact state-only head
+  `52b1f1cee7846371cc551cc00571b4ca5a26fdb0`, reproduced all current RED and full validation,
+  confirmed all 11 exact-head checks, and issued
+  [REQUEST CHANGES](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549730432)
+  for HIGH H9. Exact `RunContext.model_construct()` timestamps and direct response-repository cutoff
+  inputs could carry custom timezone objects whose methods ran before canonicalization. Selection
+  reconstruction also used caller `model_dump`.
+- The durable
+  [H9 repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549730577)
+  kept the approved architecture, schemas, difficult Sol route, and one writer. Test-only RED
+  `351a4acba830314565783edb3723f9b1dbd7c7d1`, parent `52b1f1c`, produced 33 expected
+  failures and 11 passing controls with no production change.
+- Production-only GREEN `35cf6d8473f3928bb9c54c0b7ab531359acc88f7` changes only replay guard and
+  cached-response repository validation. Exact RunContext/NetworkPolicy storage and complete fields
+  are checked with built-in operations before Pydantic; timestamps accept exact strings or exact
+  `datetime`/`timezone.utc`, then rebuild and verify a fresh canonical context. Replay requires exact
+  bundle ID. Bound lookup requires canonical UTC cutoff and reconstructs exact selection primitives
+  without caller serialization.
+- H9 validation: targeted 44; cached-response 130; focused 387; legacy 26; productionization 1053;
+  full 1629 passed, 2 skipped, 18 warnings, 69 subtests in 100.76s. Ruff, dependency direction, lock,
+  Markdown, diff, imports/config, and a fresh offline wheel valid/zero-observation smoke passed. The
+  Master independently inspected the production diff and reran all 44 H9 selections successfully.
+- This final state-only checkpoint changes no production/tests. Another different fresh
+  `reviewer_xhigh`, all 11 exact checkpoint-head checks, and the Master merge artifact remain
+  mandatory. No final PASS is claimed before those gates complete.
+
+## Historical bound-string final candidate
+
+- Another fresh `reviewer_xhigh` / configured-actual Sol/xhigh reviewed exact state-only head
+  `f2cdd48a4c2b37ba89355a5a6912fcd507dc0ad7`, confirmed H1–H9 and M1–M3 closed,
+  but issued
+  [REQUEST CHANGES](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549850684)
+  for HIGH H10. The two exported historical plain-data entry points accepted non-exact bound string
+  arguments before Propagator conversion/comparison; a recording `trade_date.__str__` ran and the
+  response was accepted.
+- The durable
+  [H10 repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549850773)
+  kept the approved architecture and one writer. Test-only RED
+  `4e73febefa4a3754abfd5b0b86daeff7b7544707`, parent `f2cdd48`, produced all 16
+  expected hostile failures and one passing exact-string control with no production change.
+- Production-only GREEN `ebb59b99bbfe2a6b107f89bf7c90320af14b3c98` changes only
+  `tradingagents/graph/historical.py`. One internal guard requires exact strings for company, date,
+  asset type and instrument context as the first executable line in both exported entry points,
+  before output traversal or Propagator. Public signatures, state shape and signal behavior remain.
+- H10 validation: targeted 17; adapter/cached 324; focused 404; legacy 26; productionization 1070;
+  full 1646 passed, 2 skipped, 18 warnings, 69 subtests in 99.84s. Ruff, dependency direction, lock,
+  Markdown, diff and a fresh offline wheel matrix over both exports/four arguments/object and string
+  subclass zero-observation denial passed. The Master independently inspected the production diff and
+  reran the 16 hostile selections successfully.
+- This final state-only checkpoint changes no production/tests. Another different fresh
+  `reviewer_xhigh`, all 11 exact checkpoint-head checks, and the Master merge artifact remain
+  mandatory. No final PASS is claimed before those gates complete.
 
 ## Current master pre-flight evidence
 
-- 2026-09-04 GPT-6 disablement reconciliation: PR #26 merged as current main
-  `9dde1955484b793c4d8dba9c62794ae85b181bcf`. The user requested a new harness-only PR that removes
-  every active GPT-6 route because of credit consumption. `reviewer_astra_high` is removed; the
-  hardest route becomes Sol/xhigh implementation plus fresh independent Sol/xhigh review. Historical
-  PR #25/#26 records remain unchanged as evidence of what was previously configured. SIG-01 PR #24
-  remains active in another worktree and is not modified or adjudicated by this task.
-
-- Historical PR #26 cost-balanced harness reconciliation: PR #25 had merged as main
+- Historical PR #26 harness reconciliation (superseded operationally by the current checkpoint): PR #25 merged as current main
   `7af14f3bba7078f78cc807885b3c169acc6b7da5`. The user requested a new harness-only PR that restores
   Sol for the default Master, high/critical implementers, and standard/escalated reviewers while
   retaining Luna/max for normal/high/critical work and adding explicit Sol escalation plus a final
@@ -223,11 +488,10 @@ PR IDs.
 - No FND-03 or FND-04 blocker remains; both are merged with final exact-head evidence.
 - Foundation FND-01 through FND-04 is complete as implementation/CI evidence only; this does not prove
   PIT correctness, alpha, paper readiness, or live readiness.
-- PIT-01 through PIT-06 are merged. SIG-01 PR #24 has moved beyond the previously reviewed
-  `ba228571c91d17648375d574450454006b66c55b` head. The prior REQUEST CHANGES and DO NOT MERGE
-  artifacts remain historical evidence but cannot approve or reject the newer head. Its owning
-  session must reconcile the current diff, findings, review, and CI. This harness-only task does not
-  resolve SIG-01 or authorize SIG-02.
+- PIT-01 through PIT-06 are merged. The user approved SIG-01's closed cached-response replay and UTC
+  cutoff-date rule. The repaired candidate removes the host callable, implements the date binding,
+  and closes the latest cutoff/deep-argument findings locally. Fresh exact-head review/CI must confirm
+  every closure before merge. SIG-02 remains out of scope.
 - PIT-06 trusted-input boundary: bundle/domain APIs require concrete validated project models. Hostile
   subclasses overriding `model_dump()` are a nonblocking future hardening item before exposing these
   constructors outside the trusted in-process contract; exact repository and RunContext subclasses

@@ -9,7 +9,7 @@ import socket
 import time
 from contextlib import nullcontext
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -168,9 +168,7 @@ def _updated_manifest(
     manifest: SourceManifest,
     **updates: object,
 ) -> SourceManifest:
-    return SourceManifest.model_validate(
-        {**manifest.model_dump(mode="python"), **updates}
-    )
+    return SourceManifest.model_validate({**manifest.model_dump(mode="python"), **updates})
 
 
 def _requirements() -> tuple[EvidenceRequirement, ...]:
@@ -469,8 +467,7 @@ def test_every_semantic_control_changes_the_hash() -> None:
         }
     )
     alternate_bars = tuple(
-        bar.model_copy(update={"calendar_id": "XNYS.synthetic.v2"})
-        for bar in _bars()
+        bar.model_copy(update={"calendar_id": "XNYS.synthetic.v2"}) for bar in _bars()
     )
     changed_calendar = _build(
         calendar=alternate_calendar,
@@ -823,9 +820,7 @@ def test_bundle_rejects_orphan_universe_records(domain: str) -> None:
     else:
         memberships = candidates["membership_candidates"]
         assert isinstance(memberships, tuple)
-        orphan = memberships[0].model_copy(
-            update={"instrument_id": "instrument-missing"}
-        )
+        orphan = memberships[0].model_copy(update={"instrument_id": "instrument-missing"})
         overrides = {"membership_candidates": (orphan, *memberships[1:])}
 
     with pytest.raises(InvalidEvidenceError, match=domain):
@@ -914,9 +909,7 @@ def test_every_instrument_bearing_domain_references_a_selected_instrument(
         orphan = events[1].model_copy(update={"instrument_id": "instrument-missing"})
         overrides = {"event_candidates": (orphan, *events[2:])}
     else:
-        orphan = _social_candidates(1)[0].model_copy(
-            update={"instrument_id": "instrument-missing"}
-        )
+        orphan = _social_candidates(1)[0].model_copy(update={"instrument_id": "instrument-missing"})
         overrides = {
             "social_post_candidates": (orphan,),
             "missing_optional": (),
@@ -1007,9 +1000,7 @@ def test_historical_guard_denies_run_context_subclasses_before_model_dump_or_io(
 
     repository = EvidenceRepository()
     bundle = repository.seal(_build())
-    hostile = HostileRunContext.model_validate(
-        _context(bundle).model_dump(mode="python")
-    )
+    hostile = HostileRunContext.model_validate(_context(bundle).model_dump(mode="python"))
     monkeypatch.setattr(socket, "socket", lambda *_args, **_kwargs: calls.append("socket"))
     monkeypatch.setattr(
         builtins,
@@ -1110,3 +1101,251 @@ def test_action_union_remains_exactly_the_existing_pit_05_types() -> None:
         DividendAction,
     }
     assert DelistingAction not in {type(action) for action in _actions()}
+
+
+def test_replay_bound_returns_defensive_canonical_context_and_legacy_bundle(monkeypatch):
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    context = _context(bundle)
+    payload = context.model_dump(mode="json")
+    raw = RunContext.model_construct(**payload)
+
+    replayed, bound = HistoricalDataGuard.replay_bound(repository, bundle.bundle_id, raw)
+    assert type(replayed) is EvidenceBundle
+    assert replayed == bundle
+    assert type(bound) is RunContext
+    assert bound == context and bound is not raw
+    assert bound.mode is Mode.HISTORICAL
+    assert type(bound.network_policy) is NetworkPolicy
+    assert bound.knowledge_cutoff.tzinfo is timezone.utc
+    assert type(raw.network_policy) is dict
+    assert type(raw.knowledge_cutoff) is str
+    assert tuple(inspect.signature(HistoricalDataGuard.replay_bound).parameters) == (
+        "repository",
+        "bundle_id",
+        "context",
+    )
+    calls = []
+
+    def already_bound(supplied_repository, supplied_id, supplied_context):
+        calls.append((supplied_repository, supplied_id, supplied_context))
+        return replayed, bound
+
+    monkeypatch.setattr(HistoricalDataGuard, "replay_bound", staticmethod(already_bound))
+    legacy = HistoricalDataGuard.replay(repository, bundle.bundle_id, raw)
+    assert legacy is replayed
+    assert calls == [(repository, bundle.bundle_id, raw)]
+
+
+class ObservedContextTzInfo(tzinfo):
+    def __init__(self, effects: list[str]) -> None:
+        self.effects = effects
+
+    def utcoffset(self, value: datetime | None) -> timedelta:
+        self.effects.append("tzinfo.utcoffset")
+        return timedelta(0)
+
+    def dst(self, value: datetime | None) -> timedelta:
+        self.effects.append("tzinfo.dst")
+        return timedelta(0)
+
+
+class ContextDateTimeSubclass(datetime):
+    pass
+
+
+class ContextStringSubclass(str):
+    def __new__(cls, value: str, effects: list[str]):
+        instance = str.__new__(cls, value)
+        instance.effects = effects
+        return instance
+
+    def __str__(self) -> str:
+        self.effects.append("string.str")
+        return super().__str__()
+
+    def __eq__(self, other: object) -> bool:
+        self.effects.append("string.eq")
+        return super().__eq__(other)
+
+    __hash__ = str.__hash__
+
+
+@pytest.mark.parametrize("field", ["decision_time", "knowledge_cutoff", "earliest_execution_time"])
+@pytest.mark.parametrize("kind", ["custom-tz", "naive", "non-utc", "subclass"])
+def test_replay_bound_rejects_noncanonical_context_datetimes_without_observation(
+    field: str, kind: str
+) -> None:
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    context = _context(bundle)
+    payload = context.model_dump(mode="python")
+    effects: list[str] = []
+    baseline = payload[field]
+    assert type(baseline) is datetime
+    if kind == "custom-tz":
+        value = datetime(
+            baseline.year,
+            baseline.month,
+            baseline.day,
+            baseline.hour,
+            baseline.minute,
+            baseline.second,
+            tzinfo=ObservedContextTzInfo(effects),
+        )
+    elif kind == "naive":
+        value = baseline.replace(tzinfo=None)
+    elif kind == "non-utc":
+        value = baseline.replace(tzinfo=timezone(timedelta(hours=-5)))
+    else:
+        value = ContextDateTimeSubclass(
+            baseline.year,
+            baseline.month,
+            baseline.day,
+            baseline.hour,
+            baseline.minute,
+            baseline.second,
+            tzinfo=timezone.utc,
+        )
+    payload[field] = value
+    raw = RunContext.model_construct(**payload)
+    effects.clear()
+    with pytest.raises(HistoricalReplayDeniedError):
+        HistoricalDataGuard.replay_bound(repository, bundle.bundle_id, raw)
+    assert effects == []
+
+
+def test_replay_bound_accepts_json_offset_times_and_network_policy_dict() -> None:
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    payload = _context(bundle).model_dump(mode="json")
+    payload.update(
+        decision_time="2024-07-01T15:00:00-05:00",
+        knowledge_cutoff="2024-06-30T18:59:59-05:00",
+        earliest_execution_time="2024-07-02T08:30:00-05:00",
+        network_policy={
+            "data_capture_egress": False,
+            "model_provider_egress": False,
+            "research_tool_egress": False,
+            "paper_broker_egress": False,
+            "live_broker_egress": False,
+        },
+    )
+    raw = RunContext.model_construct(**payload)
+    replayed, bound = HistoricalDataGuard.replay_bound(repository, bundle.bundle_id, raw)
+    assert replayed == bundle
+    assert type(bound) is RunContext and bound is not raw
+    assert bound.mode is Mode.HISTORICAL
+    assert type(bound.network_policy) is NetworkPolicy
+    assert all(
+        type(getattr(bound.network_policy, field)) is bool
+        for field in (
+            "data_capture_egress",
+            "model_provider_egress",
+            "research_tool_egress",
+            "paper_broker_egress",
+            "live_broker_egress",
+        )
+    )
+    assert all(
+        type(getattr(bound, field)) is datetime and getattr(bound, field).tzinfo is timezone.utc
+        for field in ("decision_time", "knowledge_cutoff", "earliest_execution_time")
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema_version",
+        "run_id",
+        "variant_id",
+        "bundle_id",
+        "bundle_hash",
+        "calendar_id",
+        "base_currency",
+        "mode",
+    ],
+)
+def test_replay_bound_rejects_context_string_subclasses_without_observation(
+    field: str,
+) -> None:
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    payload = _context(bundle).model_dump(mode="python")
+    effects: list[str] = []
+    raw_value = payload[field].value if field == "mode" else str(payload[field])
+    payload[field] = ContextStringSubclass(raw_value, effects)
+    raw = RunContext.model_construct(**payload)
+    effects.clear()
+    with pytest.raises(HistoricalReplayDeniedError):
+        HistoricalDataGuard.replay_bound(repository, bundle.bundle_id, raw)
+    assert effects == []
+
+
+@pytest.mark.parametrize("kind", ["policy-subclass", "dict-subclass", "opaque-bool"])
+def test_replay_bound_rejects_hostile_network_policy_without_observation(kind: str) -> None:
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    payload = _context(bundle).model_dump(mode="python")
+    effects: list[str] = []
+
+    class PolicySubclass(NetworkPolicy):
+        def __getattribute__(self, name: str) -> object:
+            if name not in {"__class__", "__dict__"}:
+                effects.append(f"policy.getattribute:{name}")
+            return super().__getattribute__(name)
+
+    class PolicyDictSubclass(dict[str, object]):
+        def items(self):
+            effects.append("policy-dict.items")
+            return super().items()
+
+        def __iter__(self):
+            effects.append("policy-dict.iter")
+            return super().__iter__()
+
+    class OpaqueBool:
+        def __bool__(self) -> bool:
+            effects.append("opaque.bool")
+            return False
+
+        def __eq__(self, other: object) -> bool:
+            effects.append("opaque.eq")
+            return False
+
+    if kind == "policy-subclass":
+        policy: object = PolicySubclass()
+    elif kind == "dict-subclass":
+        policy = PolicyDictSubclass(NetworkPolicy().model_dump(mode="python"))
+    else:
+        policy_fields = NetworkPolicy().model_dump(mode="python")
+        policy_fields["research_tool_egress"] = OpaqueBool()
+        policy = NetworkPolicy.model_construct(**policy_fields)
+    payload["network_policy"] = policy
+    raw = RunContext.model_construct(**payload)
+    effects.clear()
+    with pytest.raises(HistoricalReplayDeniedError):
+        HistoricalDataGuard.replay_bound(repository, bundle.bundle_id, raw)
+    assert effects == []
+
+
+def test_replay_bound_requires_exact_bundle_id_before_repository_access(monkeypatch) -> None:
+    repository = EvidenceRepository()
+    bundle = repository.seal(_build())
+    effects: list[str] = []
+
+    class BundleIdSubclass(str):
+        def __eq__(self, other: object) -> bool:
+            effects.append("bundle-id.eq")
+            return super().__eq__(other)
+
+        def __str__(self) -> str:
+            effects.append("bundle-id.str")
+            return super().__str__()
+
+    monkeypatch.setattr(repository, "get", lambda *_args: pytest.fail("repository accessed"))
+    requested = BundleIdSubclass(bundle.bundle_id)
+    effects.clear()
+    with pytest.raises(HistoricalReplayDeniedError):
+        HistoricalDataGuard.replay_bound(repository, requested, _context(bundle))
+    assert effects == []

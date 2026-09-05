@@ -12,15 +12,16 @@ Commands are planned until a PR records exact output.
 
 ## Exact existing files to touch
 
-- [`tradingagents/graph/setup.py`](../../../../tradingagents/graph/setup.py) and [`propagation.py`](../../../../tradingagents/graph/propagation.py) only at an adapter seam.
-- [`tradingagents/agents/utils/agent_states.py`](../../../../tradingagents/agents/utils/agent_states.py) only for typed context extraction; do not add portfolio/order state.
-- [`tradingagents/agents/schemas.py`](../../../../tradingagents/agents/schemas.py) only for compatibility rendering if required.
-- [`tradingagents/graph/signal_processing.py`](../../../../tradingagents/graph/signal_processing.py) only to preserve current string API.
-- [`tradingagents/graph/trading_graph.py`](../../../../tradingagents/graph/trading_graph.py) only to ensure historical mode bypasses pending outcome resolution.
+- For SIG-01, keep [`tradingagents/graph/trading_graph.py`](../../../../tradingagents/graph/trading_graph.py), [`setup.py`](../../../../tradingagents/graph/setup.py), and [`propagation.py`](../../../../tradingagents/graph/propagation.py) as the unchanged default path. Add the historical path in a separate module and update `tradingagents/graph/__init__.py` only for additive exports if required.
+- Reuse the current `Propagator.create_initial_state()` and `SignalProcessor.process_signal()` contracts without changing their ordinary behavior.
+- Later SIG slices may touch analyst utilities or schemas only when their own JIT contract requires it; do not pull those changes into SIG-01.
 
 ## Proposed files, classes, and APIs
 
-- `mytradingalpha/research/tradingagents_adapter.py`: `ResearchAdapter.run(bundle, context) -> list[ResearchNote]`.
+- `tradingagents/graph/historical.py`: pure cached-state validation and five-tier rendering; no callable or runtime loading.
+- `mytradingalpha/data/replay_guard.py`: additive `HistoricalDataGuard.replay_bound(...) -> tuple[EvidenceBundle, RunContext]` returns the guard-validated canonical binding; existing `replay(...) -> EvidenceBundle` remains compatible.
+- `mytradingalpha/research/cached_response.py`: separate v1 canonical response contract, exact selection, byte sealer/parser, append-only repository, hashes, provenance/cutoff checks, and typed errors.
+- `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact evidence/response repositories and selection; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
 - `mytradingalpha/research/evidence_tools.py`: `EvidenceToolset.get/list_citations()`.
 - `mytradingalpha/research/notes.py`: `ResearchNoteBuilder.build()`.
 - `mytradingalpha/quant/features.py`: `FeatureSet.compute(bundle, instrument)`.
@@ -50,13 +51,16 @@ The validator rejects extra output fields that represent weights, quantity, orde
 
 ## Red-green-refactor
 
-1. Red: add tests for network access in historical mode, missing citation, overlay forbidden fields, multiplier >1, veto mismatch, timeout, schema error, abstain, and variant fallback.
-2. Green: implement the read-only adapter, deterministic feature path, typed validator, envelope, and registry.
-3. Refactor: isolate compatibility rendering from domain contracts and freeze the public action/variant names.
+1. SIG-01 Red: add exact sealed repository/context/response binding, canonical bytes/hash/provenance/cutoff/date failures, no-callable denial, side-effect observers, state/output compatibility, authority denial, and SIG-02-deferral tests.
+2. SIG-01 Green: implement only the closed response contract/repository, pure `tradingagents` validator, and adapter; do not change ordinary graph execution or add a remote/current fallback.
+3. Later SIG PRs repeat their own RED/GREEN cycles for evidence citations, deterministic quant, overlay validation, and envelope/variant behavior.
+4. Refactor: isolate compatibility rendering from domain contracts and freeze the public action/variant names without crossing PR boundaries.
 
 ## Exact tests and fixtures
 
-- `tests/productionization/research/test_adapter.py`: sequential graph invocation against a sealed bundle, historical network denial, pending-memory bypass.
+- `tests/productionization/research/test_adapter.py`: exact sealed bundle/context/response replay, side-effect denial, UTC cutoff-date rule, current final/five-tier compatibility, and fail-closed output/authority boundaries.
+- `tests/productionization/research/test_cached_response.py`: canonical bytes, exact selection/bindings, provenance cutoffs, append-only conflicts, corruption, limits, and hostile non-data rejection.
+- `tests/productionization/research/test_adapter_repairs.py`: bound-field mutation denial, sealed alias intervals, defensive canonical context handoff, UTC cutoff-date enforcement, and authority checks in supported plain messages/structured call arguments.
 - `tests/productionization/research/test_evidence_tools.py`: citation completeness, immutable item, prompt-injection text treated as data.
 - `tests/productionization/quant/test_signal.py`: feature golden file, deterministic repeat, missing-feature status, model hash.
 - `tests/productionization/research/test_overlay.py`: attenuate/veto/abstain, timeout/schema error no-trade, forbidden fields, multiplier bounds.
@@ -76,7 +80,13 @@ These commands are planned; the PR report must state whether each ran and includ
 
 ## Migration and compatibility
 
-The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The new adapter is opt-in by mode/variant and emits an envelope alongside existing reports. Historical runs use only sealed bundles; forward paper can capture current inputs before invoking the adapter. Disable the new path to roll back without deleting envelopes or changing current memory records.
+The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The SIG-01 adapter is opt-in, preserves the legacy prose state and five-tier string, and requires an exact sealed bundle plus exact canonical cached response. It does not emit a `ResearchNote` or `SignalEnvelope`; those remain later SIG slices. Disable the new path to roll back without deleting bundles/responses or changing current memory records. Forward-paper behavior remains outside SIG-01.
+
+SIG-01 tests seal deterministic canonical response fixtures through the production parser. Fixtures
+prove replay mechanics only and are never described as real model inference. The approved
+[SIG-01 amendment](SIG_01_AMENDMENT_PROPOSAL.md) forbids callable execution and defines the UTC
+cutoff-date rule. Missing response evidence never permits a remote, current-vendor, Quant-only, or
+ordinary-graph fallback.
 
 ## Definition of done
 
