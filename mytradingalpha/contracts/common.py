@@ -49,7 +49,10 @@ def _validate_utc_datetime(value: Any) -> datetime:
 
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("invalid_timestamp: naive datetimes are not supported")
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError("invalid_timestamp: UTC instant is outside the supported range") from exc
 
 
 def _serialize_utc_datetime(value: datetime) -> str:

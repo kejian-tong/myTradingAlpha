@@ -506,7 +506,7 @@ def parse_cached_graph_response(raw_record: bytes) -> CachedGraphResponse:
             parse_constant=_reject_constant,
             parse_float=_parse_float,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, OverflowError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
         raise CachedGraphResponseCorruptionError(
             "invalid cached response encoding or JSON"
         ) from exc
