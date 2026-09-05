@@ -2,9 +2,9 @@
 
 ## Purpose and boundary
 
-The target is a small, auditable daily research-to-order system around the existing Research Graph. It is not a rewrite of `tradingagents/`. The upstream-derived graph remains useful for evidence interpretation; production-owned numerical decisions, portfolio accounting, risk controls, execution simulation, and broker integration live in a new `mytradingalpha/` package.
+The target is a small, auditable daily research-to-order system around the existing Research Graph. It is not a rewrite of `tradingagents/`. The upstream-derived graph remains useful for evidence interpretation; the existing `mytradingalpha/` package owns Foundation, PIT, and closed cached-response replay. Production-owned numerical decisions, portfolio accounting, risk controls, execution simulation, and broker integration remain later roadmap work.
 
-The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. No document in this set asserts that the target package currently exists.
+The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, and SIG-01 are implemented at their contract scope; SIG-02 and subsequent behavior in this target diagram remain planned. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state rather than interpreting the diagram as shipped functionality.
 
 ## System overview
 
@@ -14,6 +14,7 @@ flowchart LR
     D --> E[Immutable EvidenceBundle]
     E --> Q[Deterministic QuantSignal]
     E --> R[Research adapter]
+    C[Separately sealed cached response] --> R
     R --> L[Bounded LLMOverlay]
     Q --> S[SignalEnvelope]
     L --> S
@@ -65,11 +66,13 @@ PIT (point-in-time) strictly separates what was knowable then from what became k
 
 ### Historical
 
-`RunContext.mode=historical` requires an immutable bundle hash and a component-scoped network policy with `data_capture_egress`, `model_provider_egress`, `research_tool_egress`, `paper_broker_egress`, and `live_broker_egress` all false; only cached responses in the bundle are readable. It verifies `available_at <= knowledge_cutoff`; archive-realistic replay additionally verifies `ingested_at <= knowledge_cutoff`. No pending-memory outcome fetch, current yfinance refresh, Polymarket request, or live credentials are allowed.
+`RunContext.mode=historical` requires an immutable bundle hash and a component-scoped network policy with `data_capture_egress`, `model_provider_egress`, `research_tool_egress`, `paper_broker_egress`, and `live_broker_egress` all false. SIG-01 selects a separate canonical cached-response record by exact ID/hash and bundle/context/instrument/artifact bindings; it does not embed responses in EvidenceBundle v1. Both replay policies verify `available_at <= knowledge_cutoff`; archive-realistic replay additionally verifies `ingested_at <= knowledge_cutoff`. The generic validator receives plain JSON state, never LangChain message objects, runtime callables, or a live graph. Missing, corrupt, or ineligible responses yield typed failure/no trade without fallback. No ordinary graph construction, pending-memory outcome fetch, current yfinance refresh, Polymarket request, or live credentials are allowed. The [approved amendment](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md) defines the unchanged UTC cutoff-date label.
 
 ### Forward paper
 
-The scheduler captures the same inputs at the close, creates a bundle, runs the graph/quant/allocator/risk path, and sends approved intents only to the deterministic paper adapter or an approved PAPER endpoint. Its component-scoped policy may allow `data_capture_egress`, an approved `model_provider_egress`, and `paper_broker_egress` while keeping `research_tool_egress=false` and `live_broker_egress=false`. It records operational timing, missing-data behavior, fills, reconciliation, and human approvals. Eight to twelve weeks primarily tests operational reliability, not long-term alpha.
+This is planned scope, not an implemented capture service or authorization to operate. The [archive-realistic v1 producer schedule](03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff) preregisters a pre-close input freeze and a fixed close-time deadline. It seals the exact bundle before requesting model-bearing responses, which must genuinely be available and ingested by that deadline. The current closing bar cannot be included in pre-close inputs. A late response remains unavailable; never move the cutoff after observing latency or backdate output. Model-free variants need no cached model response, and SIG-02 does not perform inference.
+
+After the relevant software/evidence gates and separate provider/PAPER authorization, the scheduler may run the selected quant/research/allocator/risk path and send approved intents only to the deterministic paper adapter or an approved PAPER endpoint. Its component-scoped policy may allow `data_capture_egress`, an approved `model_provider_egress`, and `paper_broker_egress` while keeping `research_tool_egress=false` and `live_broker_egress=false`. Preparatory capture cannot dispatch orders. Operational promotion requires eight to twelve weeks of real elapsed session evidence, reconciliation, and human review; simulated calendars prove software behavior only, not long-term alpha.
 
 ### Live pilot
 
@@ -81,7 +84,7 @@ Promotion is staged: L0 read-only; L1 one/few symbols with human approval; L2 sm
 | --- | --- | --- | --- |
 | Missing or stale required observation | Reject bundle/run | Skip symbol and alert; no intent | Persistent halt for affected scope; human review |
 | Unavailable optional evidence | Record `degraded`; continue only if variant permits | Continue with explicit reason code | Continue only under approved policy; otherwise halt |
-| LLM timeout/schema error | Overlay `abstain`; no trade. Quant-only runs separately under its own preregistration. | No new trade; existing holdings follow risk policy | No new trade; alert and halt if policy says fail closed |
+| Missing/ineligible cached response or overlay schema error | Typed failure/no trade; no new inference or ordinary-graph fallback. Quant-only runs separately under its own preregistration. | No new trade; existing holdings follow risk policy | No new trade; alert and halt if policy says fail closed |
 | Risk limit breach | Mark run invalid | Reject intent and persist halt if hard limit | Reject, persist halt, page operator |
 | Unknown broker acknowledgement | Not applicable | Pause/query; never blind resubmit | Pause/query; reconcile before any retry |
 | Ledger or reconciliation mismatch | Fail the run | Freeze promotion and reconcile | Persistent halt, preserve evidence, operator approval required |
@@ -91,7 +94,7 @@ All failures carry a stable reason code, run ID, bundle hash, and correlation ID
 ## Migration path
 
 1. Add package/config scaffolding without changing `tradingagents/` behavior.
-2. Capture PIT observations and build immutable bundles while the existing graph remains the research adapter.
+2. Capture PIT observations and build immutable bundles; SIG-01 replays separately sealed responses without constructing the ordinary graph.
 3. Add deterministic quant and the bounded overlay boundary; compare outputs without orders.
 4. Add clock, simulator, ledger, and baselines; prove accounting and cost invariants.
 5. Add rule allocator and shared hard risk; run offline only.
