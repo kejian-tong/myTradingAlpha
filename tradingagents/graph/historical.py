@@ -1,7 +1,9 @@
-"""Explicit, side-effect-free execution seam for caller-supplied historical runtimes.
+"""Opt-in historical invocation and output validation, without runtime isolation.
 
 This module deliberately does not construct :class:`TradingAgentsGraph`.  A caller owns
 the opaque evidence/context objects and supplies the only runner that may be invoked.
+The seam does not confine that runner's host capabilities or enforce zero egress.
+Caller attestation is insufficient; runtime enforcement awaits architecture approval.
 """
 
 from __future__ import annotations
@@ -143,9 +145,10 @@ HistoricalRunner = Callable[[object, object, dict[str, object]], object]
 class OfflineGraphRuntime:
     """Concrete wrapper around one explicitly caller-supplied deterministic runner.
 
-    Construction of this wrapper does not prove that the callable is a deployable
-    offline model.  The caller is responsible for supplying an approved local runner;
-    this seam never supplies or discovers a default provider.
+    This wrapper provides neither isolation nor enforced zero egress. Callable/type
+    checks, output validation, and caller attestation do not establish offline execution.
+    Runtime enforcement remains unimplemented pending architecture approval. This seam
+    never supplies or discovers a default provider.
     """
 
     runner: HistoricalRunner
