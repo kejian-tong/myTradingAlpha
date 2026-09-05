@@ -175,13 +175,24 @@ class _DynamicImports(ast.NodeVisitor):
             }
             self.bindings[alias.asname or alias.name] = frozenset({alias.name}) if allowed else self._OTHER
 
+    def _assign_target(self, target: ast.AST, binding: frozenset[str | None]) -> None:
+        # Target expressions run after the RHS, with stores applied left to right.
+        # Unpacking does not imply we know the values assigned to its components.
+        if isinstance(target, ast.Name):
+            self.bindings[target.id] = binding
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                self._assign_target(item, self._OTHER)
+        elif isinstance(target, ast.Starred):
+            self._assign_target(target.value, self._OTHER)
+        else:
+            self.visit(target)
+
     def visit_Assign(self, node: ast.Assign) -> None:
         self.visit(node.value)
         binding = self._binding(node.value)
         for target in node.targets:
-            self._shadow(target)
-            if isinstance(target, ast.Name):
-                self.bindings[target.id] = binding
+            self._assign_target(target, binding)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         # An annotation alone does not replace an existing module/class value.
@@ -189,9 +200,10 @@ class _DynamicImports(ast.NodeVisitor):
         if node.value is not None:
             self.visit(node.value)
             binding = self._binding(node.value)
-            self._shadow(node.target)
-            if isinstance(node.target, ast.Name):
-                self.bindings[node.target.id] = binding
+            self._assign_target(node.target, binding)
+        else:
+            # A value-free annotation evaluates a complex target, but stores no name.
+            self.visit(node.target)
 
         if not self.in_function:
             self.visit(node.annotation)
