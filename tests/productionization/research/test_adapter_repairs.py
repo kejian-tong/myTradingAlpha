@@ -673,3 +673,172 @@ def test_message_boundary_benign_event_types_are_not_execution_blocks(event_type
     assert final["messages"][-1] is message
     assert message == original
     assert signal == "Hold"
+
+
+_CONTENT_REPRESENTATIONS = ["concrete", "role", "type", "constructor", "tuple", "list"]
+
+
+def _wrapped_content_message(representation, block, depth):
+    for _ in range(depth):
+        block = {"type": "non_standard", "value": block}
+    return _content_message(representation, block)
+
+
+@pytest.mark.parametrize("representation", _CONTENT_REPRESENTATIONS)
+@pytest.mark.parametrize("depth", [0, 1, 2], ids=["direct", "wrapped", "nested-wrapped"])
+@pytest.mark.parametrize("block", [
+    {"type": "custom_tool", "name": "research", "args": '{"quantity": 999}'},
+    {"type": "unknown_operation", "input": '{"order_intents": []}'},
+])
+def test_message_contract_unknown_content_denies_through_wrappers(representation, depth, block):
+    message = _wrapped_content_message(representation, block, depth)
+    original = deepcopy(message)
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+    assert message == original
+
+
+@pytest.mark.parametrize("representation", _CONTENT_REPRESENTATIONS)
+@pytest.mark.parametrize("block", [
+    {"type": "non_standard"},
+    {"type": "non_standard", "value": None},
+    {"type": "non_standard", "value": "Research prose"},
+    {"type": "non_standard", "value": []},
+    {"type": "non_standard", "value": ("text", "Research")},
+])
+def test_message_contract_malformed_nested_wrapper_value_denies(representation, block):
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(_wrapped_content_message(representation, block, 1))
+
+
+@pytest.mark.parametrize("representation", _CONTENT_REPRESENTATIONS)
+@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("block", [
+    {"type": "text", "text": 'Discussion of {"quantity": 999}'},
+    {"type": "earnings_call", "evidence_id": "e1", "description": '{"args": "not-json"}'},
+])
+def test_message_contract_benign_wrappers_preserve_original(representation, depth, block):
+    message = _wrapped_content_message(representation, block, depth)
+    original = deepcopy(message)
+    final, signal = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert message == original
+    assert signal == "Hold"
+
+
+@pytest.mark.parametrize("location", ["arguments", "metadata"])
+def test_message_contract_wrapper_semantics_do_not_reclassify_ordinary_data(location):
+    data = {"type": "non_standard", "value": "Research description"}
+    if location == "arguments":
+        message = AIMessage(content="Research", tool_calls=[{
+            "name": "research", "id": "call-1", "args": {"description": data},
+        }])
+    else:
+        message = AIMessage(content="Research", response_metadata={"description": data})
+    original = deepcopy(message)
+    final, signal = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert message == original
+    assert signal == "Hold"
+
+
+def _numeric_argument_message(location, arguments):
+    if location == "normalized":
+        return AIMessage(content="Research", tool_calls=[{
+            "name": "research", "id": "call-1", "args": arguments,
+        }])
+    if location == "raw-object":
+        return _wire_message("role", _wire_call_fields("tool_calls", arguments))
+    return _wrapped_content_message("concrete", {
+        "type": "tool_call", "name": "research", "id": "call-1", "args": arguments,
+    }, 1 if location == "wrapped-content" else 0)
+
+
+@pytest.mark.parametrize("location", ["normalized", "raw-object", "content", "wrapped-content"])
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "negative-inf"])
+def test_message_contract_nested_nonfinite_argument_values_deny(location, number):
+    message = _numeric_argument_message(location, {"nested": [{"scores": [1.5, number]}]})
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+@pytest.mark.parametrize("location", ["tool_calls", "function_call", "invalid_tool_calls"])
+@pytest.mark.parametrize("number", ["1e400", "-1e400"])
+def test_message_contract_json_exponent_overflow_denies(location, number):
+    arguments = f'{{"nested": [{{"score": {number}}}]}}'
+    message = _wire_message("role", _wire_call_fields(location, arguments))
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
+
+
+@pytest.mark.parametrize("location", ["normalized", "raw-object", "content", "wrapped-content"])
+def test_message_contract_finite_native_argument_values_preserve_original(location):
+    arguments = {"values": [10**400, 0, 1.5, -2.5, False, None, "NaN", "1e400", "Infinity"]}
+    message = _numeric_argument_message(location, arguments)
+    original = deepcopy(message)
+    final, signal = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert message == original
+    assert signal == "Hold"
+
+
+@pytest.mark.parametrize("representation", _CONTENT_REPRESENTATIONS)
+@pytest.mark.parametrize("depth", [0, 1])
+@pytest.mark.parametrize("block", [
+    {"type": "tool_call", "id": [], "name": "research", "args": {}},
+    {"type": "server_tool_call", "id": {}, "name": "research", "args": {}},
+    {"type": "invalid_tool_call", "id": {}, "name": [], "args": "{}"},
+    {"type": "function_call", "name": "research", "arguments": "{}"},
+])
+def test_message_contract_invalid_call_record_denies_across_content_forms(representation, depth, block):
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(_wrapped_content_message(representation, block, depth))
+
+
+@pytest.mark.parametrize("block", [
+    {"type": "server_tool_call", "id": None, "name": "research", "args": {}},
+    {"type": "tool_call_chunk", "id": [], "name": "research", "args": "{}"},
+    {"type": "tool_call_chunk", "id": "call-1", "name": 7, "args": "{}"},
+    {"type": "tool_call_chunk", "name": None, "args": "{}"},
+    {"type": "tool_call_chunk", "id": None, "args": "{}"},
+    {"type": "invalid_tool_call", "name": None, "args": "{}"},
+    {"type": "invalid_tool_call", "id": None, "args": "{}"},
+    {"type": "server_tool_call_chunk", "id": None, "args": "{}"},
+    {"type": "server_tool_call_chunk", "name": None, "args": "{}"},
+    {"type": "function_call", "call_id": None, "name": "research", "arguments": "{}"},
+    {"type": "function_call", "call_id": [], "name": "research", "arguments": "{}"},
+    {"type": "function_call", "call_id": "call-1", "name": "research", "arguments": {}},
+])
+def test_message_contract_required_and_optional_call_field_types_deny(block):
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(_wrapped_content_message("concrete", block, 1))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("index", True), ("index", 1.5), ("index", []),
+    ("extras", []), ("extras", None), ("error", 7),
+])
+def test_message_contract_optional_call_metadata_has_declared_types(field, value):
+    block = {"type": "invalid_tool_call", "id": None, "name": None, "args": "{}", field: value}
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(_wrapped_content_message("concrete", block, 1))
+
+
+@pytest.mark.parametrize("representation", _CONTENT_REPRESENTATIONS)
+@pytest.mark.parametrize("depth", [0, 2])
+@pytest.mark.parametrize("block", [
+    {"type": "tool_call", "id": None, "name": "research", "args": {}, "index": -1, "extras": {}},
+    {"type": "server_tool_call", "id": "call-1", "name": "research", "args": {}, "index": "first"},
+    {"type": "invalid_tool_call", "id": None, "name": None, "args": "{}", "error": None},
+    {"type": "tool_call_chunk", "id": None, "name": None, "args": "{}", "index": -1},
+    {"type": "server_tool_call_chunk", "args": "{}", "index": "part-a"},
+    {"type": "server_tool_call_chunk", "id": "call-1", "name": "research", "args": "{}"},
+    {"type": "function_call", "call_id": "call-1", "name": "research", "arguments": "{}"},
+])
+def test_message_contract_valid_call_records_preserve_original(representation, depth, block):
+    message = _wrapped_content_message(representation, block, depth)
+    original = deepcopy(message)
+    final, signal = _run_with_message(message)
+    assert final["messages"][-1] is message
+    assert message == original
+    assert signal == "Hold"
