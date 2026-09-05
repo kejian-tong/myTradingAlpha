@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from math import isfinite
 from threading import RLock
 from typing import Literal
 
-from pydantic import TypeAdapter, ValidationError, model_validator
+from pydantic import ConfigDict, TypeAdapter, ValidationError, model_validator
 
 from mytradingalpha.contracts.common import StableId, UtcDateTime
 from mytradingalpha.contracts.schemas import ContractModel
@@ -109,6 +109,8 @@ class CachedGraphSelection(ContractModel):
 
 class _CachedGraphResponseFields(ContractModel):
     """Shared response fields used for typed preflight without error reclassification."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     schema_version: Literal["v1"]
     response_id: StableId
@@ -239,21 +241,25 @@ def _exact_dict_fields(
     return {key: dict.__getitem__(value, key) for key in expected}
 
 
+def _is_exact_utc_datetime(value: object) -> bool:
+    return type(value) is datetime and object.__getattribute__(value, "tzinfo") is timezone.utc
+
+
 def _validate_manifest_python_fields(fields: dict[str, object]) -> None:
     if any(type(fields[field]) is not str for field in _SOURCE_MANIFEST_STRING_FIELDS):
         raise CachedGraphResponseCorruptionError(
             "capture manifest string fields require exact strings"
         )
-    if any(type(fields[field]) is not datetime for field in _SOURCE_MANIFEST_TIME_FIELDS):
+    if any(not _is_exact_utc_datetime(fields[field]) for field in _SOURCE_MANIFEST_TIME_FIELDS):
         raise CachedGraphResponseCorruptionError(
-            "capture manifest timestamps require exact datetime values"
+            "capture manifest timestamps require exact UTC datetime values"
         )
     if any(
-        value is not None and type(value) is not datetime
+        value is not None and not _is_exact_utc_datetime(value)
         for value in (fields[field] for field in _SOURCE_MANIFEST_OPTIONAL_TIME_FIELDS)
     ):
         raise CachedGraphResponseCorruptionError(
-            "capture manifest optional timestamps require exact datetime or None"
+            "capture manifest optional timestamps require exact UTC datetime or None"
         )
     if type(fields["revision"]) is not int:
         raise CachedGraphResponseCorruptionError(
@@ -277,17 +283,18 @@ def _safe_source_manifest(value: object) -> SourceManifest:
                 "capture manifest string fields require exact strings"
             )
         if any(
-            type(fields[field]) not in (str, datetime) for field in _SOURCE_MANIFEST_TIME_FIELDS
+            type(fields[field]) is not str and not _is_exact_utc_datetime(fields[field])
+            for field in _SOURCE_MANIFEST_TIME_FIELDS
         ):
             raise CachedGraphResponseCorruptionError(
-                "capture manifest timestamps require exact strings or datetimes"
+                "capture manifest timestamps require exact strings or UTC datetimes"
             )
         if any(
-            value is not None and type(value) not in (str, datetime)
+            value is not None and type(value) is not str and not _is_exact_utc_datetime(value)
             for value in (fields[field] for field in _SOURCE_MANIFEST_OPTIONAL_TIME_FIELDS)
         ):
             raise CachedGraphResponseCorruptionError(
-                "capture manifest optional timestamps require exact strings, datetimes, or None"
+                "capture manifest optional timestamps require exact strings, UTC datetimes, or None"
             )
         if type(fields["revision"]) is not int:
             raise CachedGraphResponseCorruptionError(
@@ -329,9 +336,11 @@ def _safe_response_input(value: object) -> dict[str, object]:
     fields = _exact_dict_fields(value, expected, label="cached response")
     if any(type(fields[field]) is not str for field in _RESPONSE_STRING_FIELDS):
         raise CachedGraphResponseCorruptionError("cached response fields require exact strings")
-    if type(fields["knowledge_cutoff"]) not in (str, datetime):
+    if type(fields["knowledge_cutoff"]) is not str and not _is_exact_utc_datetime(
+        fields["knowledge_cutoff"]
+    ):
         raise CachedGraphResponseCorruptionError(
-            "cached response cutoff requires an exact string or datetime"
+            "cached response cutoff requires an exact string or UTC datetime"
         )
     if type(fields["replay_policy"]) not in (str, BundleReplayPolicy):
         raise CachedGraphResponseCorruptionError(
@@ -525,9 +534,9 @@ def build_cached_graph_response(
     )
     if any(type(value) is not str for value in string_fields):
         raise CachedGraphResponseCorruptionError("cached response metadata requires exact strings")
-    if type(knowledge_cutoff) not in (str, datetime):
+    if type(knowledge_cutoff) is not str and not _is_exact_utc_datetime(knowledge_cutoff):
         raise CachedGraphResponseCorruptionError(
-            "cached response knowledge cutoff requires a plain timestamp"
+            "cached response knowledge cutoff requires an exact string or UTC datetime"
         )
     if type(replay_policy) is not BundleReplayPolicy:
         raise CachedGraphResponseCorruptionError(
@@ -543,6 +552,10 @@ def build_cached_graph_response(
         raise CachedGraphResponseCorruptionError(
             "invalid cached response knowledge cutoff"
         ) from exc
+    if not _is_exact_utc_datetime(cutoff):
+        raise CachedGraphResponseCorruptionError(
+            "cached response cutoff did not normalize to an exact UTC datetime"
+        )
     _validate_trade_date(trade_date, cutoff)
     validate_historical_response(
         normalised_output,
