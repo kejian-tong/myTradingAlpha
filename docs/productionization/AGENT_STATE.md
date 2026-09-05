@@ -7,7 +7,7 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `fcdebebbb1ea667b255d97f6350fad2e0d0ae2d8`
+- `last_reconciled_main_sha`: `908ee66cdbae755f301816f16156d04dcd6e2e90`
 - `roadmap_status`: `sig_01_merged_stopped`
 - `current_pr_id`: none (no active roadmap implementation)
 - `next_pr_id`: `SIG-02` (informational; requires fresh authorization and reconciled gates)
@@ -45,15 +45,32 @@ batch by the explicit user update and the recorded merge-gate comments.
 | --- | --- | --- | --- |
 | REM-01 / A01-A03 runtime boundaries | #28 | `f76e18b8669160df420c7fa51a0e95485f07c7d7` | `1d467cb4edfcbb322cbdd45baeefdbaede816495`; merged, main refreshed |
 | REM-02 / A04-A06 validation boundaries | #29 | `8624c9502258d7e06ec3a1229cae532021e3efbf` | `fcdebebbb1ea667b255d97f6350fad2e0d0ae2d8`; merged after fresh integration CI |
-| REM-03 / A07 and state reconciliation | #30 | frozen candidate recorded in PR conversation | current maintenance; final integrated CI/merge pending |
-| REM-04 / A08-A12 design handoffs | not started | none | only after REM-03 is verified and merged |
+| REM-03 / A07 and state reconciliation | #30 | `d66ae19b8ffa58bc6447c0ba2c349e85e7e6acaa` | `908ee66cdbae755f301816f16156d04dcd6e2e90`; merged, main refreshed |
+| REM-04 / A08-A12 design handoffs | #31 | final candidate and checks belong in PR conversation after freeze | current maintenance; merge pending, not a PASS claim |
 
 REM-01 CI/CodeQL/Dependency Review: `33980970330` / `33980970259` / `33980970220`.
 REM-02 fresh integration CI/CodeQL/Dependency Review: `33984025011` / `33984025097` / `33984025007`.
+REM-03 fresh integration CI/CodeQL/Dependency Review: `33984551684` / `33984551666` / `33984551669`.
 The complete diffs, RED/GREEN history, limits and merge decisions remain in the respective PRs.
 Optional live-provider/Bedrock skips are not passed integrations. Local focused results use a
 non-locked environment; the complete locked matrix comes from GitHub Actions. No alpha or promotion
 claim follows from these results.
+
+### PR #31 recovery and withdrawn completion claim
+
+The user's `2026-09-05T19:27:30Z` recheck found #31 still open at test-only RED
+`2b9d72fb4f505b1ad85f57b7a544be272f081612`; CI `33985052574` failed. The earlier external completion
+report claiming a #31 merge and 1777 passing tests was incorrect and is
+[withdrawn](https://github.com/kejian-tong/myTradingAlpha/pull/31#issuecomment-5554253842).
+Do not use that report, its tentative head/merge IDs, or an unmerged PR's synthetic merge SHA as proof.
+
+Recovery published the previously unreferenced phase-document child `8f51c3ad92170002415002dcd468bcb2fc0dcd90`
+and then the missing shared contracts, roadmap, indexes and compatibility text. The original RED
+assertions remain intact. These are future implementation specifications, not shipped ledger/OMS/capture
+services. The final candidate must pass actual exact-head CI before an expected-head-protected merge.
+After a successful merge, read back merged state, main, parents and tree; failed publish/merge results
+are failures, never receipts. Record that final verification in the PR conversation without trying to
+embed this commit's own final SHA here. SIG-02 remains unstarted until a fresh authorized JIT.
 
 ## Roadmap PR ledger
 
