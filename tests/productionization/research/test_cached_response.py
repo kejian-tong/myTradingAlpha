@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
@@ -324,6 +325,267 @@ def test_direct_contract_rejects_source_manifest_subclass_without_serializer_acc
     with pytest.raises(ValidationError):
         CachedGraphResponse.model_validate(payload)
     assert calls == []
+
+
+class HookProbe:
+    def __init__(self, effects: list[str], label: str) -> None:
+        object.__setattr__(self, "effects", effects)
+        object.__setattr__(self, "label", label)
+
+    def _effect(self, operation: str) -> None:
+        object.__getattribute__(self, "effects").append(
+            f"{object.__getattribute__(self, 'label')}.{operation}"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        self._effect("eq")
+        return False
+
+    def __lt__(self, other: object) -> bool:
+        self._effect("lt")
+        return False
+
+    def __le__(self, other: object) -> bool:
+        self._effect("le")
+        return False
+
+    def __gt__(self, other: object) -> bool:
+        self._effect("gt")
+        return False
+
+    def __ge__(self, other: object) -> bool:
+        self._effect("ge")
+        return False
+
+    def __str__(self) -> str:
+        self._effect("str")
+        return "hook-probe"
+
+    def __iter__(self) -> Iterator[object]:
+        self._effect("iter")
+        return iter(())
+
+
+def constructed_manifest_with(field: str, value: object) -> SourceManifest:
+    manifest = make_capture_manifest(make_output())
+    fields = manifest.model_dump(mode="python")
+    fields[field] = value
+    return SourceManifest.model_construct(**fields)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["checksum", "fetched_at", "event_time", "published_at", "available_at", "ingested_at"],
+)
+@pytest.mark.parametrize("surface", ["builder", "public-model"])
+def test_hostile_constructed_manifest_fields_are_rejected_without_hooks(
+    field: str, surface: str
+) -> None:
+    effects: list[str] = []
+    hostile = constructed_manifest_with(field, HookProbe(effects, field))
+    if surface == "builder":
+        with pytest.raises(CachedGraphResponseCorruptionError):
+            build_cached_graph_response(**make_response_kwargs(capture_manifest=hostile))
+    else:
+        payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
+            mode="python"
+        )
+        payload["capture_manifest"] = hostile
+        with pytest.raises(ValidationError):
+            CachedGraphResponse.model_validate(payload)
+    assert effects == []
+
+
+def test_manifest_subclass_is_rejected_before_any_attribute_or_serializer_hook() -> None:
+    effects: list[str] = []
+    manifest = make_capture_manifest(make_output())
+
+    class HostileManifest(SourceManifest):
+        def __getattribute__(self, name: str) -> object:
+            if name not in {"__class__", "__dict__"}:
+                effects.append(f"getattribute:{name}")
+            return super().__getattribute__(name)
+
+        def model_dump(self, *args: object, **kwargs: object) -> object:
+            effects.append("model_dump")
+            raise AssertionError("manifest serializer hook executed")
+
+    hostile = HostileManifest.model_construct(**manifest.model_dump(mode="python"))
+    effects.clear()
+    with pytest.raises(CachedGraphResponseCorruptionError):
+        build_cached_graph_response(**make_response_kwargs(capture_manifest=hostile))
+    payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
+        mode="python"
+    )
+    payload["capture_manifest"] = hostile
+    with pytest.raises(ValidationError):
+        CachedGraphResponse.model_validate(payload)
+    assert effects == []
+
+
+class HookDict(dict[object, object]):
+    def __init__(self, value: Mapping[object, object], effects: list[str]) -> None:
+        dict.__init__(self, value)
+        self.effects = effects
+
+    def __iter__(self) -> Iterator[object]:
+        self.effects.append("dict.iter")
+        return dict.__iter__(self)
+
+    def __getitem__(self, key: object) -> object:
+        self.effects.append("dict.getitem")
+        return dict.__getitem__(self, key)
+
+    def items(self):
+        self.effects.append("dict.items")
+        return dict.items(self)
+
+    def keys(self):
+        self.effects.append("dict.keys")
+        return dict.keys(self)
+
+
+class HookMapping(Mapping[object, object]):
+    def __init__(self, value: dict[object, object], effects: list[str]) -> None:
+        self._value = value
+        self.effects = effects
+
+    def __iter__(self) -> Iterator[object]:
+        self.effects.append("mapping.iter")
+        return iter(self._value)
+
+    def __len__(self) -> int:
+        self.effects.append("mapping.len")
+        return len(self._value)
+
+    def __getitem__(self, key: object) -> object:
+        self.effects.append("mapping.getitem")
+        return self._value[key]
+
+
+class HookList(list[object]):
+    def __init__(self, value: list[object], effects: list[str]) -> None:
+        list.__init__(self, value)
+        self.effects = effects
+
+    def __iter__(self) -> Iterator[object]:
+        self.effects.append("list.iter")
+        return list.__iter__(self)
+
+    def __getitem__(self, key: object) -> object:
+        self.effects.append("list.getitem")
+        return list.__getitem__(self, key)  # type: ignore[index]
+
+
+class HookString(str):
+    def __new__(cls, value: str, effects: list[str]):
+        instance = str.__new__(cls, value)
+        instance.effects = effects
+        return instance
+
+    def __str__(self) -> str:
+        self.effects.append("string.str")
+        return str.__str__(self)
+
+    def encode(self, *args: object, **kwargs: object) -> bytes:
+        self.effects.append("string.encode")
+        return str.encode(self, *args, **kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("kind", ["dict-subclass", "custom-mapping"])
+def test_public_model_rejects_nonexact_outer_mapping_without_hooks(kind: str) -> None:
+    effects: list[str] = []
+    payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
+        mode="python"
+    )
+    hostile: object = (
+        HookDict(payload, effects) if kind == "dict-subclass" else HookMapping(payload, effects)
+    )
+    with pytest.raises(ValidationError):
+        CachedGraphResponse.model_validate(hostile)
+    assert effects == []
+
+
+@pytest.mark.parametrize("kind", ["dict-subclass", "custom-mapping"])
+@pytest.mark.parametrize("surface", ["builder", "public-model"])
+def test_nonexact_output_mapping_is_rejected_without_hooks(kind: str, surface: str) -> None:
+    effects: list[str] = []
+    output = make_output()
+    hostile: object = (
+        HookDict(output, effects) if kind == "dict-subclass" else HookMapping(output, effects)
+    )
+    if surface == "builder":
+        with pytest.raises(CachedGraphResponseCorruptionError):
+            build_cached_graph_response(
+                **make_response_kwargs(
+                    output=hostile,  # type: ignore[arg-type]
+                    capture_manifest=make_capture_manifest(output),
+                )
+            )
+    else:
+        payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
+            mode="python"
+        )
+        payload["output"] = hostile
+        with pytest.raises(ValidationError):
+            CachedGraphResponse.model_validate(payload)
+    assert effects == []
+
+
+@pytest.mark.parametrize("kind", ["mapping", "list", "string"])
+@pytest.mark.parametrize("surface", ["builder", "public-model"])
+def test_nested_output_subclasses_are_rejected_without_hooks(kind: str, surface: str) -> None:
+    effects: list[str] = []
+    output = make_output()
+    if kind == "mapping":
+        value: object = HookMapping({"citation": "e1"}, effects)
+    elif kind == "list":
+        value = HookList(["e1"], effects)
+    else:
+        value = HookString("e1", effects)
+    output["messages"].append(
+        {"role": "assistant", "content": "Research", "response_metadata": {"hostile": value}}
+    )
+    if surface == "builder":
+        with pytest.raises(CachedGraphResponseCorruptionError):
+            build_cached_graph_response(
+                **make_response_kwargs(
+                    output=output,
+                    capture_manifest=make_capture_manifest(make_output()),
+                )
+            )
+    else:
+        payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
+            mode="python"
+        )
+        payload["output"] = output
+        with pytest.raises(ValidationError):
+            CachedGraphResponse.model_validate(payload)
+    assert effects == []
+
+
+def test_nonexact_outer_string_key_is_rejected_without_hooks() -> None:
+    effects: list[str] = []
+    payload = parse_cached_graph_response(FIXTURE.read_bytes().removesuffix(b"\n")).model_dump(
+        mode="python"
+    )
+    output = payload.pop("output")
+    payload[HookString("output", effects)] = output
+    effects.clear()
+    with pytest.raises(ValidationError):
+        CachedGraphResponse.model_validate(payload)
+    assert effects == []
+
+
+def test_valid_exact_manifest_and_manifest_dict_preserve_fixture_bytes() -> None:
+    output = make_output()
+    manifest = make_capture_manifest(output)
+    assert build_cached_graph_response(
+        **make_response_kwargs(capture_manifest=manifest)
+    ) == FIXTURE.read_bytes().removesuffix(b"\n")
+    assert build_cached_graph_response(
+        **make_response_kwargs(capture_manifest=manifest.model_dump(mode="python"))
+    ) == FIXTURE.read_bytes().removesuffix(b"\n")
 
 
 def cutoff_payload(*, policy: str, future_availability: bool) -> dict[str, object]:
