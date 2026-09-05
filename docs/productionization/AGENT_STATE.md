@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `9dde1955484b793c4d8dba9c62794ae85b181bcf`
-- `roadmap_status`: `sig_01_h5_wrapper_repair_runtime_and_horizon_blocked`
+- `roadmap_status`: `sig_01_repaired_pending_final_review_human_architecture_blocked`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -158,7 +158,8 @@ PR IDs.
   implementation. Original base `1a185d4035db8807c12c5070c30cfe6d2979d968`; startup main
   `7af14f3bba7078f78cc807885b3c169acc6b7da5` from PR #25. Latest main is now
   `9dde1955484b793c4d8dba9c62794ae85b181bcf` from concurrently merged harness PR #26.
-- Startup checkout was clean on updated main and the runtime exposed the updated named roles.
+- Startup checkout was clean on PR #25 main and the runtime exposed named max roles. Full
+  activation of the upgraded high-implementer model route was not established; see correction below.
   Merge `9f1d0b4614fbb77acdd14933d904d8588fd84eb9` integrated main into the existing branch,
   preserving parent `ba228571c91d17648375d574450454006b66c55b` and all original RED/GREEN history.
   Only state conflicted; main's harness and later REQUEST CHANGES / DO NOT MERGE evidence won.
@@ -168,8 +169,10 @@ PR IDs.
   Sol/xhigh Master labels remain unchanged; completed FND/PIT ledger rows match main exactly.
 - Fresh named loading succeeded for `reviewer_max` (initial and subsequent independent contexts),
   `high_implementer`, and final `max_implementer`, with loaded instructions matching their files.
-  Configured actual routes: reviewers `gpt-6-astra / max`; initial repairs `gpt-6-astra / high`;
-  final H5 writer `gpt-6-astra / max`. Master requested/configured `gpt-6-astra / xhigh`.
+  Max routes were reported as configured `gpt-6-astra / max`. Initial repairs requested Astra/high
+  from the file but the runtime-exposed fixed `high_implementer` route is Sol/high; the earlier
+  actual-Astra/high claim is not verified and is corrected below. Master requested/configured
+  `gpt-6-astra / xhigh`; no hot switch to newer on-disk defaults is claimed.
   No additional backend telemetry is claimed. Both writers have stopped; only one ran at a time.
 - Complexity remains `high`; `execution_tier: max` now covers implementation and fresh independent
   review. Initial review-only escalation adjudicated runtime/temporal ambiguity; implementation
@@ -237,6 +240,36 @@ PR IDs.
   GREEN; retain benign data, nullable/chunk compatibility and all previous tests. Only historical.py
   and the existing adapter repair tests may change. H4/M1 dependent implementation stays prohibited.
 
+## Final bounded repair evidence and routing correction
+
+- [379c30a review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548090259)
+  and [final repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548126743)
+  define remaining H5 wrapper and M2/M3 data-shape corrections; H4/M1 are excluded human decisions.
+- Latest main `9dde195` integrated via `55cf4381a0cb4b2c5caa4e54347e875d5866deda` with no
+  production/test changes. CI restarted and all 11 checks passed at that integration head.
+- Repair RED `2026529c9fdefcd9765dc3b14708ddea67157bfe`: test-only, 138 expected failures and
+  126 passing controls on unchanged durable production. GREEN
+  `3f492251dd8844af19cccc8fa00a5ad21775ac1b`: 56 added / 8 removed production lines in historical.py.
+  Only that module and existing repair tests changed. Writer is stopped on a clean pushed head.
+- Executed final validation: new matrix 264; focused 746; legacy 26; productionization 1412;
+  full 1988 passed, 2 skipped, 27 warnings, 69 subtests in 115.22s. Ruff/dependency/lock/Markdown/
+  base diff/import checks and a fresh offline exact-head wheel with source hashes and installed
+  guard/wrapper/finite-number/record/compatibility smoke passed. H5/M2/M3 are locally repaired;
+  fresh independent closure and final-head CI remain required at this checkpoint.
+- [Routing correction](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548196904):
+  the initial high_implementer on-disk PR25 file requested Astra/high, while the runtime's fixed-role
+  definition specifies Sol/high. Successful spawn plus matching instruction text did not settle
+  that conflict; do not claim verified actual Astra/high. Earlier reports are preserved but their
+  file-based actual-route assertion is superseded. No completed historical PR is relabeled.
+- Retained max writer/review contexts report their PR25 configured route, with source at `7af14f3`;
+  there is no contrary fixed-model declaration for those max roles in the exposed catalog. No extra
+  backend attestation is claimed. The final fresh named review must explicitly select
+  `gpt-6-astra / max` through tool controls and record actual loading/provenance. If unavailable,
+  mark insufficient evidence; do not use a generic substitute or restore retired configs.
+- Requested route remains the user's explicit max selection for this active SIG-01 run. Future
+  fresh Master defaults are PR26's ladder. H4/M1 remain open; no cached runtime, horizon rule,
+  trust attestation replacement, broker/paper/live promotion, or SIG-02 work is authorized.
+
 ## Current master pre-flight evidence
 
 - Historical PR #26 harness reconciliation (superseded operationally by the current checkpoint): PR #25 merged as current main
@@ -301,8 +334,8 @@ PR IDs.
 - Foundation FND-01 through FND-04 is complete as implementation/CI evidence only; this does not prove
   PIT correctness, alpha, paper readiness, or live readiness.
 - PIT-01 through PIT-06 are merged. H1/H2/H3 are independently closed on SIG-01. H5 wrapped
-  content plus M2/M3 data-shape corrections remain in scope; H4 enforced runtime and M1 horizon
-  require human approval of the concrete amendment. No attestation substitution or SIG-02 work is
+  content plus M2/M3 data-shape corrections have local repair evidence pending final independent
+  closure; H4 enforced runtime and M1 horizon require human approval of the concrete amendment. No attestation substitution or SIG-02 work is
   authorized. Latest exact-head artifacts, not older green checks or provisional local claims,
   control disposition. SIG-01 remains unmerged.
 - PIT-06 trusted-input boundary: bundle/domain APIs require concrete validated project models. Hostile
