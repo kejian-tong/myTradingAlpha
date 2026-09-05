@@ -11,6 +11,7 @@ Treat SIG-01 trade_date as the UTC date label of the sealed evidence snapshot: i
 An arbitrary in-process callable cannot be made capability-free by a marker, attestation, type check, serializer, or cooperative monkeypatch. A bare child process also does not establish filesystem, clock, credential, or network isolation. Keeping the existing requirements therefore needs an explicitly approved executable boundary.
 
 Recommended amendment — closed cached-response replay:
+
 - Replace the public caller-supplied Python runner with a closed, repository-owned replay evaluator that accepts canonical data only, with no dynamic callable/plugin/code loading. This changes the SIG-01 happy path from executing injected graph code to replaying an already captured graph result. It does not claim new model inference.
 - Consume only provenance-bound cached graph responses sealed with the evidence input; preserve legacy prose state and five-tier signal at the adapter output. Each response must identify its input bundle hash, bound research date/instrument, graph/model artifact identity, capture provenance, and canonical output hash. Verify all bindings before returning data. Do not accept a caller-created result dictionary as an approved transcript.
 - Reject a missing, mismatched, or incomplete cached response; no synthesized model output, live inference, remote provider, current data, or default graph fallback.
@@ -18,13 +19,13 @@ Recommended amendment — closed cached-response replay:
 - This changes the invocation/trust interface and expands SIG-01's data contract. It does not supply arbitrary local Python model execution. Approval must explicitly cover these differences; no EvidenceToolset/ResearchNote/citations or SIG-02 behavior is included by implication.
 
 Alternative requiring a different amendment — isolated executable runtime:
+
 - Replace opaque live Python bundle/context objects and arbitrary callable injection with an explicit runtime artifact and a bounded data-only request/response protocol.
 - An audited execution substrate must enforce no host filesystem or durable writes, network/DNS/provider/loopback access, ambient credentials, subprocess escape, or host wall clock. Supply deterministic run time from the request only.
 - Enforce memory/compute/output limits; fail with typed unavailable when the protected substrate is missing and typed denial on forbidden capabilities. Failed enforcement or incomplete evidence must never fall back in process.
 - Requires choosing and proving a concrete isolation substrate and platform support, packaging a compatible runtime, and expanding CI with adversarial capability-denial tests. A generic promise of a sandbox is insufficient. No such backend is implemented or approved in the current repository.
 
 The Master and independent max reviewer recommend the closed replay direction as the smaller boundary. It still changes the trust/interface and data contract and therefore requires explicit architecture approval. The isolated-execution alternative has a larger platform and verification scope. Neither is a routine callable-type-check repair. The already authorized bound-state, alias, canonical-context, and message-metadata corrections can proceed independently of this choice.
-
 
 ## Expected approved scope and acceptance
 

@@ -11,7 +11,7 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `7af14f3bba7078f78cc807885b3c169acc6b7da5`
-- `roadmap_status`: `sig_01_max_h5_repair_runtime_and_horizon_blocked`
+- `roadmap_status`: `sig_01_final_max_review_runtime_and_horizon_blocked`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -140,121 +140,68 @@ PR IDs.
 | Project-scoped runtime/audit hardening | #9 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | Add the Codex runtime-routing and PR-audit harness | merged as `0dc55016db0a8b972855d3e3e6b9db5f2b1a7708` |
 | Python 3.14 default alignment | #12 | `0dc55016db0a8b972855d3e3e6b9db5f2b1a7708` | Pin the preferred default runtime while preserving Python `>=3.10` compatibility | merged as `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` |
 | Hybrid concurrent agent harness | #17 | `70e4a9af5f040c10fa13b49f3dffc9e68573b7b2` | Add read-only pre-flight/review specialist lanes while preserving serialized production writes | merged as `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd` |
+| Astra/max routing update | #25 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | Upgrade fresh named routes; add optional max implementation/audit tier | merged as `7af14f3bba7078f78cc807885b3c169acc6b7da5` |
 
-## SIG-01 resumed audit — 2026-09-04
+## Current SIG-01 resume checkpoint — 2026-09-04
 
-- Scope: complete existing PR #24 only; no SIG-02 branch, RED, JIT, PR, or implementation.
-- Verified harness PR #25 merged at `2026-09-04T22:56:20Z`, merge/main
-  `7af14f3bba7078f78cc807885b3c169acc6b7da5`. The clean startup checkout matched this SHA.
-- Existing SIG-01 head: `ba228571c91d17648375d574450454006b66c55b`; original base
-  `1a185d4035db8807c12c5070c30cfe6d2979d968`. Merge updated main into the existing branch;
-  preserve both parents and all original RED/GREEN commits. Only AGENT_STATE.md conflicted.
-- Conflict resolution retains current main's harness and verified REQUEST CHANGES / DO NOT MERGE
-  verdicts; historical routing and completed roadmap ledger rows remain unchanged.
-- Original RED `6d4327c7e83189c7f2faae57eb0d97c24e0858d1`; GREEN
-  `04c2dd6dc7abd383335e536a29d356fc179aec33`; repair RED
-  `c5178e3eaaa2d1be85defdc8239aa5d8d35892e6`; repair GREEN
-  `6edc92b22cd94b402bb542683aa68039c9ecea36`. Historical implementation used
-  `high_implementer` / Sol high; historical review used `reviewer_high` / Sol high.
-- Complexity remains `high`; `execution_tier: max`, review-only escalation. Reason: preserved
-  reproductions conflict with the callable wrapper's zero-egress claim, while mutable input binding,
-  temporal alias validity, canonical context handoff, and trade-date horizon interact. A stronger
-  reviewer must adjudicate code and approved requirements; model strength cannot clear a human gate.
-- Escalated role: fresh `reviewer_max`, `.codex/agents/reviewer-max.toml`, requested
-  `gpt-6-astra / max`. The active runtime role catalog exposes this named role and its max route,
-  plus `high_implementer`, `critical_implementer`, and `max_implementer`. Dispatch/loading is pending
-  at this pre-dispatch checkpoint; configuration files alone are not counted as successful loading.
-- Master requested/configured route: `gpt-6-astra / xhigh`; current session exposes the updated
-  project-specific role catalog. New implementation has not been dispatched. Exactly zero production
-  writers are active during this audit. A future bounded repair uses the appropriate named route.
-- JIT: original PR #24 body plus the resumed audit addendum, persisted before reviewer dispatch.
-  No approved invariant is replaced by the old body phrase "trusted wrapper". The current user
-  explicitly excludes trusted-caller attestation as a substitute for enforced zero egress.
-- All four prior HIGH findings and the trade-date horizon finding remain open pending adjudication.
-  Old CI/review is historical evidence only after this merge commit. Any trust-model change or material
-  architecture expansion requires a concrete proposed amendment and human approval before dependent
-  implementation. Real offline inference, alpha, paper, and live readiness remain unproved.
-
-## SIG-01 bounded repair checkpoint — 2026-09-04
-
-- Integrated/audited head: `9f1d0b4614fbb77acdd14933d904d8588fd84eb9`. All original history
-  preserved; `main` remains `7af14f3bba7078f78cc807885b3c169acc6b7da5`.
-- Successful fresh named `reviewer_max` dispatch `/root/sig01_max_adjudication` confirmed loaded
-  instructions/config and configured-actual `gpt-6-astra / max`. This is runtime loading evidence,
-  not merely TOML validation. Historical Sol routing remains unchanged.
-- [Max review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547521216):
-  REQUEST CHANGES. H1 mutable state, H2 expired/no alias fallback, H3 canonical context discarded,
-  and additional H5 authority in LangChain message metadata are independently repairable. H4
-  arbitrary callable enforcement and M1 date/horizon semantics remain unresolved human decisions.
-- [Bounded repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547525453)
-  activates H1/H2/H3/H5 only under the current user's explicit authorization. No dependent runtime
-  or horizon implementation is authorized. Master and reviewer agree these four fixes are independent.
-- Complexity `high`; `execution_tier: max` remains review-only for runtime/temporal audit ambiguity.
-  New sole writer selected: `high_implementer`, `.codex/agents/high-implementer.toml`, requested
-  `gpt-6-astra / high`; dispatch/loading pending at this checkpoint. These bounded repairs do not
-  warrant exceptional max implementation. Fresh final controlling `reviewer_max` remains required.
-- Master validation at integrated head: focused adapter/PIT-06/legacy 135 passed; full 1351 passed,
-  2 skipped, 18 warnings, 69 subtests in 97.57s; Ruff/dependency/Markdown/diff passed. Independent
-  reviewer re-ran original RED (expected exit 2), repair RED (12 failed/43 passed), focused/legacy
-  81 passed, full 1351/2 skipped, static/lock checks. All 11 exact-head CI checks passed: CI
-  `33927880124`, CodeQL `33927880150`, Dependency Review `33927880171`.
-- Next: one repair RED then GREEN, exact-head independent review/CI, durable Master DO NOT MERGE
-  if H4/M1 remain open, and concrete human amendment request. Do not start SIG-02.
-
-## SIG-01 repaired candidate — 2026-09-04
-
-- New writer loading confirmed: `/root/sig01_bounded_repair`, named `high_implementer`,
-  `.codex/agents/high-implementer.toml`, configured-actual `gpt-6-astra / high`. Writer has stopped.
-  No other production writer ran; Master owns documentation/state only.
-- Repair REDs: `bb30bd129ee471e9d5066fd257464291139431b0` (19 expected failures/130 passes),
-  `192bba8295f8e1d234cbe5d1195ff468815e1a57` (9 failures/4 passes/39 deselected),
-  `8958453a53cc0ba7b2955c29cb0f6dac21205746` (8 failures/52 deselected). All are test-only,
-  pushed before corresponding GREEN; later REDs were isolated from existing production WIP.
-- GREEN `9e3875035d585c77e8d2632ad08e94b161521232` changes only historical output/state validation,
-  the research adapter, and an additive guard-owned canonical binding API. H1/H2/H3/H5 are locally
-  repaired. H5 includes known JSON call arguments and malformed call-container denial; the
-  [JIT clarification](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547575426)
-  preserves prose, performs no tool execution, and does not claim confinement.
-- Final implementation validation: focused 170, legacy 26, productionization 836, full 1412 passed,
-  2 skipped, 27 warnings, 69 subtests in 99.16s. Ruff/dependency/lock/Markdown/diff/import checks
-  passed. Final wheel built and installed offline into a fresh environment; installed imports and
-  canonical guard rejection smoke passed. New warnings arise from deliberately unvalidated test
-  contexts. Optional Bedrock and live DeepSeek checks remain skipped as reported, not passed.
-- This checkpoint precedes fresh exact-head controlling review/CI for the documented candidate.
-  The existing max-review reason and `high` class remain in force; requested controlling role is
-  fresh `reviewer_max` / `gpt-6-astra / max`. No max implementer escalation was needed for these
-  bounded repairs. Historical model/review evidence remains unchanged.
-- H4 enforced runtime remains HIGH; M1 horizon remains an unresolved human decision. The
-  [amendment proposal](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md) is unapproved.
-  Master disposition remains DO NOT MERGE. No closed runtime, cached-response schema, or UTC date
-  rule has been implemented. Completing them requires approval before dependent implementation.
-- Scope remains existing SIG-01 PR #24 only; SIG-02 has no branch, RED, JIT, PR, or implementation.
-  Current/next work is blocked SIG-01; last completed roadmap PR remains PIT-06.
-
-## SIG-01 max implementation escalation — 2026-09-04
-
-- [Fresh max review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547725878)
-  independently reviewed `f119f284fd2faa952364a7380b533fb8306bd117`: H1/H2/H3 CLOSED; H5 remains
-  HIGH for plain message dictionaries and mutated normalized call arguments. H4 remains HIGH;
-  M1 remains MEDIUM/human decision. This supersedes the prior provisional local H5 repair claim.
-- That fresh `reviewer_max` loaded `gpt-6-astra / max`, independently re-ran all five original/repair
-  REDs, focused 196, full 1412/2 skipped, static checks and a clean offline wheel. All 11 CI checks
-  passed at that head: CI `33929795577`, CodeQL `33929795487`, Dependency Review `33929795612`.
-- Complexity remains `high`; `execution_tier: max` now applies to implementation AND fresh
-  independent review. Reason: repeated concrete output-authority gaps across concrete messages,
-  plain/wire representations, encoded versus normalized call arguments, and normalization/shadowing
-  semantics require a coherent finite representation boundary. This does not change runtime trust,
-  clear a human gate, or expand beyond the H5 output invariant.
-- [Max H5 repair JIT](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547726002)
-  authorizes only `tradingagents/graph/historical.py` and the existing adapter repair test file.
-  Selected writer: `max_implementer`, `.codex/agents/max-implementer.toml`, requested
-  `gpt-6-astra / max`; runtime catalog exposes the role, dispatch/loading pending at this checkpoint.
-  Previous `high_implementer` stopped after `9e3875035d585c77e8d2632ad08e94b161521232` and is not
-  running concurrently. Only one new production writer may run. Final reviewer must be a fresh
-  `reviewer_max`, configured `gpt-6-astra / max`; Master remains `gpt-6-astra / xhigh`.
-- Validation must cover original data before normalization, safe canonical views, exact normalized
-  argument shapes, shadowed call fields, compatible benign outputs, and no custom deserializers.
-  Repair RED must precede GREEN. H4/M1 and the unapproved amendment remain excluded; no SIG-02 work.
+- Scope: complete existing PR #24 only; no duplicate PR and no SIG-02 branch, RED, JIT, PR, or
+  implementation. Original base `1a185d4035db8807c12c5070c30cfe6d2979d968`; reconciled main
+  `7af14f3bba7078f78cc807885b3c169acc6b7da5`. Harness PR #25 merged at that main SHA.
+- Startup checkout was clean on updated main and the runtime exposed the updated named roles.
+  Merge `9f1d0b4614fbb77acdd14933d904d8588fd84eb9` integrated main into the existing branch,
+  preserving parent `ba228571c91d17648375d574450454006b66c55b` and all original RED/GREEN history.
+  Only state conflicted; main's harness and later REQUEST CHANGES / DO NOT MERGE evidence won.
+- Historical original RED/GREEN: `6d4327c7e83189c7f2faae57eb0d97c24e0858d1` /
+  `04c2dd6dc7abd383335e536a29d356fc179aec33`; original repair `c5178e3eaaa2d1be85defdc8239aa5d8d35892e6`
+  / `6edc92b22cd94b402bb542683aa68039c9ecea36`. Historical Sol/high implementation/review and
+  Sol/xhigh Master labels remain unchanged; completed FND/PIT ledger rows match main exactly.
+- Fresh named loading succeeded for `reviewer_max` (initial and subsequent independent contexts),
+  `high_implementer`, and final `max_implementer`, with loaded instructions matching their files.
+  Configured actual routes: reviewers `gpt-6-astra / max`; initial repairs `gpt-6-astra / high`;
+  final H5 writer `gpt-6-astra / max`. Master requested/configured `gpt-6-astra / xhigh`.
+  No additional backend telemetry is claimed. Both writers have stopped; only one ran at a time.
+- Complexity remains `high`; `execution_tier: max` now covers implementation and fresh independent
+  review. Initial review-only escalation adjudicated runtime/temporal ambiguity; implementation
+  escalation followed repeated concrete gaps across message representations, encoded/normalized
+  arguments, and normalization shadowing. Reasons and affected roles were recorded before dispatch
+  in state commits and JITs; stronger routing never clears a human gate.
+- Durable JITs: [resume](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547417305),
+  [independent repairs](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547525453),
+  [argument refinement](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547575426),
+  [max H5](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547726002).
+- Preserved fresh reviews: [9f1d0b4](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547521216)
+  confirmed H1–H5/M1; [f119f28](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547725878)
+  CLOSED H1/H2/H3, retained H5/H4/M1; the
+  [read-only matrix](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5547794895)
+  supplied additional concrete H5 cases without acting as final approval.
+- Initial repair REDs: `bb30bd129ee471e9d5066fd257464291139431b0` (19 fail / 130 pass),
+  `192bba8295f8e1d234cbe5d1195ff468815e1a57` (9 fail / 4 pass),
+  `8958453a53cc0ba7b2955c29cb0f6dac21205746` (8 fail). GREEN
+  `9e3875035d585c77e8d2632ad08e94b161521232` repaired H1/H2/H3 and part of H5.
+- Max H5 REDs: `25d5c733f2d4d3aa865d06612e347b5d7cadab02` (215 fail / 59 pass),
+  `3368421ec3c9f5e8114da50cbe63e061b762175c` (15 fail / 1 pass),
+  `89846c482ae50b904bba8ae0dbe93a039ad7e843` (18 fail). All were test-only and pushed before GREEN;
+  isolated archives excluded production WIP. Compatibility controls
+  `285ea6f798d0ff0e10ae0af82c37f595ed9e3e31` passed on durable baseline and exposed 4 WIP failures;
+  they are not falsely labeled failing baseline RED.
+- Final H5 GREEN `d96797e987eaf1b78d5f4b39eb672e7e7646bfc3`; documentation-only clarification
+  `76b40a8e381519b172f23ae4838f9cbcff59297c` explicitly denies runtime-isolation guarantees.
+  Only historical.py and the adapter repair tests changed in the max writer's scope.
+- Executed final behavioral validation: focused 482, legacy 26, productionization 1148; full 1724
+  passed, 2 skipped, 27 warnings, 69 subtests in 104.50s. Ruff/dependency/lock/Markdown/diff/import
+  checks passed. Exact 76b40a8 wheel was built/installed offline in a fresh environment with source
+  hashes, imports/signatures, guard denial and malicious/benign message smoke verified.
+- This checkpoint precedes a DIFFERENT fresh `reviewer_max` and exact-head CI on the documented
+  final candidate. H5 is locally repaired but remains subject to independent closure. Previous
+  f119f28 CI passed all 11 checks (`33929795577`, `33929795487`, `33929795612`); that is historical
+  SHA-specific evidence, not approval or CI for a newer head.
+- H4 remains HIGH: arbitrary callable execution does not enforce zero egress. M1 remains a human
+  date/horizon decision. The [amendment proposal](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md)
+  recommends closed cached-result replay and a UTC cutoff-date label, both unapproved. No runtime,
+  cache schema, or horizon implementation occurred. Master remains DO NOT MERGE; SIG-01 is unmerged.
+- Resume with explicit repository selection in GitHub commands (`--repo kejian-tong/myTradingAlpha`);
+  implicit `gh` may select upstream. GitHub/current main and latest exact-head PR artifacts remain
+  authoritative. No H4/M1 dependent implementation before the user approves the concrete amendment.
 
 ## Current master pre-flight evidence
 
@@ -310,11 +257,11 @@ PR IDs.
 - No FND-03 or FND-04 blocker remains; both are merged with final exact-head evidence.
 - Foundation FND-01 through FND-04 is complete as implementation/CI evidence only; this does not prove
   PIT correctness, alpha, paper readiness, or live readiness.
-- PIT-01 through PIT-06 are merged. SIG-01 PR #24 remains blocked by HIGH findings: mutable initial
-  state binding, stale ticker alias acceptance, discarded canonical RunContext, and the unrestricted
-  callable runtime boundary. The trade-date horizon also needs an explicit rule. The authoritative
-  review and DO NOT MERGE artifacts are linked above; green CI does not clear them. The pending human
-  architecture decision is preserved. This harness upgrade does not resolve it or authorize SIG-02.
+- PIT-01 through PIT-06 are merged. SIG-01 PR #24 remains blocked by H4 enforced-runtime failure
+  and M1 date/horizon decision. H1/H2/H3 are independently closed; H5 has a new local repair requiring
+  exact-head independent closure. The current checkpoint and preserved review artifacts above are
+  authoritative for this resume. Green tests/CI do not clear the human architecture decision or
+  authorize SIG-02. No trusted-caller attestation substitution is approved.
 - PIT-06 trusted-input boundary: bundle/domain APIs require concrete validated project models. Hostile
   subclasses overriding `model_dump()` are a nonblocking future hardening item before exposing these
   constructors outside the trusted in-process contract; exact repository and RunContext subclasses
