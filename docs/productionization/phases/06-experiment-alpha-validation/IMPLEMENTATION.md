@@ -11,7 +11,7 @@ Commands are planned until exact implementation output is recorded.
 
 ## Exact existing files to touch
 
-- [`tradingagents/graph/trading_graph.py`](../../../../tradingagents/graph/trading_graph.py) only through a read-only adapter to capture graph outputs.
+- [`tradingagents/graph/trading_graph.py`](../../../../tradingagents/graph/trading_graph.py) only via separately authorized forward capture; historical experiments consume the closed cached-response adapter and never call the ordinary graph.
 - [`tradingagents/reporting.py`](../../../../tradingagents/reporting.py) only for additive report links; do not reinterpret raw return reflections as alpha.
 - [`pyproject.toml`](../../../../pyproject.toml) only for explicitly approved statistical tooling, with lock metadata recorded.
 
@@ -42,14 +42,14 @@ register(spec) before run
   -> write immutable report + GateEvidence(pass|fail|insufficient_evidence)
 ```
 
-Historical EXP execution consumes a distinct captured response for every declared inference trial,
+Historical EXP execution consumes a distinct captured response for every declared inference trial of a model-bearing variant,
 under the [closed capture/replay handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
 No ordinary graph/model call can fill a missing historical response. Replaying a fixture repeatedly
 proves determinism, not fresh inference or multiple seeds. Missing qualified variants/trials yield
 `insufficient_evidence`; retain failures instead of manufacturing completeness. FWD-01 owns the later
 controlled producer; existing independently verified captures can be used earlier. This is not an
 EXP dependency on a future FWD implementation: offline software tests use synthetic contracts, whereas
-actual alpha/PAPER promotion requires the real evidence and separate authorization.
+actual alpha/PAPER promotion requires the real evidence and separate authorization. Cash, B&H, deterministic trend and Quant-only require no cached model response.
 
 The final report must include Cash, B&H, trend, Single Agent, No Debate, No Memory, Full Multi-agent, Quant-only, and Quant+LLM. Quant+LLM overlay error/abstain is no trade; it never selects Quant-only inside the same run.
 

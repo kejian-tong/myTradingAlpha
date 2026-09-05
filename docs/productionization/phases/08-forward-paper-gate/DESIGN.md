@@ -24,7 +24,7 @@ Depends on Phase 07 OMS/paper/reconciliation and Phase 06 sealed experiment/gate
 
 ```text
 preregistered session deadline -> pre-close input freeze -> immutable EvidenceBundle
-  -> controlled response capture before the fixed close deadline
+  -> model-bearing variants only: controlled response capture before the fixed close deadline
   -> Quant/Research/Overlay -> allocator -> RiskEngine
   -> approved paper intent -> PaperBroker/PAPER endpoint
   -> ledger/NAV -> reconciliation -> daily/weekly GateEvidence inputs

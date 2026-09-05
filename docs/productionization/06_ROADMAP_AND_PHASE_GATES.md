@@ -51,15 +51,15 @@ Goal: model what a small allowlist can actually trade. Scope includes spread, sl
 
 ### 06 Experiment and alpha validation
 
-Goal: separate a reproducible experiment from a favorable narrative. Scope includes required variants, seed manifests, walk-forward purge/embargo, sealed holdout, bootstrap, DSR/PBO, and result governance. Non-goals are live promotion. Gate evidence is complete and reviewable.
+Goal: separate a reproducible experiment from a favorable narrative. Scope includes required variants, seed manifests, walk-forward purge/embargo, sealed holdout, bootstrap, DSR/PBO, and result governance. Non-goals are live promotion. Software acceptance uses synthetic fixtures; actual experiment qualification needs complete independently verifiable captured trials and sealed reports. Missing real evidence blocks PAPER operation/promotion, not offline implementation of dependent software. Use the [closed response handoff](03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff); fixtures cannot manufacture alpha evidence.
 
 ### 07 OMS, paper, and reconciliation
 
-Goal: exercise shared intent/event/fill contracts without assuming a broker is safe. Scope includes OMS state machine, paper adapter, broker interface, outbox, stable IDs, reconciliation, and approval records. Non-goals are broker writes before Phase 09. Gate evidence includes unknown-ACK handling and restart idempotency.
+Goal: exercise shared intent/event/fill contracts without assuming a broker is safe. Scope includes OMS state machine, paper adapter, broker interface, outbox, stable IDs, reconciliation, and approval records. Non-goals are live-broker writes before Phase 09. Gate evidence includes unknown-ACK handling and restart idempotency.
 
 ### 08 Forward paper gate
 
-Goal: prove operational reliability over 8–12 weeks. Scope includes daily scheduler, captured bundles, paper fills, reconciliation, alerts, incident review, and a signed gate decision. Non-goal is claiming durable alpha from a short paper period.
+Goal: prove operational reliability over 8–12 weeks. Scope includes daily scheduler, captured bundles, paper fills, reconciliation, alerts, incident review, and a signed gate decision. Non-goal is claiming durable alpha from a short paper period. A simulated 8–12 week calendar validates software only. Operational promotion requires 8–12 weeks of real elapsed sessions, complete records and signed human approval.
 
 ### 09 Live pilot
 
@@ -78,7 +78,7 @@ Goal: test an explicitly approved tiny live scope. Scope starts at L0 read-only,
 
 ## Rough schedule (non-binding)
 
-For one engineer, a practical first slice is two weeks: establish Phase 00 interfaces and config; implement a minimal Phase 01 bundle fixture; add one Phase 02 adapter path; and produce one offline replay report. A broader MVP may take several months depending on data contracts and review capacity. These are non-binding estimates, not delivery commitments. See each phase implementation and [`07_PR_IMPLEMENTATION_PLAN.md`](07_PR_IMPLEMENTATION_PLAN.md) for work packages.
+For one engineer, a practical first slice is two weeks: establish Phase 00 interfaces and config and implement a complete thin Phase 01 fixture/bundle replay path. The slice stops at PIT-06; SIG/BT begin only in a separately authorized subsequent slice. A broader MVP may take several months depending on data contracts and review capacity. These are non-binding estimates, not delivery commitments. See each phase implementation and [`07_PR_IMPLEMENTATION_PLAN.md`](07_PR_IMPLEMENTATION_PLAN.md) for work packages.
 
 ## Promotion language
 

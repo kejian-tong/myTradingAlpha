@@ -45,3 +45,12 @@
 | ADR-011 | Keep current unrelated Git histories independent; sync upstream by fetch/review/cherry-pick or reviewed diff. | [`UPSTREAM.md`](../../../UPSTREAM.md), [`CHANGES_FROM_UPSTREAM.md`](../../../CHANGES_FROM_UPSTREAM.md) |
 
 ADR entries are indexes to the design records, not evidence that a future implementation has shipped.
+
+## Remediation clarifications and unresolved changes
+
+[Shared contracts](../03_CONTRACTS_AND_SCHEMAS.md) now identify first-use wire owners, all-in fill
+price versus incremental explicit fees, and distinct partial-fill event semantics. These repair
+implementation ambiguity without introducing the future runtime modules. The closed-response
+handoff preserves the approved SIG-01 v1 time contract; a different derived-artifact or session-clock
+contract remains a separately approved architecture change, not silently approved by this index.
+Current/target schemas and software/operational gate evidence must not be conflated.
