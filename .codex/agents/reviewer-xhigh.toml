@@ -1,6 +1,6 @@
 name = "reviewer_xhigh"
 description = "Required independent reviewer for critical or escalated myTradingAlpha productionization roadmap PRs."
-model = "gpt-6-astra"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 

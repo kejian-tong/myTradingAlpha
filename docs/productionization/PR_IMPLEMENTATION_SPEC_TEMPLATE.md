@@ -276,21 +276,23 @@ Include at minimum:
 ## 19. Complexity and named-agent routing
 
 - **Complexity:** `normal | high | critical`
-- **Execution tier:** `standard | max` (preserve safety class; explain max selection and affected roles)
+- **Route:** `luna_sol_high | luna_sol_xhigh | sol_high_sol_xhigh | sol_xhigh_astra_high`
 - **Reason:** `<actual correctness/safety complexity>`
-- **Implementer role:** `normal_implementer | high_implementer | critical_implementer | max_implementer`
+- **Implementer role:** `normal_implementer | high_implementer | critical_implementer`
 - **Implementer config:** `.codex/agents/<file>.toml`
 - **Configured model / effort:** `<model> / <effort>`
-- **Reviewer role:** `reviewer_high | reviewer_xhigh | reviewer_max`
+- **Reviewer role:** `reviewer_high | reviewer_xhigh | reviewer_astra_high`
 - **Reviewer config:** `.codex/agents/<file>.toml`
 - **Configured model / effort:** `<model> / <effort>`
 - **Master route:** `<configured/requested route>`
 - **Escalation triggers specific to this PR:** `<conditions>`
 
-Master and standard reviewers use Astra/xhigh; normal implementation remains Luna/max, high uses
-Astra/high, and critical uses Astra/xhigh. A max implementation requires a fresh Astra/max
-`reviewer_max`; a review-only max escalation retains the current implementer. Record the max-tier
-reason before dispatch, keep one writer, and preserve all safety/promotion/stop gates.
+Master defaults to Sol/xhigh; normal/high/critical implementation remains Luna/max with Sol/high or
+Sol/xhigh review; difficult escalation uses Sol/high implementation and Sol/xhigh review; the hardest
+route uses Sol/xhigh implementation and Astra/high review. Review escalation follows
+`reviewer_high -> reviewer_xhigh -> reviewer_astra_high`. Record an evidence-based reason before the
+difficult or hardest route, retain the underlying safety class, keep one writer, and preserve all
+safety/promotion/stop gates.
 
 If the required named role/config cannot be loaded, stop with `insufficient_evidence`; do not silently
 substitute a generic agent and claim the configured route.

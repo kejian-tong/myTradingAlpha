@@ -33,21 +33,31 @@ Do not infer configured actual routing when a generic/default agent was used.
 
 | Complexity | Implementer | Independent reviewer | Configured route |
 | --- | --- | --- | --- |
-| `normal` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Astra/xhigh review |
-| `high` | `high_implementer` | `reviewer_high` | Astra/high implementation; Astra/xhigh review |
-| `critical` | `critical_implementer` | `reviewer_xhigh` | Astra/xhigh implementation and review |
-| existing class + explicit `execution_tier: max` | `max_implementer` | `reviewer_max` | Astra/max implementation and independent review |
+| `normal` | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
+| `high` initial | `normal_implementer` | `reviewer_high` | Luna/max implementation; Sol/high review |
+| high implementation-only escalation | `high_implementer` | `reviewer_high` | Sol/high implementation and review |
+| high review-only escalation | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
+| `critical` | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
+| difficult escalation | `high_implementer` | `reviewer_xhigh` | Sol/high implementation; Sol/xhigh review |
+| hardest escalation | `critical_implementer` | `reviewer_astra_high` | Sol/xhigh implementation; Astra/high review |
 
-`gpt-6-astra` is the explicit Codex model ID for GPT-6 Astra. The Master uses Astra/xhigh (Extra High).
-The normal implementer, code explorer, and test auditor retain `gpt-5.6-luna` / max. Existing
-`reviewer_high` and `reviewer_xhigh` names remain compatible; both now use Astra/xhigh, with the latter
-retaining critical/adjudication responsibilities. Historical records retain the routes actually used.
+`gpt-5.6-sol` is the default Master and demanding-work model ID. The Master uses Sol/xhigh (Extra
+High); `reviewer_high` and the boundary reviewer use Sol/high, while `reviewer_xhigh` uses Sol/xhigh.
+The normal implementer, code explorer, and test auditor retain `gpt-5.6-luna` / max. GPT-6 Astra is
+reserved for the hardest route as an independent Astra/high reviewer. Historical records retain the
+routes actually used.
 
-For exceptional difficulty or unresolved audit ambiguity, record the max-tier reason and affected
-roles in the JIT/state before spawning. A review-only escalation uses `reviewer_max` and leaves the
-implementer unchanged. A `max_implementer` requires independent `reviewer_max`. Preserve the underlying
+Use the least expensive adequate route. Normal/high/critical use Luna implementation; difficult
+escalation uses Sol/high implementation; the hardest route uses Sol/xhigh implementation and
+Astra/high review. Review-only escalation advances `reviewer_high -> reviewer_xhigh -> reviewer_astra_high`.
+Record the route reason and affected roles in the JIT/state before spawning. Preserve the underlying
 normal/high/critical safety class, one writer, and all stop conditions; escalation is not permission
 to choose a new architecture or pass a human gate. See AGENTS.md Section 5.2.1.
+
+Normal and high intentionally share the initial route. Normal stays there unless reclassified. High
+implementation complexity alone selects `high_implementer` while retaining `reviewer_high`; review
+ambiguity alone retains `normal_implementer` and selects `reviewer_xhigh`; both select difficult
+escalation. Each replacement requires an evidence-backed JIT/state update.
 
 This model/configuration upgrade applies after merge, checkout refresh, and fresh session loading.
 Already running agents retain their loaded routes. A paused roadmap PR may resume on new routes after
@@ -56,6 +66,7 @@ Successful TOML validation alone is not evidence that a new named role was loade
 
 Model and configuration references:
 
+- https://developers.openai.com/api/docs/models/gpt-5.6-sol
 - https://developers.openai.com/api/docs/models/gpt-6-astra
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
 
@@ -169,8 +180,9 @@ INDEPENDENT AGENT REVIEW
 PR ID: <id>
 PR: #<n>
 reviewed head: <exact SHA>
-reviewer role: reviewer_high|reviewer_xhigh|reviewer_max
+reviewer role: reviewer_high|reviewer_xhigh|reviewer_astra_high
 reviewer config: .codex/agents/<file>.toml
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_astra_high
 configured model/effort: <model> / <effort>
 JIT implementation spec: <GitHub PR body/comment reference>
 RED evidence: PASS|FAIL|INSUFFICIENT_EVIDENCE
@@ -200,7 +212,7 @@ PR ID: <id>
 final head: <exact SHA>
 base main: <exact SHA>
 complexity: normal|high|critical
-execution tier: standard|max (record reason and escalated roles for max)
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_astra_high
 JIT implementation spec: <GitHub PR body/comment reference>
 implementer role/configured route: <role> / <model> / <effort>
 reviewer role/configured route: <role> / <model> / <effort>
@@ -222,7 +234,7 @@ exact-head required CI, and this master-gate artifact all exist and pass.
 
 On the next normal `AGENT_STATE.md` update, record at least:
 
-- complexity and execution tier, including max-tier reason and affected roles when selected;
+- complexity and model tier, including the evidence-based reason and affected roles for every Astra tier;
 - named implementer role and config path;
 - configured actual implementer model/effort;
 - named reviewer role and config path;
