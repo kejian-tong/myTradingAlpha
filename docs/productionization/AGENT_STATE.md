@@ -11,11 +11,11 @@ phase DESIGN/IMPLEMENTATION documents.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `62a5b5cf7393e5a83b10de69289ac72789dbd12d`
-- `roadmap_status`: `sig_01_blocked_runtime_and_horizon_human_approval`
+- `roadmap_status`: `sig_01_closed_replay_amendment_approved_pre_red`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: `autonomous_sig_01_only_paused_for_human_architecture_decision`
+- `autonomy_mode`: `autonomous_sig_01_only_active`
 - `last_completed_roadmap_pr`: `PIT-06`
 - `stop_after_pr_id`: `SIG-01` (do not start SIG-02)
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
@@ -209,6 +209,54 @@ PR IDs.
 - Resume existing SIG-01 only after the human architecture decision. Use current main's named routes,
   explicit `gh --repo kejian-tong/myTradingAlpha`, fresh current-state reconciliation, and exact-head
   gates. Stop after SIG-01 merges; do not start the next slice.
+
+## Approved SIG-01 closed-replay implementation checkpoint
+
+- On 2026-09-04 the user approved the reviewed closed cached-response replay and UTC cutoff-date
+  amendment and instructed the Master to continue. Conditional merge authorization remains active
+  after all review, CI, and Master gates pass. Scope remains existing PR #24 only; stop after SIG-01
+  and do not start SIG-02.
+- Exact base main remains `62a5b5cf7393e5a83b10de69289ac72789dbd12d`; current branch pre-RED
+  head is `28bb74b829e240db52191340d7754aff864448fc`. PR #24 is open and cleanly mergeable. No
+  duplicate PR is created. Existing FND/PIT and SIG-01 history/model evidence remains unchanged.
+- The approved architecture is recorded in
+  [SIG_01_AMENDMENT_PROPOSAL.md](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md),
+  Phase 02 design/implementation, the SIG-01 roadmap row, and appendices A/B before repair RED.
+  EvidenceBundle and RunContext v1 fields/hashes/readers remain unchanged.
+- Exact response design: a separate v1 production-owned cached-response contract, immutable selection,
+  canonical byte sealer/parser, and append-only in-memory repository. Selection requires exact response
+  ID/hash plus graph/model/runtime artifact IDs and hashes. The record binds bundle ID/hash, UTC cutoff,
+  calendar, replay policy, variant, UTC snapshot date, ticker, instrument/asset, capture provenance,
+  canonical output hash, and response hash. Repository access is exact, never implicit/latest.
+- The repository stores bounded canonical UTF-8 JSON bytes. The production sealer rejects duplicate
+  keys, non-finite values, opaque/custom objects, authority fields, malformed message/call records,
+  excessive total bytes, depth, nodes, or string size. Capture availability must be at/before cutoff;
+  archive-realistic ingestion must also be at/before cutoff. Typed missing/corrupt/mismatch/unavailable
+  failures return no state/signal and have no retry, synthesis, callable, dynamic load, or fallback.
+- `trade_date` is approved as exactly the canonical UTC `knowledge_cutoff` date. Reject earlier/later
+  values before alias resolution or response lookup. This is a research snapshot label; it does not
+  infer session/execution behavior.
+- `tradingagents.graph.historical` becomes a pure cached plain-state validator/five-tier renderer. It
+  accepts no bundle/context/callable/plugin/import target or object deserializer and never imports
+  `mytradingalpha`. The existing production adapter remains the only reverse importer. Ordinary graph,
+  CLI, setup/propagation, provider config, persistence, and existing artifacts stay compatible.
+- Complexity remains `high`. Selected current-harness route is difficult escalation: sole
+  `high_implementer`, `.codex/agents/high-implementer.toml`, configured `gpt-5.6-sol / high`, followed
+  by fresh independent `reviewer_xhigh`, `.codex/agents/reviewer-xhigh.toml`, configured
+  `gpt-5.6-sol / xhigh`. Reason: canonical hashing, temporal cutoff/provenance, bounded parsing, and
+  removal of a safety-boundary callable require elevated implementation and review. This is not a
+  `critical` broker/live boundary. Both names/configs are present in the current runtime catalog;
+  actual loading requires successful dispatch. Master uses current Sol/xhigh policy.
+- One production writer only. Repair RED rewrites callable-oriented tests to the approved response
+  contract and adds a test-only canonical raw response fixture before GREEN. GREEN may add
+  `mytradingalpha/research/cached_response.py`, modify the adapter/pure validator/exports/research
+  namespace, and update only focused SIG-01 tests. No EvidenceToolset/ResearchNote, quant, durable
+  cache storage/capture service, broker/paper/live, dependency, or SIG-02 implementation.
+- Required evidence: callable API removal/static denial; exact canonical round-trip/hash/repeat;
+  ID/hash/bundle/context/date/instrument/artifact/provenance/cutoff mutation denial; no file/socket/
+  clock/environment/provider/subprocess/import-hook effects without monkeypatch-based confinement;
+  legacy state/five-tier and ordinary graph/CLI compatibility; unchanged EvidenceBundle v1 golden
+  hashes; full local validation, fresh current-harness review, exact-head CI, and Master gate.
 
 ## Current master pre-flight evidence
 

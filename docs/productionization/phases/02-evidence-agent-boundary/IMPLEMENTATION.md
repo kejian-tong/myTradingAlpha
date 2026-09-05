@@ -18,9 +18,10 @@ Commands are planned until a PR records exact output.
 
 ## Proposed files, classes, and APIs
 
-- `tradingagents/graph/historical.py`: concrete exact-type `OfflineGraphRuntime`, typed unavailable/type/output failures, pure current-shape state construction, and `run_historical(...) -> tuple[dict[str, object], str]`.
+- `tradingagents/graph/historical.py`: pure cached-state validation and five-tier rendering; no callable or runtime loading.
 - `mytradingalpha/data/replay_guard.py`: additive `HistoricalDataGuard.replay_bound(...) -> tuple[EvidenceBundle, RunContext]` returns the guard-validated canonical binding; existing `replay(...) -> EvidenceBundle` remains compatible.
-- `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact `EvidenceRepository` and offline runtime; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
+- `mytradingalpha/research/cached_response.py`: separate v1 canonical response contract, exact selection, byte sealer/parser, append-only repository, hashes, provenance/cutoff checks, and typed errors.
+- `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact evidence/response repositories and selection; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
 - `mytradingalpha/research/evidence_tools.py`: `EvidenceToolset.get/list_citations()`.
 - `mytradingalpha/research/notes.py`: `ResearchNoteBuilder.build()`.
 - `mytradingalpha/quant/features.py`: `FeatureSet.compute(bundle, instrument)`.
@@ -50,14 +51,15 @@ The validator rejects extra output fields that represent weights, quantity, orde
 
 ## Red-green-refactor
 
-1. SIG-01 Red: add exact sealed repository/context binding, runtime unavailable/type/output failures, pending/provider/persistence/file/socket/clock tripwires, current state/output/signature compatibility, authority-field denial, and SIG-02-deferral tests.
-2. SIG-01 Green: implement only the generic offline runtime seam and repository-bound read-only adapter; do not change ordinary graph execution or add a remote/current fallback.
+1. SIG-01 Red: add exact sealed repository/context/response binding, canonical bytes/hash/provenance/cutoff/date failures, no-callable denial, side-effect observers, state/output compatibility, authority denial, and SIG-02-deferral tests.
+2. SIG-01 Green: implement only the closed response contract/repository, pure `tradingagents` validator, and adapter; do not change ordinary graph execution or add a remote/current fallback.
 3. Later SIG PRs repeat their own RED/GREEN cycles for evidence citations, deterministic quant, overlay validation, and envelope/variant behavior.
 4. Refactor: isolate compatibility rendering from domain contracts and freeze the public action/variant names without crossing PR boundaries.
 
 ## Exact tests and fixtures
 
-- `tests/productionization/research/test_adapter.py`: exact sealed bundle/context invocation through an injected offline runtime; historical provider/pending-memory/persistence/file/socket/clock denial; current initial/final/five-tier compatibility; fail-closed runtime/output/authority boundaries.
+- `tests/productionization/research/test_adapter.py`: exact sealed bundle/context/response replay, side-effect denial, UTC cutoff-date rule, current final/five-tier compatibility, and fail-closed output/authority boundaries.
+- `tests/productionization/research/test_cached_response.py`: canonical bytes, exact selection/bindings, provenance cutoffs, append-only conflicts, corruption, limits, and hostile non-data rejection.
 - `tests/productionization/research/test_adapter_repairs.py`: independent bound-field mutation denial, sealed alias intervals, defensive canonical context handoff, and authority checks in supported messages/structured call arguments. These tests do not prove runtime enforcement or select a date horizon.
 - `tests/productionization/research/test_evidence_tools.py`: citation completeness, immutable item, prompt-injection text treated as data.
 - `tests/productionization/quant/test_signal.py`: feature golden file, deterministic repeat, missing-feature status, model hash.
@@ -78,14 +80,13 @@ These commands are planned; the PR report must state whether each ran and includ
 
 ## Migration and compatibility
 
-The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The SIG-01 adapter is opt-in, preserves the legacy prose state and five-tier string, and requires an exact sealed bundle plus explicitly supplied local/offline runtime. It does not emit a `ResearchNote` or `SignalEnvelope`; those remain later SIG slices. Disable the new path to roll back without deleting bundles or changing current memory records. Forward-paper behavior remains outside SIG-01.
+The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The SIG-01 adapter is opt-in, preserves the legacy prose state and five-tier string, and requires an exact sealed bundle plus exact canonical cached response. It does not emit a `ResearchNote` or `SignalEnvelope`; those remain later SIG slices. Disable the new path to roll back without deleting bundles/responses or changing current memory records. Forward-paper behavior remains outside SIG-01.
 
-SIG-01 local tests use a deterministic fake runner to prove binding, output validation, and the
-adapter-owned path's avoidance of patched side-effect functions. They do not enforce zero egress in
-production. Independent adversarial runtime evidence remains required and currently fails. Runtime
-enforcement and the trade-date policy remain blocking human decisions under the
-[unapproved SIG-01 amendment proposal](SIG_01_AMENDMENT_PROPOSAL.md). No missing-runtime evidence permits
-a remote, current-vendor, Quant-only, or ordinary-graph fallback.
+SIG-01 tests seal deterministic canonical response fixtures through the production parser. Fixtures
+prove replay mechanics only and are never described as real model inference. The approved
+[SIG-01 amendment](SIG_01_AMENDMENT_PROPOSAL.md) forbids callable execution and defines the UTC
+cutoff-date rule. Missing response evidence never permits a remote, current-vendor, Quant-only, or
+ordinary-graph fallback.
 
 ## Definition of done
 
