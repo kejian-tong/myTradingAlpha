@@ -180,7 +180,7 @@ PR: #<n>
 reviewed head: <exact SHA>
 reviewer role: reviewer_high|reviewer_xhigh
 reviewer config: .codex/agents/<file>.toml
-route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_sol_xhigh
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_high|sol_high_sol_xhigh|sol_xhigh_sol_xhigh
 configured model/effort: <model> / <effort>
 JIT implementation spec: <GitHub PR body/comment reference>
 RED evidence: PASS|FAIL|INSUFFICIENT_EVIDENCE
@@ -210,7 +210,7 @@ PR ID: <id>
 final head: <exact SHA>
 base main: <exact SHA>
 complexity: normal|high|critical
-route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_sol_xhigh
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_high|sol_high_sol_xhigh|sol_xhigh_sol_xhigh
 JIT implementation spec: <GitHub PR body/comment reference>
 implementer role/configured route: <role> / <model> / <effort>
 reviewer role/configured route: <role> / <model> / <effort>

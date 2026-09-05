@@ -201,7 +201,7 @@ executable tests can express it.
 
 | Test / fixture | Contract expressed | Expected RED failure |
 | --- | --- | --- |
-| `<path::test>` | `<contract>` | `<expected failure>` |
+| `<path>` | `<contract>` | `<expected failure>` |
 
 ### RED command
 
@@ -276,7 +276,7 @@ Include at minimum:
 ## 19. Complexity and named-agent routing
 
 - **Complexity:** `normal | high | critical`
-- **Route:** `luna_sol_high | luna_sol_xhigh | sol_high_sol_xhigh | sol_xhigh_sol_xhigh`
+- **Route:** `luna_sol_high | luna_sol_xhigh | sol_high_sol_high | sol_high_sol_xhigh | sol_xhigh_sol_xhigh`
 - **Reason:** `<actual correctness/safety complexity>`
 - **Implementer role:** `normal_implementer | high_implementer | critical_implementer`
 - **Implementer config:** `.codex/agents/<file>.toml`
