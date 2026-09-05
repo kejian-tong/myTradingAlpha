@@ -181,6 +181,15 @@ def correlation_scope(**values: Any) -> Iterator[None]:
 def configure_logging(*, logger: logging.Logger, stream: Any) -> logging.Logger:
     """Install one redacted JSON stream handler on ``logger``."""
 
+    # Configure a dedicated logger before starting producers. An earlier caller-owned
+    # handler could emit a record before our redaction filter sees it. Do not silently
+    # remove or take ownership of another component's sinks.
+    if any(
+        not getattr(handler, "_mytradingalpha_structured", False)
+        for handler in logger.handlers
+    ):
+        raise ValueError("structured logging requires a dedicated logger")
+
     for handler in list(logger.handlers):
         if getattr(handler, "_mytradingalpha_structured", False):
             logger.removeHandler(handler)
