@@ -57,11 +57,12 @@ def test_timestamp_rejects_more_than_six_fractional_digits(fraction: str, offset
         TypeAdapter(UtcDateTime).validate_python(f"2024-06-30T23:59:59.{fraction}{offset}")
 
 
-@pytest.mark.parametrize("fraction", ["", ".1", ".123456"])
+@pytest.mark.parametrize("fraction", ["", ".1", ".12", ".123", ".1234", ".12345", ".123456"])
 def test_supported_timestamp_precision_round_trips_without_loss(fraction: str) -> None:
     adapter = TypeAdapter(UtcDateTime)
     parsed = adapter.validate_python(f"2024-06-30T18:59:59{fraction}-05:00")
-    assert parsed == datetime.fromisoformat(f"2024-06-30T23:59:59{fraction}+00:00")
+    microseconds = int(fraction.removeprefix(".").ljust(6, "0"))
+    assert parsed == datetime(2024, 6, 30, 23, 59, 59, microseconds, tzinfo=timezone.utc)
     assert parsed.tzinfo is timezone.utc
     assert adapter.validate_json(adapter.dump_json(parsed)) == parsed
 
