@@ -33,6 +33,6 @@ If the recommended amendment is approved, the SIG-01 JIT must explicitly add the
 
 Required observable evidence includes a legitimate provenance-bound cached result, canonical round-trip/hash/binding checks, repeatable output, missing/mismatched response denial, and data that attempts callback/import/host-handle injection rejected before execution. Network/file/clock/credential observers must remain unchanged without test monkeypatches supplying the enforcement. Failure of runtime availability or any enforcement test remains blocking insufficient evidence. Tests may use explicit fixtures but production cannot synthesize fixtures as a fallback.
 
-Rollback disables the new opt-in replay adapter and preserves all sealed evidence/cache artifacts. Ordinary graph behavior remains unchanged. Final fresh reviewer_max, required exact-head CI, and Master gate remain necessary; architecture approval alone does not authorize merge.
+Rollback disables the new opt-in replay adapter and preserves all sealed evidence/cache artifacts. Ordinary graph behavior remains unchanged. A fresh independent named controlling review under the current AGENTS.md harness, required exact-head CI, and Master gate remain necessary; architecture approval alone does not authorize merge.
 
 Approval requested: authorize the closed cached-response replay amendment and the UTC cutoff-date label rule above for SIG-01, or choose the isolated executable direction with its expanded design/platform scope. Until that decision arrives, keep H4 and M1 open and stop before dependent implementation.
