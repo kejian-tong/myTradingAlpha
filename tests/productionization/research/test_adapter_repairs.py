@@ -646,3 +646,12 @@ def test_message_boundary_raw_object_arguments_preserve_original():
     final, _ = _run_with_message(message)
     assert final["messages"][-1] is message
     assert message == original
+
+
+@pytest.mark.parametrize("representation", ["role", "type", "constructor"])
+@pytest.mark.parametrize("field", ["additional_kwargs", "response_metadata"])
+@pytest.mark.parametrize("metadata", [[], (), False])
+def test_message_boundary_original_metadata_shape_denies_before_erasure(representation, field, metadata):
+    message = _wire_message(representation, {field: metadata})
+    with pytest.raises(HistoricalRuntimeOutputError):
+        _run_with_message(message)
