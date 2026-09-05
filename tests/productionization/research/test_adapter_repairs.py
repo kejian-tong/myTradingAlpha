@@ -16,6 +16,7 @@ from mytradingalpha.research.cached_response import (
     build_cached_graph_response,
 )
 from mytradingalpha.research.tradingagents_adapter import HistoricalInstrumentError, ResearchAdapter
+from tests.productionization.data.test_bundle_replay import ObservedContextTzInfo
 from tests.productionization.research.test_adapter import (
     run_adapter,
     sealed_adapter,
@@ -98,6 +99,29 @@ def test_adapter_passes_guard_bound_canonical_context_to_response_repository(mon
     assert type(observed[0][1]["knowledge_cutoff"]) is datetime
     assert observed[0][1]["knowledge_cutoff"].tzinfo is timezone.utc
     assert raw.knowledge_cutoff == "2024-06-30T23:59:59Z"
+
+
+@pytest.mark.parametrize("field", ["decision_time", "knowledge_cutoff", "earliest_execution_time"])
+def test_adapter_rejects_custom_tzinfo_context_without_observation(field: str) -> None:
+    bundle, context, _, _, _, adapter = sealed_adapter()
+    payload = context.model_dump(mode="python")
+    baseline = payload[field]
+    assert type(baseline) is datetime
+    effects: list[str] = []
+    payload[field] = datetime(
+        baseline.year,
+        baseline.month,
+        baseline.day,
+        baseline.hour,
+        baseline.minute,
+        baseline.second,
+        tzinfo=ObservedContextTzInfo(effects),
+    )
+    raw = RunContext.model_construct(**payload)
+    effects.clear()
+    with pytest.raises(HistoricalReplayDeniedError):
+        run_adapter(adapter, bundle, raw)
+    assert effects == []
 
 
 @pytest.mark.parametrize(

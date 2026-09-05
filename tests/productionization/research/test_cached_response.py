@@ -1009,6 +1009,43 @@ def test_get_bound_denies_every_exact_selection_binding(field: str, replacement:
         repository.get_bound(selection, **bound_kwargs(record))
 
 
+@pytest.mark.parametrize("kind", ["custom-tz", "naive", "non-utc", "subclass"])
+def test_get_bound_rejects_noncanonical_cutoff_without_observation(kind: str) -> None:
+    repository = CachedGraphResponseRepository()
+    record = repository.seal(FIXTURE.read_bytes().removesuffix(b"\n"))
+    effects: list[str] = []
+    if kind == "custom-tz":
+        cutoff = datetime(2024, 6, 30, 23, 59, 59, tzinfo=ObservedTzInfo(effects))
+    elif kind == "naive":
+        cutoff = datetime(2024, 6, 30, 23, 59, 59)
+    elif kind == "non-utc":
+        cutoff = datetime(2024, 6, 30, 18, 59, 59, tzinfo=timezone(timedelta(hours=-5)))
+    else:
+        cutoff = DateTimeSubclass(2024, 6, 30, 23, 59, 59, tzinfo=timezone.utc)
+    effects.clear()
+    with pytest.raises(CachedGraphResponseMismatchError):
+        repository.get_bound(
+            make_selection(expected_response_hash=record.response_hash),
+            **bound_kwargs(record, knowledge_cutoff=cutoff),
+        )
+    assert effects == []
+
+
+@pytest.mark.parametrize("field", list(CachedGraphSelection.model_fields))
+def test_get_bound_reconstructs_selection_without_caller_field_hooks(field: str) -> None:
+    repository = CachedGraphResponseRepository()
+    record = repository.seal(FIXTURE.read_bytes().removesuffix(b"\n"))
+    selection = make_selection(expected_response_hash=record.response_hash)
+    payload = selection.model_dump(mode="python")
+    effects: list[str] = []
+    payload[field] = HookString(str(payload[field]), effects)
+    constructed = CachedGraphSelection.model_construct(**payload)
+    effects.clear()
+    with pytest.raises(CachedGraphResponseMismatchError):
+        repository.get_bound(constructed, **bound_kwargs(record))
+    assert effects == []
+
+
 @pytest.mark.parametrize(
     ("policy", "available_delta", "ingested_delta", "allowed"),
     [
