@@ -26,8 +26,8 @@ Depends on Phase 01 sealed EvidenceBundle and Phase 00 contracts. Current graph 
 EvidenceBundle ───────────────> Quant feature service ───> QuantSignal
       |
       +-> SIG-01 read-only adapter ───> legacy prose graph state
-                                            |
-                                            +-> SIG-02 ResearchNote ───> optional LLMOverlay
+                  ^                         |
+Separate exact-bound cached response        +-> SIG-02 ResearchNote ───> optional LLMOverlay
 QuantSignal + optional overlay ─────────> SignalEnvelope
 ```
 
@@ -64,10 +64,11 @@ outcome/reflection logic, current identity or vendor helpers, memory, reports, c
 configured remote model. No caller callable, dynamic loader, plugin, pickle, or generic object
 deserializer is accepted. Missing, corrupt, cutoff-ineligible, or mismatched response records fail
 closed. Malformed output and new target/order/broker/credential/risk-authority fields also
-fail closed. Supported concrete LangChain messages are checked as data, including metadata and
-structured tool-call arguments; unknown/custom opaque message objects fail closed before custom
-serialization. No tool call is executed by this validation. Existing prose plan language remains legacy research output, not numeric production
-portfolio or order authority.
+fail closed. Only plain JSON message records are accepted, including bounded metadata and decoded
+structured tool-call arguments. Concrete LangChain message instances and custom opaque objects are
+rejected before any object serialization; their normal-graph support does not extend to closed replay.
+No tool call is executed by this validation. Existing prose plan language remains legacy research
+output, not numeric production portfolio or order authority.
 
 SIG-01 supplies only the minimal bundle-backed input boundary needed for closed cached response replay. The
 public `EvidenceToolset`, citation enumeration/completeness, prompt-injection rendering policy,
@@ -81,6 +82,9 @@ The [SIG-01 amendment](SIG_01_AMENDMENT_PROPOSAL.md) is approved for existing PR
 replay accepts only a separately versioned canonical cached-response record selected by exact ID and
 expected hash. The response binds the sealed bundle/context, instrument, graph/model/runtime artifacts,
 capture provenance, and canonical output. Existing EvidenceBundle v1 hashes and readers do not change.
+Both replay policies require response `available_at <= knowledge_cutoff`; archive-realistic replay
+also requires `ingested_at <= knowledge_cutoff`. Availability-only backfilled research is not proof
+of archive-realistic capture. See the [policy examples](../../03_CONTRACTS_AND_SCHEMAS.md#executable-response-policy-examples).
 `trade_date` equals the canonical UTC `knowledge_cutoff` date; session-clock behavior remains later
 roadmap work. SIG-02 remains deferred.
 
