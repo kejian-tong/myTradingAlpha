@@ -2,6 +2,8 @@
 
 Commands in this document are planned commands until an implementation record shows that they were executed.
 
+Current scope is implemented; retain this implementation plan as history and use the [current test index](../../appendices/B_TEST_MATRIX.md#implemented-productionization-checks) for actual paths. No command below is automatically a claim of a new run.
+
 ## Ordered PR/work packages
 
 1. **FND-01** — add package ownership and empty bounded-context modules.

@@ -25,7 +25,8 @@ Commands are planned until exact execution evidence is recorded.
 - `mytradingalpha/backtest/runner.py`: `BacktestRunner.run()`.
 - `mytradingalpha/backtest/orders.py`: `SimOrder`, `OrderBook`.
 - `mytradingalpha/backtest/fills.py`: `FillModel.simulate()`.
-- `mytradingalpha/backtest/costs.py`: `CostModel.quote()`.
+- `mytradingalpha/backtest/costs/__init__.py`: export `CostModel.quote()` from the initial package; EXC extends it without breaking the public import.
+- `mytradingalpha/contracts/orders.py`: shared `OrderIntent`/`Fill` first introduced by BT-02; `SimOrder` remains domain-internal. BT-01 simulation events are not OMS wire events.
 - `mytradingalpha/backtest/ledger.py`: `Ledger.append/replay/balance()`.
 - `mytradingalpha/backtest/nav.py`: `NAVCalculator.compute()`.
 - `mytradingalpha/backtest/accounting.py`: `AccountingInvariant.check()`.
@@ -41,7 +42,8 @@ decision at session close
   -> clock.next_session(decision_time)
   -> create intent with earliest_submit_time
   -> fill using next-session bar and cost model
-  -> append fill + fee cash event exactly once
+  -> append all-in fill notional + incremental explicit fee exactly once (atomic, by fill ID)
+  -> cost breakdown/implementation shortfall are attribution, not another debit
   -> derive positions/cash/NAV and metrics
 
 semantic_hash(record):
@@ -49,6 +51,8 @@ semantic_hash(record):
   omit run_id, created_at, wall_clock, log sequence unrelated to economics
   hash canonical JSON
 ```
+
+Use [shared first-use ownership and accounting units](../../03_CONTRACTS_AND_SCHEMAS.md). Simulation-only plan/risk references never authorize broker dispatch; do not implement RSK/OMS early merely to run fill fixtures.
 
 An interrupted run resumes from the last valid event sequence. If a semantic input changes, the manifest hash changes and the prior result is not overwritten.
 

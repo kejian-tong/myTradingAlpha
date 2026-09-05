@@ -2,6 +2,8 @@
 
 Commands below are planned until an implementation record provides output.
 
+Current scope is implemented; retain this implementation plan as history and use the [current test index](../../appendices/B_TEST_MATRIX.md#implemented-productionization-checks) for actual paths. No command below is automatically a claim of a new run.
+
 ## Ordered PR/work packages
 
 1. **PIT-01** — capture/provenance/raw store.

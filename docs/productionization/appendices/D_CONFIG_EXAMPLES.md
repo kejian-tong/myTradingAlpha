@@ -1,6 +1,6 @@
 # Appendix D — Configuration Examples
 
-These examples describe configuration shape only. Values are non-secret examples; deployment must supply approved bundle IDs, endpoint identities, policy versions, and limits through controlled configuration. Do not copy an example into a live environment without review.
+These examples describe future configuration shape only and are not directly loadable by the current strict ProductionConfig. Values are non-secret examples; deployment must supply approved bundle IDs, endpoint identities, policy versions, and limits through controlled configuration. Do not copy an example into a live environment without review.
 
 ## Historical, network-free replay
 
@@ -108,3 +108,11 @@ L0 is read-only. L1/L2 values require separate approvals and level-specific mani
 - `live_write_enabled` remains false until a Phase 09 approval; it is not controlled by an LLM or Research Graph node.
 - Secret values are resolved at the credential boundary and are absent from RunContext, prompts, logs, fixtures, and report artifacts.
 - Any missing policy, bundle, endpoint, approval, or lock metadata fails closed.
+
+## Current loadable examples
+
+The actual FND-03 parser and precedence live in `mytradingalpha/ops/config.py`; use
+`tests/productionization/fixtures/config/historical.yaml`, `paper.yaml` and `live-read-only.yaml`
+with `tests/productionization/test_config_redaction.py` for the supported configuration contract.
+A syntactically valid mode or egress flag is not authorization for its future runtime side effects.
+Do not loosen current extra-field validation merely to accept the future sketches above.

@@ -1,6 +1,6 @@
 # Phase 01 — Point-in-Time Data Design
 
-Status: planned. This phase creates immutable, availability-aware inputs for historical and archive-realistic replay.
+Status: implemented at the current contract scope. PIT-01 through PIT-06 have shipped with typed-domain fixture/contract evidence; complete vendor coverage and historical authenticity remain separate evidence obligations. This phase creates immutable, availability-aware inputs for historical and archive-realistic replay.
 
 ## Goals
 

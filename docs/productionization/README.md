@@ -4,7 +4,7 @@ This documentation turns the current `tradingagents/` research graph into an imp
 
 ## North-star boundary
 
-The first product boundary is daily, long-only, unlevered research and recommendation for liquid US equities/ETFs from a small allowlist. A decision is made at the close and, at the earliest, executed in the next eligible session. The current graph remains upstream-derived research code. A future `mytradingalpha/` package owns contracts, data, research adapters, quant, portfolio, risk, backtest, execution, experiments, and operations. Only `mytradingalpha.research` may import `tradingagents`; no file under `tradingagents/` may import `mytradingalpha`.
+The first product boundary is daily, long-only, unlevered research and recommendation for liquid US equities/ETFs from a small allowlist. A decision is made at the close and, at the earliest, executed in the next eligible session. The current graph remains upstream-derived research code. The `mytradingalpha/` package owns the implemented foundation/PIT/closed-replay boundaries and progressively introduces contracts, data, research adapters, quant, portfolio, risk, backtest, execution, experiments, and operations. Only `mytradingalpha.research` may import `tradingagents`; no file under `tradingagents/` may import `mytradingalpha`.
 
 LLM output is a bounded research/risk overlay. It may attenuate or veto a deterministic quantitative signal; an overlay failure or abstain means no trade. It cannot increase quant influence, create target weights or orders, or access broker credentials. Quant-only is a separately preregistered experiment variant, never a runtime fallback from Quant+LLM. Hard risk is deterministic, shared, independent of LangGraph, and fail-closed; a persistent halt survives process restarts.
 
@@ -49,3 +49,17 @@ Historical replay reads only an immutable `EvidenceBundle`, sets every component
 The phases are ordered `00 foundation → 01 PIT → 02 evidence/agent boundary → 03 backtest/ledger → 04 portfolio/risk → 05 execution cost/liquidity → 06 experiment/alpha → 07 OMS/paper/reconciliation → 08 8–12 week forward paper gate → 09 tiny live pilot`. Commands in implementation documents are planned commands unless a validation record explicitly says they were run. Current baseline evidence is limited to local-contract checks and green GitHub CI; it does not prove PIT correctness, backtest alpha, paper readiness, or live readiness.
 
 There is no fixed live risk number in this plan. Risk limits, allowlists, credentials, and broker settings are deployment configuration subject to approval and should never be copied from examples into a live environment.
+
+## Current implementation and evidence index
+
+FND-01 through FND-04, PIT-01 through PIT-06 and SIG-01 are implemented. SIG-02 through later
+roadmap slices remain planned unless a newer reconciled main/PR record proves otherwise. This is
+contract/fixture evidence, not complete vendor capture, model-inference, alpha or trading readiness.
+Use [AGENT_STATE](AGENT_STATE.md) plus actual GitHub main and PR records for operational status;
+historical authorization is not permission to resume. The dated current-state audit is a historical
+baseline, not the live completion ledger. Use [implemented checks](appendices/B_TEST_MATRIX.md#implemented-productionization-checks)
+for real paths and the relevant first-use JIT for future planned commands. Strict typed-domain v1
+contracts and the approved SIG-01 amendment take precedence over conceptual schema sketches.
+
+The remediation PR review waiver is limited to the owner's authorized repair batch. It does not
+relax future default model routing, independent review or human PAPER/live promotion gates.

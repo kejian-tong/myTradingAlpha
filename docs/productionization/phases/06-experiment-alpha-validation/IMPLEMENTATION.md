@@ -11,14 +11,15 @@ Commands are planned until exact implementation output is recorded.
 
 ## Exact existing files to touch
 
-- [`tradingagents/graph/trading_graph.py`](../../../../tradingagents/graph/trading_graph.py) only through a read-only adapter to capture graph outputs.
+- [`tradingagents/graph/trading_graph.py`](../../../../tradingagents/graph/trading_graph.py) only via separately authorized forward capture; historical experiments consume the closed cached-response adapter and never call the ordinary graph.
 - [`tradingagents/reporting.py`](../../../../tradingagents/reporting.py) only for additive report links; do not reinterpret raw return reflections as alpha.
 - [`pyproject.toml`](../../../../pyproject.toml) only for explicitly approved statistical tooling, with lock metadata recorded.
 
 ## Proposed files, classes, and APIs
 
-- `mytradingalpha/experiments/spec.py`: immutable `ExperimentSpec` and `validate_preregistration()`.
-- `mytradingalpha/experiments/registry.py`: `VariantRegistry.register/resolve()`.
+- `mytradingalpha/contracts/experiments.py`: immutable ExperimentSpec wire type first introduced by EXP-01.
+- `mytradingalpha/experiments/spec.py`: `validate_preregistration()` for that shared type.
+- `mytradingalpha/experiments/registry.py`: `ExperimentRegistry.register/resolve()` references SIG-05 `quant/variants.py:VariantRegistry` identities; it does not recreate them.
 - `mytradingalpha/experiments/matrix.py`: `ExperimentMatrix.required_variants()`.
 - `mytradingalpha/experiments/seeds.py`: `SeedPlan.screen/final()`.
 - `mytradingalpha/experiments/walk_forward.py`: `WalkForwardSplitter.split()` with purge/embargo.
@@ -40,6 +41,15 @@ register(spec) before run
   -> after opening, allow read-only audit replay only; any tuning/model/metric/seed change contaminates it and requires a new holdout/experiment
   -> write immutable report + GateEvidence(pass|fail|insufficient_evidence)
 ```
+
+Historical EXP execution consumes a distinct captured response for every declared inference trial of a model-bearing variant,
+under the [closed capture/replay handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
+No ordinary graph/model call can fill a missing historical response. Replaying a fixture repeatedly
+proves determinism, not fresh inference or multiple seeds. Missing qualified variants/trials yield
+`insufficient_evidence`; retain failures instead of manufacturing completeness. FWD-01 owns the later
+controlled producer; existing independently verified captures can be used earlier. This is not an
+EXP dependency on a future FWD implementation: offline software tests use synthetic contracts, whereas
+actual alpha/PAPER promotion requires the real evidence and separate authorization. Cash, B&H, deterministic trend and Quant-only require no cached model response.
 
 The final report must include Cash, B&H, trend, Single Agent, No Debate, No Memory, Full Multi-agent, Quant-only, and Quant+LLM. Quant+LLM overlay error/abstain is no trade; it never selects Quant-only inside the same run.
 
@@ -79,7 +89,7 @@ Experiments consume new ledger/bundle artifacts and leave current markdown repor
 - Required baselines/ablations, seed thresholds, and cost policies are complete.
 - Walk-forward purge/embargo, sealed holdout, block bootstrap, DSR/PBO are evidenced where applicable.
 - Reports contain required metrics and no raw close-minus-benchmark alpha claim.
-- Gate evidence is `pass`; `fail` or `insufficient_evidence` blocks Phase 07/08.
+- Software gate evidence must be `pass` before dependent implementation. Real experiment evidence is a separate gate: `fail` or `insufficient_evidence` blocks PAPER operation/promotion, and cannot be replaced by synthetic software tests.
 
 ## Evidence and rollback
 

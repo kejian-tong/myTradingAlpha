@@ -21,8 +21,9 @@ Commands are planned until exact implementation output is recorded. External PAP
 
 ## Proposed files, classes, and APIs
 
-- `mytradingalpha/execution/orders.py`: `OrderIntent`, `OrderAggregate`.
-- `mytradingalpha/execution/events.py`: `OrderEvent`, `Fill`, `TransitionEvent`.
+- `mytradingalpha/contracts/orders.py`: reuse BT-02 OrderIntent/Fill; OMS-01 adds the versioned OrderEvent wire contract.
+- `mytradingalpha/execution/orders.py`: `OrderAggregate`, consuming shared contracts.
+- `mytradingalpha/execution/events.py`: internal `TransitionEvent` and normalization; no duplicate shared models.
 - `mytradingalpha/execution/state_machine.py`: `OrderStateMachine.apply()`.
 - `mytradingalpha/execution/identity.py`: `ClientOrderIdFactory`, `FillIdFactory`.
 - `mytradingalpha/execution/outbox.py`: `Outbox.append/claim/ack()`.
@@ -49,7 +50,7 @@ intent(proposed)
  -> reconcile broker snapshot with local ledger
 ```
 
-`submit_paper` checks `mode=forward_paper`, `paper_write_enabled=true`, approved endpoint identity, and a valid approval record. A live endpoint method is not exposed in Phase 07 and `live_write_enabled` remains false. Duplicate client IDs return the existing aggregate; a conflicting payload halts.
+`submit_paper` checks `mode=forward_paper`, `paper_write_enabled=true`, approved endpoint identity, and a valid approval record. A live endpoint method is not exposed in Phase 07 and `live_write_enabled` remains false. Duplicate client IDs return the existing aggregate; a conflicting payload halts. Apply the [shared event rule](../../03_CONTRACTS_AND_SCHEMAS.md#oms-event-application-and-observed-facts): unique fills 2/3/5 for quantity 10 produce partial/partial/filled; partial may expire with booked fills retained. Duplicate event ID plus identical payload is a no-op, not a second ledger posting. Late facts are retained and reconciled, never dropped or blindly resubmitted.
 
 ## Red-green-refactor
 
@@ -59,7 +60,7 @@ intent(proposed)
 
 ## Exact tests and fixtures
 
-- `tests/productionization/execution/test_state_machine.py`: all 12 statuses, valid/invalid transitions, risk/approval ordering.
+- `tests/productionization/execution/test_state_machine.py`: all 12 statuses, 2/3/5 partial sequence, partial-expiry, duplicate/conflicting/overfill and late-event cases, state/ledger parity, risk/approval ordering.
 - `tests/productionization/execution/test_outbox_ids.py`: duplicate/conflicting intent, restart, timeout, stable client/fill IDs.
 - `tests/productionization/execution/test_paper_broker.py`: deterministic submit/cancel/query, partial fills, cost/ledger parity.
 - `tests/productionization/execution/test_paper_endpoint.py`: fake/sandbox PAPER submit/cancel/query, default-false flag, credential redaction, live-write denial.

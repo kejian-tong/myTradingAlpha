@@ -4,7 +4,7 @@ Status: planned. This phase exercises order lifecycle and paper operations while
 
 ## Goals
 
-- Implement shared `OrderIntent`, `OrderEvent`, and `Fill` lifecycle contracts.
+- Reuse BT-02 shared `OrderIntent`/`Fill` and extend `contracts/orders.py` with OMS-01 `OrderEvent`; do not duplicate wire models in execution internals.
 - Make validation, risk approval, submission, acknowledgement, fills, and unknown states explicit and idempotent.
 - Provide a local deterministic `PaperBroker` and an isolated external PAPER adapter path with reconciliation.
 
@@ -41,7 +41,7 @@ An unknown acknowledgement pauses the intent and queries the endpoint; no blind 
 
 ## Interfaces and invariants
 
-Order states are `proposed`, `validated`, `approved`, `submitting`, `submitted`, `acknowledged`, `partial`, `filled`, `cancelled`, `rejected`, `expired`, and `unknown`. Required transitions include `proposed → validated → approved → submitting → submitted → acknowledged/rejected/expired/unknown`; `acknowledged → filled/partial/cancelled/rejected/expired`; and `partial → filled/cancelled/rejected`. A risk decision and approval are required before `submitting`. Stable client/fill IDs and an outbox make retries idempotent. Unknown acknowledgement enters query-only pause. `paper_write_enabled` defaults false; `live_write_enabled` is unavailable until Phase 09.
+Order states are `proposed`, `validated`, `approved`, `submitting`, `submitted`, `acknowledged`, `partial`, `filled`, `cancelled`, `rejected`, `expired`, and `unknown`. Required transitions include `proposed → validated → approved → submitting → submitted → acknowledged/rejected/expired/unknown`; `acknowledged → filled/partial/cancelled/rejected/expired`; and `partial → partial/filled/cancelled/rejected/expired`. Distinct unique fills increase cumulative_filled; a repeated state is not a duplicate event. Terminal residual closure preserves booked fills. The [shared event-application rule](../../03_CONTRACTS_AND_SCHEMAS.md#oms-event-application-and-observed-facts) governs late/out-of-order facts, overfills and conflicting duplicates. A risk decision and approval are required before `submitting`. Stable client/fill IDs and an outbox make retries idempotent. Unknown acknowledgement enters query-only pause. `paper_write_enabled` defaults false; `live_write_enabled` is unavailable until Phase 09.
 
 ## Decisions and alternatives
 

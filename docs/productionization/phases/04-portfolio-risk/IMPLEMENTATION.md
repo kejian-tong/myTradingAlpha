@@ -19,8 +19,9 @@ Commands are planned until exact implementation output is recorded.
 
 ## Proposed files, classes, and APIs
 
-- `mytradingalpha/portfolio/snapshot.py`: `SnapshotStore.latest()` and `PortfolioSnapshot`.
-- `mytradingalpha/portfolio/target.py`: `TargetPortfolio.validate()`.
+- `mytradingalpha/contracts/portfolio.py`: shared PortfolioSnapshot/TargetPortfolio, first introduced by RSK-01.
+- `mytradingalpha/portfolio/snapshot.py`: `SnapshotStore.latest()`, consuming the shared snapshot.
+- `mytradingalpha/portfolio/target.py`: target validation helpers, not another wire class.
 - `mytradingalpha/portfolio/allocator.py`: `RuleAllocator.allocate()`.
 - `mytradingalpha/portfolio/policies.py`: `AllocationPolicy`.
 - `mytradingalpha/risk/estimates.py`: `RiskEstimator.volatility/covariance/liquidity()`.
@@ -28,7 +29,8 @@ Commands are planned until exact implementation output is recorded.
 - `mytradingalpha/risk/exposure.py`: `ExposureCalculator.compute()`.
 - `mytradingalpha/risk/engine.py`: `RiskEngine.evaluate()`.
 - `mytradingalpha/risk/halts.py`: `PersistentHaltStore.activate/clear()`.
-- `mytradingalpha/risk/decisions.py`: `RiskDecision` and `ResizeLineage`.
+- `mytradingalpha/contracts/risk.py`: shared RiskDecision introduced by RSK-04.
+- `mytradingalpha/risk/decisions.py`: ResizeLineage/decision helpers consuming that shared type.
 - `mytradingalpha/portfolio/optimizer.py`: `ConstrainedOptimizer.optimize()`.
 
 ## Schema and pseudocode
@@ -85,7 +87,8 @@ Current `PortfolioDecision` and `SignalProcessor` remain the research interface.
 
 ## Definition of done
 
-- All RSK PRs pass focused tests and deterministic repeat checks.
+- Required baseline RSK-01 through RSK-04 passes focused tests and deterministic repeat checks.
+- RSK-05 is optional and not a baseline exit prerequisite. Record `not_applicable` as criterion metadata for a preregistered rule-only configuration, never label an unimplemented optimizer PASS. Once an optimizer variant is selected, all RSK-05 tests and independent post-solve/risk checks are mandatory; failure is no-trade with no dynamic fallback. GateEvidence statuses remain pass/fail/insufficient_evidence.
 - Rule allocator emits valid long-only targets with explicit cash.
 - Risk handles approve, reject, resize/revalidation, and persistent halt correctly.
 - Optimizer cannot bypass constraints or risk and is off by default.

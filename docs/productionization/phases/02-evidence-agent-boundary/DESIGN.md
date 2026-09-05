@@ -1,6 +1,6 @@
 # Phase 02 — Evidence and Agent Boundary Design
 
-Status: planned. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
+Status: partially implemented. SIG-01 closed cached-response replay is implemented; SIG-02 through SIG-05 remain planned. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
 
 ## Goals
 
@@ -35,7 +35,7 @@ The two branches are independent: QuantSignal does not depend on LLM output, and
 
 ## Current integration points
 
-- [`GraphSetup.setup_graph`](../../../../tradingagents/graph/setup.py#L61-L154) builds sequential analysts and later decision nodes; the adapter must wrap this boundary rather than add portfolio behavior to the graph.
+- [`GraphSetup.setup_graph`](../../../../tradingagents/graph/setup.py#L61-L154) builds the ordinary research graph only; SIG-01 historical replay never constructs it. Keep portfolio behavior outside that legacy graph.
 - [`AgentState`](../../../../tradingagents/agents/utils/agent_states.py#L47-L76) carries prose reports/debate state but no numeric portfolio fields.
 - [`TraderProposal`](../../../../tradingagents/agents/schemas.py#L121-L180) has string `position_sizing`, and [`PortfolioDecision`](../../../../tradingagents/agents/schemas.py#L188-L223) is rating/prose.
 - [`SignalProcessor`](../../../../tradingagents/graph/signal_processing.py#L20-L30) returns a five-tier string and is not a target-weight service.
@@ -101,8 +101,10 @@ Missing evidence is a reason-coded degradation or run failure according to varia
 
 ## Migration and rollback
 
-Run the adapter and signals in shadow mode while existing markdown reports remain the user-facing output. Disable the new adapter or overlay flag to return to the current Research Graph. Stored envelopes remain immutable and are never edited to fit a later interpretation.
+Run the adapter and signals in shadow mode while existing markdown reports remain the user-facing output. Disabling the adapter ends the affected historical run with typed unavailable/no-trade; it never falls back to the ordinary Research Graph or Quant-only. The separately selected ordinary research path remains compatible outside historical replay. Stored envelopes remain immutable and are never edited to fit a later interpretation.
 
 ## Acceptance and gate
 
 Pass requires offline evidence-only adapter tests, deterministic QuantSignal repeatability, overlay property tests proving no forbidden fields/actions, explicit no-trade failure behavior, and separate variant IDs. `fail` or `insufficient_evidence` blocks portfolio/backtest promotion.
+
+Shared wire ownership and the later producer/capture boundary are defined in [Contracts and schemas](../../03_CONTRACTS_AND_SCHEMAS.md#first-use-wire-ownership). SIG-02 does not introduce inference or modify SIG-01 v1 cutoffs.

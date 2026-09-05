@@ -40,7 +40,7 @@ The first executable decision is at the close and the first fill is at the earli
 
 ## Interfaces and invariants
 
-`SessionClock` emits ordered session events. `FillModel` is deterministic for a fixed event stream/config. `Ledger.append()` is immutable and sequence-numbered. `NAV = cash + sum(quantity * mark_price) + receivables - liabilities` after every applied event; fees are posted once as cash events and not subtracted again in NAV. Reported alpha is portfolio net return relative to a declared benchmark, not raw close-minus-benchmark. The canonical economic/artifact hash excludes non-semantic run IDs and wall-clock fields while retaining bundle/config/code/model/seed, events, fills, costs, holdings, and metrics.
+`SessionClock` emits ordered session events. `FillModel` is deterministic for a fixed event stream/config. `Ledger.append()` is immutable and sequence-numbered. `NAV = cash + sum(quantity * mark_price) + receivables - liabilities` after every applied event; all-in fill notional and incremental explicit fees are posted once, atomically, and are not subtracted again in NAV. Price-friction attribution is not an extra cash charge; use the [shared accounting rule](../../03_CONTRACTS_AND_SCHEMAS.md#fill-accounting-units-and-fee-once-rule). Reported alpha is portfolio net return relative to a declared benchmark, not raw close-minus-benchmark. The canonical economic/artifact hash excludes non-semantic run IDs and wall-clock fields while retaining bundle/config/code/model/seed, events, fills, costs, holdings, and metrics.
 
 ## Decisions and alternatives
 
