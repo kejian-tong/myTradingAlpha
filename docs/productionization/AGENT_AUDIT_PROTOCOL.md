@@ -39,17 +39,16 @@ Do not infer configured actual routing when a generic/default agent was used.
 | high review-only escalation | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
 | `critical` | `normal_implementer` | `reviewer_xhigh` | Luna/max implementation; Sol/xhigh review |
 | difficult escalation | `high_implementer` | `reviewer_xhigh` | Sol/high implementation; Sol/xhigh review |
-| hardest escalation | `critical_implementer` | `reviewer_astra_high` | Sol/xhigh implementation; Astra/high review |
+| hardest escalation | `critical_implementer` | `reviewer_xhigh` | Sol/xhigh implementation and fresh independent Sol/xhigh review |
 
 `gpt-5.6-sol` is the default Master and demanding-work model ID. The Master uses Sol/xhigh (Extra
 High); `reviewer_high` and the boundary reviewer use Sol/high, while `reviewer_xhigh` uses Sol/xhigh.
-The normal implementer, code explorer, and test auditor retain `gpt-5.6-luna` / max. GPT-6 Astra is
-reserved for the hardest route as an independent Astra/high reviewer. Historical records retain the
-routes actually used.
+The normal implementer, code explorer, and test auditor retain `gpt-5.6-luna` / max. GPT-6 routes are
+temporarily disabled. Historical records retain the routes actually used.
 
 Use the least expensive adequate route. Normal/high/critical use Luna implementation; difficult
-escalation uses Sol/high implementation; the hardest route uses Sol/xhigh implementation and
-Astra/high review. Review-only escalation advances `reviewer_high -> reviewer_xhigh -> reviewer_astra_high`.
+escalation uses Sol/high implementation; the hardest route uses Sol/xhigh implementation and fresh
+independent Sol/xhigh review. Review-only escalation advances `reviewer_high -> reviewer_xhigh`.
 Record the route reason and affected roles in the JIT/state before spawning. Preserve the underlying
 normal/high/critical safety class, one writer, and all stop conditions; escalation is not permission
 to choose a new architecture or pass a human gate. See AGENTS.md Section 5.2.1.
@@ -67,7 +66,6 @@ Successful TOML validation alone is not evidence that a new named role was loade
 Model and configuration references:
 
 - https://developers.openai.com/api/docs/models/gpt-5.6-sol
-- https://developers.openai.com/api/docs/models/gpt-6-astra
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
 
 If a required named role cannot be spawned with its project configuration, do not silently substitute a
@@ -180,9 +178,9 @@ INDEPENDENT AGENT REVIEW
 PR ID: <id>
 PR: #<n>
 reviewed head: <exact SHA>
-reviewer role: reviewer_high|reviewer_xhigh|reviewer_astra_high
+reviewer role: reviewer_high|reviewer_xhigh
 reviewer config: .codex/agents/<file>.toml
-route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_astra_high
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_sol_xhigh
 configured model/effort: <model> / <effort>
 JIT implementation spec: <GitHub PR body/comment reference>
 RED evidence: PASS|FAIL|INSUFFICIENT_EVIDENCE
@@ -212,7 +210,7 @@ PR ID: <id>
 final head: <exact SHA>
 base main: <exact SHA>
 complexity: normal|high|critical
-route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_astra_high
+route: luna_sol_high|luna_sol_xhigh|sol_high_sol_xhigh|sol_xhigh_sol_xhigh
 JIT implementation spec: <GitHub PR body/comment reference>
 implementer role/configured route: <role> / <model> / <effort>
 reviewer role/configured route: <role> / <model> / <effort>
@@ -234,7 +232,7 @@ exact-head required CI, and this master-gate artifact all exist and pass.
 
 On the next normal `AGENT_STATE.md` update, record at least:
 
-- complexity and model tier, including the evidence-based reason and affected roles for every Astra tier;
+- complexity and route, including the evidence-based reason and affected roles for every escalation;
 - named implementer role and config path;
 - configured actual implementer model/effort;
 - named reviewer role and config path;

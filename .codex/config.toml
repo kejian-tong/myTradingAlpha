@@ -17,18 +17,17 @@ policy is present on the checked-out base branch:
 - high review-only escalation: retain `normal_implementer`; replace review with `reviewer_xhigh`
 - critical: `normal_implementer` + controlling `reviewer_xhigh`
 - difficult escalation: `high_implementer` + controlling `reviewer_xhigh`
-- hardest escalation: `critical_implementer` + controlling `reviewer_astra_high`
-- review-only escalation: retain the existing implementer and advance through `reviewer_xhigh`,
-  then `reviewer_astra_high` as evidence requires
+- hardest escalation: `critical_implementer` + controlling `reviewer_xhigh`
+- review-only escalation: retain the existing implementer and use `reviewer_xhigh`
 - hybrid read-only specialists: `code_explorer`, `test_auditor`, `boundary_reviewer`
 
 Master uses GPT-5.6 Sol / xhigh (Extra High). reviewer_high and boundary_reviewer use Sol/high;
-reviewer_xhigh uses Sol/xhigh; reviewer_astra_high uses GPT-6 Astra / high. Normal and critical
-implementation stays on Luna/max. Difficult escalation uses Sol/high implementation, and the hardest
-layer uses Sol/xhigh implementation with Astra/high review. Record the selected route, evidence-based
-reason, and affected roles in the JIT and AGENT_STATE.md before spawning. These tiers do not replace
-normal/high/critical safety classification, raise concurrency, resolve a human architecture decision,
-or waive any stop/promotion gate.
+reviewer_xhigh uses Sol/xhigh. Normal and critical implementation stays on Luna/max. Difficult
+escalation uses Sol/high implementation, and the hardest layer uses Sol/xhigh implementation with a
+fresh Sol/xhigh reviewer. GPT-6 routes are temporarily disabled. Record the selected route,
+evidence-based reason, and affected roles in the JIT and AGENT_STATE.md before spawning. These tiers do
+not replace normal/high/critical safety classification, raise concurrency, resolve a human architecture
+decision, or waive any stop/promotion gate.
 
 Normal and high intentionally share the initial Luna/max + Sol/high route. Normal remains there unless
 new evidence requires reclassification. For high work, implementation complexity alone escalates only

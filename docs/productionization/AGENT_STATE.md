@@ -10,8 +10,8 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `9dde1955484b793c4d8dba9c62794ae85b181bcf`
-- `roadmap_status`: `sig_01_repaired_pending_final_review_human_architecture_blocked`
+- `last_reconciled_main_sha`: `62a5b5cf7393e5a83b10de69289ac72789dbd12d`
+- `roadmap_status`: `sig_01_sol_xhigh_review_pending_human_architecture_blocked`
 - `current_pr_id`: `SIG-01` (existing PR #24 only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -25,7 +25,8 @@ phase DESIGN/IMPLEMENTATION documents.
 - `high_implementation_only_route`: `high_implementer Sol/high + reviewer_high Sol/high`
 - `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
-- `hardest_escalation_route`: `critical_implementer Sol/xhigh + reviewer_astra_high GPT-6 Astra/high`
+- `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
+- `active_gpt6_routes`: `none (temporarily disabled)`
 
 The state above must be reconciled against GitHub before every implementation session. GitHub/main is
 authoritative if this file is stale. Model names/effort tiers here describe requested policy; each PR
@@ -60,10 +61,10 @@ The master classifies each PR from actual scope/current code before implementati
 | `high review-only` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | review ambiguity only |
 | `critical` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | critical boundary with a known implementation path |
 | `difficult escalation` | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | implementation needs more reasoning |
-| `hardest escalation` | GPT-5.6 Sol / xhigh | GPT-6 Astra / high | GPT-5.6 Sol / xhigh | deepest approved work; stronger independent reviewer |
+| `hardest escalation` | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | deepest approved work; fresh independent maximum Sol reasoning |
 
 The difficult and hardest routes are optional and preserve the underlying safety class. Escalate review
-through Sol/high, Sol/xhigh, then Astra/high only as evidence requires. Review-only escalation leaves
+from Sol/high to Sol/xhigh only as evidence requires. Review-only escalation leaves
 the implementer unchanged. New routes take effect after merge and fresh session loading, not
 retroactively. Prior ledger entries below retain the model/effort actually used. This routing change
 is not approval of any unresolved SIG-01 architecture decision.
@@ -151,6 +152,7 @@ PR IDs.
 | Hybrid concurrent agent harness | #17 | `70e4a9af5f040c10fa13b49f3dffc9e68573b7b2` | Add read-only pre-flight/review specialist lanes while preserving serialized production writes | merged as `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd` |
 | GPT-6 Astra max-tier harness | #25 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | Add Astra routing and an optional max implementation/review tier | merged as `7af14f3bba7078f78cc807885b3c169acc6b7da5` |
 | Cost-balanced routing ladder | #26 | `7af14f3bba7078f78cc807885b3c169acc6b7da5` | Prospective Luna/Sol/Astra-high routes; existing loaded/historical routes preserved | merged as `9dde1955484b793c4d8dba9c62794ae85b181bcf` |
+| GPT-6 routes disabled | #27 | `9dde1955484b793c4d8dba9c62794ae85b181bcf` | Current defaults use Luna/Sol only; historical routes preserved | merged as `62a5b5cf7393e5a83b10de69289ac72789dbd12d` |
 
 ## Current SIG-01 resume checkpoint — 2026-09-04
 
@@ -269,6 +271,32 @@ PR IDs.
 - Requested route remains the user's explicit max selection for this active SIG-01 run. Future
   fresh Master defaults are PR26's ladder. H4/M1 remain open; no cached runtime, horizon rule,
   trust attestation replacement, broker/paper/live promotion, or SIG-02 work is authorized.
+
+## Current user steering and PR #27 integration
+
+- The user explicitly replaced the max-review requirement: use another model under the latest
+  codebase harness, then merge SIG-01 directly if all required gates pass. This supersedes the prior
+  current-review route request, not the unresolved runtime/date human architecture decisions or any
+  safety gate. Scope remains SIG-01 only.
+- Latest main is `62a5b5cf7393e5a83b10de69289ac72789dbd12d`, merged PR #27; it disables every
+  configured GPT-6 route and uses `reviewer_xhigh` / Sol xhigh for the strongest current review.
+  Its config/AGENTS/protocol/template changes are integrated intact; production/tests unchanged.
+- The failed max dispatch is preserved in
+  [availability evidence](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5548286323).
+  A temporary untracked PR25 reviewer file was created while testing session-only availability, but
+  the user's steering arrived before any further spawn. The unchanged task-created file was removed;
+  no max or Astra role is restored, committed, or active as a new child under current policy.
+- Current selected reviewer: fresh `reviewer_xhigh`, `.codex/agents/reviewer-xhigh.toml`, requested
+  `gpt-5.6-sol / xhigh`. Current file and exposed fixed-role definition agree. Role availability is
+  present in the runtime catalog; actual loading must still be established by successful dispatch.
+  Review-only escalation is justified by the prior concrete representation/serialization findings.
+  No implementer replacement or new production writing is needed; all writers are stopped.
+- Preserve all prior requested/configured routes and the initial-high routing correction; do not
+  retroactively label max implementation as Sol work. Configuration changes do not hot-switch the
+  already running Master. Future fresh Masters use the current Sol defaults.
+- Candidate code remains `3f492251dd8844af19cccc8fa00a5ad21775ac1b`: full 1988 passed, 2 skipped;
+  H5/M2/M3 local repairs await current-route independent closure. H4 zero egress and M1 horizon remain
+  open. Conditional merge authorization is active only if every required gate actually passes.
 
 ## Current master pre-flight evidence
 
