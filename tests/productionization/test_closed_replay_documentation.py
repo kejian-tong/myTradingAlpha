@@ -76,6 +76,7 @@ def test_documented_response_eligibility_matches_existing_sealer_and_parser(inde
 def test_documented_message_representation_matches_plain_data_validator(as_object: bool) -> None:
     assert _examples()["message_representation"] == "plain_json"
     from langchain_core.messages import AIMessage
+
     from tradingagents.graph.historical import (
         HistoricalRuntimeOutputError,
         validate_historical_response,
