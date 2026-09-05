@@ -60,7 +60,7 @@ The validator rejects extra output fields that represent weights, quantity, orde
 
 - `tests/productionization/research/test_adapter.py`: exact sealed bundle/context/response replay, side-effect denial, UTC cutoff-date rule, current final/five-tier compatibility, and fail-closed output/authority boundaries.
 - `tests/productionization/research/test_cached_response.py`: canonical bytes, exact selection/bindings, provenance cutoffs, append-only conflicts, corruption, limits, and hostile non-data rejection.
-- `tests/productionization/research/test_adapter_repairs.py`: independent bound-field mutation denial, sealed alias intervals, defensive canonical context handoff, and authority checks in supported messages/structured call arguments. These tests do not prove runtime enforcement or select a date horizon.
+- `tests/productionization/research/test_adapter_repairs.py`: bound-field mutation denial, sealed alias intervals, defensive canonical context handoff, UTC cutoff-date enforcement, and authority checks in supported plain messages/structured call arguments.
 - `tests/productionization/research/test_evidence_tools.py`: citation completeness, immutable item, prompt-injection text treated as data.
 - `tests/productionization/quant/test_signal.py`: feature golden file, deterministic repeat, missing-feature status, model hash.
 - `tests/productionization/research/test_overlay.py`: attenuate/veto/abstain, timeout/schema error no-trade, forbidden fields, multiplier bounds.

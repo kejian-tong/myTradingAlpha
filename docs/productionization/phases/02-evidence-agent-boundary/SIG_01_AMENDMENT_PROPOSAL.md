@@ -44,7 +44,8 @@ or cooperative monkeypatch. SIG-01 therefore uses closed cached-response replay:
   not synthesize cache content, retry, invoke the ordinary graph, or use a remote/current/Quant-only
   fallback.
 - Keep `tradingagents.graph.historical` a pure plain-data legacy-state validator and five-tier renderer.
-  It never imports `mytradingalpha`. The production adapter remains the only reverse importer.
+  It never imports `mytradingalpha`. Only the cached-response sealer and production adapter under
+  `mytradingalpha.research` statically import that pure validator.
 
 An isolated executable runtime is rejected for SIG-01 because it would require a larger platform,
 transport, packaging, and adversarial confinement scope. No trusted-caller attestation is accepted as
