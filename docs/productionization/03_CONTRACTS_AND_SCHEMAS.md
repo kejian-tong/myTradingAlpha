@@ -227,7 +227,6 @@ class OrderEvent(BaseModel):
     reason_code: str | None = None
     raw_reference: str | None = None
     raw_hash: str | None = None
-
 class Fill(BaseModel):
     fill_id: str
     intent_id: str
@@ -343,7 +342,7 @@ Examples contain no live credentials, fixed live risk limits, or broker identifi
 ## Invariants
 
 1. **Time:** `knowledge_cutoff <= decision_time < earliest_execution_time`. Every observation satisfies `available_at <= knowledge_cutoff`; archive-realistic replay also requires `ingested_at <= knowledge_cutoff`. If `published_at` is absent, the policy must explicitly reject or classify the item as unavailable.
-2. **Network policy:** Historical mode sets every `NetworkPolicy` field false and reads only cached bundle responses. Forward paper may enable `data_capture_egress`, approved `model_provider_egress`, and approved `paper_broker_egress`; `research_tool_egress` remains false and `live_broker_egress` remains false. Live pilot enables only the explicitly approved components.
+2. **Network policy:** Historical mode sets every `NetworkPolicy` field false and reads only sealed evidence plus separately sealed, exact-bound cached responses. Forward paper may enable `data_capture_egress`, approved `model_provider_egress`, and approved `paper_broker_egress`; `research_tool_egress` remains false and `live_broker_egress` remains false. Live pilot enables only the explicitly approved components.
 3. **Immutability:** `EvidenceBundle` is content-addressed, immutable after sealing, and records event, publication, availability, ingestion, validity interval, revision, and replay policy. A later revision is a new observation, not an in-place edit.
 4. **Signal authority:** `QuantSignal` is numeric and deterministic for a fixed bundle/config/model artifact. `LLMOverlay` is optional; when present it has only attenuate/veto plus an explicit abstain flag. `multiplier` is in [0,1], veto requires multiplier 0, and abstain always means no trade. No overlay field represents a target weight or order. Overlay failure is no trade; Quant-only is a separate preregistered variant.
 5. **Portfolio:** `TargetPortfolio` is long-only, has non-negative asset weights, explicit cash weight, and total weight equal to 1 within configured decimal tolerance. Allocator output is not executable until `RiskDecision=approved`.
@@ -418,12 +417,17 @@ never divide by zero or manufacture a fill when residual capacity is zero.
 
 ## Closed response capture and replay handoff
 
-The approved SIG-01 v1 contract is unchanged: a model response must satisfy
-`available_at <= knowledge_cutoff` and `ingested_at <= knowledge_cutoff`. Its input bundle, cutoff,
-calendar, variant, instrument, graph/model/runtime IDs and hashes are exact bindings. The stricter
-response ingestion rule is not a change to availability-only PIT data replay. A correct content hash
-proves integrity, not source authenticity or historical availability; producer provenance still needs
-independent source evidence. PIT filtering does not eliminate LLM training-knowledge leakage.
+**Correction, 2026-09-05:** the [SIG-01 amendment approved for PR #24](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md)
+and implemented v1 validators govern this section. The earlier handoff text incorrectly applied
+an ingestion cutoff to every response policy. Both policies require `available_at <= knowledge_cutoff`;
+only archive-realistic replay additionally requires `ingested_at <= knowledge_cutoff`. Availability-only
+backfilled research may ingest an already-available response later, but is not archive-realistic
+operational evidence. It never permits labeling newly generated inference as historically available.
+The response's input bundle, cutoff, calendar, variant, instrument, graph/model/runtime IDs and hashes
+are exact bindings. Responses are separate canonical records, not fields added to EvidenceBundle v1.
+A correct content hash proves integrity, not source authenticity or historical availability; producer
+provenance still needs independent source evidence. PIT filtering does not eliminate LLM
+training-knowledge leakage. No code, stored bytes, UTC trade-date rule, or approved cutoff changes here.
 
 SIG-02 is a pure evidence/cached-state-to-note transformation with **no new inference**, provider
 call, capture service, arbitrary runner or historical fallback. EXP-02 consumes existing independently
@@ -432,9 +436,9 @@ captured response and execution identity. Replaying one cache 30 times is determ
 30 model trials. Cash, buy-and-hold, deterministic trend and Quant-only do not require model responses.
 Missing qualified model trials yield insufficient_evidence; never fabricate complete alpha evidence.
 
-FWD-01 owns the later controlled producer within its authorized capture scope. One v1-compatible
-schedule freezes pre-close inputs at preregistered `input_freeze_time`, seals the exact bundle, then
-requires the response to be genuinely available and ingested by the fixed close-time cutoff. The
+FWD-01 owns the later controlled producer within its authorized capture scope. One archive-realistic
+v1-compatible schedule freezes pre-close inputs at preregistered `input_freeze_time`, seals the exact bundle,
+then requires the response to be genuinely available and ingested by the fixed close-time cutoff. The
 current closing bar cannot enter those pre-close inputs. Record input freeze, request, completion,
 availability, ingestion, distinct execution/seed and all artifact bindings in the capture manifest;
 never backdate a response or move the deadline after observing latency. A t+5s response is unavailable
@@ -446,6 +450,33 @@ qualified captures or later separately authorized collection. Preparatory captur
 orders. A different decision/capture clock or derived-artifact contract requires a separate approved
 amendment and version/migration plan; this clarification does not approve such a redesign. No existing
 bundle/response v1 bytes, strict cutoffs, UTC trade-date rule or human PAPER/live gates are relaxed.
+
+### Executable response-policy examples
+
+These synthetic cases describe response eligibility, not a new wire schema or real capture evidence.
+`tests/productionization/test_closed_replay_documentation.py` combines these timestamps with the existing
+synthetic response fixture and checks the real v1 sealer/parser. All other intrinsic fields are valid;
+full bundle/context/artifact binding is tested separately by the research suite. Late ingestion alone
+is permitted only by the availability policy; late availability fails both. The historical validator
+accepts plain JSON message records and rejects concrete LangChain message objects before serialization.
+
+<!-- sig01-response-examples -->
+```json
+{
+  "knowledge_cutoff": "2024-06-30T23:59:59Z",
+  "message_representation": "plain_json",
+  "cases": [
+    {"policy": "availability", "case": "before", "available_at": "2024-06-30T23:59:58Z", "ingested_at": "2024-06-30T23:59:58Z", "eligible": true},
+    {"policy": "availability", "case": "at_cutoff", "available_at": "2024-06-30T23:59:59Z", "ingested_at": "2024-06-30T23:59:59Z", "eligible": true},
+    {"policy": "availability", "case": "late_ingestion", "available_at": "2024-06-30T23:59:59Z", "ingested_at": "2024-07-01T00:00:04Z", "eligible": true},
+    {"policy": "availability", "case": "late_availability", "available_at": "2024-07-01T00:00:04Z", "ingested_at": "2024-07-01T00:00:04Z", "eligible": false},
+    {"policy": "archive_realistic", "case": "before", "available_at": "2024-06-30T23:59:58Z", "ingested_at": "2024-06-30T23:59:58Z", "eligible": true},
+    {"policy": "archive_realistic", "case": "at_cutoff", "available_at": "2024-06-30T23:59:59Z", "ingested_at": "2024-06-30T23:59:59Z", "eligible": true},
+    {"policy": "archive_realistic", "case": "late_ingestion", "available_at": "2024-06-30T23:59:59Z", "ingested_at": "2024-07-01T00:00:04Z", "eligible": false},
+    {"policy": "archive_realistic", "case": "late_availability", "available_at": "2024-07-01T00:00:04Z", "ingested_at": "2024-07-01T00:00:04Z", "eligible": false}
+  ]
+}
+```
 
 ## Schema evolution
 
