@@ -41,9 +41,9 @@ jobs:
         run: uv sync --locked --no-dev --no-editable
       - name: Import installed packages
         run: |
-          # Catches undeclared runtime deps (e.g. #994 python-dotenv): a bare
-          # install must import the package and the CLI module.
-          uv run --no-sync python -c "from mytradingalpha.contracts import (CURRENT_SCHEMA_VERSION, ContractModel, DecimalString, FoundationReasonCode, MigrationPlan, Mode, RunContext, SchemaRegistry, SchemaRegistryError, StableId, UtcDateTime); import tradingagents, cli.main; print(f'clean-install import OK ({CURRENT_SCHEMA_VERSION}, {Mode.HISTORICAL.value})')"
+          PYTHON="$GITHUB_WORKSPACE/.venv/bin/python"
+          cd "$(mktemp -d)"
+          "$PYTHON" -I "$GITHUB_WORKSPACE/scripts/smoke_installed.py"
 
   lint:
     name: ruff (strict, full repo)
