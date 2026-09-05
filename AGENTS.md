@@ -190,7 +190,7 @@ appropriate model for each role and PR while avoiding unnecessary flagship-model
 | High implementer | GPT-5.6 Sol | high |
 | Critical implementer | GPT-5.6 Sol | xhigh / Extra High |
 | Independent reviewer / boundary reviewer | GPT-5.6 Sol | high, xhigh for escalation |
-| Difficult review/implementation escalation (opt-in) | GPT-5.6 Sol / GPT-6 Astra reviewer | high -> xhigh |
+| Difficult review/implementation escalation (opt-in) | GPT-5.6 Sol | high -> xhigh |
 
 Reasoning-effort labels may differ by runtime. Treat `xhigh` and UI wording such as `Extra High` as the
 same intended tier when appropriate. Never falsely claim the runtime used a requested model/effort.
@@ -280,15 +280,16 @@ Complexity (`normal|high|critical`) describes correctness and safety risk. The r
 | high review-only escalation | `normal_implementer` — Luna/max | `reviewer_xhigh` — Sol/xhigh | review ambiguity only |
 | critical | `normal_implementer` — Luna/max | `reviewer_xhigh` — Sol/xhigh | critical boundaries with a known implementation path |
 | difficult escalation | `high_implementer` — Sol/high | `reviewer_xhigh` — Sol/xhigh | implementation needs more reasoning after high/critical analysis |
-| hardest escalation | `critical_implementer` — Sol/xhigh | `reviewer_astra_high` — Astra/high | deepest approved work where the reviewer needs stronger model capability |
+| hardest escalation | `critical_implementer` — Sol/xhigh | `reviewer_xhigh` — Sol/xhigh | deepest approved work using fresh independent maximum Sol reasoning |
 
 Default to the first route appropriate for the task. A review-only escalation keeps the current
-implementer and advances `reviewer_high -> reviewer_xhigh -> reviewer_astra_high`. Record the route,
+implementer and advances `reviewer_high -> reviewer_xhigh`. Record the route,
 evidence-based reason, and affected roles in the JIT and `AGENT_STATE.md`. Stop the previous writer
 before dispatching a replacement; only one production writer may run.
 
-The Master defaults to **GPT-5.6 Sol / xhigh**. A fresh Master session may explicitly use Astra/high
-or Astra/xhigh when evidence justifies it; configuration changes do not hot-switch an existing Master.
+The Master defaults to **GPT-5.6 Sol / xhigh**. GPT-6 routes are temporarily disabled; changing this
+requires a later reviewed harness PR and a fresh session. Configuration changes do not hot-switch an
+existing Master.
 
 Model routing does not change the underlying safety class, grant scope or authority, resolve a human
 architecture decision, or waive any paper/live gate. If a required named route cannot be loaded,
@@ -326,7 +327,7 @@ record the reason in `AGENT_STATE.md`.
 Fresh context independence is mandatory even when implementer and reviewer use the same model tier.
 For normal, high, and critical PRs, use Luna/max implementation with Sol/high or Sol/xhigh review
 as specified above. For difficult escalation, use Sol implementation with Sol review. For the hardest
-route, use Sol/xhigh implementation with an independent Astra/high reviewer. Every reviewer remains
+route, use Sol/xhigh implementation with an independent Sol/xhigh reviewer. Every reviewer remains
 a separate fresh context and must inspect diff/tests/evidence independently.
 
 The master is not a substitute for the independent reviewer; it is a final gate after review.

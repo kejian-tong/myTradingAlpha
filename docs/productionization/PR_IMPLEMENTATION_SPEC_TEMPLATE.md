@@ -276,12 +276,12 @@ Include at minimum:
 ## 19. Complexity and named-agent routing
 
 - **Complexity:** `normal | high | critical`
-- **Route:** `luna_sol_high | luna_sol_xhigh | sol_high_sol_xhigh | sol_xhigh_astra_high`
+- **Route:** `luna_sol_high | luna_sol_xhigh | sol_high_sol_xhigh | sol_xhigh_sol_xhigh`
 - **Reason:** `<actual correctness/safety complexity>`
 - **Implementer role:** `normal_implementer | high_implementer | critical_implementer`
 - **Implementer config:** `.codex/agents/<file>.toml`
 - **Configured model / effort:** `<model> / <effort>`
-- **Reviewer role:** `reviewer_high | reviewer_xhigh | reviewer_astra_high`
+- **Reviewer role:** `reviewer_high | reviewer_xhigh`
 - **Reviewer config:** `.codex/agents/<file>.toml`
 - **Configured model / effort:** `<model> / <effort>`
 - **Master route:** `<configured/requested route>`
@@ -289,8 +289,8 @@ Include at minimum:
 
 Master defaults to Sol/xhigh; normal/high/critical implementation remains Luna/max with Sol/high or
 Sol/xhigh review; difficult escalation uses Sol/high implementation and Sol/xhigh review; the hardest
-route uses Sol/xhigh implementation and Astra/high review. Review escalation follows
-`reviewer_high -> reviewer_xhigh -> reviewer_astra_high`. Record an evidence-based reason before the
+route uses Sol/xhigh implementation and fresh Sol/xhigh review. Review escalation follows
+`reviewer_high -> reviewer_xhigh`. Record an evidence-based reason before the
 difficult or hardest route, retain the underlying safety class, keep one writer, and preserve all
 safety/promotion/stop gates.
 

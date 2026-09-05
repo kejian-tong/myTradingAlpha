@@ -10,8 +10,8 @@ phase DESIGN/IMPLEMENTATION documents.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `7af14f3bba7078f78cc807885b3c169acc6b7da5`
-- `roadmap_status`: `sig_01_open_cost_balanced_harness_update_only`
+- `last_reconciled_main_sha`: `9dde1955484b793c4d8dba9c62794ae85b181bcf`
+- `roadmap_status`: `sig_01_open_gpt6_disabled_harness_update_only`
 - `current_pr_id`: `SIG-01` (PR #24 remains open; this task changes the harness only)
 - `next_pr_id`: `SIG-01` (resume existing PR after blocker resolution; do not create a duplicate)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -25,7 +25,8 @@ phase DESIGN/IMPLEMENTATION documents.
 - `high_implementation_only_route`: `high_implementer Sol/high + reviewer_high Sol/high`
 - `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
-- `hardest_escalation_route`: `critical_implementer Sol/xhigh + reviewer_astra_high GPT-6 Astra/high`
+- `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
+- `active_gpt6_routes`: `none (temporarily disabled)`
 
 The state above must be reconciled against GitHub before every implementation session. GitHub/main is
 authoritative if this file is stale. Model names/effort tiers here describe requested policy; each PR
@@ -60,10 +61,10 @@ The master classifies each PR from actual scope/current code before implementati
 | `high review-only` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | review ambiguity only |
 | `critical` | GPT-5.6 Luna / max | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | critical boundary with a known implementation path |
 | `difficult escalation` | GPT-5.6 Sol / high | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | implementation needs more reasoning |
-| `hardest escalation` | GPT-5.6 Sol / xhigh | GPT-6 Astra / high | GPT-5.6 Sol / xhigh | deepest approved work; stronger independent reviewer |
+| `hardest escalation` | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | GPT-5.6 Sol / xhigh | deepest approved work; fresh independent maximum Sol reasoning |
 
 The difficult and hardest routes are optional and preserve the underlying safety class. Escalate review
-through Sol/high, Sol/xhigh, then Astra/high only as evidence requires. Review-only escalation leaves
+from Sol/high to Sol/xhigh only as evidence requires. Review-only escalation leaves
 the implementer unchanged. New routes take effect after merge and fresh session loading, not
 retroactively. Prior ledger entries below retain the model/effort actually used. This routing change
 is not approval of any unresolved SIG-01 architecture decision.
@@ -150,10 +151,18 @@ PR IDs.
 | Python 3.14 default alignment | #12 | `0dc55016db0a8b972855d3e3e6b9db5f2b1a7708` | Pin the preferred default runtime while preserving Python `>=3.10` compatibility | merged as `cbd1bb7a4d57143423509debe5aa2a737c4f8a07` |
 | Hybrid concurrent agent harness | #17 | `70e4a9af5f040c10fa13b49f3dffc9e68573b7b2` | Add read-only pre-flight/review specialist lanes while preserving serialized production writes | merged as `8b2a19e68322a052a3d68f4da6ec2d50fb4f7cbd` |
 | GPT-6 Astra max-tier harness | #25 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | Add Astra routing and an optional max implementation/review tier | merged as `7af14f3bba7078f78cc807885b3c169acc6b7da5` |
+| Cost-balanced agent routing | #26 | `7af14f3bba7078f78cc807885b3c169acc6b7da5` | Restore Luna/Sol defaults and retain Astra/high only for the hardest review tier | merged as `9dde1955484b793c4d8dba9c62794ae85b181bcf` |
 
 ## Current master pre-flight evidence
 
-- 2026-09-04 cost-balanced harness reconciliation: PR #25 merged as current main
+- 2026-09-04 GPT-6 disablement reconciliation: PR #26 merged as current main
+  `9dde1955484b793c4d8dba9c62794ae85b181bcf`. The user requested a new harness-only PR that removes
+  every active GPT-6 route because of credit consumption. `reviewer_astra_high` is removed; the
+  hardest route becomes Sol/xhigh implementation plus fresh independent Sol/xhigh review. Historical
+  PR #25/#26 records remain unchanged as evidence of what was previously configured. SIG-01 PR #24
+  remains active in another worktree and is not modified or adjudicated by this task.
+
+- Historical PR #26 cost-balanced harness reconciliation: PR #25 had merged as main
   `7af14f3bba7078f78cc807885b3c169acc6b7da5`. The user requested a new harness-only PR that restores
   Sol for the default Master, high/critical implementers, and standard/escalated reviewers while
   retaining Luna/max for normal/high/critical work and adding explicit Sol escalation plus a final

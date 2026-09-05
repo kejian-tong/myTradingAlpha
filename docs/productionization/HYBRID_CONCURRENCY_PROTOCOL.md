@@ -24,7 +24,7 @@ For one active roadmap PR:
 - at most **one production-code writer** may be active at a time;
 - RED, GREEN, REFACTOR, and each repair cycle are owned by one named implementer/repair implementer;
 - read-only specialists may run concurrently when their questions are independent;
-- the controlling reviewer follows the recorded route from `reviewer_high` through `reviewer_astra_high`;
+- the controlling reviewer follows the recorded route using `reviewer_high` or `reviewer_xhigh`;
 - specialist reviews add evidence; they do not replace the controlling independent-review artifact;
 - no agent may start a dependency-ordered later roadmap PR before the current PR is merged;
 - no concurrency rule waives paper/live or other explicit human promotion gates.
@@ -68,7 +68,7 @@ Writer and controlling-review routes:
 - `critical_implementer` — Sol/xhigh;
 - `reviewer_high` — Sol/high;
 - `reviewer_xhigh` — Sol/xhigh (critical/adjudication role);
-- hardest route: `critical_implementer` — Sol/xhigh plus `reviewer_astra_high` — Astra/high;
+- hardest route: `critical_implementer` — Sol/xhigh plus fresh `reviewer_xhigh` — Sol/xhigh;
 
 Normal and high share the initial Luna/max writer plus Sol/high reviewer. For high work,
 implementation-only escalation replaces the writer with `high_implementer`; review-only escalation
@@ -153,8 +153,8 @@ If triage finds a material defect:
    new SHA.
 
 For ambiguity, advance review only as evidence requires:
-`reviewer_high -> reviewer_xhigh -> reviewer_astra_high`.
-Re-review count alone does not make a PR `critical` or justify Astra. Safety classification remains
+`reviewer_high -> reviewer_xhigh`.
+Re-review count alone does not make a PR `critical` or justify a stronger route. Safety classification remains
 tied to correctness/external-effect risk under `AGENTS.md`; route escalation requires a separate
 recorded reason.
 
