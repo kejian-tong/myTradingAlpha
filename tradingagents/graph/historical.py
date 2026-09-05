@@ -12,6 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from langchain_core.messages import (
@@ -222,6 +223,19 @@ def _reject_json_constant(_value: str) -> None:
     raise ValueError("non-JSON call argument constant")
 
 
+def _validate_argument_numbers(value: object) -> None:
+    # Native integers (including large ones) need no float coercion. Other data
+    # types have already passed the plain-data boundary; never call numeric hooks.
+    if type(value) is float and not isfinite(value):
+        raise HistoricalRuntimeOutputError("historical call arguments require finite numbers")
+    if type(value) is dict:
+        for item in value.values():
+            _validate_argument_numbers(item)
+    elif type(value) in (list, tuple):
+        for item in value:
+            _validate_argument_numbers(item)
+
+
 def _validate_call_arguments(
     call: object, field: str, *, encoded: bool, require_string: bool = False,
 ) -> None:
@@ -242,6 +256,7 @@ def _validate_call_arguments(
         _validate_call_tree(arguments)
     if type(arguments) is not dict:
         raise HistoricalRuntimeOutputError("historical call arguments require a JSON object")
+    _validate_argument_numbers(arguments)
 
 
 def _validate_function_call(call: object) -> None:
@@ -322,20 +337,53 @@ def _validate_call_tree(value: object, *, normalized: bool = False) -> None:
             _validate_call_tree(item)
 
 
+def _validate_content_call_record(block: dict[str, object], kind: str) -> None:
+    nullable_id = kind in {"tool_call", "invalid_tool_call", "tool_call_chunk"}
+    nullable_name = kind in {"invalid_tool_call", "tool_call_chunk"}
+    optional_identity = kind == "server_tool_call_chunk"
+    id_field = "call_id" if kind == "function_call" else "id"
+    for field, nullable in ((id_field, nullable_id), ("name", nullable_name)):
+        if field not in block:
+            if optional_identity:
+                continue
+            raise HistoricalRuntimeOutputError("missing historical content-call identity field")
+        if type(block[field]) is not str and not (nullable and block[field] is None):
+            raise HistoricalRuntimeOutputError("invalid historical content-call identity field")
+    argument_field = "arguments" if kind == "function_call" else "args"
+    argument_type = dict if kind in _OBJECT_CALL_BLOCKS else str
+    if type(block.get(argument_field)) is not argument_type:
+        raise HistoricalRuntimeOutputError("invalid historical content-call argument field")
+    for field, types in (
+        ("index", (int, str)), ("extras", (dict,)), ("error", (str, type(None))),
+    ):
+        if field in block and type(block[field]) not in types:
+            raise HistoricalRuntimeOutputError("invalid historical content-call metadata field")
+
+
+def _validate_content_block(block: dict[str, object]) -> None:
+    kind = block.get("type")
+    if kind == "non_standard":
+        # value is provider content, not an opaque metadata wrapper. Keep this
+        # recursion scoped to actual content, never ordinary arguments/metadata.
+        if type(block.get("value")) is not dict:
+            raise HistoricalRuntimeOutputError("historical content wrapper requires a plain mapping")
+        _validate_content_block(block["value"])
+    if type(kind) is str and kind in (
+        _OBJECT_CALL_BLOCKS | _ENCODED_CALL_BLOCKS | {"function_call"}
+    ):
+        _validate_content_call_record(block, kind)
+    elif any(field in block for field in ("args", "arguments", "input", "function")):
+        raise HistoricalRuntimeOutputError("unsupported historical execution-bearing block")
+
+
 def _validate_message_content(content: object, *, nullable: bool = False) -> None:
     if type(content) is str or (nullable and content is None):
         return
     if type(content) is not list or any(type(item) not in (str, dict) for item in content):
         raise HistoricalRuntimeOutputError("invalid historical message content shape")
     for block in content:
-        if type(block) is dict and any(
-            field in block for field in ("args", "arguments", "input", "function")
-        ):
-            kind = block.get("type")
-            if type(kind) is not str or kind not in (
-                _OBJECT_CALL_BLOCKS | _ENCODED_CALL_BLOCKS | {"function_call"}
-            ):
-                raise HistoricalRuntimeOutputError("unsupported historical execution-bearing block")
+        if type(block) is dict:
+            _validate_content_block(block)
 
 
 def _validate_message(message: object) -> None:
