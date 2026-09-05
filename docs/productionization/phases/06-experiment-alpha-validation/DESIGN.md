@@ -35,11 +35,11 @@ Quant-only and Quant+LLM are separate variants. Quant+LLM uses an optional overl
 
 - [`TradingAgentsGraph.propagate`](../../../../tradingagents/graph/trading_graph.py#L350-L500) runs a research graph but does not register seed/data/cost manifests.
 - [`tradingagents/reporting.py`](../../../../tradingagents/reporting.py) writes reports but does not calculate portfolio alpha/capacity metrics.
-- [`pyproject.toml`](../../../../pyproject.toml) exposes open dependency lower bounds; future experiment artifacts must record environment/lock metadata.
+- [`pyproject.toml`](../../../../pyproject.toml) declares dependency ranges and committed `uv.lock` now supplies locked CI; experiment artifacts must record the actual lock/environment hashes.
 
 ## Interfaces and invariants
 
-`ExperimentSpec` is immutable after preregistration. Screening has at least 10 seeds; final has at least 30 unless a budget is preregistered before inspection. Required rows are Cash, B&H, trend, Single Agent, No Debate, No Memory, Full Multi-agent, Quant-only, Quant+LLM. Walk-forward windows enforce purge/embargo; holdout remains sealed. Reports show median/p5/p95/worst and required risk/trading/relative/capacity measures. Gate status is `pass`, `fail`, or `insufficient_evidence`; no mandatory live gate waiver.
+`ExperimentSpec` is immutable after preregistration. EXP-01 ExperimentRegistry references the SIG-05 VariantRegistry rather than defining a second one. Historical inference trials require distinct qualified captures; fixture repeats do not count as model seeds. Missing captures yield insufficient_evidence under the [v1 handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff). Screening has at least 10 seeds; final has at least 30 unless a budget is preregistered before inspection. Required rows are Cash, B&H, trend, Single Agent, No Debate, No Memory, Full Multi-agent, Quant-only, Quant+LLM. Walk-forward windows enforce purge/embargo; holdout remains sealed. Reports show median/p5/p95/worst and required risk/trading/relative/capacity measures. Gate status is `pass`, `fail`, or `insufficient_evidence`; no mandatory live gate waiver.
 
 ## Decisions and alternatives
 

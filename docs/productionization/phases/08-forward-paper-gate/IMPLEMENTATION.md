@@ -29,7 +29,11 @@ Commands are planned until exact implementation output is recorded. Approved ext
 
 ```text
 for each eligible session:
-  capture -> seal EvidenceBundle -> run candidate -> require risk + approval
+  preregister input_freeze_time and fixed close-time cutoff/decision deadline
+  -> freeze pre-close available input -> seal exact EvidenceBundle before model request
+  -> model-based variant only: controlled response capture by deadline, with actual capture timestamps
+  -> missing/late response: record unavailable/no-trade; never change deadline or backdate
+  -> validate required bindings -> run the preregistered candidate -> require risk + approval
   -> submit to local or approved PAPER endpoint
   -> collect events/fills -> append ledger -> reconcile
   -> record daily completeness/latency/incidents
@@ -39,6 +43,16 @@ after 8-12 weeks:
   -> attach experiment/gate artifacts -> reviewer decision
   -> pass|fail|insufficient_evidence; never auto-promote
 ```
+
+FWD-01 owns the [closed response producer handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
+The current close bar is not available in a pre-close input freeze. A response first available five
+seconds after the declared cutoff remains ineligible even when its input bundle is otherwise valid.
+Record input_freeze_time, fixed schedule, exact bundle/model/runtime/variant/seed hashes and actual
+capture timestamps in the producer manifest. Test early/equal/late response availability and archive
+ingestion, missing captures, wrong bindings and repeated versus distinct trials. Preserve current
+EvidenceBundle/response v1 bytes and UTC date rules; no arbitrary callable enters historical replay.
+Preparatory capture has no order dispatch and requires separate provider authorization. Missing real
+experiment evidence prevents PAPER operation, not offline software testing of this interface.
 
 An endpoint outage may switch to local paper only with a new mode record; results from distinct paper modes are not silently pooled.
 
@@ -73,11 +87,12 @@ Forward artifacts are additive and keyed by bundle/run/ledger hashes. Existing g
 
 ## Definition of done
 
-- All FWD PRs pass focused tests and a simulated 8–12 week run.
+- **Software acceptance:** FWD code passes focused tests and a simulated 8–12 week calendar; this is not operational promotion evidence.
+- **Operational promotion:** requires 8–12 weeks of real elapsed sessions under the approved calendar/scope, immutable daily records and signed human review. Replay speed, synthetic dates or repeated fixtures cannot satisfy elapsed operation or substitute for real experiment evidence.
 - Each session has bundle, decision, risk, approval, event/fill, ledger, reconciliation, and incident evidence.
 - External PAPER side effects are bounded and approved; live write remains unavailable.
 - Gate evaluator emits only pass/fail/insufficient_evidence and blocks promotion on incomplete evidence.
-- Independent reviewer signs the final `GateEvidence` record.
+- Independent reviewer signs the operational `GateEvidence` record; this remediation batch's PR-review waiver does not apply to trading promotion.
 
 ## Evidence and rollback
 

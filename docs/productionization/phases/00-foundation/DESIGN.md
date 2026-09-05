@@ -1,6 +1,6 @@
 # Phase 00 — Foundation Design
 
-Status: planned. This phase establishes ownership and durable interfaces without changing the current Research Graph behavior.
+Status: implemented at the current contract scope. FND-01 through FND-04 have shipped; this is not a later-phase readiness claim. This phase establishes ownership and durable interfaces without changing the current Research Graph behavior.
 
 ## Goals
 

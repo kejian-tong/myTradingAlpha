@@ -60,4 +60,6 @@ Run allocator/risk in shadow mode beside current rating decisions. Use cash/no-t
 
 ## Acceptance and gate
 
+The rule-only baseline requires RSK-01 through RSK-04, not optional RSK-05. An explicitly selected optimizer variant additionally requires RSK-05 evidence; absence is not a passed optimizer test. There is no dynamic fallback after solver/risk failure.
+
 Pass requires rule allocation golden/property tests, risk reject/resize/revalidation tests, persistent halt restart tests, and proof that no LLM field can alter constraints or create an intent. `fail` or `insufficient_evidence` blocks execution work.

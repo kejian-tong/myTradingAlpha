@@ -23,7 +23,8 @@ Depends on Phase 07 OMS/paper/reconciliation and Phase 06 sealed experiment/gate
 ## Components and dataflow
 
 ```text
-session calendar -> close capture -> immutable EvidenceBundle
+preregistered session deadline -> pre-close input freeze -> immutable EvidenceBundle
+  -> controlled response capture before the fixed close deadline
   -> Quant/Research/Overlay -> allocator -> RiskEngine
   -> approved paper intent -> PaperBroker/PAPER endpoint
   -> ledger/NAV -> reconciliation -> daily/weekly GateEvidence inputs
@@ -38,6 +39,8 @@ Paper endpoint writes are external side effects, allowed only after explicit app
 - [`tradingagents/default_config.py`](../../../../tradingagents/default_config.py) is the existing config seam; new scheduler/paper settings are additive and explicit.
 
 ## Interfaces and invariants
+
+FWD-01 owns controlled response capture under the [v1 capture/replay handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff), not SIG-02. A late response is unavailable, never backdated. The observation freeze and fixed close deadline are preregistered before any output; no current close bar is assumed known early.
 
 Each session has a run ID, bundle hash, decision/earliest execution times, variant, target/risk decisions, event/fill/ledger sequence, approval, endpoint mode, reconciliation status, and incident links. Historical replay remains network-free; forward capture may use approved provider/PAPER endpoints. A no-trade/failure is recorded, not counted as a successful fill. Gate statuses are `pass`, `fail`, or `insufficient_evidence`; there is no mandatory live-gate waiver.
 
@@ -58,4 +61,4 @@ Begin with one or a few symbols and local paper, then approved PAPER endpoint wr
 
 ## Acceptance and gate
 
-Pass requires 8–12 weeks of complete session evidence, repeatable captured reruns, no unexplained reconciliation breaks, reviewed risk incidents, approved paper writes only, and signed independent review. `fail` or `insufficient_evidence` blocks live work.
+Synthetic calendar tests validate software only. Operational promotion pass requires 8–12 weeks of real elapsed complete session evidence, repeatable captured reruns, no unexplained reconciliation breaks, reviewed risk incidents, approved paper writes only, and signed independent review. `fail` or `insufficient_evidence` blocks live work.

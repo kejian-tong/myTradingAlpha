@@ -17,6 +17,7 @@ Commands are planned until exact output is recorded.
 
 ## Proposed files, classes, and APIs
 
+- Extend the BT-02 `mytradingalpha/backtest/costs/__init__.py` facade; preserve its CostModel import.
 - `mytradingalpha/backtest/costs/spread_slippage.py`: `SpreadSlippage.quote()`.
 - `mytradingalpha/backtest/costs/commission.py`: `CommissionPolicy.quote()`.
 - `mytradingalpha/backtest/costs/impact.py`: `ImpactModel.quote()`.
@@ -30,20 +31,26 @@ Commands are planned until exact output is recorded.
 ```text
 market = liquidity.as_of(instrument, knowledge_cutoff)
 if market missing/stale: reject with DATA_LIQUIDITY_UNAVAILABLE
-if calibration outside instrument/venue/time validity range: reject or select approved conservative stress policy
-impact_cost = eta * sigma * price * abs(quantity) * sqrt(abs(quantity) / ADV)
-execution_price = mid + sign(quantity) * (spread / 2 + slippage + impact_cost / abs(quantity))
-cost = spread + slippage + commission + impact_cost
-fill_qty = min(intent.qty, participation_limit * ADV)
-append fill and one fee/cost cash event
-emit residual intent for partial fill or explicit capacity rejection
+if calibration outside validity range: reject or use a preregistered conservative stress policy
+fill_qty = min(abs(intent.quantity), remaining_session_capacity)
+if fill_qty <= 0: record unfilled; do not divide by quantity or invent a fill
+# Determine capacity before quoting impact, and consume it across prior fills in this session.
+impact_total = eta * sigma * mid * fill_qty * sqrt(fill_qty / ADV)
+price_friction_per_share = full_spread_per_share / 2 + slippage_per_share + impact_total / fill_qty
+execution_price = mid + side_sign * price_friction_per_share
+if execution_price <= 0 or any required value is invalid: reject
+explicit_fee = cumulative_fee_after_fill - cumulative_fee_already_posted
+cash_delta = -side_sign * fill_qty * execution_price - explicit_fee
+append fill-notional and incremental explicit-fee events atomically and idempotently
+cost_breakdown = total-currency components; attribution only, never another cash debit
+record residual intent/capacity rejection without forcing fills
 ```
 
-The report carries gross return, each cost component, total net cost, turnover, participation, capacity, and artifact hash. The same fill/cost event stream is accepted by the Phase 03 ledger.
+Use the [shared accounting units and fee-once rule](../../03_CONTRACTS_AND_SCHEMAS.md#fill-accounting-units-and-fee-once-rule). The report carries gross return, each total-currency cost component, net return, turnover, participation, capacity, and artifact hash. The same fill/cost event stream is accepted by the Phase 03 ledger.
 
 ## Red-green-refactor
 
-1. Red: add tests for negative cost, stale/missing ADV, monotonic square-root impact, calibration out-of-range, partial fill residuals, fee double-count, and base/stress divergence.
+1. Red: add tests for negative cost, stale/missing ADV, monotonic square-root impact, calibration out-of-range, partial fill residuals, shared buy/sell/2–3–5 fee-once goldens, cumulative fee allocation, fee double-count, and base/stress divergence.
 2. Green: implement explicit cost components, liquidity selector, partial fills, capacity check, and scenario runner.
 3. Refactor: share Decimal arithmetic and cost event serialization with `mytradingalpha.backtest` without changing current graph code.
 

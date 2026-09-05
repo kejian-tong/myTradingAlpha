@@ -1,6 +1,6 @@
 # Phase 02 — Evidence and Agent Boundary Implementation
 
-Commands are planned until a PR records exact output.
+SIG-01 is implemented; SIG-02 through SIG-05 remain planned. Commands are plans until their PR records exact output; the current research tests exist, while later quant/evidence-tool paths do not.
 
 ## Ordered PR/work packages
 
@@ -22,6 +22,7 @@ Commands are planned until a PR records exact output.
 - `mytradingalpha/data/replay_guard.py`: additive `HistoricalDataGuard.replay_bound(...) -> tuple[EvidenceBundle, RunContext]` returns the guard-validated canonical binding; existing `replay(...) -> EvidenceBundle` remains compatible.
 - `mytradingalpha/research/cached_response.py`: separate v1 canonical response contract, exact selection, byte sealer/parser, append-only repository, hashes, provenance/cutoff checks, and typed errors.
 - `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact evidence/response repositories and selection; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
+- Shared ResearchNote/QuantSignal/LLMOverlay/SignalEnvelope wire classes follow [first-use ownership](../../03_CONTRACTS_AND_SCHEMAS.md#first-use-wire-ownership); no duplicate domain wire classes.
 - `mytradingalpha/research/evidence_tools.py`: `EvidenceToolset.get/list_citations()`.
 - `mytradingalpha/research/notes.py`: `ResearchNoteBuilder.build()`.
 - `mytradingalpha/quant/features.py`: `FeatureSet.compute(bundle, instrument)`.
@@ -46,6 +47,8 @@ overlay_result:
 
 Quant-only and Quant+LLM are separate VariantRegistry entries.
 ```
+
+SIG-02 is a pure bundle/evidence/cached-state-to-note transformation: no model invocation, capture service, runtime callback or ordinary-graph fallback. Preserve genuine cached provenance; citation/rendering tests are not real inference evidence. The future producer is assigned in the [v1 handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
 
 The validator rejects extra output fields that represent weights, quantity, order type, broker IDs, or credentials. It rejects multiplier values outside [0,1], veto with nonzero multiplier, and any envelope whose bundle/context hash is inconsistent.
 
