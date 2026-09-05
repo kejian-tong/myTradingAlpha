@@ -363,20 +363,110 @@ def test_optional_call_metadata_requires_declared_types(field: str, value: objec
 
 
 def test_shadowed_raw_and_normalized_call_fields_are_both_checked() -> None:
-    message = (
-        {
-            "role": "assistant",
-            "content": "Research",
-            "tool_calls": [
-                {"type": "tool_call", "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}
-            ],
-            "additional_kwargs": {
-                "function_call": {"name": "research", "arguments": '{"order_intents":[]}'}
-            },
+    message = {
+        "role": "assistant",
+        "content": "Research",
+        "tool_calls": [
+            {"type": "tool_call", "id": "c1", "name": "research", "args": {"evidence_id": "e1"}}
+        ],
+        "additional_kwargs": {
+            "function_call": {"name": "research", "arguments": '{"order_intents":[]}'}
         },
-    )
+    }
+    assert type(message) is dict
     with pytest.raises(HistoricalRuntimeOutputError):
         validate(with_message(message))
+
+
+def nested_argument_json(max_depth: int) -> str:
+    return '{"n":' * (max_depth - 1) + "0" + "}" * (max_depth - 1)
+
+
+def encoded_depth_message(max_depth: int) -> dict[str, object]:
+    return raw_function_call(nested_argument_json(max_depth))
+
+
+def json_node_count(value: object) -> int:
+    if type(value) is dict:
+        return 1 + sum(json_node_count(item) for item in value.values())
+    if type(value) is list:
+        return 1 + sum(json_node_count(item) for item in value)
+    return 1
+
+
+def output_at_depth(max_depth: int) -> dict[str, object]:
+    output = make_output()
+    value: object = "leaf"
+    # output -> messages -> message -> response_metadata -> value is five nodes deep.
+    for index in range(max_depth - 5):
+        value = {f"n{index}": value}
+    output["messages"].append(
+        {"role": "assistant", "content": "Research", "response_metadata": {"value": value}}
+    )
+    return output
+
+
+def test_deep_encoded_arguments_fail_with_typed_historical_error() -> None:
+    with pytest.raises(HistoricalRuntimeOutputError):
+        validate(with_message(encoded_depth_message(1_500)))
+
+
+def test_direct_historical_depth_boundary_is_exact() -> None:
+    assert validate(output_at_depth(64))[1] == "Hold"
+    with pytest.raises(HistoricalRuntimeOutputError, match="depth"):
+        validate(output_at_depth(65))
+
+
+def test_direct_historical_decoded_argument_depth_boundary_is_exact() -> None:
+    assert validate(with_message(encoded_depth_message(64)))[1] == "Hold"
+    with pytest.raises(HistoricalRuntimeOutputError, match="depth"):
+        validate(with_message(encoded_depth_message(65)))
+
+
+def test_direct_historical_node_boundary_is_exact() -> None:
+    output = make_output()
+    remaining = 100_000 - json_node_count(output)
+    output["messages"].extend("Research" for _ in range(remaining))
+    assert json_node_count(output) == 100_000
+    assert validate(output)[1] == "Hold"
+    output["messages"].append("one-too-many")
+    with pytest.raises(HistoricalRuntimeOutputError, match="node"):
+        validate(output)
+
+
+def test_direct_historical_decoded_argument_node_boundary_is_exact() -> None:
+    accepted = raw_function_call('{"values":[' + ",".join("0" for _ in range(99_998)) + "]}")
+    rejected = raw_function_call('{"values":[' + ",".join("0" for _ in range(99_999)) + "]}")
+    assert validate(with_message(accepted))[1] == "Hold"
+    with pytest.raises(HistoricalRuntimeOutputError, match="node"):
+        validate(with_message(rejected))
+
+
+def test_direct_historical_utf8_key_and_string_boundaries_are_exact() -> None:
+    for field in ("market_report", "metadata-key"):
+        accepted = make_output()
+        rejected = make_output()
+        if field == "market_report":
+            accepted[field] = "x" * 1_048_576
+            rejected[field] = "x" * 1_048_577
+        else:
+            accepted["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "Research",
+                    "response_metadata": {"k" * 1_048_576: "ok"},
+                }
+            )
+            rejected["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "Research",
+                    "response_metadata": {"k" * 1_048_577: "no"},
+                }
+            )
+        assert validate(accepted)[1] == "Hold"
+        with pytest.raises(HistoricalRuntimeOutputError, match="string"):
+            validate(rejected)
 
 
 def test_benign_encoded_and_object_call_arguments_are_preserved_as_data() -> None:

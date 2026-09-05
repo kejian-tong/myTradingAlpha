@@ -61,6 +61,15 @@ def response_hash(payload_without_hash: dict[str, object]) -> str:
     return f"sha256:{hashlib.sha256(RESPONSE_DOMAIN + canonical(payload_without_hash)).hexdigest()}"
 
 
+def rehash_record_payload(payload: dict[str, object]) -> dict[str, object]:
+    output_hash = checksum(payload["output"])
+    payload["output_hash"] = output_hash
+    payload["capture_manifest"]["checksum"] = output_hash
+    hash_payload = {key: value for key, value in payload.items() if key != "response_hash"}
+    payload["response_hash"] = response_hash(hash_payload)
+    return payload
+
+
 def make_output(*, rating: str = "Hold") -> dict[str, object]:
     return {
         "asset_type": "stock",
@@ -317,6 +326,45 @@ def test_direct_contract_rejects_source_manifest_subclass_without_serializer_acc
     assert calls == []
 
 
+def cutoff_payload(*, policy: str, future_availability: bool) -> dict[str, object]:
+    payload = json.loads(FIXTURE.read_bytes())
+    payload["replay_policy"] = policy
+    manifest = payload["capture_manifest"]
+    manifest["published_at"] = None
+    if future_availability:
+        manifest["available_at"] = "2024-07-01T00:00:00Z"
+        manifest["fetched_at"] = "2024-07-01T00:00:00Z"
+    else:
+        manifest["available_at"] = "2024-06-30T23:59:58Z"
+        manifest["fetched_at"] = "2024-06-30T23:59:59Z"
+    manifest["ingested_at"] = "2024-07-01T00:00:00Z"
+    return rehash_record_payload(payload)
+
+
+def test_public_contract_rejects_rehashed_future_availability_and_late_archive() -> None:
+    for payload in (
+        cutoff_payload(policy="availability", future_availability=True),
+        cutoff_payload(policy="archive_realistic", future_availability=False),
+    ):
+        with pytest.raises(ValidationError):
+            CachedGraphResponse.model_validate(payload)
+
+
+def test_public_contract_allows_availability_policy_late_ingestion() -> None:
+    payload = cutoff_payload(policy="availability", future_availability=False)
+    record = CachedGraphResponse.model_validate(payload)
+    assert record.capture_manifest.ingested_at > record.knowledge_cutoff
+
+
+def test_parser_preserves_typed_unavailable_for_rehashed_cutoff_ineligible_records() -> None:
+    for payload in (
+        cutoff_payload(policy="availability", future_availability=True),
+        cutoff_payload(policy="archive_realistic", future_availability=False),
+    ):
+        with pytest.raises(CachedGraphResponseUnavailableError):
+            parse_cached_graph_response(canonical(payload))
+
+
 def test_tuple_input_becomes_array_without_hooks() -> None:
     output = make_output()
     output["messages"] = (("human", "NEW"), ("assistant", "Fixture research response."))
@@ -342,6 +390,34 @@ def test_builder_rejects_malformed_or_authority_output_before_sealing() -> None:
                     output=output, capture_manifest=make_capture_manifest(output)
                 )
             )
+
+
+def deeply_encoded_output(depth: int = 1_500) -> dict[str, object]:
+    output = make_output()
+    arguments = '{"n":' * (depth - 1) + "0" + "}" * (depth - 1)
+    output["messages"].append(
+        {
+            "role": "assistant",
+            "content": "Research",
+            "additional_kwargs": {"function_call": {"name": "research", "arguments": arguments}},
+        }
+    )
+    return output
+
+
+def test_builder_maps_deep_encoded_arguments_to_typed_output_error() -> None:
+    output = deeply_encoded_output()
+    with pytest.raises(HistoricalRuntimeOutputError):
+        build_cached_graph_response(
+            **make_response_kwargs(output=output, capture_manifest=make_capture_manifest(output))
+        )
+
+
+def test_parser_maps_rehashed_deep_encoded_arguments_to_corruption() -> None:
+    payload = json.loads(FIXTURE.read_bytes())
+    payload["output"] = deeply_encoded_output()
+    with pytest.raises(CachedGraphResponseCorruptionError):
+        parse_cached_graph_response(canonical(rehash_record_payload(payload)))
 
 
 def test_builder_rejects_schema_string_subclass() -> None:
