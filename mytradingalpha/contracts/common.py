@@ -13,7 +13,7 @@ _STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$"
 _UTC_DATETIME_STRING_PATTERN = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T"
     r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
-    r"(?:\.[0-9]+)?"
+    r"(?:\.[0-9]{1,6})?"
     r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
 )
 
@@ -33,6 +33,11 @@ def _validate_utc_datetime(value: Any) -> datetime:
                 "invalid_timestamp: expected a full ISO timestamp with an explicit offset"
             )
         normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+        # Python 3.10 accepts only 3/6 fractional digits in fromisoformat.
+        # The validated grammar allows 1-6; zero-padding preserves the exact instant.
+        if normalized[19:20] == ".":
+            seconds, fraction = normalized[:-6].split(".")
+            normalized = f"{seconds}.{fraction.ljust(6, '0')}{normalized[-6:]}"
         try:
             parsed = datetime.fromisoformat(normalized)
         except (ValueError, OverflowError) as exc:
@@ -93,7 +98,11 @@ UtcDateTime = Annotated[
     PlainSerializer(_serialize_utc_datetime, return_type=str, when_used="json"),
     WithJsonSchema({"type": "string", "format": "date-time"}),
 ]
-"""A timezone-aware datetime normalized to :data:`datetime.timezone.utc`."""
+"""An aware UTC datetime; ISO inputs support at most six fractional digits.
+
+Excess precision (including extra zero digits) is rejected, never silently truncated
+across a point-in-time cutoff. Existing microsecond-level wire values are unchanged.
+"""
 
 DecimalString = Annotated[
     Decimal,

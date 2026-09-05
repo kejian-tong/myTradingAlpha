@@ -85,6 +85,8 @@ _AUTHORITY_FIELDS = {
     "risk_authorization",
     "risk_authorizations",
 }
+# Only normalize spellings of this finite reserved namespace, not arbitrary prose.
+_NORMALIZED_AUTHORITY_FIELDS = frozenset(field.replace("_", "") for field in _AUTHORITY_FIELDS)
 _MESSAGE_ROLES = {
     "ai",
     "assistant",
@@ -222,7 +224,8 @@ def _bounded_plain_data(value: object) -> None:
 def _contains_authority_field(value: object) -> bool:
     if type(value) is dict:
         for key, item in value.items():
-            if key.lower() in _AUTHORITY_FIELDS or _contains_authority_field(item):
+            normalized_key = key.casefold().replace("_", "").replace("-", "")
+            if normalized_key in _NORMALIZED_AUTHORITY_FIELDS or _contains_authority_field(item):
                 return True
     elif type(value) is list:
         return any(_contains_authority_field(item) for item in value)
