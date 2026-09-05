@@ -232,7 +232,7 @@ exact-head required CI, and this master-gate artifact all exist and pass.
 
 On the next normal `AGENT_STATE.md` update, record at least:
 
-- complexity and model tier, including the evidence-based reason and affected roles for every Astra tier;
+- complexity and route, including the evidence-based reason and affected roles for every escalation;
 - named implementer role and config path;
 - configured actual implementer model/effort;
 - named reviewer role and config path;

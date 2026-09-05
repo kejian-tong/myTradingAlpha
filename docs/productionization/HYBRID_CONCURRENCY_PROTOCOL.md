@@ -154,7 +154,7 @@ If triage finds a material defect:
 
 For ambiguity, advance review only as evidence requires:
 `reviewer_high -> reviewer_xhigh`.
-Re-review count alone does not make a PR `critical` or justify Astra. Safety classification remains
+Re-review count alone does not make a PR `critical` or justify a stronger route. Safety classification remains
 tied to correctness/external-effect risk under `AGENTS.md`; route escalation requires a separate
 recorded reason.
 
