@@ -279,7 +279,10 @@ class RawStore:
             if manifest.manifest_id != requested_id:
                 raise ValueError("manifest ID does not match its store key")
             return manifest
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValidationError, ValueError) as exc:
+        except (
+            UnicodeDecodeError, json.JSONDecodeError, TypeError, ValidationError, ValueError,
+            RecursionError,
+        ) as exc:
             raise RawStoreCorruptionError("manifest failed integrity validation") from exc
 
     @contextmanager
