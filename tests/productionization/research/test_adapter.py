@@ -464,14 +464,14 @@ def test_dependency_direction_scope_and_callable_surface_are_static_and_narrow()
             module == "mytradingalpha" or module.startswith("mytradingalpha.")
             for module in absolute_imports(path)
         ), path
-    reverse = [
+    reverse = sorted(
         path.relative_to(REPOSITORY_ROOT).as_posix()
         for path in (REPOSITORY_ROOT / "mytradingalpha").rglob("*.py")
         if any(
             module == "tradingagents" or module.startswith("tradingagents.")
             for module in absolute_imports(path)
         )
-    ]
+    )
     assert reverse == [
         "mytradingalpha/research/cached_response.py",
         "mytradingalpha/research/tradingagents_adapter.py",
