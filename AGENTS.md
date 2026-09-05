@@ -3,6 +3,19 @@
 This file applies to the repository root and all descendants unless a deeper `AGENTS.md` provides
 more specific instructions for a subtree.
 
+## Repository language
+
+All repository-authored prose must be English, even when the user asks in Chinese or another
+language. This covers docs, design/implementation/review notes, reports, code comments, docstrings,
+commit messages, and PR titles, descriptions, reviews, and comments. Do not add Chinese prose.
+Translate existing explanatory prose when correcting it; do not introduce bilingual notes.
+
+Preserve product localization values, test data, exact identifiers, sealed artifacts, and immutable
+historical evidence. These are data, not permission to write non-English engineering commentary.
+Never rewrite an original review verdict or signed/source artifact merely to translate it; add an
+English clarification when needed. Review all changed prose and GitHub text before publishing.
+Automated Han-character checks are regression guards, not proof that all text is English.
+
 ## 1. Purpose and operating model
 
 Use this repository as a disciplined, PR-by-PR productionization project. The current

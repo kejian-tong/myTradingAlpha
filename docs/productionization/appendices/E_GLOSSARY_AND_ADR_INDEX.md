@@ -4,14 +4,14 @@
 
 | Term | Definition |
 | --- | --- |
-| Available-at / `available_at` | Earliest time an observation could have been used by the system, after publication and access latency. PIT 核心时间语义。 |
+| Available-at / `available_at` | Earliest time an observation could have been used by the system, after publication and access latency. This is the core PIT timing rule. |
 | Archive-realistic replay | Historical replay that requires both `available_at` and `ingested_at` to be no later than the knowledge cutoff. |
 | B&H | Buy-and-hold benchmark with explicit corporate-action/dividend treatment. |
 | Bundle hash | Content-addressed identity for an immutable EvidenceBundle. |
 | Capacity | The size/participation limit at which an intent cannot be filled under the stated liquidity and cost assumptions. |
 | Decision time | Close-time timestamp at which a target decision is made. |
 | EvidenceBundle | Immutable, provenance-rich set of observations authorized for a run. |
-| Fail-closed | Any missing/invalid safety input rejects or halts instead of assuming approval. 安全优先，不以猜测继续。 |
+| Fail-closed | Any missing/invalid safety input rejects or halts instead of assuming approval. Safety takes priority over continuing on a guess. |
 | GateEvidence | Immutable record of a phase/promotion decision, evidence URIs, metrics, reviewer, and rollback plan. |
 | Knowledge cutoff | Latest information time visible to a historical run. |
 | L0/L1/L2 | Live-pilot levels: read-only; human-approved one/few symbols; human-approved small allowlist. |

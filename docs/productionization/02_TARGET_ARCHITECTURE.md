@@ -59,7 +59,7 @@ The allowed direction is from production-owned contexts toward `contracts`; `dat
 | Credential boundary | Broker secret in a process-specific secret store | Submit only when the deployment mode and feature flag permit | Persist secrets in artifacts, logs, prompts, or fixtures |
 | Ledger boundary | Validated events/fills | Append immutable accounting events and derived NAV | Rewrite history or charge a fee twice |
 
-中文注释：PIT（point-in-time）要求“当时能看到什么”与“后来知道什么”严格分离；fail-closed 表示不满足条件时只能停机或不交易。
+PIT (point-in-time) strictly separates what was knowable then from what became known later. Fail-closed means that unmet conditions allow only a halt or no trade.
 
 ## Deployment modes
 

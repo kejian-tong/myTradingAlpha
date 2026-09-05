@@ -1,6 +1,6 @@
 # myTradingAlpha Productionization
 
-This documentation turns the current `tradingagents/` research graph into an implementable, staged productionization plan. It is predominantly English so engineers can use exact APIs, schemas, commands, and acceptance gates; short Chinese notes explain specialized concepts such as point-in-time data and fail-closed risk. 当前状态仍是 research/recommendation only, not a portfolio or execution system.
+This documentation turns the current `tradingagents/` research graph into an implementable, staged productionization plan. All repository-authored documentation and engineering commentary must be English, following the [repository language rule](../../AGENTS.md#repository-language), regardless of the user's prompt language. The current system remains research/recommendation only, not a portfolio or execution system.
 
 ## North-star boundary
 
