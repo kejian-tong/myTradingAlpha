@@ -27,6 +27,51 @@ MAX_CACHED_RESPONSE_NODES = 100_000
 MAX_CACHED_RESPONSE_STRING_BYTES = 1_048_576
 _RESPONSE_HASH_DOMAIN = b"mytradingalpha.cached_graph_response.v1\x00"
 _UTC_ADAPTER = TypeAdapter(UtcDateTime)
+_SOURCE_MANIFEST_FIELDS = (
+    "schema_version",
+    "manifest_id",
+    "source",
+    "source_locator",
+    "fetched_at",
+    "event_time",
+    "published_at",
+    "available_at",
+    "ingested_at",
+    "checksum",
+    "terms",
+    "revision",
+)
+_SOURCE_MANIFEST_STRING_FIELDS = (
+    "schema_version",
+    "manifest_id",
+    "source",
+    "source_locator",
+    "checksum",
+    "terms",
+)
+_SOURCE_MANIFEST_TIME_FIELDS = ("fetched_at", "available_at", "ingested_at")
+_SOURCE_MANIFEST_OPTIONAL_TIME_FIELDS = ("event_time", "published_at")
+_RESPONSE_STRING_FIELDS = (
+    "schema_version",
+    "response_id",
+    "response_hash",
+    "bundle_id",
+    "bundle_hash",
+    "calendar_id",
+    "variant_id",
+    "trade_date",
+    "ticker",
+    "instrument_id",
+    "asset_type",
+    "instrument_context",
+    "graph_artifact_id",
+    "graph_artifact_hash",
+    "model_artifact_id",
+    "model_artifact_hash",
+    "runtime_manifest_id",
+    "runtime_manifest_hash",
+    "output_hash",
+)
 
 
 class CachedGraphResponseError(ValueError):
@@ -88,6 +133,11 @@ class _CachedGraphResponseFields(ContractModel):
     capture_manifest: SourceManifest
     output: dict[str, object]
     output_hash: CanonicalChecksum
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_raw_contract_input(cls, value: object) -> dict[str, object]:
+        return _safe_response_input(value)
 
 
 class CachedGraphResponse(_CachedGraphResponseFields):
@@ -176,6 +226,124 @@ def _normalise_plain(value: object, *, seen: set[int], depth: int, counter: list
 
 def _bounded_plain(value: object) -> object:
     return _normalise_plain(value, seen=set(), depth=1, counter=[0])
+
+
+def _exact_dict_fields(
+    value: dict[object, object], expected: tuple[str, ...], *, label: str
+) -> dict[str, object]:
+    raw_keys = tuple(dict.keys(value))
+    if any(type(key) is not str for key in raw_keys):
+        raise CachedGraphResponseCorruptionError(f"{label} keys must be exact strings")
+    if set(raw_keys) != set(expected):
+        raise CachedGraphResponseCorruptionError(f"{label} field set is invalid")
+    return {key: dict.__getitem__(value, key) for key in expected}
+
+
+def _validate_manifest_python_fields(fields: dict[str, object]) -> None:
+    if any(type(fields[field]) is not str for field in _SOURCE_MANIFEST_STRING_FIELDS):
+        raise CachedGraphResponseCorruptionError(
+            "capture manifest string fields require exact strings"
+        )
+    if any(type(fields[field]) is not datetime for field in _SOURCE_MANIFEST_TIME_FIELDS):
+        raise CachedGraphResponseCorruptionError(
+            "capture manifest timestamps require exact datetime values"
+        )
+    if any(
+        value is not None and type(value) is not datetime
+        for value in (fields[field] for field in _SOURCE_MANIFEST_OPTIONAL_TIME_FIELDS)
+    ):
+        raise CachedGraphResponseCorruptionError(
+            "capture manifest optional timestamps require exact datetime or None"
+        )
+    if type(fields["revision"]) is not int:
+        raise CachedGraphResponseCorruptionError(
+            "capture manifest revision requires an exact integer"
+        )
+
+
+def _safe_source_manifest(value: object) -> SourceManifest:
+    if type(value) is SourceManifest:
+        raw = object.__getattribute__(value, "__dict__")
+        if type(raw) is not dict:
+            raise CachedGraphResponseCorruptionError(
+                "capture manifest storage requires an exact dictionary"
+            )
+        fields = _exact_dict_fields(raw, _SOURCE_MANIFEST_FIELDS, label="capture manifest")
+        _validate_manifest_python_fields(fields)
+    elif type(value) is dict:
+        fields = _exact_dict_fields(value, _SOURCE_MANIFEST_FIELDS, label="capture manifest")
+        if any(type(fields[field]) is not str for field in _SOURCE_MANIFEST_STRING_FIELDS):
+            raise CachedGraphResponseCorruptionError(
+                "capture manifest string fields require exact strings"
+            )
+        if any(
+            type(fields[field]) not in (str, datetime) for field in _SOURCE_MANIFEST_TIME_FIELDS
+        ):
+            raise CachedGraphResponseCorruptionError(
+                "capture manifest timestamps require exact strings or datetimes"
+            )
+        if any(
+            value is not None and type(value) not in (str, datetime)
+            for value in (fields[field] for field in _SOURCE_MANIFEST_OPTIONAL_TIME_FIELDS)
+        ):
+            raise CachedGraphResponseCorruptionError(
+                "capture manifest optional timestamps require exact strings, datetimes, or None"
+            )
+        if type(fields["revision"]) is not int:
+            raise CachedGraphResponseCorruptionError(
+                "capture manifest revision requires an exact integer"
+            )
+        if all(type(item) is not datetime for item in fields.values()):
+            _bounded_plain(fields)
+    else:
+        raise CachedGraphResponseCorruptionError(
+            "cached response requires an exact SourceManifest or dictionary"
+        )
+
+    try:
+        manifest = SourceManifest.model_validate(dict(fields))
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise CachedGraphResponseCorruptionError("capture manifest validation failed") from exc
+    if type(manifest) is not SourceManifest:
+        raise CachedGraphResponseCorruptionError(
+            "capture manifest validation returned a non-exact type"
+        )
+    safe_storage = object.__getattribute__(manifest, "__dict__")
+    if type(safe_storage) is not dict:
+        raise CachedGraphResponseCorruptionError(
+            "capture manifest storage requires an exact dictionary"
+        )
+    safe_fields = _exact_dict_fields(
+        safe_storage, _SOURCE_MANIFEST_FIELDS, label="capture manifest"
+    )
+    _validate_manifest_python_fields(safe_fields)
+    return manifest
+
+
+def _safe_response_input(value: object) -> dict[str, object]:
+    if type(value) is not dict:
+        raise CachedGraphResponseCorruptionError(
+            "cached response public validation requires an exact dictionary"
+        )
+    expected = tuple(_CachedGraphResponseFields.model_fields)
+    fields = _exact_dict_fields(value, expected, label="cached response")
+    if any(type(fields[field]) is not str for field in _RESPONSE_STRING_FIELDS):
+        raise CachedGraphResponseCorruptionError("cached response fields require exact strings")
+    if type(fields["knowledge_cutoff"]) not in (str, datetime):
+        raise CachedGraphResponseCorruptionError(
+            "cached response cutoff requires an exact string or datetime"
+        )
+    if type(fields["replay_policy"]) not in (str, BundleReplayPolicy):
+        raise CachedGraphResponseCorruptionError(
+            "cached response policy requires an exact string or BundleReplayPolicy"
+        )
+    if type(fields["output"]) is not dict:
+        raise CachedGraphResponseCorruptionError(
+            "cached response output requires an exact dictionary"
+        )
+    fields["output"] = _bounded_plain(fields["output"])
+    fields["capture_manifest"] = _safe_source_manifest(fields["capture_manifest"])
+    return fields
 
 
 def _duplicate_rejecting_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -330,7 +498,7 @@ def build_cached_graph_response(
     model_artifact_hash: str,
     runtime_manifest_id: str,
     runtime_manifest_hash: str,
-    capture_manifest: SourceManifest,
+    capture_manifest: SourceManifest | dict[str, object],
     output: dict[str, object],
 ) -> bytes:
     """Validate and seal one graph response as canonical UTF-8 JSON bytes."""
@@ -365,8 +533,7 @@ def build_cached_graph_response(
         raise CachedGraphResponseCorruptionError(
             "cached response requires exact BundleReplayPolicy"
         )
-    if type(capture_manifest) is not SourceManifest:
-        raise CachedGraphResponseCorruptionError("cached response requires exact SourceManifest")
+    safe_capture_manifest = _safe_source_manifest(capture_manifest)
     normalised_output = _bounded_plain(output)
     if type(normalised_output) is not dict:
         raise CachedGraphResponseCorruptionError("cached response output must be an object")
@@ -385,17 +552,17 @@ def build_cached_graph_response(
         instrument_context=instrument_context,
     )
     output_hash = _sha256(_canonical_bytes(normalised_output))
-    if capture_manifest.checksum != output_hash:
+    if safe_capture_manifest.checksum != output_hash:
         raise CachedGraphResponseCorruptionError(
             "capture manifest checksum does not bind cached output"
         )
-    if capture_manifest.available_at > cutoff:
+    if safe_capture_manifest.available_at > cutoff:
         raise CachedGraphResponseUnavailableError(
             "cached response was unavailable at knowledge cutoff"
         )
     if (
         replay_policy is BundleReplayPolicy.ARCHIVE_REALISTIC
-        and capture_manifest.ingested_at > cutoff
+        and safe_capture_manifest.ingested_at > cutoff
     ):
         raise CachedGraphResponseUnavailableError(
             "cached response was not archived at knowledge cutoff"
@@ -420,7 +587,7 @@ def build_cached_graph_response(
         "model_artifact_hash": model_artifact_hash,
         "runtime_manifest_id": runtime_manifest_id,
         "runtime_manifest_hash": runtime_manifest_hash,
-        "capture_manifest": capture_manifest.model_dump(mode="json"),
+        "capture_manifest": safe_capture_manifest.model_dump(mode="json"),
         "output": normalised_output,
         "output_hash": output_hash,
     }
