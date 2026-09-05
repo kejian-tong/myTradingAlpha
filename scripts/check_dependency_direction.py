@@ -8,6 +8,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from importlib.util import resolve_name
 from pathlib import Path
 
 _PRODUCTION_ROOT = "mytradingalpha"
@@ -94,6 +95,109 @@ def _imported_modules(tree: ast.AST) -> Iterable[tuple[ast.AST, str]]:
             yield node, node.module
 
 
+class _DynamicImports(ast.NodeVisitor):
+    """Bounded lexical analysis of known loader forms, not arbitrary Python execution.
+
+    Literal names, import aliases, simple alias assignments and function-local
+    shadowing are covered. A recognized loader with a computed target is a
+    manual-review diagnostic, never an inferred safe dependency. Reflective code,
+    runtime monkeypatching and arbitrary callable dataflow still require review.
+    """
+
+    def __init__(self) -> None:
+        self.bindings: dict[str, str | None] = {"__import__": "__import__"}
+        self.imports: list[tuple[ast.AST, str | None]] = []
+
+    def _binding(self, node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return self.bindings.get(node.id)
+        if isinstance(node, ast.Attribute):
+            owner = self._binding(node.value)
+            if (owner, node.attr) == ("importlib", "import_module"):
+                return "import_module"
+            if (owner, node.attr) == ("builtins", "__import__"):
+                return "__import__"
+        return None
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            name = alias.asname or alias.name.split(".")[0]
+            module = alias.name if alias.asname else alias.name.split(".")[0]
+            self.bindings[name] = module if module in {"importlib", "builtins"} else None
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            loader = (node.module, alias.name)
+            allowed = node.level == 0 and loader in {
+                ("importlib", "import_module"), ("builtins", "__import__")
+            }
+            self.bindings[alias.asname or alias.name] = alias.name if allowed else None
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        binding = self._binding(node.value)
+        for target in node.targets:
+            for child in ast.walk(target):
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                    self.bindings[child.id] = binding if isinstance(target, ast.Name) else None
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self.bindings[node.target.id] = self._binding(node.value) if node.value else None
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for expression in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+            if expression is not None:
+                self.visit(expression)
+        self.bindings[node.name] = None
+        outer = self.bindings.copy()
+        # Parameters shadow globals even when their names resemble an import API.
+        arguments = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+        for argument in (*arguments, node.args.vararg, node.args.kwarg):
+            if argument is not None:
+                self.bindings[argument.arg] = None
+        for statement in node.body:
+            self.visit(statement)
+        self.bindings = outer
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.bindings[node.name] = None
+        outer = self.bindings.copy()
+        self.generic_visit(node)
+        self.bindings = outer
+
+    @staticmethod
+    def _argument(node: ast.Call, index: int, keyword: str) -> ast.AST | None:
+        if len(node.args) > index:
+            return node.args[index]
+        return next((item.value for item in node.keywords if item.arg == keyword), None)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        loader = self._binding(node.func)
+        if loader in {"import_module", "__import__"}:
+            target = self._argument(node, 0, "name")
+            name = target.value if isinstance(target, ast.Constant) and isinstance(target.value, str) else None
+            if loader == "import_module" and name and name.startswith("."):
+                package = self._argument(node, 1, "package")
+                if isinstance(package, ast.Constant) and isinstance(package.value, str):
+                    try:
+                        name = resolve_name(name, package.value)
+                    except (ImportError, ValueError):
+                        name = None
+                else:
+                    name = None
+            if loader == "__import__":
+                level = self._argument(node, 4, "level")
+                if level is not None and not (isinstance(level, ast.Constant) and level.value == 0):
+                    name = None
+            self.imports.append((node, name))
+        self.generic_visit(node)
+
+
 def _violation_for(
     path: Path, root: Path, node: ast.AST, imported_module: str
 ) -> DependencyViolation | None:
@@ -149,6 +253,20 @@ def find_violations(root: Path | str) -> list[DependencyViolation]:
             violation = _violation_for(path, root, node, imported_module)
             if violation is not None:
                 violations.append(violation)
+
+        dynamic = _DynamicImports()
+        dynamic.visit(tree)
+        for node, imported_module in dynamic.imports:
+            if imported_module is None:
+                violations.append(DependencyViolation(
+                    path=path, line=node.lineno, column=node.col_offset + 1,
+                    imported_module="<dynamic>",
+                    message="unresolved dynamic import requires manual review; use a literal import",
+                ))
+            else:
+                violation = _violation_for(path, root, node, imported_module)
+                if violation is not None:
+                    violations.append(violation)
 
     return violations
 
