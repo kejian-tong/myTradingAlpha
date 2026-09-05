@@ -30,6 +30,7 @@ from tests.productionization.research.test_cached_response import (
 )
 from tradingagents.graph.historical import (
     HistoricalRuntimeOutputError,
+    create_historical_initial_state,
     validate_historical_response,
 )
 
@@ -42,6 +43,121 @@ def validate(output: object):
         asset_type="stock",
         instrument_context=str(make_output()["instrument_context"]),
     )
+
+
+class BoundArgumentProbe:
+    def __init__(self, effects: list[str], label: str) -> None:
+        object.__setattr__(self, "_effects", effects)
+        object.__setattr__(self, "_label", label)
+
+    def _record(self, operation: str) -> None:
+        object.__getattribute__(self, "_effects").append(
+            f"{object.__getattribute__(self, '_label')}.{operation}"
+        )
+
+    def __str__(self) -> str:
+        self._record("str")
+        return "2024-06-30"
+
+    def __eq__(self, other: object) -> bool:
+        self._record("eq")
+        return False
+
+    def __ne__(self, other: object) -> bool:
+        self._record("ne")
+        return True
+
+    def __hash__(self) -> int:
+        self._record("hash")
+        return 1
+
+    def model_dump(self, *args: object, **kwargs: object) -> object:
+        self._record("model_dump")
+        return {}
+
+
+class BoundStringSubclass(str):
+    def __new__(cls, value: str, effects: list[str], label: str):
+        instance = str.__new__(cls, value)
+        instance._effects = effects
+        instance._label = label
+        return instance
+
+    def _record(self, operation: str) -> None:
+        self._effects.append(f"{self._label}.{operation}")
+
+    def __str__(self) -> str:
+        self._record("str")
+        return str.__str__(self)
+
+    def __eq__(self, other: object) -> bool:
+        self._record("eq")
+        return str.__eq__(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        self._record("ne")
+        return str.__ne__(self, other)
+
+    def __hash__(self) -> int:
+        self._record("hash")
+        return str.__hash__(self)
+
+    def model_dump(self, *args: object, **kwargs: object) -> object:
+        self._record("model_dump")
+        return {}
+
+
+def historical_bound_kwargs() -> dict[str, object]:
+    return {
+        "company_name": "NEW",
+        "trade_date": "2024-06-30",
+        "asset_type": "stock",
+        "instrument_context": str(make_output()["instrument_context"]),
+    }
+
+
+@pytest.mark.parametrize("entrypoint", ["create", "validate"])
+@pytest.mark.parametrize(
+    "field", ["company_name", "trade_date", "asset_type", "instrument_context"]
+)
+@pytest.mark.parametrize("kind", ["object", "string-subclass"])
+def test_historical_exports_reject_nonexact_bound_strings_without_observation(
+    entrypoint: str, field: str, kind: str
+) -> None:
+    effects: list[str] = []
+    valid = historical_bound_kwargs()[field]
+    hostile: object = (
+        BoundArgumentProbe(effects, field)
+        if kind == "object"
+        else BoundStringSubclass(str(valid), effects, field)
+    )
+    kwargs = historical_bound_kwargs()
+    kwargs[field] = hostile
+    effects.clear()
+    with pytest.raises(HistoricalRuntimeOutputError):
+        if entrypoint == "create":
+            create_historical_initial_state(**kwargs)  # type: ignore[arg-type]
+        else:
+            validate_historical_response(
+                make_output(),
+                **kwargs,  # type: ignore[arg-type]
+            )
+    assert effects == []
+
+
+def test_historical_exports_preserve_exact_string_state_and_signal_controls() -> None:
+    kwargs = historical_bound_kwargs()
+    initial = create_historical_initial_state(**kwargs)  # type: ignore[arg-type]
+    assert initial["company_of_interest"] == "NEW"
+    assert initial["trade_date"] == "2024-06-30"
+    assert initial["asset_type"] == "stock"
+    assert initial["instrument_context"] == make_output()["instrument_context"]
+    final, signal = validate_historical_response(
+        make_output(),
+        **kwargs,  # type: ignore[arg-type]
+    )
+    assert final == make_output()
+    assert signal == "Hold"
 
 
 @pytest.mark.parametrize(
