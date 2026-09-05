@@ -111,6 +111,20 @@ class HistoricalRuntimeOutputError(HistoricalRuntimeError):
     """Raised when cached graph output is unsafe or incompatible."""
 
 
+def _require_exact_bound_strings(
+    *,
+    company_name: object,
+    trade_date: object,
+    asset_type: object,
+    instrument_context: object,
+) -> None:
+    if any(
+        type(value) is not str
+        for value in (company_name, trade_date, asset_type, instrument_context)
+    ):
+        raise HistoricalRuntimeOutputError("historical bound arguments require exact strings")
+
+
 def create_historical_initial_state(
     *,
     company_name: str,
@@ -120,6 +134,12 @@ def create_historical_initial_state(
 ) -> dict[str, object]:
     """Create the current graph state shape without running the graph."""
 
+    _require_exact_bound_strings(
+        company_name=company_name,
+        trade_date=trade_date,
+        asset_type=asset_type,
+        instrument_context=instrument_context,
+    )
     return Propagator().create_initial_state(
         company_name,
         trade_date,
@@ -397,6 +417,12 @@ def validate_historical_response(
 ) -> tuple[dict[str, object], str]:
     """Validate plain cached output and return a defensive legacy state/signal."""
 
+    _require_exact_bound_strings(
+        company_name=company_name,
+        trade_date=trade_date,
+        asset_type=asset_type,
+        instrument_context=instrument_context,
+    )
     _bounded_plain_data(output)
     if type(output) is not dict:
         raise HistoricalRuntimeOutputError("historical response must be a plain final-state object")
