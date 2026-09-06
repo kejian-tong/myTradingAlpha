@@ -347,3 +347,252 @@ def test_control_flow_source_is_parsed_only(tmp_path: Path) -> None:
     )
     _assert_forbidden(tmp_path, source)
     assert not sentinel.exists()
+
+
+def test_review_repair_callable_ifexp_applies_test_shadow_before_resolution(
+    tmp_path: Path,
+) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        '(load if (load := safe) else safe)("tradingagents.graph")\n',
+    ) == []
+
+
+def test_review_repair_callable_ifexp_applies_test_loader_before_resolution(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        '(load if (load := import_module) else safe)("tradingagents.graph")\n',
+    )
+
+
+def test_review_repair_callable_ifexp_unresolved_target_is_unique(tmp_path: Path) -> None:
+    findings = _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "(load if (load := import_module) else safe)(module_name)\n",
+    )
+    assert len(findings) == 1
+    assert findings[0].imported_module == "<dynamic>"
+
+
+def test_review_repair_callable_then_nested_argument_calls_are_ordered_once(
+    tmp_path: Path,
+) -> None:
+    findings = _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        '(load if (load := import_module) else safe)("tradingagents.outer", '
+        'value=load("tradingagents.argument"))\n',
+    )
+    assert [finding.imported_module for finding in findings] == [
+        "tradingagents.outer",
+        "tradingagents.argument",
+    ]
+
+
+def test_review_repair_trystar_prior_handler_loader_reaches_later_handler(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "try:\n    risky()\n"
+        "except* FirstError:\n    load = import_module\n"
+        'except* SecondError:\n    load("tradingagents.graph")\n',
+    )
+
+
+def test_review_repair_trystar_no_match_path_preserves_loader(tmp_path: Path) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "try:\n    risky()\n"
+        "except* FirstError:\n    load = safe\n"
+        'except* SecondError:\n    load("tradingagents.graph")\n',
+    )
+
+
+def test_review_repair_trystar_safe_sequential_handlers_do_not_false_positive(
+    tmp_path: Path,
+) -> None:
+    assert _violations(
+        tmp_path,
+        "load = safe\ntry:\n    risky()\n"
+        "except* FirstError:\n    load = safe\n"
+        'except* SecondError:\n    load("tradingagents.graph")\n',
+    ) == []
+
+
+@pytest.mark.parametrize("keyword", ("for", "async for"))
+def test_review_repair_no_break_for_else_overwrite_controls_postloop(
+    tmp_path: Path,
+    keyword: str,
+) -> None:
+    if keyword.startswith("async"):
+        source = (
+            "from importlib import import_module\n"
+            "async def run():\n"
+            "    load = import_module\n"
+            "    async for item in values:\n"
+            "        load = import_module\n"
+            "    else:\n"
+            "        load = safe\n"
+            '    load("tradingagents.graph")\n'
+        )
+    else:
+        source = (
+            "from importlib import import_module\n"
+            "load = import_module\n"
+            "for item in values:\n"
+            "    load = import_module\n"
+            "else:\n"
+            "    load = safe\n"
+            'load("tradingagents.graph")\n'
+        )
+    assert _violations(tmp_path, source) == []
+
+
+def test_review_repair_no_break_while_else_overwrite_controls_postloop(
+    tmp_path: Path,
+) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "while flag:\n    load = safe\n"
+        "else:\n    load = safe\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
+@pytest.mark.parametrize("keyword", ("for", "async for"))
+def test_review_repair_current_loop_break_retains_loader_exit(
+    tmp_path: Path,
+    keyword: str,
+) -> None:
+    if keyword.startswith("async"):
+        source = (
+            "from importlib import import_module\n"
+            "async def run():\n"
+            "    load = safe\n"
+            "    async for item in values:\n"
+            "        load = import_module\n"
+            "        break\n"
+            "    else:\n"
+            "        load = safe\n"
+            '    load("tradingagents.graph")\n'
+        )
+    else:
+        source = (
+            "from importlib import import_module\n"
+            "load = safe\n"
+            "for item in values:\n"
+            "    load = import_module\n"
+            "    break\n"
+            "else:\n"
+            "    load = safe\n"
+            'load("tradingagents.graph")\n'
+        )
+    _assert_forbidden(tmp_path, source)
+
+
+def test_review_repair_current_while_break_retains_loader_exit(tmp_path: Path) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "while flag:\n    load = import_module\n    break\n"
+        "else:\n    load = safe\n"
+        'load("tradingagents.graph")\n',
+    )
+
+
+def test_review_repair_nested_loop_break_does_not_skip_outer_else(tmp_path: Path) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "for item in values:\n    while flag:\n        break\n"
+        "else:\n    load = safe\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
+def test_review_repair_generator_walrus_is_lazy_at_construction(tmp_path: Path) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "values = ((load := import_module) for item in items)\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
+def test_review_repair_generator_deferred_body_is_still_inspected(tmp_path: Path) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        'values = (load("tradingagents.graph") for item in items)\n',
+    )
+
+
+def test_review_repair_generator_first_iterable_is_eagerly_inspected(tmp_path: Path) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        'values = (item for item in load("tradingagents.graph"))\n',
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "[(load := import_module) for item in items]",
+        "{(load := import_module) for item in items}",
+        "{item: (load := import_module) for item in items}",
+    ),
+)
+def test_review_repair_eager_comprehensions_still_propagate_walrus(
+    tmp_path: Path,
+    expression: str,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        f"values = {expression}\n"
+        'load("tradingagents.graph")\n',
+    )
+
+
+def test_review_repair_handler_target_is_cleared_on_exceptional_finally_path(
+    tmp_path: Path,
+) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "try:\n    risky()\n"
+        "except Exception as load:\n    load = import_module\n    raise\n"
+        'finally:\n    load("tradingagents.graph")\n',
+    ) == []
+
+
+def test_review_repair_handler_cleanup_preserves_outer_loader_success_path(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "try:\n    risky()\n"
+        "except Exception as load:\n    load = safe\n    raise\n"
+        'finally:\n    load("tradingagents.graph")\n',
+    )
+
+
+def test_review_repair_trystar_target_is_cleared_before_finally(tmp_path: Path) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "try:\n    risky()\n"
+        "except* Exception as load:\n    load = import_module\n    raise\n"
+        'finally:\n    load("tradingagents.graph")\n',
+    ) == []
