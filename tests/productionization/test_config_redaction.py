@@ -563,7 +563,7 @@ def test_aud_h01_redacts_every_alias_across_log_record_surfaces(
     elif surface == "lazy-mapping":
         record = _aud_h01_record(
             message=f"{field_name}=%({field_name})s",
-            arguments={field_name: canary},
+            arguments=({field_name: canary},),
         )
     else:
         assert surface == "extra"
