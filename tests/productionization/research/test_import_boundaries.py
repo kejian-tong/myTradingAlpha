@@ -243,6 +243,206 @@ else:
     assert "TRADINGAGENTS_MAX_DEBATE_ROUNDS" in observed["message"]
 
 
+@pytest.mark.parametrize(
+    "import_source",
+    (
+        "import tradingagents.llm_clients",
+        "from tradingagents.llm_clients import create_llm_client",
+        "from tradingagents.llm_clients.factory import create_llm_client",
+        "import tradingagents.dataflows",
+    ),
+)
+def test_h03_r1_public_ordinary_packages_bootstrap_environment(
+    tmp_path: Path,
+    import_source: str,
+) -> None:
+    source = f"""
+import json
+{import_source}
+print(json.dumps({{
+    "canary": os.environ.get({_CANARY!r}),
+    "enterprise_canary": os.environ.get("AUD_H03_ENTERPRISE_CANARY"),
+    "provider": os.environ.get("TRADINGAGENTS_LLM_PROVIDER"),
+    "deep": os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM"),
+    "quick": os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM"),
+}}))
+"""
+    observed = _json_result(
+        _run_isolated(
+            tmp_path,
+            source,
+            environment={"TRADINGAGENTS_LLM_PROVIDER": "exported-provider"},
+        )
+    )
+
+    assert observed == {
+        "canary": "from-dotenv",
+        "enterprise_canary": "from-enterprise",
+        "provider": "exported-provider",
+        "deep": "dotenv-deep",
+        "quick": "enterprise-quick",
+    }
+
+
+_INSTRUMENT_CONTEXT = (
+    "Symbol: NEW; instrument_id: inst-acme; asset_class: equity; "
+    "exchange: XNYS; currency: USD"
+)
+_EXPECTED_INITIAL_STATE = {
+    "messages": [("human", "NEW")],
+    "company_of_interest": "NEW",
+    "asset_type": "stock",
+    "instrument_context": _INSTRUMENT_CONTEXT,
+    "trade_date": "2024-06-30",
+    "past_context": "",
+    "investment_debate_state": {
+        "bull_history": "",
+        "bear_history": "",
+        "history": "",
+        "current_response": "",
+        "judge_decision": "",
+        "count": 0,
+    },
+    "risk_debate_state": {
+        "aggressive_history": "",
+        "conservative_history": "",
+        "neutral_history": "",
+        "history": "",
+        "latest_speaker": "",
+        "current_aggressive_response": "",
+        "current_conservative_response": "",
+        "current_neutral_response": "",
+        "judge_decision": "",
+        "count": 0,
+    },
+    "market_report": "",
+    "fundamentals_report": "",
+    "sentiment_report": "",
+    "news_report": "",
+}
+_VALID_FINAL_STATE = {
+    "asset_type": "stock",
+    "company_of_interest": "NEW",
+    "final_trade_decision": "**Rating**: Hold\n\nDeterministic cached research fixture.",
+    "fundamentals_report": "Fixture fundamentals evidence summary.",
+    "instrument_context": _INSTRUMENT_CONTEXT,
+    "investment_debate_state": {
+        "bear_history": "",
+        "bull_history": "",
+        "count": 0,
+        "current_response": "",
+        "history": "",
+        "judge_decision": "",
+    },
+    "investment_plan": "Fixture prose investment plan.",
+    "market_report": "Fixture market evidence summary.",
+    "messages": [
+        ["human", "NEW"],
+        {
+            "role": "assistant",
+            "content": "Fixture research response.",
+            "response_metadata": {"source": "test-only-cache"},
+        },
+    ],
+    "news_report": "Fixture news evidence summary.",
+    "past_context": "",
+    "risk_debate_state": {
+        "aggressive_history": "",
+        "conservative_history": "",
+        "count": 0,
+        "current_aggressive_response": "",
+        "current_conservative_response": "",
+        "current_neutral_response": "",
+        "history": "",
+        "judge_decision": "",
+        "latest_speaker": "",
+        "neutral_history": "",
+    },
+    "sentiment_report": "Fixture sentiment evidence summary.",
+    "trade_date": "2024-06-30",
+    "trader_investment_plan": "Fixture prose trader plan.",
+}
+
+
+@pytest.mark.parametrize("operation", ("initial", "validate"))
+def test_h03_r2_cold_historical_first_call_stays_pure(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    source = f"""
+import json
+import sys
+import warnings
+
+socket_calls = []
+def observe_socket(event, args):
+    if event == "socket.__new__":
+        socket_calls.append(args)
+
+sys.addaudithook(observe_socket)
+filters_before = list(warnings.filters)
+from tradingagents.graph.historical import (
+    create_historical_initial_state,
+    validate_historical_response,
+)
+
+bindings = {{
+    "company_name": "NEW",
+    "trade_date": "2024-06-30",
+    "asset_type": "stock",
+    "instrument_context": {_INSTRUMENT_CONTEXT!r},
+}}
+initial_matches = None
+returned_matches = None
+signal = None
+if {operation!r} == "initial":
+    initial_matches = create_historical_initial_state(**bindings) == {_EXPECTED_INITIAL_STATE!r}
+else:
+    source_state = {_VALID_FINAL_STATE!r}
+    returned_state, signal = validate_historical_response(source_state, **bindings)
+    returned_matches = returned_state == source_state and returned_state is not source_state
+
+forbidden_prefixes = {list(_ORDINARY_IMPORTS) + [
+        "tradingagents.agents.utils.agent_states",
+        "langchain",
+        "langgraph",
+    ]!r}
+forbidden_loaded = sorted(
+    name
+    for name in sys.modules
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden_prefixes)
+)
+print(json.dumps({{
+    "canary": os.environ.get({_CANARY!r}),
+    "enterprise_canary": os.environ.get("AUD_H03_ENTERPRISE_CANARY"),
+    "filters_unchanged": filters_before == warnings.filters,
+    "forbidden_loaded": forbidden_loaded,
+    "initial_matches": initial_matches,
+    "returned_matches": returned_matches,
+    "signal": signal,
+    "socket_calls": len(socket_calls),
+}}))
+"""
+    observed = _json_result(_run_isolated(tmp_path, source))
+
+    expected = {
+        "canary": None,
+        "enterprise_canary": None,
+        "filters_unchanged": True,
+        "forbidden_loaded": [],
+        "initial_matches": None,
+        "returned_matches": None,
+        "signal": None,
+        "socket_calls": 0,
+    }
+    if operation == "initial":
+        expected["initial_matches"] = True
+    else:
+        expected["returned_matches"] = True
+        expected["signal"] = "Hold"
+    assert observed == expected
+
+
 _GRAPH_EXPORTS = {
     "TradingAgentsGraph": "tradingagents.graph.trading_graph",
     "ConditionalLogic": "tradingagents.graph.conditional_logic",
