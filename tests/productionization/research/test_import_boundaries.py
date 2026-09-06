@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CANARY = "AUD_H03_IMPORT_CANARY"
 _ORDINARY_IMPORTS = (

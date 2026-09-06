@@ -11,9 +11,6 @@ from copy import deepcopy
 from math import isfinite
 from typing import Any
 
-from .propagation import Propagator
-from .signal_processing import SignalProcessor
-
 _BOUND_FIELDS = (
     "company_of_interest",
     "asset_type",
@@ -135,6 +132,8 @@ def create_historical_initial_state(
     instrument_context: str,
 ) -> dict[str, object]:
     """Create the current graph state shape without running the graph."""
+
+    from .propagation import Propagator
 
     _require_exact_bound_strings(
         company_name=company_name,
@@ -421,6 +420,8 @@ def validate_historical_response(
     instrument_context: str,
 ) -> tuple[dict[str, object], str]:
     """Validate plain cached output and return a defensive legacy state/signal."""
+
+    from .signal_processing import SignalProcessor
 
     _require_exact_bound_strings(
         company_name=company_name,
