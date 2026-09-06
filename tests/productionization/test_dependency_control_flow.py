@@ -219,6 +219,15 @@ def test_while_safe_paths_do_not_false_positive(tmp_path: Path) -> None:
     ) == []
 
 
+def test_while_test_binding_applies_before_zero_iteration_exit(tmp_path: Path) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "while (load := safe):\n    pass\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
 @pytest.mark.parametrize("keyword", ("with", "async with"))
 def test_with_target_shadows_loader_before_body(tmp_path: Path, keyword: str) -> None:
     statement = f'{keyword} manager as load:\n        load("tradingagents.graph")'
