@@ -7,7 +7,7 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `908ee66cdbae755f301816f16156d04dcd6e2e90`
+- `last_reconciled_main_sha`: `58b7d1bf02d21f19c9efdcd10f6705559dd9ebd9`
 - `roadmap_status`: `sig_01_merged_stopped`
 - `current_pr_id`: none (no active roadmap implementation)
 - `next_pr_id`: `SIG-02` (informational; requires fresh authorization and reconciled gates)
@@ -28,6 +28,18 @@ contracts before any newly authorized roadmap work.
 
 ## Current maintenance checkpoint
 
+Reconciled on 2026-09-06 from actual GitHub PR/ref/commit/workflow reads. PRs #31 through #38
+are merged; the prior pending #31 row was checkpoint lag, not an active writer or a state-machine
+failure. The [pre-SIG-02 remediation report](PRE_SIG02_REMEDIATION_2026_09_06.md) separates verified
+repairs, reading coverage, original CI evidence, and remaining verification limits. Its publication
+PR conversation records that PR's exact final head, actual merge and post-merge checks; do not add a
+self-referential state commit merely to embed this file's own future merge SHA.
+
+The owner renewed the bounded serial repair authorization on 2026-09-05T22:59:26Z and
+2026-09-06T01:25:32Z, and explicitly approved the operations at 2026-09-06T01:26:29Z. Chat may be
+Chinese; all repository/GitHub engineering prose is English. Root AGENTS already enforces this rule
+from merged PR #36. No authorization to implement SIG-02 or resume the roadmap is implied.
+
 The user authorized audit remediation A01-A12 on 2026-09-05 and explicitly updated the instruction
 at `2026-09-05T18:20:41Z`: verify and merge one passing remediation PR, refresh main, then proceed to
 the next. Independent PR review is waived **only for this bounded remediation batch**. This is an
@@ -46,7 +58,14 @@ batch by the explicit user update and the recorded merge-gate comments.
 | REM-01 / A01-A03 runtime boundaries | #28 | `f76e18b8669160df420c7fa51a0e95485f07c7d7` | `1d467cb4edfcbb322cbdd45baeefdbaede816495`; merged, main refreshed |
 | REM-02 / A04-A06 validation boundaries | #29 | `8624c9502258d7e06ec3a1229cae532021e3efbf` | `fcdebebbb1ea667b255d97f6350fad2e0d0ae2d8`; merged after fresh integration CI |
 | REM-03 / A07 and state reconciliation | #30 | `d66ae19b8ffa58bc6447c0ba2c349e85e7e6acaa` | `908ee66cdbae755f301816f16156d04dcd6e2e90`; merged, main refreshed |
-| REM-04 / A08-A12 design handoffs | #31 | final candidate and checks belong in PR conversation after freeze | current maintenance; merge pending, not a PASS claim |
+| REM-04 / A08-A12 design handoffs | #31 | `d32c0b85f30fd8ffab1b7fd1d359b29d5a3a1da0` | `af610844cd9de744e911486185b7869dca369f2d`; merged 2026-09-05T20:00:08Z |
+| REM-05 / A06 lexical scope and branches | #32 | `f10a511efe90442ca090909c93e63fe0dc6b01c7` | `b6ce5a3faaf7fe7d35e760d8a7d7be7c79f8d5d3`; merged 2026-09-05T20:14:38Z |
+| N01 / N03 input error classification | #33 | `b20baf94a031abcba263c872b805974f075d96c7` | `07c63438e976f6a5a05586f7570a35443cdedac0`; merged 2026-09-05T21:53:12Z |
+| N02 annotation dependency traversal | #34 | `30eae5b331656e8cb33e801c126fe2155e7b0e7e` | `3c42ac939c57c33df10c29f9fce07e7215fd1399`; merged 2026-09-05T23:09:09Z |
+| FRESH-01 assignment-target dependencies | #35 | `6efc1ba2aa4399b0f513287c48cc78097127f8aa` | `1e522e49d181633499e3077ce3350f3a2548f25a`; merged 2026-09-05T23:21:00Z |
+| LANG-01 English repository and GitHub prose | #36 | `1e6ad59687b3019d327baa31104bcf99aff28309` | `c8ed290b74549d3c373e97f772eda5ed9c2dc157`; merged 2026-09-05T23:36:16Z |
+| FRESH-02 approved closed-replay documentation | #37 | `e71e892ff6270cf2437849e9094768860d723368` | `9078921d7fd071183b53dda6f53e17b6601f93c7`; merged 2026-09-06T01:34:42Z |
+| FRESH-03 malformed historical content selectors | #38 | `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4` | `58b7d1bf02d21f19c9efdcd10f6705559dd9ebd9`; merged 2026-09-06T02:09:11Z |
 
 REM-01 CI/CodeQL/Dependency Review: `33980970330` / `33980970259` / `33980970220`.
 REM-02 fresh integration CI/CodeQL/Dependency Review: `33984025011` / `33984025097` / `33984025007`.
@@ -71,6 +90,40 @@ services. The final candidate must pass actual exact-head CI before an expected-
 After a successful merge, read back merged state, main, parents and tree; failed publish/merge results
 are failures, never receipts. Record that final verification in the PR conversation without trying to
 embed this commit's own final SHA here. SIG-02 remains unstarted until a fresh authorized JIT.
+
+### Verified recovery result, 2026-09-06
+
+The withdrawal above remains valid: the initial completion claim was false at the time. Later
+GitHub records establish the actual #31 final head and merge shown in the table. Subsequent chat
+summaries also incorrectly said that #33-#36 had not been written/merged and that the language rule
+was absent. Those summaries are superseded by the actual PR records, current code and root AGENTS;
+do not recreate completed repairs or reinterpret historical RED commits as the current head.
+
+PR #37's final head, CI synthetic merge `fdc79ac1ca14a85496e6e56dae1004c73cb93494`, and actual
+merge share tree `7b05deb2b720c5c273faea2d2a3c2cae201024bd`. Its actual main parents are
+`c8ed290b74549d3c373e97f772eda5ed9c2dc157` and `e71e892ff6270cf2437849e9094768860d723368`.
+Final-head CI `33999602851`, CodeQL `33999602899`, and Dependency Review `33999602846` passed.
+Raw Python 3.14, Foundation, and installed-origin logs were inspected: 1902 passed / 2 skipped /
+69 subtests; 1326 productionization tests; all ten smoke origins in installed site-packages.
+Actual main-push CI `34004259861` and CodeQL `34004259837` then completed successfully before the
+checkpoint-publication branch was created. See the [post-merge evidence](https://github.com/kejian-tong/myTradingAlpha/pull/37#issuecomment-5556118766).
+
+PR #38 then repaired a typed-error leak for list/object content-block selectors without changing
+valid replay behavior. Final head `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4`, CI synthetic merge
+`fcb1484412d059392be129ede98a57e4e0729863`, and actual merge share tree
+`c66a7a7e72cfc7a19c48126757daf1cd4c5c7295`. Actual main parents are
+`9078921d7fd071183b53dda6f53e17b6601f93c7` and `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4`.
+Final-head CI `34005509441`, CodeQL `34005509451`, and Dependency Review `34005509452` passed;
+raw logs show 1926 passed / 2 skipped / 69 subtests and 1350 productionization tests.
+Actual main-push CI `34005733778` and CodeQL `34005733823` passed before the fresh evidence-publication
+branch was created. See the [post-merge evidence](https://github.com/kejian-tong/myTradingAlpha/pull/38#issuecomment-5556284139).
+The earlier unused checkpoint branch was paused without remote edits; it did not bypass serial order.
+
+The two optional skips and existing warnings are not real integrations. Reconciliation and green
+software CI do not prove source authenticity, real inference, alpha, PAPER or live readiness.
+The approved v1 response cutoff remains policy-specific: availability is always required by cutoff;
+ingestion is additionally required by cutoff for archive-realistic replay only. PR #37 corrects the
+older contrary handoff wording without changing code, sealed bytes, or the approved UTC date rule.
 
 ## Roadmap PR ledger
 
