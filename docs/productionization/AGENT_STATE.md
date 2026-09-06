@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -40,8 +40,9 @@ SIG-02 — Evidence tools and ResearchNote
 
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
-- implementation head before Master bookkeeping: `b162ecb8c8924470a7774a0381548f7e0e020ea1`
-  (tree `3b0ad7a2b5a13b69cbb2efe975f796b42efeff62`); the final state-bearing head is
+- final repaired implementation head before Master bookkeeping:
+  `073362ec4758e62ab299e755205e521dbc92542f`
+  (tree `1e934b7026e9493b004198f521645f154b3436cb`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -50,8 +51,9 @@ SIG-02 — Evidence tools and ResearchNote
 - implementer: successfully loaded named `normal_implementer`,
   `.codex/agents/normal-implementer.toml`, configured actual `gpt-5.6-luna / max`; no separate backend
   telemetry claim
-- reviewer: requested `reviewer_high`, `.codex/agents/reviewer-high.toml`, configured
-  `gpt-5.6-sol / high`; loading and verdict pending
+- reviewer: successfully loaded named `reviewer_high`, `.codex/agents/reviewer-high.toml`, configured
+  actual `gpt-5.6-sol / high`; no separate backend telemetry claim; first verdict REQUEST CHANGES,
+  fresh final-head re-review pending
 - master: configured/requested `gpt-5.6-sol / xhigh`; no separate backend telemetry claim
 - JIT: PR #45 body
 - RED: `8bca32021f03ecb1e9b34830277b8a6d2febdef6`, expected `12 failed, 55 passed`
@@ -59,17 +61,22 @@ SIG-02 — Evidence tools and ResearchNote
 - Master repair RED: `e649f5b377a79178f7035c9059ca48cf3b06fc26`, expected
   `4 failed, 67 passed`
 - repair GREEN: `b162ecb8c8924470a7774a0381548f7e0e020ea1`
-- local tests: PASS; focused `71 passed`, required regressions `791 passed`, full suite
-  `2266 passed / 3 skipped / 18 warnings / 69 subtests`
+- adversarial repair RED: `5f65b60413d9887bcf1156e632519b717d36b125`, expected
+  `11 failed / 70 passed`; repair GREEN: `344256df4945655c30bdbd665f58ea64298a9678`
+- redaction repair RED: `cf1f0fcd700ec96a8c33a8003744532e144f3b1d`, expected
+  `3 failed / 81 passed`; repair GREEN: `073362ec4758e62ab299e755205e521dbc92542f`
+- local tests: PASS after final repair; focused `84 passed`, required regressions `804 passed`, full
+  suite `2279 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: PASS at now-stale head `55e7d7b04190cd196ecfb50bdfe1239fa1078763` in CI
+- CI: prior PASS at stale head `55e7d7b04190cd196ecfb50bdfe1239fa1078763` in CI
   `34065709470`, CodeQL `34065709495` and Dependency Review `34065709471`; fresh exact-head checks
-  required after repair
+  pending after final state-bearing commit
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
-  durable artifact: PR #45 comment `5562924431`; repair RED/GREEN and fresh review required
+  durable artifact: PR #45 comment `5562924431`; three focused repair RED/GREEN cycles now close the
+  reported surfaces locally, but fresh exact-head review remains required
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
