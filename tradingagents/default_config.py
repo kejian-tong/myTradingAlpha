@@ -1,5 +1,9 @@
 import os
 
+from tradingagents._bootstrap import bootstrap_ordinary_runtime
+
+bootstrap_ordinary_runtime()
+
 _TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
 
 # Single source of truth for env-var → config-key overrides. To expose

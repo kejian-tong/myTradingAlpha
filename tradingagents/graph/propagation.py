@@ -2,11 +2,6 @@
 
 from typing import Any
 
-from tradingagents.agents.utils.agent_states import (
-    InvestDebateState,
-    RiskDebateState,
-)
-
 
 class Propagator:
     """Handles state initialization and propagation through the graph."""
@@ -38,30 +33,26 @@ class Propagator:
             "instrument_context": instrument_context,
             "trade_date": str(trade_date),
             "past_context": past_context,
-            "investment_debate_state": InvestDebateState(
-                {
-                    "bull_history": "",
-                    "bear_history": "",
-                    "history": "",
-                    "current_response": "",
-                    "judge_decision": "",
-                    "count": 0,
-                }
-            ),
-            "risk_debate_state": RiskDebateState(
-                {
-                    "aggressive_history": "",
-                    "conservative_history": "",
-                    "neutral_history": "",
-                    "history": "",
-                    "latest_speaker": "",
-                    "current_aggressive_response": "",
-                    "current_conservative_response": "",
-                    "current_neutral_response": "",
-                    "judge_decision": "",
-                    "count": 0,
-                }
-            ),
+            "investment_debate_state": {
+                "bull_history": "",
+                "bear_history": "",
+                "history": "",
+                "current_response": "",
+                "judge_decision": "",
+                "count": 0,
+            },
+            "risk_debate_state": {
+                "aggressive_history": "",
+                "conservative_history": "",
+                "neutral_history": "",
+                "history": "",
+                "latest_speaker": "",
+                "current_aggressive_response": "",
+                "current_conservative_response": "",
+                "current_neutral_response": "",
+                "judge_decision": "",
+                "count": 0,
+            },
             "market_report": "",
             "fundamentals_report": "",
             "sentiment_report": "",
