@@ -683,6 +683,12 @@ def test_aud_h01_preserves_delimiter_aware_negative_controls() -> None:
     assert "'token_count': 7" in rendered
     assert "'count': 2" in rendered
 
+    text = (
+        "secretary=office monkey=banana token_count=7 run_id=run-synthetic-001 "
+        "instrument_id=instrument-synthetic-001 count=2 api_secretary=ordinary"
+    )
+    assert _aud_h01_render(_aud_h01_record(message=text)) == text
+
 
 @pytest.mark.parametrize("field_name", _AUD_H01_SECRET_FIELDS)
 def test_aud_h01_already_redacted_values_are_idempotent(field_name: str) -> None:
