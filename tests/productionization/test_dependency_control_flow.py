@@ -632,6 +632,8 @@ def test_second_review_repair_captures_exact_nested_break_state(
             "        load = import_module\n"
             "        break\n"
             "        load = safe\n"
+            "    finally:\n"
+            "        pass\n"
         )
     elif container == "except":
         body = (
