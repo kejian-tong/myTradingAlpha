@@ -508,7 +508,7 @@ def test_dependency_direction_scope_and_callable_surface_are_static_and_narrow()
     ):
         assert token not in source
     research_root = REPOSITORY_ROOT / "mytradingalpha/research"
-    for later in ("evidence_tools.py", "notes.py", "overlay.py", "overlay_validator.py"):
+    for later in ("overlay.py", "overlay_validator.py"):
         assert not (research_root / later).exists()
 
 
