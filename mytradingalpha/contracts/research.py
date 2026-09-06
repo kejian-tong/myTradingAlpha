@@ -70,6 +70,12 @@ class ResearchProvenance(_ResearchContractModel):
     revision: StrictInt = Field(ge=0)
     manifest_hash: CanonicalChecksum
 
+    @model_validator(mode="after")
+    def validate_redacted_fields(self) -> ResearchProvenance:
+        if self.source_locator != "[REDACTED]" or self.terms != "[REDACTED]":
+            raise ValueError("research provenance requires redacted projection fields")
+        return self
+
 
 class EvidenceReference(_ResearchContractModel):
     """A domain-qualified reference to exactly one bundle record."""

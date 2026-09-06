@@ -9,6 +9,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from pydantic import BaseModel
@@ -163,10 +164,14 @@ def redact_plain_data(value: Any) -> Any:
             raise ValueError("plain data exceeds maximum redaction depth")
         item_type = type(item)
         if item_type is str:
-            if field_name in _PLAIN_DATA_SENSITIVE_FIELDS:
+            if field_name in _PLAIN_DATA_SENSITIVE_FIELDS or _is_sensitive_field(field_name):
                 return _REDACTED
             return _redact_plain_text(item)
-        if item_type in (int, float, bool, type(None)):
+        if item_type is float:
+            if not isfinite(item):
+                raise ValueError("plain data requires finite numbers")
+            return item
+        if item_type in (int, bool, type(None)):
             return item
         if item_type not in (dict, list, tuple):
             raise TypeError("plain data redaction accepts exact built-in JSON values")
