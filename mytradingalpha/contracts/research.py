@@ -26,6 +26,11 @@ CitableDomain = Literal[
     "macro",
 ]
 ResearchClaim = Literal["thesis", "risks"]
+MAX_RESEARCH_NOTE_BYTES = 4_194_304
+
+
+class ResearchNoteSerializationError(ValueError):
+    """Raised when a note cannot be represented within its canonical bounds."""
 
 
 class _FrozenDict(dict[str, str]):
@@ -52,6 +57,7 @@ class EvidenceCitation(ContractModel):
 
     claim: ResearchClaim
     reference: EvidenceReference
+    provenance: SourceManifest
     semantic_support: Literal["unassessed"] = "unassessed"
 
 
@@ -116,7 +122,12 @@ class ResearchNote(ContractModel):
     def canonical_bytes(self) -> bytes:
         """Return bounded canonical UTF-8 JSON for this note."""
 
-        return _canonical_json(self.model_dump(mode="json"))
+        raw = _canonical_json(self.model_dump(mode="json"))
+        if len(raw) > MAX_RESEARCH_NOTE_BYTES:
+            raise ResearchNoteSerializationError(
+                "research note exceeds maximum canonical byte size"
+            )
+        return raw
 
     @property
     def note_hash(self) -> str:
@@ -129,6 +140,8 @@ __all__ = [
     "CitableDomain",
     "EvidenceCitation",
     "EvidenceReference",
+    "MAX_RESEARCH_NOTE_BYTES",
     "ResearchClaim",
     "ResearchNote",
+    "ResearchNoteSerializationError",
 ]

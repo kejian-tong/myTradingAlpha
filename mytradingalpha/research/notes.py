@@ -5,11 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
 
-from mytradingalpha.contracts.research import EvidenceCitation, EvidenceReference, ResearchNote
+from mytradingalpha.contracts.research import (
+    MAX_RESEARCH_NOTE_BYTES,
+    EvidenceCitation,
+    EvidenceReference,
+    ResearchNote,
+    ResearchNoteSerializationError,
+)
 from mytradingalpha.contracts.schemas import RunContext
 from mytradingalpha.data.bundle import EvidenceBundle
+from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.ops.logging import redact_text
 from mytradingalpha.research.cached_response import CachedGraphResponse
 
@@ -37,10 +43,6 @@ class ResearchNoteBindingError(ResearchNoteError):
     """Raised when bundle, context, or cached response bindings disagree."""
 
 
-class ResearchNoteSerializationError(ResearchNoteError):
-    """Raised when note content cannot be represented canonically."""
-
-
 def _canonical(value: object) -> bytes:
     try:
         return json.dumps(
@@ -58,14 +60,29 @@ def _copy_bundle(bundle: object) -> EvidenceBundle:
     if type(bundle) is not EvidenceBundle:
         raise ResearchNoteInputError("ResearchNoteBuilder requires an exact EvidenceBundle")
     try:
-        return EvidenceBundle.model_validate(bundle.model_dump(mode="python"))
+        return EvidenceBundle.model_validate(EvidenceBundle.model_dump(bundle, mode="python"))
     except (TypeError, ValueError) as exc:
         raise ResearchNoteInputError("ResearchNoteBuilder received an invalid bundle") from exc
 
 
-def _check_exact_type(value: object, expected: type[Any], label: str) -> None:
-    if type(value) is not expected:
-        raise ResearchNoteInputError(f"{label} requires an exact {expected.__name__}")
+def _copy_context(context: object) -> RunContext:
+    if type(context) is not RunContext:
+        raise ResearchNoteInputError("context requires an exact RunContext")
+    try:
+        return RunContext.model_validate(RunContext.model_dump(context, mode="python"))
+    except (TypeError, ValueError) as exc:
+        raise ResearchNoteBindingError("context failed defensive validation") from exc
+
+
+def _copy_response(response: object) -> CachedGraphResponse:
+    if type(response) is not CachedGraphResponse:
+        raise ResearchNoteInputError("response requires an exact CachedGraphResponse")
+    try:
+        return CachedGraphResponse.model_validate(
+            CachedGraphResponse.model_dump(response, mode="python")
+        )
+    except (TypeError, ValueError) as exc:
+        raise ResearchNoteBindingError("cached response failed defensive validation") from exc
 
 
 def _validate_bindings(
@@ -112,10 +129,8 @@ class ResearchNoteBuilder:
         response: CachedGraphResponse,
     ) -> None:
         self._bundle = _copy_bundle(bundle)
-        _check_exact_type(context, RunContext, "context")
-        _check_exact_type(response, CachedGraphResponse, "response")
-        self._context = context
-        self._response = response
+        self._context = _copy_context(context)
+        self._response = _copy_response(response)
 
     def build(
         self,
@@ -177,12 +192,13 @@ class ResearchNoteBuilder:
                         f"duplicate evidence citation: {reference.domain}/{reference.record_id}"
                     )
                 item = toolset.get(reference)
-                del item
+                provenance = SourceManifest.model_validate(dict(item.provenance))
                 seen.add(key)
                 citations.append(
                     EvidenceCitation(
                         claim=claim,
                         reference=reference,
+                        provenance=provenance,
                         semantic_support="unassessed",
                     )
                 )
@@ -233,6 +249,7 @@ __all__ = [
     "EvidenceToolError",
     "IneligibleEvidenceReferenceError",
     "MalformedEvidenceReferenceError",
+    "MAX_RESEARCH_NOTE_BYTES",
     "MissingEvidenceReferenceError",
     "ResearchNoteBindingError",
     "ResearchNoteBuilder",
