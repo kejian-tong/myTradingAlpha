@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from pydantic import ValidationError
 
 from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.data.bundle import EvidenceDomain
+from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.research.cached_response import (
     build_cached_graph_response,
     parse_cached_graph_response,
@@ -278,6 +280,11 @@ def test_research_note_binds_exact_sources_and_keeps_semantic_support_unassessed
         "action-acme-split",
         "news-aapl-earnings",
     }
+    event = next(item for item in bundle.events if item.event_id == "news-aapl-earnings")
+    event_citation = next(
+        item for item in payload["citations"] if item["reference"]["record_id"] == event.event_id
+    )
+    assert event_citation["provenance"] == event.manifest.model_dump(mode="json")
     for field in (
         "note_id",
         "run_id",
@@ -366,6 +373,66 @@ def test_research_note_rejects_duplicate_citations_bad_fields_and_cross_binding(
             source_fields={"thesis": "market_report", "risks": "news_report"},
             claim_citations={"thesis": (reference,), "risks": ()},
         )
+
+
+def test_evidence_toolset_fails_closed_for_ambiguous_and_ineligible_records() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    reference = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    toolset = evidence_tools.EvidenceToolset(bundle)
+    event = next(item for item in toolset._bundle.events if item.event_id == reference.record_id)
+
+    object.__setattr__(toolset._bundle, "events", (event, event))
+    with pytest.raises(evidence_tools.AmbiguousEvidenceReferenceError):
+        toolset.get(reference)
+
+    late_manifest = SourceManifest.model_validate(
+        {
+            **event.manifest.model_dump(mode="python"),
+            "ingested_at": datetime(2024, 7, 1, tzinfo=timezone.utc),
+        }
+    )
+    late_event = event.model_copy(update={"manifest": late_manifest})
+    object.__setattr__(toolset._bundle, "events", (late_event,))
+    with pytest.raises(evidence_tools.IneligibleEvidenceReferenceError):
+        toolset.get(reference)
+
+
+def test_research_note_builder_defensively_copies_context_and_response() -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, output = _bundle_response()
+    thesis_ref = _reference(contracts, bundle, "actions", "action-acme-split")
+    risk_ref = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    builder = notes.ResearchNoteBuilder(bundle=bundle, context=context, response=response)
+
+    object.__setattr__(context, "run_id", "caller-mutated-run")
+    response.output["market_report"] = "caller-mutated-thesis"
+    note = builder.build(
+        source_agent="sentiment_analyst",
+        source_fields={"thesis": "market_report", "risks": "news_report"},
+        claim_citations={"thesis": (thesis_ref,), "risks": (risk_ref,)},
+    )
+    assert note.run_id == "run-sig-02"
+    assert note.thesis == output["market_report"]
+
+
+def test_research_note_builder_maps_corrupt_response_to_typed_error() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    corrupt = response.model_copy(update={"response_hash": f"sha256:{'0' * 64}"})
+    with pytest.raises(notes.ResearchNoteBindingError):
+        notes.ResearchNoteBuilder(bundle=bundle, context=context, response=corrupt)
+
+
+def test_research_note_canonical_bytes_have_a_named_bounded_limit() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    limit = notes.MAX_RESEARCH_NOTE_BYTES
+    assert type(limit) is int and limit == 4_194_304
+    oversized = note.model_copy(update={"thesis": "x" * limit})
+    with pytest.raises(notes.ResearchNoteSerializationError):
+        oversized.canonical_bytes()
 
 
 def test_redaction_helper_preserves_existing_logging_behavior() -> None:
