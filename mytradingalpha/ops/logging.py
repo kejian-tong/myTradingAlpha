@@ -42,19 +42,47 @@ _SENSITIVE_FIELD_PATHS = (
     ("secret",),
     ("token",),
 )
+_SENSITIVE_COMPACT_FIELDS = frozenset(
+    "".join(path) for path in _SENSITIVE_FIELD_PATHS if len(path) > 1
+)
+_CAMEL_ACRONYMS = {"api": "API", "aws": "AWS", "id": "ID"}
+_SENSITIVE_CAMEL_SUFFIXES = tuple(
+    dict.fromkeys(
+        suffix
+        for path in _SENSITIVE_FIELD_PATHS
+        for suffix in (
+            "".join(part.title() for part in path),
+            "".join(_CAMEL_ACRONYMS.get(part, part.title()) for part in path),
+        )
+    )
+)
 _CAMEL_BOUNDARY_PATTERN = re.compile(
     r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
 )
 _FIELD_PART_PATTERN = re.compile(r"[A-Za-z0-9]+")
-_SENSITIVE_TEXT_KEY_PATTERN = "(?:" + "|".join(
+_SENSITIVE_ALIAS_PATTERN = "(?:" + "|".join(
     r"[-_.]?".join(path) for path in _SENSITIVE_FIELD_PATHS
 ) + ")"
+_SENSITIVE_CAMEL_KEY_PATTERN = (
+    r"(?:[A-Za-z][A-Za-z0-9]*?)(?:"
+    + "|".join(re.escape(suffix) for suffix in _SENSITIVE_CAMEL_SUFFIXES)
+    + ")"
+)
+_SENSITIVE_TEXT_KEY_PATTERN = (
+    rf"(?:(?:[A-Za-z][A-Za-z0-9]*[-_.]+)*{_SENSITIVE_ALIAS_PATTERN}"
+    rf"|(?-i:{_SENSITIVE_CAMEL_KEY_PATTERN}))"
+)
+_AUTHORIZATION_TEXT_KEY_PATTERN = (
+    r"(?:(?:[A-Za-z0-9]+[-_.]+)*authorization"
+    r"|(?-i:(?:[A-Za-z][A-Za-z0-9]*?)Authorization))"
+)
 _BEARER_PATTERN = re.compile(
     r"(\bBearer\s+)(?!\[REDACTED\])[^\s,}\]]+", re.IGNORECASE
 )
 _AUTHORIZATION_PATTERN = re.compile(
-    r"(?P<prefix>(?P<key_quote>[\"']?)"
-    r"(?P<key>(?:[A-Za-z0-9]+[_-])*authorization)"
+    rf"(?<![A-Za-z0-9_.-])"
+    rf"(?P<prefix>(?P<key_quote>[\"']?)"
+    rf"(?P<key>{_AUTHORIZATION_TEXT_KEY_PATTERN})"
     r"(?P=key_quote)\s*[:=])"
     r"(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?P<spacing>\s*)"
@@ -65,7 +93,7 @@ _AUTHORIZATION_PATTERN = re.compile(
 _KEY_VALUE_PATTERN = re.compile(
     rf"(?<![A-Za-z0-9_.-])"
     rf"(?P<prefix>(?P<key_quote>[\"']?)"
-    rf"(?P<key>(?:[A-Za-z][A-Za-z0-9]*[-_.]+)*{_SENSITIVE_TEXT_KEY_PATTERN})"
+    rf"(?P<key>{_SENSITIVE_TEXT_KEY_PATTERN})"
     r"(?P=key_quote)\s*[:=])"
     r"(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?P<spacing>\s*)"
@@ -92,7 +120,7 @@ def _is_sensitive_field(field_name: Any) -> bool:
     return any(
         len(parts) >= len(path) and parts[-len(path) :] == path
         for path in _SENSITIVE_FIELD_PATHS
-    )
+    ) or bool(parts and parts[-1] in _SENSITIVE_COMPACT_FIELDS)
 
 
 def _redact_text(value: str) -> str:
