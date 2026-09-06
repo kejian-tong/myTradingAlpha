@@ -11,6 +11,7 @@ import importlib
 import json
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from math import nan
 from pathlib import Path
 from typing import Any
 
@@ -643,6 +644,50 @@ def test_public_plain_data_redaction_rejects_hostile_containers_and_nested_secre
 
     with pytest.raises(TypeError):
         logging_module.redact_plain_data(HostileDict(payload))
+
+
+def test_public_plain_data_redaction_checks_exact_sensitive_field_aliases() -> None:
+    _, _, _ = _load_sig02()
+    logging_module = importlib.import_module("mytradingalpha.ops.logging")
+    payload = {
+        "api_key": "SIG02_DIRECT_SECRET",
+        "api-key": "SIG02_DASH_SECRET",
+        "apiKey": "SIG02_CAMEL_SECRET",
+        "clientSecret": "SIG02_CLIENT_SECRET",
+        "Authorization": "Bearer SIG02_AUTHORIZATION_SECRET",
+        "bearerToken": "SIG02_BEARER_SECRET",
+        "safe_api_key_hint": "SIG02_SAFE_CONTROL",
+    }
+    redacted = logging_module.redact_plain_data(payload)
+    encoded = json.dumps(redacted, sort_keys=True)
+    assert all(secret not in encoded for secret in payload.values() if secret != payload["safe_api_key_hint"])
+    assert redacted["safe_api_key_hint"] == "SIG02_SAFE_CONTROL"
+    assert all(value == "[REDACTED]" for key, value in redacted.items() if key != "safe_api_key_hint")
+
+
+def test_public_plain_data_redaction_rejects_non_finite_numbers() -> None:
+    _, _, _ = _load_sig02()
+    logging_module = importlib.import_module("mytradingalpha.ops.logging")
+    with pytest.raises(ValueError):
+        logging_module.redact_plain_data({"nested": [nan]})
+
+
+def test_direct_provenance_and_note_payloads_require_redacted_projection_fields() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    provenance = note.capture_manifest.model_dump(mode="python")
+
+    for field in ("source_locator", "terms"):
+        unredacted = dict(provenance)
+        unredacted[field] = f"raw-{field}-secret"
+        with pytest.raises(ValidationError):
+            contracts.ResearchProvenance.model_validate(unredacted)
+
+        payload = note.model_dump(mode="python")
+        payload["capture_manifest"] = unredacted
+        with pytest.raises(ValidationError):
+            contracts.ResearchNote.model_validate(payload)
 
 
 def test_clean_install_smoke_lists_sig02_public_submodules() -> None:
