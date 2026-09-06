@@ -709,6 +709,178 @@ def test_aud_h01_preserves_standard_malformed_formatting_failure() -> None:
         RedactionFilter().filter(record)
 
 
+_AUD_H01_COMPACT_FIELDS = (
+    "apikey",
+    "clientsecret",
+    "accesstoken",
+    "brokeraccountid",
+    "awssecretaccesskey",
+    "apisecret",
+)
+
+
+@pytest.mark.parametrize("field_name", _AUD_H01_COMPACT_FIELDS)
+@pytest.mark.parametrize(
+    "surface",
+    ("mapping", "nested", "lazy-mapping", "extra", "error", "exception"),
+)
+def test_aud_h01_repair_redacts_compact_aliases_across_structured_surfaces(
+    field_name: str,
+    surface: str,
+) -> None:
+    canary = f"AUDH01_REPAIR_CANARY_{field_name.upper()}"
+    if surface == "mapping":
+        rendered = _aud_h01_render(_aud_h01_record(message={field_name: canary}))
+    elif surface == "nested":
+        rendered = _aud_h01_render(
+            _aud_h01_record(message={"payload": [({field_name: canary},)]})
+        )
+    elif surface == "lazy-mapping":
+        rendered = _aud_h01_render(
+            _aud_h01_record(
+                message=f"{field_name}=%({field_name})s",
+                arguments=({field_name: canary},),
+            )
+        )
+    elif surface == "extra":
+        record = _aud_h01_record(message="synthetic compact extra")
+        record.__dict__[field_name] = canary
+        rendered = _aud_h01_render(record, f"%(message)s %({field_name})s")
+    elif surface == "error":
+        logger, stream = _aud_h01_standard_logger(f"aud-h01-repair-error-{field_name}")
+        logger.error("failed: %s", ValueError(f"{field_name}={canary}"))
+        rendered = stream.getvalue()
+    else:
+        assert surface == "exception"
+        logger, stream = _aud_h01_standard_logger(f"aud-h01-repair-exception-{field_name}")
+        try:
+            raise ValueError(f"failed: {field_name}={canary}")
+        except ValueError:
+            logger.exception("synthetic compact failure")
+        rendered = stream.getvalue()
+        assert "Traceback (most recent call last)" in rendered
+        assert "ValueError: failed:" in rendered
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "provider_apikey",
+        "service_clientsecret",
+        "cloud_accesstoken",
+        "audit_brokeraccountid",
+        "cloud_awssecretaccesskey",
+        "provider_apisecret",
+    ),
+)
+@pytest.mark.parametrize("surface", ("mapping", "text"))
+def test_aud_h01_repair_redacts_compact_alias_suffix_tokens(
+    field_name: str,
+    surface: str,
+) -> None:
+    canary = f"AUDH01_REPAIR_SUFFIX_{field_name.upper()}"
+    message: object = (
+        {field_name: canary}
+        if surface == "mapping"
+        else f"synthetic: {field_name}={canary}"
+    )
+
+    rendered = _aud_h01_render(_aud_h01_record(message=message))
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.parametrize("field_name", ("providerApiKey", "providerApiSecret", "providerAPIKey"))
+@pytest.mark.parametrize("surface", ("text", "lazy", "traceback"))
+def test_aud_h01_repair_redacts_prefixed_camel_text_surfaces(
+    field_name: str,
+    surface: str,
+) -> None:
+    canary = f"AUDH01_REPAIR_CAMEL_{field_name.upper()}"
+    if surface == "text":
+        rendered = _aud_h01_render(
+            _aud_h01_record(message=f"synthetic: {field_name}={canary}")
+        )
+    elif surface == "lazy":
+        rendered = _aud_h01_render(
+            _aud_h01_record(message=f"{field_name}=%s", arguments=(canary,))
+        )
+    else:
+        assert surface == "traceback"
+        logger, stream = _aud_h01_standard_logger(f"aud-h01-repair-camel-{field_name}")
+        try:
+            raise ValueError(f"failed: {field_name}={canary}")
+        except ValueError:
+            logger.exception("synthetic camel failure")
+        rendered = stream.getvalue()
+        assert "Traceback (most recent call last)" in rendered
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "apiKey",
+        "clientSecret",
+        "AWSSecretAccessKey",
+        "provider_api_key",
+        "provider-api-secret",
+    ),
+)
+def test_aud_h01_repair_preserves_exact_camel_and_delimiter_protection(
+    field_name: str,
+) -> None:
+    canary = f"AUDH01_REPAIR_PROTECTED_{field_name.upper()}"
+
+    rendered = _aud_h01_render(
+        _aud_h01_record(message=f"synthetic: {field_name}={canary}")
+    )
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "Authorization: Basic AUDH01_REPAIR_AUTHORIZATION",
+        "Proxy-Authorization: Token AUDH01_REPAIR_PROXY_AUTHORIZATION",
+        "provider_authorization=AUDH01_REPAIR_DELIMITED_AUTHORIZATION",
+        "providerAuthorization: Bearer AUDH01_REPAIR_CAMEL_AUTHORIZATION",
+    ),
+)
+def test_aud_h01_repair_preserves_authorization_boundary_protection(message: str) -> None:
+    rendered = _aud_h01_render(_aud_h01_record(message=message))
+
+    assert "AUDH01_REPAIR" not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "notauthorization=ordinary",
+        "preauthorization=ordinary",
+        "authorizationStatus=ordinary",
+        "myapikey=ordinary",
+        "clientsecretary=ordinary",
+        "accesstoken_count=7",
+        "brokeraccountidentity=ordinary",
+        "secretary=office monkey=banana token_count=7",
+    ),
+)
+def test_aud_h01_repair_preserves_authorization_and_compact_near_matches(
+    message: str,
+) -> None:
+    assert _aud_h01_render(_aud_h01_record(message=message)) == message
+
+
 def test_structured_logs_include_context_and_restore_nested_correlation_scopes() -> None:
     from mytradingalpha.ops.logging import configure_logging, correlation_scope
 
