@@ -268,6 +268,28 @@ def test_comprehension_named_expression_updates_containing_scope(tmp_path: Path)
     )
 
 
+def test_comprehension_named_expression_updates_containing_function_scope(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\n"
+        "def run():\n"
+        "    values = [(load := import_module) for item in items]\n"
+        '    load("tradingagents.graph")\n',
+    )
+
+
+def test_comprehension_safe_walrus_is_local_not_outer_loader(tmp_path: Path) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "def run():\n"
+        "    values = [(load := safe) for item in items]\n"
+        '    load("tradingagents.graph")\n',
+    ) == []
+
+
 def test_comprehension_zero_iteration_preserves_outer_loader(tmp_path: Path) -> None:
     _assert_forbidden(
         tmp_path,
