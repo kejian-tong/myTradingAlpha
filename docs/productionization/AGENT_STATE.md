@@ -7,7 +7,7 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `58b7d1bf02d21f19c9efdcd10f6705559dd9ebd9`
+- `last_reconciled_main_sha`: `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`
 - `roadmap_status`: `sig_01_merged_stopped`
 - `current_pr_id`: none (no active roadmap implementation)
 - `next_pr_id`: `SIG-02` (informational; requires fresh authorization and reconciled gates)
@@ -28,12 +28,17 @@ contracts before any newly authorized roadmap work.
 
 ## Current maintenance checkpoint
 
-Reconciled on 2026-09-06 from actual GitHub PR/ref/commit/workflow reads. PRs #31 through #38
-are merged; the prior pending #31 row was checkpoint lag, not an active writer or a state-machine
-failure. The [pre-SIG-02 remediation report](PRE_SIG02_REMEDIATION_2026_09_06.md) separates verified
-repairs, reading coverage, original CI evidence, and remaining verification limits. Its publication
-PR conversation records that PR's exact final head, actual merge and post-merge checks; do not add a
-self-referential state commit merely to embed this file's own future merge SHA.
+Reconciled on 2026-09-06 from actual GitHub PR/ref/commit/workflow reads through the last product-code
+merge, PR #43 at `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`. PRs #31 through #43 are merged;
+the prior pending #31 row was checkpoint lag, not an active writer or a state-machine failure. The
+[pre-SIG-02 remediation report](PRE_SIG02_REMEDIATION_2026_09_06.md) now contains a prominent
+independent-audit supersession while preserving the original #28-#39 report as historical evidence.
+
+PR #39 has zero issue comments and zero review objects. The earlier statement that its conversation
+contained the final receipt was false. Its actual final head, merge/tree and candidate/post-push
+checks are established by immutable GitHub PR, ref, commit and workflow records listed below. This
+file records the last verified product-code main as the base for the final documentation correction;
+do not add a self-referential follow-up merely to embed that correction PR's own future merge SHA.
 
 The owner renewed the bounded serial repair authorization on 2026-09-05T22:59:26Z and
 2026-09-06T01:25:32Z, and explicitly approved the operations at 2026-09-06T01:26:29Z. Chat may be
@@ -48,10 +53,12 @@ to execute SIG-02. It does not waive required CI, branch protections, architectu
 paper/live approval. The waiver expires when this batch stops or completes and is not inherited by
 a future roadmap session merely because it appears in this file.
 
-The current session directly implements/verifies through the GitHub connector; no named Codex spawn,
-reasoning-effort switch, independent reviewer or backend route telemetry is claimed. Project Luna/Sol
-configuration remains unchanged. Older PR bodies saying no merge authorized are superseded for this
-batch by the explicit user update and the recorded merge-gate comments.
+That no-independent-review statement applies only to the historical #28-#39 batch. The later
+independent audit and PRs #40-#43 used a loaded `high_implementer` configured actual Sol/high and a
+separate `reviewer_xhigh` configured actual Sol/xhigh, with exact-head re-review after every
+repair. These are successful named-role configured-actual records, not claims of separately exposed
+backend telemetry. The Master used the actually selected root runtime without relabeling it. Project
+Luna/Sol configuration remained unchanged, and no GPT-6 route was enabled.
 
 | Maintenance scope | PR | Exact validated head | Actual merge / current state |
 | --- | --- | --- | --- |
@@ -66,10 +73,32 @@ batch by the explicit user update and the recorded merge-gate comments.
 | LANG-01 English repository and GitHub prose | #36 | `1e6ad59687b3019d327baa31104bcf99aff28309` | `c8ed290b74549d3c373e97f772eda5ed9c2dc157`; merged 2026-09-05T23:36:16Z |
 | FRESH-02 approved closed-replay documentation | #37 | `e71e892ff6270cf2437849e9094768860d723368` | `9078921d7fd071183b53dda6f53e17b6601f93c7`; merged 2026-09-06T01:34:42Z |
 | FRESH-03 malformed historical content selectors | #38 | `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4` | `58b7d1bf02d21f19c9efdcd10f6705559dd9ebd9`; merged 2026-09-06T02:09:11Z |
+| STATE-01 recovery publication | #39 | `bb79a13e0bca1f498b14e584d852e72a46e5d658` | `c02243ea25cb3e1be4c302c10b2e447a587604b2`; merged 2026-09-06T02:28:32Z |
+| AUD-H03 closed-replay import purity | #40 | `7b566757ddcbe45d8b8f2f90d1c37699abeca74b` | `ca61fdc020bfa95e67a19fa518ee6427abde651a`; merged 2026-09-06T15:40:37Z |
+| AUD-H02 historical call-field placement | #41 | `b35c83a5f742ccbc869ef2945ca422c3cc716767` | `56ee0a5d0a0633b8ae17b4095e7063d93f5da268`; merged 2026-09-06T16:10:38Z |
+| AUD-H01 structured-log redaction | #42 | `0afae2986a1772897c939b20670d9a7353d142e4` | `5240885ebe15132b11fca17ccbf175c180675b9b`; merged 2026-09-06T18:07:30Z |
+| AUD-M01 dependency control-flow analysis | #43 | `20370f67c601f5dbd5693830a7805f5919f73fc4` | `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`; merged 2026-09-06T19:33:30Z |
 
 REM-01 CI/CodeQL/Dependency Review: `33980970330` / `33980970259` / `33980970220`.
 REM-02 fresh integration CI/CodeQL/Dependency Review: `33984025011` / `33984025097` / `33984025007`.
 REM-03 fresh integration CI/CodeQL/Dependency Review: `33984551684` / `33984551666` / `33984551669`.
+#39 candidate CI/CodeQL/Dependency Review: `34006302600` / `34006302440` / `34006302913`;
+main-push CI/CodeQL: `34006575330` / `34006575329`; head and merge share tree
+`8917ad6d7f9e59ca7b9ef34a15e980f6521c99e7`.
+#40 candidate: `34042663314` / `34042663311` / `34042663317`; main push:
+`34043061438` / `34043061463`; merge tree `6ee1f21b5b7636693d36fe64df61beebc2956b3f`.
+#41 candidate: `34044170605` / `34044170589` / `34044170583`; main push:
+`34044607182` / `34044607180`; merge tree `606c072d6f89c7018b33cda1e9df8f809cd4eff8`.
+#42 candidate: `34050312728` / `34050312642` / `34050312669`; main push:
+`34050719401` / `34050719320`; merge tree `61aeaaada13f174a67f9a800ce844074f2d00292`.
+#43 candidate: `34054706215` / `34054706207` / `34054706271`; main push:
+`34055267326` / `34055267342`; merge tree `03d185859827d9f8013f6f1744fef3f191a2aad0`.
+
+PRs #40-#43 contain durable independent-review and Master-gate comments. Those comments accurately
+index the independent agent evidence but are not submitted GitHub review objects. Earlier candidate
+reviews became stale whenever the head changed; only each final frozen-head APPROVE and exact-head
+checks control its merge.
+
 The complete diffs, RED/GREEN history, limits and merge decisions remain in the respective PRs.
 Optional live-provider/Bedrock skips are not passed integrations. Local focused results use a
 non-locked environment; the complete locked matrix comes from GitHub Actions. No alpha or promotion
@@ -187,9 +216,11 @@ still controls closed replay and the UTC cutoff-date rule.
    head/base/tree CI and persist the Master gate before any separately authorized merge. Any explicit
    current-user maintenance exception must be narrowly recorded, never forged as a review or reused.
 
-Review/CI results after a frozen checkpoint are recorded in its PR conversation. Reconcile them in
-the next authorized state update. Do not create a commit merely to record its own unknowable final
-SHA, and do not add a state-only PR after every merge solely to force a self-referential checkpoint.
+Review/CI results after a frozen checkpoint belong in a durable PR artifact and/or immutable GitHub
+ref, commit and workflow record. A PR conversation may index that evidence, but PR #39 proves it is
+not universally present. Reconcile the underlying records in the next authorized state update. Do
+not create a commit merely to record its own unknowable final SHA, and do not add a state-only PR
+after every merge solely to force a self-referential checkpoint.
 The offline harness checker tests normal roadmap predicates only; permissions, successful role
 loading, writer termination and evidence authenticity must be verified in the actual host/connector.
 It is not the executor of this expressly waived maintenance batch.
