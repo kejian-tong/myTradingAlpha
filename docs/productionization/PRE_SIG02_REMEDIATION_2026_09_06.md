@@ -27,7 +27,7 @@ verified by post-push checks:
 
 PR #39's actual final head is `bb79a13e0bca1f498b14e584d852e72a46e5d658`, its merge is
 `c02243ea25cb3e1be4c302c10b2e447a587604b2`, and both share tree
-`8917ad6d7f9e59ca7b9ef34a15e980f6521c99e7`. Candidate CI/CodeQL/Dependency Review
+`8917ad6a156a7b45df450fd3fe157e43d96d1d7f`. Candidate CI/CodeQL/Dependency Review
 `34006302600` / `34006302440` / `34006302913` and main-push CI/CodeQL
 `34006575330` / `34006575329` passed. These immutable records correct the missing conversation
 receipt; no historical comment or review was fabricated.
