@@ -130,6 +130,14 @@ def _redact_text(value: str) -> str:
     return _BEARER_PATTERN.sub(rf"\1{_REDACTED}", value)
 
 
+def redact_text(value: str) -> str:
+    """Return text redacted with the same rules used by structured logging."""
+
+    if type(value) is not str:
+        raise TypeError("redact_text requires an exact string")
+    return _redact_text(value)
+
+
 def _replace_sensitive_value(match: re.Match[str]) -> str:
     if not _is_sensitive_field(match.group("key")):
         return match.group(0)
@@ -243,4 +251,4 @@ def configure_logging(*, logger: logging.Logger, stream: Any) -> logging.Logger:
     return logger
 
 
-__all__ = ["RedactionFilter", "configure_logging", "correlation_scope"]
+__all__ = ["RedactionFilter", "configure_logging", "correlation_scope", "redact_text"]
