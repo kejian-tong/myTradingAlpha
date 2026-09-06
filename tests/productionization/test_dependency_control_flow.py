@@ -731,3 +731,154 @@ def test_second_review_repair_direct_break_is_unique_and_not_erased(
         "    load = safe\n"
         'load("tradingagents.graph")\n',
     )
+
+
+def _finalized_break_source(loop_kind: str, *, before: str, final: str) -> str:
+    if loop_kind == "async for":
+        return (
+            "from importlib import import_module\n"
+            "async def run():\n"
+            f"    load = {before}\n"
+            "    async for item in values:\n"
+            "        try:\n"
+            "            break\n"
+            "        finally:\n"
+            f"            load = {final}\n"
+            "    else:\n"
+            "        load = safe\n"
+            '    load("tradingagents.graph")\n'
+        )
+    header = "for item in values:" if loop_kind == "for" else "while flag:"
+    return (
+        "from importlib import import_module\n"
+        f"load = {before}\n"
+        f"{header}\n"
+        "    try:\n"
+        "        break\n"
+        "    finally:\n"
+        f"        load = {final}\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n'
+    )
+
+
+@pytest.mark.parametrize("loop_kind", ("for", "async for", "while"))
+def test_second_review_repair_finally_can_create_loader_on_pending_break(
+    tmp_path: Path,
+    loop_kind: str,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        _finalized_break_source(loop_kind, before="safe", final="import_module"),
+    )
+
+
+@pytest.mark.parametrize("loop_kind", ("for", "async for", "while"))
+def test_second_review_repair_finally_can_clear_loader_on_pending_break(
+    tmp_path: Path,
+    loop_kind: str,
+) -> None:
+    assert _violations(
+        tmp_path,
+        _finalized_break_source(loop_kind, before="import_module", final="safe"),
+    ) == []
+
+
+def test_second_review_repair_try_else_break_runs_finally(tmp_path: Path) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    else:\n"
+        "        break\n"
+        "    finally:\n"
+        "        load = import_module\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    )
+
+
+def test_second_review_repair_nested_finalizers_transform_break_once_each(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        "    try:\n"
+        "        try:\n"
+        "            load = import_module\n"
+        "            break\n"
+        "        finally:\n"
+        "            load = safe\n"
+        "    finally:\n"
+        "        load = import_module\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    )
+
+
+def test_second_review_repair_outer_finalizer_can_clear_inner_transformation(
+    tmp_path: Path,
+) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        "    try:\n"
+        "        try:\n"
+        "            break\n"
+        "        finally:\n"
+        "            load = import_module\n"
+        "    finally:\n"
+        "        load = safe\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
+def test_second_review_repair_except_target_is_cleared_on_pending_break(
+    tmp_path: Path,
+) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except Exception as load:\n"
+        "        load = import_module\n"
+        "        break\n"
+        "    else:\n"
+        "        load = safe\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
+def test_second_review_repair_break_inside_finally_is_not_reapplied(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        "    try:\n"
+        "        pass\n"
+        "    finally:\n"
+        "        load = import_module\n"
+        "        break\n"
+        "        load = safe\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    )
