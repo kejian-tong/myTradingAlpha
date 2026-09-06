@@ -332,6 +332,8 @@ def _validate_call_tree(value: object) -> None:
 
 def _validate_content_block(block: dict[str, object]) -> None:
     kind = block.get("type")
+    if kind is not None and type(kind) is not str:
+        raise HistoricalRuntimeOutputError("historical content block type must be a string")
     if kind == "non_standard":
         wrapped = block.get("value")
         if type(wrapped) is not dict:
