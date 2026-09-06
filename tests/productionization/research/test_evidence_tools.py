@@ -29,6 +29,7 @@ from tests.productionization.data.test_bundle_replay import (
     _candidate_fields,
 )
 from tests.productionization.research.test_cached_response import (
+    make_capture_manifest,
     make_output,
     make_response_kwargs,
 )
@@ -76,6 +77,20 @@ def _bundle_response() -> tuple[Any, RunContext, Any, dict[str, object]]:
         **make_response_kwargs(bundle=bundle, context=context, output=output)
     )
     return bundle, context, parse_cached_graph_response(raw), output
+
+
+def _response_variant(
+    bundle: Any,
+    context: RunContext,
+    *,
+    output_updates: Mapping[str, object] | None = None,
+    **response_updates: object,
+) -> Any:
+    output = make_output()
+    output.update(output_updates or {})
+    fields = make_response_kwargs(bundle=bundle, context=context, output=output)
+    fields.update(response_updates)
+    return parse_cached_graph_response(build_cached_graph_response(**fields))
 
 
 def _reference(contracts: Any, bundle: Any, domain: str, record_id: str) -> Any:
@@ -284,7 +299,10 @@ def test_research_note_binds_exact_sources_and_keeps_semantic_support_unassessed
     event_citation = next(
         item for item in payload["citations"] if item["reference"]["record_id"] == event.event_id
     )
-    assert event_citation["provenance"] == event.manifest.model_dump(mode="json")
+    assert event_citation["provenance"]["manifest_id"] == event.manifest.manifest_id
+    assert event_citation["provenance"]["source_locator"] == "[REDACTED]"
+    assert event_citation["provenance"]["terms"] == "[REDACTED]"
+    assert event_citation["provenance"]["manifest_hash"].startswith("sha256:")
     for field in (
         "note_id",
         "run_id",
@@ -433,6 +451,209 @@ def test_research_note_canonical_bytes_have_a_named_bounded_limit() -> None:
     oversized = note.model_copy(update={"thesis": "x" * limit})
     with pytest.raises(notes.ResearchNoteSerializationError):
         oversized.canonical_bytes()
+
+
+def test_research_nested_contracts_revalidate_mutated_exact_instances() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+
+    source_fields = contracts.ResearchSourceFields(
+        thesis="market_report",
+        risks="news_report",
+    )
+    object.__setattr__(source_fields, "thesis", 42)
+    with pytest.raises(ValidationError):
+        contracts.ResearchSourceFields.model_validate(source_fields)
+
+    citation = note.citations[0]
+    object.__setattr__(citation, "semantic_support", "supported")
+    with pytest.raises(ValidationError):
+        contracts.EvidenceCitation.model_validate(citation)
+
+
+def test_research_note_serialized_payload_rejects_intrinsic_citation_failures() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    baseline = note.model_dump(mode="python")
+
+    empty = dict(baseline)
+    empty["citations"] = ()
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(empty)
+
+    duplicate = dict(baseline)
+    duplicate["citations"] = (*baseline["citations"], baseline["citations"][0])
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(duplicate)
+
+    missing_risks = dict(baseline)
+    missing_risks["citations"] = tuple(
+        citation
+        for citation in baseline["citations"]
+        if citation.claim == "thesis"
+    )
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(missing_risks)
+
+    wrong_bundle = dict(baseline)
+    wrong_citation = dict(baseline["citations"][0])
+    wrong_reference = dict(wrong_citation["reference"])
+    wrong_reference["bundle_id"] = "bundle-other"
+    wrong_citation["reference"] = wrong_reference
+    wrong_bundle["citations"] = (wrong_citation, *baseline["citations"][1:])
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(wrong_bundle)
+
+
+def test_evidence_toolset_rebuilds_reference_and_rejects_hostile_containers() -> None:
+    contracts, evidence_tools, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    reference = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    toolset = evidence_tools.EvidenceToolset(bundle)
+    item = toolset.get(reference)
+    assert item.reference == reference and item.reference is not reference
+
+    object.__setattr__(reference, "record_id", 42)
+    with pytest.raises(evidence_tools.MalformedEvidenceReferenceError):
+        toolset.get(reference)
+
+    class HostileList(list[Any]):
+        def __iter__(self):
+            raise AssertionError("hostile citation container was iterated")
+
+    builder = notes.ResearchNoteBuilder(bundle=bundle, context=context, response=response)
+    with pytest.raises(notes.ResearchNoteInputError):
+        builder.build(
+            source_agent="sentiment_analyst",
+            source_fields={"thesis": "market_report", "risks": "news_report"},
+            claim_citations={
+                "thesis": HostileList([_reference(contracts, bundle, "actions", "action-acme-split")]),
+                "risks": (reference,),
+            },
+        )
+
+
+def test_list_citations_rejects_ambiguous_same_domain_ids() -> None:
+    _, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    toolset = evidence_tools.EvidenceToolset(bundle)
+    event = toolset._bundle.events[0]
+    object.__setattr__(toolset._bundle, "events", (event, event))
+    with pytest.raises(evidence_tools.AmbiguousEvidenceReferenceError):
+        toolset.list_citations()
+
+
+@pytest.mark.parametrize(
+    ("response_updates", "output_updates"),
+    [
+        ({"ticker": "KEEP", "instrument_id": "inst-acme"}, {"company_of_interest": "KEEP"}),
+        ({"asset_type": "crypto"}, {"asset_type": "crypto"}),
+        (
+            {
+                "instrument_context": (
+                    "Symbol: NEW; instrument_id: inst-survivor; "
+                    "asset_class: equity; exchange: XNYS; currency: USD"
+                )
+            },
+            {
+                "instrument_context": (
+                    "Symbol: NEW; instrument_id: inst-survivor; "
+                    "asset_class: equity; exchange: XNYS; currency: USD"
+                )
+            },
+        ),
+    ],
+)
+def test_research_note_binds_response_identity_to_unique_active_instrument(
+    response_updates: Mapping[str, object],
+    output_updates: Mapping[str, object],
+) -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    variant = _response_variant(
+        bundle,
+        context,
+        output_updates=output_updates,
+        **response_updates,
+    )
+    thesis_reference = _reference(contracts, bundle, "actions", "action-acme-split")
+    risk_reference = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    with pytest.raises(notes.ResearchNoteBindingError):
+        notes.ResearchNoteBuilder(bundle=bundle, context=context, response=variant).build(
+            source_agent="sentiment_analyst",
+            source_fields={"thesis": "market_report", "risks": "news_report"},
+            claim_citations={"thesis": (thesis_reference,), "risks": (risk_reference,)},
+        )
+
+
+def test_research_note_projects_and_redacts_response_and_citation_manifests() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    output = make_output()
+    capture_manifest = make_capture_manifest(output)
+    capture_manifest = SourceManifest.model_validate(
+        {
+            **capture_manifest.model_dump(mode="python"),
+            "source_locator": "https://example.invalid/?api_key=SIG02_RESPONSE_SECRET",
+            "terms": "SIG02_RESPONSE_TERMS_SECRET",
+        }
+    )
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=capture_manifest,
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    serialized = note.model_dump(mode="json")
+    rendered = json.dumps(serialized, sort_keys=True)
+    assert "SIG02_RESPONSE_SECRET" not in rendered
+    assert "SIG02_RESPONSE_TERMS_SECRET" not in rendered
+    assert serialized["capture_manifest"]["source_locator"] == "[REDACTED]"
+    assert serialized["capture_manifest"]["terms"] == "[REDACTED]"
+    assert serialized["capture_manifest"]["manifest_hash"].startswith("sha256:")
+
+
+def test_public_plain_data_redaction_rejects_hostile_containers_and_nested_secrets() -> None:
+    _, _, _ = _load_sig02()
+    logging_module = importlib.import_module("mytradingalpha.ops.logging")
+    payload = {
+        "source_locator": "https://example.invalid/?api_key=SIG02_LOCATOR_SECRET",
+        "terms": "SIG02_TERMS_SECRET",
+        "nested": {
+            "authorization": "Bearer SIG02_AUTH_SECRET",
+            "quoted": '{"api_key":"SIG02_QUOTED_SECRET"}',
+        },
+    }
+    redacted = logging_module.redact_plain_data(payload)
+    encoded = json.dumps(redacted, sort_keys=True)
+    assert "SIG02_" not in encoded
+    assert redacted["source_locator"] == "[REDACTED]"
+    assert redacted["terms"] == "[REDACTED]"
+
+    class HostileDict(dict[str, object]):
+        def items(self):
+            raise AssertionError("hostile mapping was traversed")
+
+    with pytest.raises(TypeError):
+        logging_module.redact_plain_data(HostileDict(payload))
+
+
+def test_clean_install_smoke_lists_sig02_public_submodules() -> None:
+    script = Path(__file__).resolve().parents[3] / "scripts/smoke_installed.py"
+    source = script.read_text(encoding="utf-8")
+    for module in (
+        "mytradingalpha.contracts.research",
+        "mytradingalpha.research.evidence_tools",
+        "mytradingalpha.research.notes",
+    ):
+        assert module in source
 
 
 def test_redaction_helper_preserves_existing_logging_behavior() -> None:
