@@ -492,7 +492,7 @@ def test_research_note_serialized_payload_rejects_intrinsic_citation_failures() 
     missing_risks["citations"] = tuple(
         citation
         for citation in baseline["citations"]
-        if citation.claim == "thesis"
+        if citation["claim"] == "thesis"
     )
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(missing_risks)
@@ -515,7 +515,7 @@ def test_evidence_toolset_rebuilds_reference_and_rejects_hostile_containers() ->
     item = toolset.get(reference)
     assert item.reference == reference and item.reference is not reference
 
-    object.__setattr__(reference, "record_id", 42)
+    object.__setattr__(reference, "record_id", " invalid ")
     with pytest.raises(evidence_tools.MalformedEvidenceReferenceError):
         toolset.get(reference)
 

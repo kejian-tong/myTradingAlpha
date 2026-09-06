@@ -6,9 +6,9 @@ import hashlib
 import json
 from typing import Literal
 
-from pydantic import StrictStr, field_validator
+from pydantic import ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
-from mytradingalpha.data.provenance import CanonicalChecksum, SourceManifest
+from mytradingalpha.data.provenance import CanonicalChecksum
 
 from .common import StableId, UtcDateTime
 from .schemas import ContractModel
@@ -33,17 +33,45 @@ class ResearchNoteSerializationError(ValueError):
     """Raised when a note cannot be represented within its canonical bounds."""
 
 
-class _FrozenDict(dict[str, str]):
-    """Small immutable mapping used for the note's source-field binding."""
+class _ResearchContractModel(ContractModel):
+    """Strict nested research model with defensive instance revalidation."""
 
-    def _blocked(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
-        raise TypeError("research note mappings are immutable")
-
-    __delitem__ = __setitem__ = clear = pop = popitem = setdefault = update = _blocked
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
 
-class EvidenceReference(ContractModel):
+class ResearchSourceFields(_ResearchContractModel):
+    """Exact cached-response fields selected for thesis and risks."""
+
+    thesis: StrictStr
+    risks: StrictStr
+
+    @field_validator("thesis", "risks")
+    @classmethod
+    def validate_field_name(cls, value: str) -> str:
+        if not value or value != value.strip():
+            raise ValueError("research source field names must be non-empty and trimmed")
+        return value
+
+
+class ResearchProvenance(_ResearchContractModel):
+    """Redacted SourceManifest projection retaining an exact-manifest hash."""
+
+    schema_version: Literal[CURRENT_SCHEMA_VERSION]
+    manifest_id: StableId
+    source: StableId
+    source_locator: StrictStr
+    fetched_at: UtcDateTime
+    event_time: UtcDateTime | None
+    published_at: UtcDateTime | None
+    available_at: UtcDateTime
+    ingested_at: UtcDateTime
+    checksum: CanonicalChecksum
+    terms: StrictStr
+    revision: StrictInt = Field(ge=0)
+    manifest_hash: CanonicalChecksum
+
+
+class EvidenceReference(_ResearchContractModel):
     """A domain-qualified reference to exactly one bundle record."""
 
     schema_version: Literal[CURRENT_SCHEMA_VERSION]
@@ -52,12 +80,12 @@ class EvidenceReference(ContractModel):
     record_id: StableId
 
 
-class EvidenceCitation(ContractModel):
+class EvidenceCitation(_ResearchContractModel):
     """One validated citation whose semantic support remains unassessed."""
 
     claim: ResearchClaim
     reference: EvidenceReference
-    provenance: SourceManifest
+    provenance: ResearchProvenance
     semantic_support: Literal["unassessed"] = "unassessed"
 
 
@@ -71,10 +99,10 @@ def _canonical_json(value: object) -> bytes:
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
-        raise TypeError("research note is not canonical JSON data") from exc
+        raise ResearchNoteSerializationError("research note is not canonical JSON data") from exc
 
 
-class ResearchNote(ContractModel):
+class ResearchNote(_ResearchContractModel):
     """Immutable, provenance-bound note derived from sealed research output."""
 
     schema_version: Literal[CURRENT_SCHEMA_VERSION]
@@ -96,28 +124,54 @@ class ResearchNote(ContractModel):
     model_artifact_hash: CanonicalChecksum
     runtime_manifest_id: StableId
     runtime_manifest_hash: CanonicalChecksum
-    capture_manifest: SourceManifest
+    capture_manifest: ResearchProvenance
     source_agent: StrictStr
-    source_fields: dict[ResearchClaim, StrictStr]
+    source_fields: ResearchSourceFields
     thesis: StrictStr
     risks: tuple[StrictStr, ...]
     citations: tuple[EvidenceCitation, ...]
 
-    @field_validator("source_fields", mode="after")
+    @field_validator("source_fields", mode="before")
     @classmethod
-    def validate_source_fields(
-        cls, value: dict[ResearchClaim, StrictStr]
-    ) -> dict[ResearchClaim, StrictStr]:
-        if set(value) != {"thesis", "risks"}:
-            raise ValueError("research note source fields must name thesis and risks")
-        return _FrozenDict(value)
+    def validate_source_fields(cls, value: object) -> object:
+        if type(value) not in (dict, ResearchSourceFields):
+            raise ValueError("research note source fields require plain data")
+        return value
 
     @field_validator("risks", mode="before")
     @classmethod
     def normalize_risks(cls, value: object) -> tuple[str, ...]:
-        if not isinstance(value, (tuple, list)):
+        if type(value) not in (tuple, list):
             raise ValueError("research note risks require a sequence")
         return tuple(value)  # type: ignore[arg-type]
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def normalize_citations(cls, value: object) -> tuple[object, ...]:
+        if type(value) not in (tuple, list):
+            raise ValueError("research note citations require a sequence")
+        for item in value:  # type: ignore[union-attr]
+            if type(item) not in (dict, EvidenceCitation):
+                raise ValueError("research note citations require plain data")
+        return tuple(value)  # type: ignore[arg-type]
+
+    @model_validator(mode="after")
+    def validate_citation_integrity(self) -> ResearchNote:
+        if not self.citations:
+            raise ValueError("research note requires at least one citation")
+        seen: set[tuple[str, str]] = set()
+        claims: set[str] = set()
+        for citation in self.citations:
+            reference_key = (citation.reference.domain, citation.reference.record_id)
+            if citation.reference.bundle_id != self.bundle_id:
+                raise ValueError("research citation targets another bundle")
+            if reference_key in seen:
+                raise ValueError("research note contains duplicate citation")
+            seen.add(reference_key)
+            claims.add(citation.claim)
+        if claims != {"thesis", "risks"}:
+            raise ValueError("research note must cite both thesis and risks")
+        return self
 
     def canonical_bytes(self) -> bytes:
         """Return bounded canonical UTF-8 JSON for this note."""
@@ -143,5 +197,7 @@ __all__ = [
     "MAX_RESEARCH_NOTE_BYTES",
     "ResearchClaim",
     "ResearchNote",
+    "ResearchProvenance",
+    "ResearchSourceFields",
     "ResearchNoteSerializationError",
 ]

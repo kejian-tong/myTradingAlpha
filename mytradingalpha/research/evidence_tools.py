@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 
 from mytradingalpha.contracts.research import EvidenceReference
+from mytradingalpha.data.actions import (
+    DelistingAction,
+    DividendAction,
+    SplitAction,
+    TickerChangeAction,
+)
+from mytradingalpha.data.bars import DailyBar
 from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
-from mytradingalpha.ops.logging import redact_text
+from mytradingalpha.data.events import NewsEvent
+from mytradingalpha.data.fundamentals import FinancialFiling
+from mytradingalpha.data.macro import MacroObservation
+from mytradingalpha.data.provenance import SourceManifest
+from mytradingalpha.data.social import SocialPost
+from mytradingalpha.data.universe import Instrument, SymbolAlias, UniverseMembership
+from mytradingalpha.ops.logging import redact_plain_data
 
 
 class EvidenceToolError(ValueError):
@@ -48,18 +62,26 @@ class EvidenceItem:
     provenance: MappingProxyType
 
 
-_DOMAIN_FIELDS: tuple[tuple[str, str, str], ...] = (
-    ("instruments", "instruments", "instrument_id"),
-    ("aliases", "aliases", "alias_id"),
-    ("memberships", "memberships", "membership_id"),
-    ("actions", "actions", "action_id"),
-    ("bars", "bars", "bar_id"),
-    ("filings", "filings", "filing_id"),
-    ("events", "events", "event_id"),
-    ("social", "social_posts", "post_id"),
-    ("macro", "macro_observations", "observation_id"),
+_DOMAIN_FIELDS: tuple[tuple[str, str, str, tuple[type[object], ...]], ...] = (
+    ("instruments", "instruments", "instrument_id", (Instrument,)),
+    ("aliases", "aliases", "alias_id", (SymbolAlias,)),
+    ("memberships", "memberships", "membership_id", (UniverseMembership,)),
+    (
+        "actions",
+        "actions",
+        "action_id",
+        (TickerChangeAction, SplitAction, DividendAction, DelistingAction),
+    ),
+    ("bars", "bars", "bar_id", (DailyBar,)),
+    ("filings", "filings", "filing_id", (FinancialFiling,)),
+    ("events", "events", "event_id", (NewsEvent,)),
+    ("social", "social_posts", "post_id", (SocialPost,)),
+    ("macro", "macro_observations", "observation_id", (MacroObservation,)),
 )
-_DOMAIN_BY_NAME = {domain: (field, id_field) for domain, field, id_field in _DOMAIN_FIELDS}
+_DOMAIN_BY_NAME = {
+    domain: (field, id_field, expected_types)
+    for domain, field, id_field, expected_types in _DOMAIN_FIELDS
+}
 
 
 def _freeze(value: object) -> object:
@@ -83,12 +105,17 @@ def _validate_reference(value: object) -> EvidenceReference:
         raise MalformedEvidenceReferenceError(
             "evidence reference must be an exact structured EvidenceReference"
         )
-    return value
+    try:
+        return EvidenceReference.model_validate(
+            EvidenceReference.model_dump(value, mode="python")
+        )
+    except (TypeError, ValueError) as exc:
+        raise MalformedEvidenceReferenceError("evidence reference is invalid") from exc
 
 
 def _record_payload(record: object) -> tuple[dict[str, object], dict[str, object]]:
     try:
-        payload = record.model_dump(mode="json")  # type: ignore[attr-defined]
+        payload = type(record).model_dump(record, mode="json")  # type: ignore[attr-defined]
     except (AttributeError, TypeError, ValueError) as exc:
         raise MalformedEvidenceReferenceError("evidence record cannot be rendered") from exc
     manifest = payload.pop("manifest", None)
@@ -104,7 +131,7 @@ class EvidenceToolset:
         if type(bundle) is not EvidenceBundle:
             raise EvidenceToolError("evidence toolset requires an exact EvidenceBundle")
         try:
-            payload = bundle.model_dump(mode="python")
+            payload = EvidenceBundle.model_dump(bundle, mode="python")
             self._bundle = EvidenceBundle.model_validate(payload)
         except (TypeError, ValueError) as exc:
             raise EvidenceToolError("evidence bundle failed defensive validation") from exc
@@ -116,16 +143,32 @@ class EvidenceToolset:
     def list_citations(self) -> tuple[EvidenceReference, ...]:
         """Enumerate every citable record in deterministic order."""
 
-        references = [
-            EvidenceReference(
-                schema_version="v1",
-                bundle_id=self._bundle.bundle_id,
-                domain=domain,
-                record_id=getattr(record, id_field),
-            )
-            for domain, field, id_field in _DOMAIN_FIELDS
-            for record in getattr(self._bundle, field)
-        ]
+        references: list[EvidenceReference] = []
+        seen: set[tuple[str, str]] = set()
+        for domain, field, id_field, expected_types in _DOMAIN_FIELDS:
+            records = getattr(self._bundle, field)
+            if type(records) is not tuple:
+                raise EvidenceToolError(f"evidence domain {domain} is not canonical")
+            for record in records:
+                if type(record) not in expected_types:
+                    raise EvidenceToolError(f"evidence domain {domain} contains a malformed record")
+                record_id = getattr(record, id_field)
+                if type(record_id) is not str:
+                    raise EvidenceToolError(f"evidence domain {domain} contains a malformed ID")
+                key = (domain, record_id)
+                if key in seen:
+                    raise AmbiguousEvidenceReferenceError(
+                        f"evidence reference is ambiguous: {domain}/{record_id}"
+                    )
+                seen.add(key)
+                references.append(
+                    EvidenceReference(
+                        schema_version="v1",
+                        bundle_id=self._bundle.bundle_id,
+                        domain=domain,
+                        record_id=record_id,
+                    )
+                )
         return tuple(sorted(references, key=lambda item: (item.domain, item.record_id)))
 
     def _find(self, reference: EvidenceReference) -> object:
@@ -134,10 +177,17 @@ class EvidenceToolset:
             raise MalformedEvidenceReferenceError(
                 f"evidence domain is not citable: {reference.domain}"
             )
-        field, id_field = field_and_id
+        field, id_field, expected_types = field_and_id
+        records = getattr(self._bundle, field)
+        if type(records) is not tuple:
+            raise EvidenceToolError(f"evidence domain {reference.domain} is not canonical")
+        if any(type(record) not in expected_types for record in records):
+            raise EvidenceToolError(f"evidence domain {reference.domain} contains a malformed record")
+        if any(type(getattr(record, id_field)) is not str for record in records):
+            raise EvidenceToolError(f"evidence domain {reference.domain} contains a malformed ID")
         matches = tuple(
             record
-            for record in getattr(self._bundle, field)
+            for record in records
             if getattr(record, id_field) == reference.record_id
         )
         if not matches:
@@ -160,7 +210,15 @@ class EvidenceToolset:
             )
         record = self._find(checked)
         manifest = getattr(record, "manifest", None)
-        if manifest is None or manifest.available_at > self._bundle.knowledge_cutoff:
+        if type(manifest) is not SourceManifest:
+            raise EvidenceToolError("evidence record provenance is malformed")
+        if (
+            type(manifest.available_at) is not datetime
+            or type(manifest.ingested_at) is not datetime
+            or type(self._bundle.knowledge_cutoff) is not datetime
+        ):
+            raise EvidenceToolError("evidence record provenance timestamps are malformed")
+        if manifest.available_at > self._bundle.knowledge_cutoff:
             raise IneligibleEvidenceReferenceError(
                 f"evidence reference is unavailable at cutoff: {checked.record_id}"
             )
@@ -183,22 +241,19 @@ class EvidenceToolset:
 
         item = self.get(reference)
         payload = {
-            "reference": _unfreeze(item.reference.model_dump(mode="json")),
+            "reference": _unfreeze(EvidenceReference.model_dump(item.reference, mode="json")),
             "content": _unfreeze(item.content),
             "provenance": _unfreeze(item.provenance),
         }
+        redacted = redact_plain_data(payload)
         raw = json.dumps(
-            payload,
+            redacted,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
         )
-        return redact_text(
-            "--- BEGIN UNTRUSTED EVIDENCE ---\n"
-            + raw
-            + "\n--- END UNTRUSTED EVIDENCE ---"
-        )
+        return "--- BEGIN UNTRUSTED EVIDENCE ---\n" + raw + "\n--- END UNTRUSTED EVIDENCE ---"
 
 
 __all__ = [

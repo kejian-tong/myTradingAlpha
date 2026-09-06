@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from datetime import date
 
 from mytradingalpha.contracts.research import (
     MAX_RESEARCH_NOTE_BYTES,
@@ -12,11 +13,14 @@ from mytradingalpha.contracts.research import (
     EvidenceReference,
     ResearchNote,
     ResearchNoteSerializationError,
+    ResearchProvenance,
+    ResearchSourceFields,
 )
 from mytradingalpha.contracts.schemas import RunContext
 from mytradingalpha.data.bundle import EvidenceBundle
 from mytradingalpha.data.provenance import SourceManifest
-from mytradingalpha.ops.logging import redact_text
+from mytradingalpha.data.universe import AssetClass, Instrument
+from mytradingalpha.ops.logging import redact_plain_data, redact_text
 from mytradingalpha.research.cached_response import CachedGraphResponse
 
 from .evidence_tools import (
@@ -85,6 +89,105 @@ def _copy_response(response: object) -> CachedGraphResponse:
         raise ResearchNoteBindingError("cached response failed defensive validation") from exc
 
 
+def _project_provenance(manifest: object) -> ResearchProvenance:
+    if type(manifest) is not SourceManifest:
+        raise ResearchNoteBindingError("evidence provenance requires an exact SourceManifest")
+    try:
+        original = SourceManifest.model_validate(
+            SourceManifest.model_dump(manifest, mode="python")
+        )
+        original_payload = original.model_dump(mode="json")
+        manifest_hash = f"sha256:{hashlib.sha256(_canonical(original_payload)).hexdigest()}"
+        redacted = redact_plain_data(original_payload)
+        if type(redacted) is not dict:
+            raise ResearchNoteSerializationError("redacted provenance is not a plain object")
+        redacted["manifest_hash"] = manifest_hash
+        return ResearchProvenance.model_validate(redacted)
+    except ResearchNoteError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise ResearchNoteBindingError("evidence provenance failed projection") from exc
+
+
+def _trade_date(value: object) -> date:
+    if type(value) is not str:
+        raise ResearchNoteBindingError("cached response trade date is not a plain string")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ResearchNoteBindingError("cached response trade date is invalid") from exc
+    if parsed.isoformat() != value:
+        raise ResearchNoteBindingError("cached response trade date is not canonical")
+    return parsed
+
+
+def _active_on(value: date, start: date, end: date | None) -> bool:
+    return start <= value and (end is None or value < end)
+
+
+def _resolve_instrument(
+    bundle: EvidenceBundle,
+    *,
+    ticker: object,
+    trade_date: object,
+    asset_type: object,
+) -> tuple[Instrument, str]:
+    as_of = _trade_date(trade_date)
+    if type(ticker) is not str or not ticker or ticker != ticker.strip():
+        raise ResearchNoteBindingError("cached response ticker is invalid")
+    if type(asset_type) is not str:
+        raise ResearchNoteBindingError("cached response asset type is invalid")
+    instrument_by_id = {item.instrument_id: item for item in bundle.instruments}
+    candidate_ids = {
+        alias.instrument_id
+        for alias in bundle.aliases
+        if alias.symbol == ticker and _active_on(as_of, alias.valid_from, alias.valid_to)
+    }
+    candidates = [
+        instrument_by_id[instrument_id]
+        for instrument_id in sorted(candidate_ids)
+        if instrument_id in instrument_by_id
+        and _active_on(
+            as_of,
+            instrument_by_id[instrument_id].active_from,
+            instrument_by_id[instrument_id].active_to,
+        )
+    ]
+    if not candidates:
+        raise ResearchNoteBindingError(
+            f"no unique sealed instrument for ticker {ticker!r} on {trade_date!r}"
+        )
+    if len(candidates) != 1:
+        raise ResearchNoteBindingError(
+            f"ambiguous sealed instrument for ticker {ticker!r} on {trade_date!r}"
+        )
+    instrument = candidates[0]
+    permitted_classes = {AssetClass.EQUITY, AssetClass.ETF} if asset_type == "stock" else set()
+    if instrument.asset_class not in permitted_classes:
+        raise ResearchNoteBindingError(
+            f"asset type does not match sealed instrument {instrument.instrument_id!r}"
+        )
+    instrument_context = (
+        f"Symbol: {ticker}; instrument_id: {instrument.instrument_id}; "
+        f"asset_class: {instrument.asset_class.value}; exchange: {instrument.exchange}; "
+        f"currency: {instrument.currency}"
+    )
+    return instrument, instrument_context
+
+
+def _copy_reference(value: object) -> EvidenceReference:
+    if type(value) is not EvidenceReference:
+        raise MalformedEvidenceReferenceError(
+            "claim citation must be an exact EvidenceReference"
+        )
+    try:
+        return EvidenceReference.model_validate(
+            EvidenceReference.model_dump(value, mode="python")
+        )
+    except (TypeError, ValueError) as exc:
+        raise MalformedEvidenceReferenceError("claim citation reference is invalid") from exc
+
+
 def _validate_bindings(
     bundle: EvidenceBundle,
     context: RunContext,
@@ -108,10 +211,18 @@ def _validate_bindings(
             raise ResearchNoteBindingError(f"cached response binding mismatch: {field}")
     if response.replay_policy.value != bundle.replay_policy.value:
         raise ResearchNoteBindingError("cached response replay policy does not match bundle")
-    if response.instrument_id not in {item.instrument_id for item in bundle.instruments}:
-        raise ResearchNoteBindingError("cached response instrument is not in the sealed bundle")
     if response.trade_date != bundle.knowledge_cutoff.date().isoformat():
         raise ResearchNoteBindingError("cached response trade date does not match bundle cutoff")
+    instrument, instrument_context = _resolve_instrument(
+        bundle,
+        ticker=response.ticker,
+        trade_date=response.trade_date,
+        asset_type=response.asset_type,
+    )
+    if response.instrument_id != instrument.instrument_id:
+        raise ResearchNoteBindingError("cached response instrument does not match ticker alias")
+    if response.instrument_context != instrument_context:
+        raise ResearchNoteBindingError("cached response instrument context does not match alias")
 
 
 def _reference_key(reference: EvidenceReference) -> tuple[str, str, str]:
@@ -146,6 +257,10 @@ class ResearchNoteBuilder:
             raise ResearchNoteInputError("source_agent must be a non-empty plain string")
         if type(source_fields) is not dict or set(source_fields) != {"thesis", "risks"}:
             raise ResearchNoteInputError("source_fields must explicitly name thesis and risks")
+        try:
+            selected_fields = ResearchSourceFields.model_validate(source_fields)
+        except (TypeError, ValueError) as exc:
+            raise ResearchNoteInputError("source_fields are invalid") from exc
         if type(claim_citations) is not dict or set(claim_citations) != {"thesis", "risks"}:
             raise ResearchNoteInputError(
                 "claim_citations must explicitly map thesis and risks"
@@ -153,7 +268,7 @@ class ResearchNoteBuilder:
         output = self._response.output
         texts: dict[str, str] = {}
         for claim in ("thesis", "risks"):
-            field = source_fields[claim]
+            field = getattr(selected_fields, claim)
             if type(field) is not str or not field or field != field.strip():
                 raise ResearchNoteInputError(f"{claim} source field must be a plain string")
             if field not in output or type(output[field]) is not str:
@@ -167,32 +282,25 @@ class ResearchNoteBuilder:
         seen: set[tuple[str, str, str]] = set()
         for claim in ("thesis", "risks"):
             references = claim_citations[claim]
-            if not isinstance(references, (tuple, list)) or not references:
+            if type(references) not in (tuple, list) or not references:
                 raise ResearchNoteInputError(f"{claim} must cite at least one evidence record")
             try:
+                copied_references = tuple(_copy_reference(item) for item in references)
                 ordered = tuple(
-                    sorted(
-                        references,
-                        key=lambda item: (
-                            getattr(item, "domain", ""),
-                            getattr(item, "record_id", ""),
-                        ),
-                    )
+                    sorted(copied_references, key=lambda item: (item.domain, item.record_id))
                 )
-            except (AttributeError, TypeError) as exc:
+            except (AttributeError, TypeError, ValueError) as exc:
                 raise ResearchNoteInputError("claim citations must be structured references") from exc
             for reference in ordered:
-                if type(reference) is not EvidenceReference:
-                    raise MalformedEvidenceReferenceError(
-                        "claim citation must be an exact EvidenceReference"
-                    )
                 key = _reference_key(reference)
                 if key in seen:
                     raise DuplicateEvidenceReferenceError(
                         f"duplicate evidence citation: {reference.domain}/{reference.record_id}"
                     )
                 item = toolset.get(reference)
-                provenance = SourceManifest.model_validate(dict(item.provenance))
+                provenance = _project_provenance(
+                    SourceManifest.model_validate(dict(item.provenance))
+                )
                 seen.add(key)
                 citations.append(
                     EvidenceCitation(
@@ -223,9 +331,9 @@ class ResearchNoteBuilder:
             "model_artifact_hash": self._response.model_artifact_hash,
             "runtime_manifest_id": self._response.runtime_manifest_id,
             "runtime_manifest_hash": self._response.runtime_manifest_hash,
-            "capture_manifest": self._response.capture_manifest,
+            "capture_manifest": _project_provenance(self._response.capture_manifest),
             "source_agent": source_agent,
-            "source_fields": {"thesis": source_fields["thesis"], "risks": source_fields["risks"]},
+            "source_fields": selected_fields,
             "thesis": texts["thesis"],
             "risks": (texts["risks"],),
             "citations": tuple(citations),
@@ -235,7 +343,9 @@ class ResearchNoteBuilder:
                 {**base, "note_id": "note-pending"}
             ).model_dump(mode="json")
             note_id = f"note-{hashlib.sha256(_canonical(canonical_input)).hexdigest()}"
-            return ResearchNote.model_validate({**base, "note_id": note_id})
+            note = ResearchNote.model_validate({**base, "note_id": note_id})
+            note.canonical_bytes()
+            return note
         except ResearchNoteError:
             raise
         except (TypeError, ValueError) as exc:
