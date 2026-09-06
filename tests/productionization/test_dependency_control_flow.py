@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -394,6 +395,7 @@ def test_review_repair_callable_then_nested_argument_calls_are_ordered_once(
     ]
 
 
+@pytest.mark.skipif(not hasattr(ast, "TryStar"), reason="except* requires Python 3.11+")
 def test_review_repair_trystar_prior_handler_loader_reaches_later_handler(
     tmp_path: Path,
 ) -> None:
@@ -406,6 +408,7 @@ def test_review_repair_trystar_prior_handler_loader_reaches_later_handler(
     )
 
 
+@pytest.mark.skipif(not hasattr(ast, "TryStar"), reason="except* requires Python 3.11+")
 def test_review_repair_trystar_no_match_path_preserves_loader(tmp_path: Path) -> None:
     _assert_forbidden(
         tmp_path,
@@ -416,6 +419,7 @@ def test_review_repair_trystar_no_match_path_preserves_loader(tmp_path: Path) ->
     )
 
 
+@pytest.mark.skipif(not hasattr(ast, "TryStar"), reason="except* requires Python 3.11+")
 def test_review_repair_trystar_safe_sequential_handlers_do_not_false_positive(
     tmp_path: Path,
 ) -> None:
@@ -588,6 +592,7 @@ def test_review_repair_handler_cleanup_preserves_outer_loader_success_path(
     )
 
 
+@pytest.mark.skipif(not hasattr(ast, "TryStar"), reason="except* requires Python 3.11+")
 def test_review_repair_trystar_target_is_cleared_before_finally(tmp_path: Path) -> None:
     assert _violations(
         tmp_path,
@@ -596,3 +601,131 @@ def test_review_repair_trystar_target_is_cleared_before_finally(tmp_path: Path) 
         "except* Exception as load:\n    load = import_module\n    raise\n"
         'finally:\n    load("tradingagents.graph")\n',
     ) == []
+
+
+@pytest.mark.skipif(hasattr(ast, "TryStar"), reason="Python 3.11+ supports except*")
+def test_second_review_repair_py310_trystar_is_a_parse_error(tmp_path: Path) -> None:
+    findings = _violations(
+        tmp_path,
+        "try:\n    risky()\nexcept* Exception:\n    pass\n",
+    )
+    assert len(findings) == 1
+    assert findings[0].imported_module == "<parse error>"
+    assert "could not parse Python source" in findings[0].message
+
+
+@pytest.mark.parametrize("container", ("if", "try", "except", "finally"))
+def test_second_review_repair_captures_exact_nested_break_state(
+    tmp_path: Path,
+    container: str,
+) -> None:
+    if container == "if":
+        body = (
+            "    if flag:\n"
+            "        load = import_module\n"
+            "        break\n"
+            "        load = safe\n"
+        )
+    elif container == "try":
+        body = (
+            "    try:\n"
+            "        load = import_module\n"
+            "        break\n"
+            "        load = safe\n"
+        )
+    elif container == "except":
+        body = (
+            "    try:\n"
+            "        risky()\n"
+            "    except Exception:\n"
+            "        load = import_module\n"
+            "        break\n"
+            "        load = safe\n"
+        )
+    else:
+        assert container == "finally"
+        body = (
+            "    try:\n"
+            "        pass\n"
+            "    finally:\n"
+            "        load = import_module\n"
+            "        break\n"
+            "        load = safe\n"
+        )
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        + body
+        + "else:\n    load = safe\n"
+        + 'load("tradingagents.graph")\n',
+    )
+
+
+@pytest.mark.parametrize("outer", ("for", "async for", "while"))
+def test_second_review_repair_nested_loop_else_break_targets_outer_loop(
+    tmp_path: Path,
+    outer: str,
+) -> None:
+    if outer == "async for":
+        source = (
+            "from importlib import import_module\n"
+            "async def run():\n"
+            "    load = safe\n"
+            "    async for outer_item in values:\n"
+            "        for inner_item in other_values:\n"
+            "            pass\n"
+            "        else:\n"
+            "            load = import_module\n"
+            "            break\n"
+            "            load = safe\n"
+            "    else:\n"
+            "        load = safe\n"
+            '    load("tradingagents.graph")\n'
+        )
+    else:
+        outer_header = "for outer_item in values:" if outer == "for" else "while outer_flag:"
+        source = (
+            "from importlib import import_module\n"
+            "load = safe\n"
+            f"{outer_header}\n"
+            "    for inner_item in other_values:\n"
+            "        pass\n"
+            "    else:\n"
+            "        load = import_module\n"
+            "        break\n"
+            "        load = safe\n"
+            "else:\n"
+            "    load = safe\n"
+            'load("tradingagents.graph")\n'
+        )
+    _assert_forbidden(tmp_path, source)
+
+
+def test_second_review_repair_nested_loop_body_break_remains_inner(tmp_path: Path) -> None:
+    assert _violations(
+        tmp_path,
+        "from importlib import import_module as load\n"
+        "for outer_item in values:\n"
+        "    for inner_item in other_values:\n"
+        "        break\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    ) == []
+
+
+def test_second_review_repair_direct_break_is_unique_and_not_erased(
+    tmp_path: Path,
+) -> None:
+    _assert_forbidden(
+        tmp_path,
+        "from importlib import import_module\nload = safe\n"
+        "for item in values:\n"
+        "    load = import_module\n"
+        "    break\n"
+        "    load = safe\n"
+        "else:\n"
+        "    load = safe\n"
+        'load("tradingagents.graph")\n',
+    )
