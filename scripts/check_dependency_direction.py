@@ -220,6 +220,36 @@ class _DynamicImports(ast.NodeVisitor):
             snapshots.append(self.bindings.copy())
         return self.bindings.copy(), snapshots
 
+    def _analyze_block_snapshots_with_breaks(
+        self,
+        statements: Iterable[ast.AST],
+        start: dict[str, frozenset[str | None]],
+    ) -> tuple[
+        dict[str, frozenset[str | None]],
+        list[dict[str, frozenset[str | None]]],
+        dict[str, frozenset[str | None]] | None,
+    ]:
+        self.break_collectors.append(None)
+        try:
+            final, snapshots = self._analyze_block_snapshots(statements, start)
+            pending_break = self.break_collectors[-1]
+        finally:
+            self.break_collectors.pop()
+        return final, snapshots, pending_break
+
+    def _merge_break_state(
+        self,
+        state: dict[str, frozenset[str | None]] | None,
+    ) -> None:
+        if state is None or not self.break_collectors:
+            return
+        current = self.break_collectors[-1]
+        self.break_collectors[-1] = (
+            state
+            if current is None
+            else self._join_states(current, state)
+        )
+
     def _record_import(self, node: ast.AST, name: str | None) -> None:
         key = (id(node), name)
         if key not in self._seen_imports:
@@ -315,72 +345,105 @@ class _DynamicImports(ast.NodeVisitor):
         success: dict[str, frozenset[str | None]],
         handler_states: list[dict[str, frozenset[str | None]]],
         exceptional_states: list[dict[str, frozenset[str | None]]],
+        pending_breaks: list[dict[str, frozenset[str | None]]],
     ) -> None:
-        success_after_else, else_states = self._analyze_block_snapshots(node.orelse, success)
+        success_after_else, else_states, else_break = (
+            self._analyze_block_snapshots_with_breaks(node.orelse, success)
+        )
         exceptional_states.extend(else_states)
+        if else_break is not None:
+            pending_breaks.append(else_break)
         continuing = self._join_states(success_after_else, *handler_states)
         if node.finalbody:
             all_final_inputs = self._join_states(continuing, *exceptional_states)
             self._analyze_block(node.finalbody, all_final_inputs)
-            self.bindings = self._analyze_block(node.finalbody, continuing)
+            continuing_after_finally = self._analyze_block(node.finalbody, continuing)
         else:
-            self.bindings = continuing
+            continuing_after_finally = continuing
+
+        if pending_breaks:
+            pending_break = self._join_states(*pending_breaks)
+            if node.finalbody:
+                pending_break = self._analyze_block(node.finalbody, pending_break)
+            self._merge_break_state(pending_break)
+        self.bindings = continuing_after_finally
 
     def visit_Try(self, node: ast.Try) -> None:
         before = self.bindings.copy()
-        success, try_states = self._analyze_block_snapshots(node.body, before)
+        success, try_states, try_break = self._analyze_block_snapshots_with_breaks(
+            node.body,
+            before,
+        )
         exception_entry = self._join_states(*try_states)
         handler_states: list[dict[str, frozenset[str | None]]] = []
         exceptional_states = list(try_states)
+        pending_breaks = [] if try_break is None else [try_break]
         for handler in node.handlers:
             self.bindings = exception_entry.copy()
             if handler.type is not None:
                 self.visit(handler.type)
             if handler.name is not None:
                 self.bindings[handler.name] = self._OTHER
-            handler_state, snapshots = self._analyze_block_snapshots(
+            handler_state, snapshots, handler_break = (
+                self._analyze_block_snapshots_with_breaks(
                 handler.body,
                 self.bindings,
+            )
             )
             handler_state = self._clear_handler_target(handler_state, handler.name)
             snapshots = [
                 self._clear_handler_target(snapshot, handler.name)
                 for snapshot in snapshots
             ]
+            if handler_break is not None:
+                handler_break = self._clear_handler_target(handler_break, handler.name)
             handler_states.append(handler_state)
             exceptional_states.extend(snapshots)
+            if handler_break is not None:
+                pending_breaks.append(handler_break)
 
         self._finish_try(
             node,
             success=success,
             handler_states=handler_states,
             exceptional_states=exceptional_states,
+            pending_breaks=pending_breaks,
         )
 
     def visit_TryStar(self, node: ast.TryStar) -> None:
         before = self.bindings.copy()
-        success, try_states = self._analyze_block_snapshots(node.body, before)
+        success, try_states, try_break = self._analyze_block_snapshots_with_breaks(
+            node.body,
+            before,
+        )
         exception_entry = self._join_states(*try_states)
         prior_handler_paths = exception_entry
         handler_states: list[dict[str, frozenset[str | None]]] = []
         exceptional_states = list(try_states)
+        pending_breaks = [] if try_break is None else [try_break]
         for handler in node.handlers:
             self.bindings = prior_handler_paths.copy()
             if handler.type is not None:
                 self.visit(handler.type)
             if handler.name is not None:
                 self.bindings[handler.name] = self._OTHER
-            handler_state, snapshots = self._analyze_block_snapshots(
+            handler_state, snapshots, handler_break = (
+                self._analyze_block_snapshots_with_breaks(
                 handler.body,
                 self.bindings,
+            )
             )
             handler_state = self._clear_handler_target(handler_state, handler.name)
             snapshots = [
                 self._clear_handler_target(snapshot, handler.name)
                 for snapshot in snapshots
             ]
+            if handler_break is not None:
+                handler_break = self._clear_handler_target(handler_break, handler.name)
             handler_states.append(handler_state)
             exceptional_states.extend(snapshots)
+            if handler_break is not None:
+                pending_breaks.append(handler_break)
             prior_handler_paths = self._join_states(
                 prior_handler_paths,
                 handler_state,
@@ -391,6 +454,7 @@ class _DynamicImports(ast.NodeVisitor):
             success=success,
             handler_states=handler_states,
             exceptional_states=exceptional_states,
+            pending_breaks=pending_breaks,
         )
 
     def _loop_body_fixed_point(
@@ -415,15 +479,7 @@ class _DynamicImports(ast.NodeVisitor):
             head = next_head
 
     def visit_Break(self, node: ast.Break) -> None:
-        if not self.break_collectors:
-            return
-        captured = self.bindings.copy()
-        current = self.break_collectors[-1]
-        self.break_collectors[-1] = (
-            captured
-            if current is None
-            else self._join_states(current, captured)
-        )
+        self._merge_break_state(self.bindings.copy())
 
     def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
         self.visit(node.iter)
