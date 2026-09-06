@@ -7,14 +7,14 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`
-- `roadmap_status`: `sig_01_merged_stopped`
-- `current_pr_id`: none (no active roadmap implementation)
-- `next_pr_id`: `SIG-02` (informational; requires fresh authorization and reconciled gates)
+- `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
+- `roadmap_status`: `sig_02_candidate_pending_review`
+- `current_pr_id`: `SIG-02` / PR #45
+- `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: disabled for roadmap execution
+- `autonomy_mode`: enabled only for SIG-02 through SIG-05 by the current user request
 - `last_completed_roadmap_pr`: `SIG-01`
-- `stop_after_pr_id`: `SIG-01` (satisfied; do not auto-start SIG-02)
+- `stop_after_pr_id`: `SIG-05`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_high_implementer_route`: `GPT-5.6 Luna / max`
@@ -25,6 +25,48 @@ contracts before any newly authorized roadmap work.
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
 - `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
 - `active_gpt6_routes`: `none (temporarily disabled in the project harness)`
+
+## Active Evidence and Signal execution
+
+The current user explicitly authorized one-at-a-time autonomous completion of SIG-02 through SIG-05
+and set `stop_after_pr_id: SIG-05`. This authorization does not extend to BT-01 or any later slice,
+deployment, real inference/provider calls, broker/PAPER/live activity, or promotion. The Master
+independently fetched GitHub at session start and verified PR #44 merged as
+`24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4` (tree
+`0027a01129d48b6deffb202559b868980c9e2d8c`), with main-push CI `34056396662` and
+CodeQL `34056396669` successful and no open PR.
+
+SIG-02 — Evidence tools and ResearchNote
+
+- base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
+- PR: #45
+- implementation head before Master bookkeeping: `b162ecb8c8924470a7774a0381548f7e0e020ea1`
+  (tree `3b0ad7a2b5a13b69cbb2efe975f796b42efeff62`); the final state-bearing head is
+  authoritative in the PR ref/conversation because a commit cannot embed its own SHA
+- merge: pending
+- complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
+  artifact correctness; no implementation or review escalation applied
+- route: `luna_sol_high`
+- implementer: successfully loaded named `normal_implementer`,
+  `.codex/agents/normal-implementer.toml`, configured actual `gpt-5.6-luna / max`; no separate backend
+  telemetry claim
+- reviewer: requested `reviewer_high`, `.codex/agents/reviewer-high.toml`, configured
+  `gpt-5.6-sol / high`; loading and verdict pending
+- master: configured/requested `gpt-5.6-sol / xhigh`; no separate backend telemetry claim
+- JIT: PR #45 body
+- RED: `8bca32021f03ecb1e9b34830277b8a6d2febdef6`, expected `12 failed, 55 passed`
+- GREEN: `28d09cf4bf92d030c3c649ebdc28a3be091ebe2d`
+- Master repair RED: `e649f5b377a79178f7035c9059ca48cf3b06fc26`, expected
+  `4 failed, 67 passed`
+- repair GREEN: `b162ecb8c8924470a7774a0381548f7e0e020ea1`
+- local tests: PASS; focused `71 passed`, required regressions `791 passed`, full suite
+  `2266 passed / 3 skipped / 18 warnings / 69 subtests`
+- local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
+  diff check and clean installed-package/public-submodule smoke PASS
+- CI: pending on final state-bearing head
+- review: pending fresh exact-head independent reviewer
+- scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
+- next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
 ## Current maintenance checkpoint
 
