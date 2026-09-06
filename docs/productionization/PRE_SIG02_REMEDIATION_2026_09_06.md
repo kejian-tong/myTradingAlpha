@@ -3,6 +3,69 @@
 Date: 2026-09-06 UTC. Scope: bounded audit remediation, not SIG-02 implementation.
 Publication and final readback: [PR #39](https://github.com/kejian-tong/myTradingAlpha/pull/39).
 
+## Independent audit supersession, 2026-09-06
+
+This section supersedes the readiness and current-fact conclusions in the original #28-#39 report
+below; it does not rewrite that report's authentic historical claims, RED/GREEN evidence, withdrawals
+or scope. A later successful repair does not retroactively make an earlier statement correct.
+
+The independent audit froze current-state review at successive immutable mains and completed the
+confirmed repair queue through product-code main
+`b1f019c498cb84d630fc923447b0d41e7bfcb0dc` (tree
+`03d185859827d9f8013f6f1744fef3f191a2aad0`). The following defects were independently reproduced,
+repaired in serial PRs, reviewed again at their final heads, merged with expected-head protection and
+verified by post-push checks:
+
+| Finding | Repair | Current disposition |
+| --- | --- | --- |
+| AUD-H03 closed replay imported ordinary runtime/provider paths and could mutate dotenv, warnings or socket state | PR #40 | Merged and verified; closed import/first-call path is pure while public ordinary imports retain dotenv precedence |
+| AUD-H02 malformed sibling execution carriers were accepted in historical response representations | PR #41 | Merged and verified; carrier placement fails closed at validator, builder, correctly rehashed parser and repository boundaries |
+| AUD-H01 common secret aliases, nested assignments and exception text could enter logs | PR #42 | Merged and verified after an independent REQUEST CHANGES; finite alias grammar covers structured/text/exception surfaces without generic substring matching |
+| AUD-M01 bounded dependency analysis missed or misclassified NamedExpr, IfExp, try, loop, with, comprehension and mandatory break/finally paths | PR #43 | Merged and verified after multiple independent REQUEST CHANGES; Python 3.10-3.14 and exact break/finalizer semantics pass within the documented bounded analyzer |
+| AUD-M02 Markdown/TOML language guard could reject hypothetical future localized data | No code change | Falsified as a current tracked-file defect: no legitimate current Markdown/TOML artifact is rejected; add a schema-qualified data marker only when a real artifact requires it |
+| AUD-L01 stale/false operational evidence, including the claimed PR #39 conversation receipt | This final two-file reconciliation | PR #39 has zero issue comments and zero review objects; its immutable GitHub PR/commit/workflow records are the receipt |
+
+PR #39's actual final head is `bb79a13e0bca1f498b14e584d852e72a46e5d658`, its merge is
+`c02243ea25cb3e1be4c302c10b2e447a587604b2`, and both share tree
+`8917ad6a156a7b45df450fd3fe157e43d96d1d7f`. Candidate CI/CodeQL/Dependency Review
+`34006302600` / `34006302440` / `34006302913` and main-push CI/CodeQL
+`34006575330` / `34006575329` passed. These immutable records correct the missing conversation
+receipt; no historical comment or review was fabricated.
+
+| PR | Final head | Actual merge | Candidate CI / CodeQL / Dependency Review | Main-push CI / CodeQL |
+| --- | --- | --- | --- | --- |
+| #40 | `7b566757ddcbe45d8b8f2f90d1c37699abeca74b` | `ca61fdc020bfa95e67a19fa518ee6427abde651a` | `34042663314` / `34042663311` / `34042663317` | `34043061438` / `34043061463` |
+| #41 | `b35c83a5f742ccbc869ef2945ca422c3cc716767` | `56ee0a5d0a0633b8ae17b4095e7063d93f5da268` | `34044170605` / `34044170589` / `34044170583` | `34044607182` / `34044607180` |
+| #42 | `0afae2986a1772897c939b20670d9a7353d142e4` | `5240885ebe15132b11fca17ccbf175c180675b9b` | `34050312728` / `34050312642` / `34050312669` | `34050719401` / `34050719320` |
+| #43 | `20370f67c601f5dbd5693830a7805f5919f73fc4` | `b1f019c498cb84d630fc923447b0d41e7bfcb0dc` | `34054706215` / `34054706207` / `34054706271` | `34055267326` / `34055267342` |
+
+The #28-#39 waiver and self-verification description below remain historical and expired. PRs
+#40-#43 used a loaded `high_implementer` configured actual Sol/high and a separate
+`reviewer_xhigh` configured actual Sol/xhigh, followed by a Master gate. No separately exposed backend
+telemetry is claimed, and the comments containing those artifacts are evidence indexes rather than
+formal GitHub review objects.
+
+**Superseding SIG-02 decision:** after this reconciliation passes its own exact-head review and CI and
+is merged, SIG-02 development may begin in a fresh, separately authorized JIT session. This decision
+does not authorize merging SIG-02, autonomous continuation, or any later roadmap slice. SIG-02 must
+retain domain-qualified evidence references, citation referential integrity distinct from semantic
+support, immutable access, source/model/time provenance, deterministic note serialization, redaction,
+safe rendering of untrusted content, and the narrow SIG-01 scope-test migration required for its new
+files.
+
+**Research/replay empirical assurance remains NO.** The repairs validate deterministic software and
+closed synthetic replay contracts. This software evidence does not establish source authenticity,
+real historical availability, real model inference, training-knowledge isolation, elapsed trials,
+statistical alpha or deployable performance.
+
+**Permission to merge future SIG-02 remains NO.** Its own final head needs independent review,
+required CI and a Master gate under fresh authorization.
+
+**PAPER/live promotion remains NO-GO.** No provider/broker operation, real order, deployment, forward
+trial or human promotion gate was performed or approved.
+
+The original report begins below and is retained for historical traceability.
+
 ## Decision and closure boundary
 
 The six confirmed post-remediation code/document defects listed below have merged repairs in
