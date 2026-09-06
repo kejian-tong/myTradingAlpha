@@ -141,6 +141,33 @@ def _local_names(body: Iterable[ast.AST]) -> set[str]:
     return names - external
 
 
+def _has_current_loop_break(body: Iterable[ast.AST]) -> bool:
+    """Whether *body* contains a break targeting its immediately enclosing loop."""
+
+    nested_scopes = (
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    pending = list(body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Break):
+            return True
+        if isinstance(node, nested_scopes):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return False
+
+
 class _DynamicImports(ast.NodeVisitor):
     """Bounded lexical analysis, never evaluation of candidate source.
 
@@ -297,6 +324,34 @@ class _DynamicImports(ast.NodeVisitor):
         otherwise = self._analyze_block((node.orelse,), before)
         self.bindings = self._join_states(body, otherwise)
 
+    def _clear_handler_target(
+        self,
+        state: dict[str, frozenset[str | None]],
+        name: str | None,
+    ) -> dict[str, frozenset[str | None]]:
+        cleared = state.copy()
+        if name is not None:
+            cleared[name] = self._OTHER
+        return cleared
+
+    def _finish_try(
+        self,
+        node: ast.Try | ast.TryStar,
+        *,
+        success: dict[str, frozenset[str | None]],
+        handler_states: list[dict[str, frozenset[str | None]]],
+        exceptional_states: list[dict[str, frozenset[str | None]]],
+    ) -> None:
+        success_after_else, else_states = self._analyze_block_snapshots(node.orelse, success)
+        exceptional_states.extend(else_states)
+        continuing = self._join_states(success_after_else, *handler_states)
+        if node.finalbody:
+            all_final_inputs = self._join_states(continuing, *exceptional_states)
+            self._analyze_block(node.finalbody, all_final_inputs)
+            self.bindings = self._analyze_block(node.finalbody, continuing)
+        else:
+            self.bindings = continuing
+
     def visit_Try(self, node: ast.Try) -> None:
         before = self.bindings.copy()
         success, try_states = self._analyze_block_snapshots(node.body, before)
@@ -313,22 +368,56 @@ class _DynamicImports(ast.NodeVisitor):
                 handler.body,
                 self.bindings,
             )
-            if handler.name is not None:
-                handler_state[handler.name] = self._OTHER
+            handler_state = self._clear_handler_target(handler_state, handler.name)
+            snapshots = [
+                self._clear_handler_target(snapshot, handler.name)
+                for snapshot in snapshots
+            ]
             handler_states.append(handler_state)
             exceptional_states.extend(snapshots)
 
-        success_after_else, else_states = self._analyze_block_snapshots(node.orelse, success)
-        exceptional_states.extend(else_states)
-        continuing = self._join_states(success_after_else, *handler_states)
-        if node.finalbody:
-            all_final_inputs = self._join_states(continuing, *exceptional_states)
-            self._analyze_block(node.finalbody, all_final_inputs)
-            self.bindings = self._analyze_block(node.finalbody, continuing)
-        else:
-            self.bindings = continuing
+        self._finish_try(
+            node,
+            success=success,
+            handler_states=handler_states,
+            exceptional_states=exceptional_states,
+        )
 
-    visit_TryStar = visit_Try
+    def visit_TryStar(self, node: ast.TryStar) -> None:
+        before = self.bindings.copy()
+        success, try_states = self._analyze_block_snapshots(node.body, before)
+        exception_entry = self._join_states(*try_states)
+        prior_handler_paths = exception_entry
+        handler_states: list[dict[str, frozenset[str | None]]] = []
+        exceptional_states = list(try_states)
+        for handler in node.handlers:
+            self.bindings = prior_handler_paths.copy()
+            if handler.type is not None:
+                self.visit(handler.type)
+            if handler.name is not None:
+                self.bindings[handler.name] = self._OTHER
+            handler_state, snapshots = self._analyze_block_snapshots(
+                handler.body,
+                self.bindings,
+            )
+            handler_state = self._clear_handler_target(handler_state, handler.name)
+            snapshots = [
+                self._clear_handler_target(snapshot, handler.name)
+                for snapshot in snapshots
+            ]
+            handler_states.append(handler_state)
+            exceptional_states.extend(snapshots)
+            prior_handler_paths = self._join_states(
+                prior_handler_paths,
+                handler_state,
+            )
+
+        self._finish_try(
+            node,
+            success=success,
+            handler_states=handler_states,
+            exceptional_states=exceptional_states,
+        )
 
     def _loop_body_fixed_point(
         self,
@@ -339,28 +428,41 @@ class _DynamicImports(ast.NodeVisitor):
     ) -> tuple[
         dict[str, frozenset[str | None]],
         dict[str, frozenset[str | None]],
+        dict[str, frozenset[str | None]],
     ]:
         head = entry.copy()
+        body_states: dict[str, frozenset[str | None]] | None = None
         while True:
             self.bindings = head.copy()
             if target is not None:
                 self._assign_target(target, self._OTHER)
-            body_exit = self._analyze_block(body, self.bindings)
+            body_exit, snapshots = self._analyze_block_snapshots(body, self.bindings)
+            body_states = (
+                self._join_states(*snapshots)
+                if body_states is None
+                else self._join_states(body_states, *snapshots)
+            )
             next_head = self._join_states(entry, head, body_exit)
             if next_head == head:
-                return head, body_exit
+                assert body_states is not None
+                return head, body_exit, body_states
             head = next_head
 
     def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
         self.visit(node.iter)
         entry = self.bindings.copy()
-        head, body_exit = self._loop_body_fixed_point(
+        head, _, body_states = self._loop_body_fixed_point(
             entry=entry,
             body=node.body,
             target=node.target,
         )
         else_exit = self._analyze_block(node.orelse, head)
-        self.bindings = self._join_states(head, body_exit, else_exit)
+        normal_exit = else_exit if node.orelse else head
+        self.bindings = (
+            self._join_states(normal_exit, body_states)
+            if _has_current_loop_break(node.body)
+            else normal_exit
+        )
 
     visit_AsyncFor = visit_For
 
@@ -369,6 +471,7 @@ class _DynamicImports(ast.NodeVisitor):
         head = entry.copy()
         normal_exit: dict[str, frozenset[str | None]] | None = None
         body_exit = entry.copy()
+        body_states: dict[str, frozenset[str | None]] | None = None
         while True:
             self.bindings = head.copy()
             self.visit(node.test)
@@ -378,15 +481,25 @@ class _DynamicImports(ast.NodeVisitor):
                 if normal_exit is None
                 else self._join_states(normal_exit, tested)
             )
-            body_exit = self._analyze_block(node.body, tested)
+            body_exit, snapshots = self._analyze_block_snapshots(node.body, tested)
+            body_states = (
+                self._join_states(*snapshots)
+                if body_states is None
+                else self._join_states(body_states, *snapshots)
+            )
             next_head = self._join_states(entry, head, body_exit)
             if next_head == head:
                 break
             head = next_head
         assert normal_exit is not None
-        loop_exit = self._join_states(normal_exit, body_exit)
+        assert body_states is not None
         else_exit = self._analyze_block(node.orelse, normal_exit)
-        self.bindings = self._join_states(loop_exit, else_exit)
+        normal_postloop = else_exit if node.orelse else normal_exit
+        self.bindings = (
+            self._join_states(normal_postloop, body_states)
+            if _has_current_loop_break(node.body)
+            else normal_postloop
+        )
 
     def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
         for item in node.items:
@@ -488,9 +601,13 @@ class _DynamicImports(ast.NodeVisitor):
             else outer
         )
         containing_before = containing_scope.copy()
+        propagate_namedexpr = not isinstance(node, ast.GeneratorExp)
+        analysis_namedexpr_scope = (
+            containing_scope if propagate_namedexpr else containing_scope.copy()
+        )
         self.bindings = self._closure()
         self.class_outer = None
-        self.namedexpr_scope = containing_scope
+        self.namedexpr_scope = analysis_namedexpr_scope
         for index, generator in enumerate(node.generators):
             if index:
                 self.visit(generator.iter)
@@ -499,14 +616,17 @@ class _DynamicImports(ast.NodeVisitor):
                 self.visit(condition)
         for expression in ((node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)):
             self.visit(expression)
-        containing_after = containing_scope.copy()
-        containing_scope.clear()
-        containing_scope.update(self._join_states(containing_before, containing_after))
-        self.bindings = (
-            containing_scope
-            if containing_scope is outer
-            else self._join_states(outer, containing_scope)
-        )
+        if propagate_namedexpr:
+            containing_after = containing_scope.copy()
+            containing_scope.clear()
+            containing_scope.update(self._join_states(containing_before, containing_after))
+            self.bindings = (
+                containing_scope
+                if containing_scope is outer
+                else self._join_states(outer, containing_scope)
+            )
+        else:
+            self.bindings = outer
         self.class_outer = class_outer
         self.namedexpr_scope = previous_namedexpr_scope
 
@@ -522,6 +642,7 @@ class _DynamicImports(ast.NodeVisitor):
         return next((item.value for item in node.keywords if item.arg == keyword), None)
 
     def visit_Call(self, node: ast.Call) -> None:
+        self.visit(node.func)
         targets: set[str | None] = set()
         for loader in sorted(self._binding(node.func) & {"import_module", "__import__"}):
             target = self._argument(node, 0, "name")
@@ -542,7 +663,10 @@ class _DynamicImports(ast.NodeVisitor):
             if name not in targets:
                 self._record_import(node, name)
                 targets.add(name)
-        self.generic_visit(node)
+        for argument in node.args:
+            self.visit(argument)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
 
 
 def _violation_for(
