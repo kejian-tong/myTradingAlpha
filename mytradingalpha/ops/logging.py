@@ -21,37 +21,68 @@ _CORRELATION_FIELDS = (
     "variant_id",
     "schema_version",
 )
-_SENSITIVE_FIELD_NAMES = {
-    "access_token",
-    "account_id",
-    "account_number",
-    "api_key",
-    "authorization",
-    "bearer_token",
-    "broker_account_id",
-    "client_secret",
-    "password",
-    "private_key",
-    "refresh_token",
-    "secret",
-    "token",
-}
-_SENSITIVE_FIELD_PARTS = (
-    "api-key",
-    "access-token",
-    "account-id",
-    "account-number",
-    "client-secret",
-    "private-key",
-    "refresh-token",
-    "authorization",
+_SENSITIVE_FIELD_PATHS = (
+    ("aws", "secret", "access", "key"),
+    ("aws", "access", "key", "id"),
+    ("broker", "account", "id"),
+    ("consumer", "secret"),
+    ("client", "secret"),
+    ("session", "token"),
+    ("refresh", "token"),
+    ("access", "token"),
+    ("bearer", "token"),
+    ("auth", "token"),
+    ("api", "secret"),
+    ("api", "key"),
+    ("private", "key"),
+    ("account", "number"),
+    ("account", "id"),
+    ("authorization",),
+    ("password",),
+    ("secret",),
+    ("token",),
+)
+_SENSITIVE_COMPACT_FIELDS = frozenset(
+    "".join(path) for path in _SENSITIVE_FIELD_PATHS if len(path) > 1
+)
+_CAMEL_ACRONYMS = {"api": "API", "aws": "AWS", "id": "ID"}
+_SENSITIVE_CAMEL_SUFFIXES = tuple(
+    dict.fromkeys(
+        suffix
+        for path in _SENSITIVE_FIELD_PATHS
+        for suffix in (
+            "".join(part.title() for part in path),
+            "".join(_CAMEL_ACRONYMS.get(part, part.title()) for part in path),
+        )
+    )
+)
+_CAMEL_BOUNDARY_PATTERN = re.compile(
+    r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
+)
+_FIELD_PART_PATTERN = re.compile(r"[A-Za-z0-9]+")
+_SENSITIVE_ALIAS_PATTERN = "(?:" + "|".join(
+    r"[-_.]?".join(path) for path in _SENSITIVE_FIELD_PATHS
+) + ")"
+_SENSITIVE_CAMEL_KEY_PATTERN = (
+    r"(?:[A-Za-z][A-Za-z0-9]*?)(?:"
+    + "|".join(re.escape(suffix) for suffix in _SENSITIVE_CAMEL_SUFFIXES)
+    + ")"
+)
+_SENSITIVE_TEXT_KEY_PATTERN = (
+    rf"(?:(?:[A-Za-z][A-Za-z0-9]*[-_.]+)*{_SENSITIVE_ALIAS_PATTERN}"
+    rf"|(?-i:{_SENSITIVE_CAMEL_KEY_PATTERN}))"
+)
+_AUTHORIZATION_TEXT_KEY_PATTERN = (
+    r"(?:(?:[A-Za-z0-9]+[-_.]+)*authorization"
+    r"|(?-i:(?:[A-Za-z][A-Za-z0-9]*?)Authorization))"
 )
 _BEARER_PATTERN = re.compile(
     r"(\bBearer\s+)(?!\[REDACTED\])[^\s,}\]]+", re.IGNORECASE
 )
 _AUTHORIZATION_PATTERN = re.compile(
-    r"(?P<prefix>(?P<key_quote>[\"']?)"
-    r"(?P<key>(?:[A-Za-z0-9]+[_-])*authorization)"
+    rf"(?<![A-Za-z0-9_.-])"
+    rf"(?P<prefix>(?P<key_quote>[\"']?)"
+    rf"(?P<key>{_AUTHORIZATION_TEXT_KEY_PATTERN})"
     r"(?P=key_quote)\s*[:=])"
     r"(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?P<spacing>\s*)"
@@ -60,12 +91,14 @@ _AUTHORIZATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _KEY_VALUE_PATTERN = re.compile(
-    r"(?P<prefix>(?P<key_quote>[\"']?)(?P<key>[A-Za-z][A-Za-z0-9_-]*)"
+    rf"(?<![A-Za-z0-9_.-])"
+    rf"(?P<prefix>(?P<key_quote>[\"']?)"
+    rf"(?P<key>{_SENSITIVE_TEXT_KEY_PATTERN})"
     r"(?P=key_quote)\s*[:=])"
     r"(?!\s*[\"']?\[REDACTED\][\"']?)"
     r"(?P<spacing>\s*)"
     r"(?P<value>"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\]]+))",
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\];]+))",
     re.IGNORECASE,
 )
 _PRIVATE_KEY_PATTERN = re.compile(
@@ -80,13 +113,14 @@ _context: ContextVar[dict[str, Any] | None] = ContextVar(
 def _is_sensitive_field(field_name: Any) -> bool:
     if not isinstance(field_name, str):
         return False
-    normalized = field_name.casefold().replace("-", "_")
-    compact = normalized.replace("_", "")
-    return (
-        normalized in _SENSITIVE_FIELD_NAMES
-        or compact in {name.replace("_", "") for name in _SENSITIVE_FIELD_NAMES}
-        or any(part in normalized.replace("_", "-") for part in _SENSITIVE_FIELD_PARTS)
+    separated = _CAMEL_BOUNDARY_PATTERN.sub("_", field_name)
+    parts = tuple(
+        part.casefold() for part in _FIELD_PART_PATTERN.findall(separated)
     )
+    return any(
+        len(parts) >= len(path) and parts[-len(path) :] == path
+        for path in _SENSITIVE_FIELD_PATHS
+    ) or bool(parts and parts[-1] in _SENSITIVE_COMPACT_FIELDS)
 
 
 def _redact_text(value: str) -> str:
@@ -148,6 +182,10 @@ class RedactionFilter(logging.Filter):
                 )
         record.msg = _redact_text(record.getMessage())
         record.args = ()
+        if record.exc_text is None and record.exc_info is not None:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if isinstance(record.exc_text, str):
+            record.exc_text = _redact_text(record.exc_text)
         return True
 
 
