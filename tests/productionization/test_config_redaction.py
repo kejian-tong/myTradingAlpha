@@ -500,6 +500,209 @@ def test_configured_logging_preserves_ordinary_lazy_formatting() -> None:
     assert json.loads(stream.getvalue())["message"] == "operation=ordinary count=2"
 
 
+_AUD_H01_SECRET_FIELDS = (
+    "api_secret",
+    "consumer_secret",
+    "aws_secret_access_key",
+    "aws_access_key_id",
+    "session_token",
+    "auth_token",
+    "api_key",
+    "client_secret",
+)
+
+
+def _aud_h01_canary(field_name: str) -> str:
+    return f"AUDH01_CANARY_{field_name.upper()}"
+
+
+def _aud_h01_record(
+    *,
+    message: object,
+    arguments: object = (),
+) -> logging.LogRecord:
+    return logging.LogRecord(
+        name="mytradingalpha.test.aud-h01",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg=message,
+        args=arguments,
+        exc_info=None,
+    )
+
+
+def _aud_h01_render(record: logging.LogRecord, template: str = "%(message)s") -> str:
+    from mytradingalpha.ops.logging import RedactionFilter
+
+    assert RedactionFilter().filter(record) is True
+    return logging.Formatter(template).format(record)
+
+
+@pytest.mark.parametrize("field_name", _AUD_H01_SECRET_FIELDS)
+@pytest.mark.parametrize(
+    "surface",
+    ("text", "mapping", "nested", "lazy-positional", "lazy-mapping", "extra"),
+)
+def test_aud_h01_redacts_every_alias_across_log_record_surfaces(
+    field_name: str,
+    surface: str,
+) -> None:
+    canary = _aud_h01_canary(field_name)
+    template = "%(message)s"
+    if surface == "text":
+        record = _aud_h01_record(message=f"failed: {field_name}={canary}")
+    elif surface == "mapping":
+        record = _aud_h01_record(message={field_name: canary})
+    elif surface == "nested":
+        record = _aud_h01_record(
+            message={"payload": [{"entries": (({field_name: canary},),)}]}
+        )
+    elif surface == "lazy-positional":
+        record = _aud_h01_record(message=f"{field_name}=%s", arguments=(canary,))
+    elif surface == "lazy-mapping":
+        record = _aud_h01_record(
+            message=f"{field_name}=%({field_name})s",
+            arguments={field_name: canary},
+        )
+    else:
+        assert surface == "extra"
+        record = _aud_h01_record(message="synthetic event")
+        record.__dict__[field_name] = canary
+        template = f"%(message)s %({field_name})s"
+
+    rendered = _aud_h01_render(record, template)
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.parametrize(
+    ("message", "canary"),
+    (
+        ("api_secret='AUDH01 CANARY QUOTED'", "AUDH01 CANARY QUOTED"),
+        ('{"consumer_secret":"AUDH01_CANARY_JSON"}', "AUDH01_CANARY_JSON"),
+        ("X-AWS-Secret-Access-Key: AUDH01_CANARY_HEADER", "AUDH01_CANARY_HEADER"),
+        ("aws_access_key_id=424242", "424242"),
+        ('session_token="AUDH01_CANARY_SESSION"', "AUDH01_CANARY_SESSION"),
+        ("X-Auth-Token: AUDH01_CANARY_AUTH", "AUDH01_CANARY_AUTH"),
+        ("api_key=AUDH01%2FCANARY", "AUDH01%2FCANARY"),
+        ('{"client_secret": "AUDH01_CANARY_CLIENT"}', "AUDH01_CANARY_CLIENT"),
+    ),
+)
+def test_aud_h01_redacts_quoted_json_header_numeric_and_encoded_values(
+    message: str,
+    canary: str,
+) -> None:
+    rendered = _aud_h01_render(_aud_h01_record(message=message))
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+
+
+def _aud_h01_standard_logger(name: str) -> tuple[logging.Logger, StringIO]:
+    from mytradingalpha.ops.logging import RedactionFilter
+
+    stream = StringIO()
+    logger = logging.Logger(name)
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(RedactionFilter())
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger, stream
+
+
+@pytest.mark.parametrize("field_name", _AUD_H01_SECRET_FIELDS)
+def test_aud_h01_logger_error_redacts_nested_exception_arguments(field_name: str) -> None:
+    logger, stream = _aud_h01_standard_logger(f"aud-h01-error-{field_name}")
+    canary = _aud_h01_canary(field_name)
+
+    logger.error("failed: %s", ValueError(f"{field_name}={canary}"))
+    rendered = stream.getvalue()
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+    assert "ValueError" not in rendered
+
+
+@pytest.mark.parametrize("field_name", _AUD_H01_SECRET_FIELDS)
+def test_aud_h01_logger_exception_redacts_generated_standard_traceback(
+    field_name: str,
+) -> None:
+    logger, stream = _aud_h01_standard_logger(f"aud-h01-exception-{field_name}")
+    canary = _aud_h01_canary(field_name)
+
+    try:
+        raise ValueError(f"failed: {field_name}={canary}")
+    except ValueError:
+        logger.exception("synthetic operation failed")
+    rendered = stream.getvalue()
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+    assert "Traceback (most recent call last)" in rendered
+    assert "ValueError: failed:" in rendered
+
+
+@pytest.mark.parametrize("field_name", _AUD_H01_SECRET_FIELDS)
+def test_aud_h01_filter_redacts_preexisting_exception_text(field_name: str) -> None:
+    canary = _aud_h01_canary(field_name)
+    record = _aud_h01_record(message="synthetic operation failed")
+    record.exc_text = (
+        "Traceback (most recent call last):\n"
+        f"  File \"synthetic.py\", line 1\nValueError: failed: {field_name}={canary}"
+    )
+
+    rendered = _aud_h01_render(record)
+
+    assert canary not in rendered
+    assert "[REDACTED]" in rendered
+    assert "Traceback (most recent call last)" in rendered
+    assert "ValueError: failed:" in rendered
+
+
+def test_aud_h01_preserves_delimiter_aware_negative_controls() -> None:
+    payload = {
+        "secretary": "office",
+        "monkey": "banana",
+        "token_count": 7,
+        "run_id": "run-synthetic-001",
+        "instrument_id": "instrument-synthetic-001",
+        "count": 2,
+        "api_secretary": "ordinary",
+        "ordinary": ["text", 3, ("tuple", 4)],
+    }
+
+    rendered = _aud_h01_render(_aud_h01_record(message=payload))
+
+    assert "[REDACTED]" not in rendered
+    for value in ("office", "banana", "run-synthetic-001", "instrument-synthetic-001"):
+        assert value in rendered
+    assert "'token_count': 7" in rendered
+    assert "'count': 2" in rendered
+
+
+@pytest.mark.parametrize("field_name", _AUD_H01_SECRET_FIELDS)
+def test_aud_h01_already_redacted_values_are_idempotent(field_name: str) -> None:
+    record = _aud_h01_record(message=f"{field_name}=[REDACTED]")
+
+    first = _aud_h01_render(record)
+    second = _aud_h01_render(record)
+
+    assert first == second == f"{field_name}=[REDACTED]"
+
+
+def test_aud_h01_preserves_standard_malformed_formatting_failure() -> None:
+    from mytradingalpha.ops.logging import RedactionFilter
+
+    record = _aud_h01_record(message="count=%d", arguments=("not-a-number",))
+
+    with pytest.raises(TypeError):
+        RedactionFilter().filter(record)
+
+
 def test_structured_logs_include_context_and_restore_nested_correlation_scopes() -> None:
     from mytradingalpha.ops.logging import configure_logging, correlation_scope
 
