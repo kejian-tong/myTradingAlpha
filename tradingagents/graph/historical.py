@@ -97,6 +97,10 @@ _MESSAGE_ROLES = {
 }
 _OBJECT_CALL_BLOCKS = {"tool_call", "server_tool_call"}
 _ENCODED_CALL_BLOCKS = {"invalid_tool_call", "tool_call_chunk", "server_tool_call_chunk"}
+_EXECUTION_CARRIERS = frozenset({"args", "arguments", "input", "function"})
+_ARGS_CARRIER = frozenset({"args"})
+_ARGUMENTS_CARRIER = frozenset({"arguments"})
+_FUNCTION_CARRIER = frozenset({"function"})
 _MAX_PLAIN_DEPTH = 64
 _MAX_PLAIN_NODES = 100_000
 _MAX_PLAIN_STRING_BYTES = 1_048_576
@@ -267,10 +271,28 @@ def _validate_object_arguments(value: object) -> None:
         raise HistoricalRuntimeOutputError("historical calls cannot contain authority fields")
 
 
+def _reject_execution_carriers(
+    value: dict[str, object],
+    *,
+    allowed: frozenset[str] = frozenset(),
+) -> None:
+    unexpected = sorted(_EXECUTION_CARRIERS.intersection(value).difference(allowed))
+    if unexpected:
+        raise HistoricalRuntimeOutputError(
+            f"unsupported historical execution carrier placement: {', '.join(unexpected)}"
+        )
+
+
 def _validate_function_call(call: object) -> None:
-    if type(call) is not dict or type(call.get("name")) is not str or "arguments" not in call:
+    if type(call) is not dict:
+        raise HistoricalRuntimeOutputError("invalid historical function call")
+    _reject_execution_carriers(call, allowed=_ARGUMENTS_CARRIER)
+    if type(call.get("name")) is not str or "arguments" not in call:
         raise HistoricalRuntimeOutputError("invalid historical function call")
     _parse_argument_object(call["arguments"])
+    for field, item in call.items():
+        if field != "arguments":
+            _validate_call_tree(item)
 
 
 def _validate_call_list(calls: object, *, kind: str) -> None:
@@ -280,13 +302,16 @@ def _validate_call_list(calls: object, *, kind: str) -> None:
         if type(call) is not dict:
             raise HistoricalRuntimeOutputError("historical calls require plain objects")
         if kind == "raw_tool_calls":
+            _reject_execution_carriers(call, allowed=_FUNCTION_CARRIER)
             if call.get("type", "function") != "function" or type(call.get("id")) not in (
                 str,
                 type(None),
             ):
                 raise HistoricalRuntimeOutputError("invalid raw historical call identity")
             _validate_function_call(call.get("function"))
+            argument_field = "function"
         elif kind == "tool_calls":
+            _reject_execution_carriers(call, allowed=_ARGS_CARRIER)
             if (
                 call.get("type", "tool_call") != "tool_call"
                 or type(call.get("name")) is not str
@@ -295,7 +320,9 @@ def _validate_call_list(calls: object, *, kind: str) -> None:
             ):
                 raise HistoricalRuntimeOutputError("invalid normalized historical call identity")
             _validate_object_arguments(call.get("args"))
+            argument_field = "args"
         else:
+            _reject_execution_carriers(call, allowed=_ARGS_CARRIER)
             expected = kind.removesuffix("s")
             if (
                 call.get("type", expected) != expected
@@ -304,26 +331,36 @@ def _validate_call_list(calls: object, *, kind: str) -> None:
             ):
                 raise HistoricalRuntimeOutputError("invalid encoded historical call identity")
             _parse_argument_object(call.get("args"))
+            argument_field = "args"
+        for field, item in call.items():
+            if field != argument_field:
+                _validate_call_tree(item)
 
 
 def _validate_call_tree(value: object) -> None:
     if type(value) is dict:
+        _reject_execution_carriers(value)
         for field in ("additional_kwargs", "response_metadata"):
             if field in value and type(value[field]) is not dict:
                 raise HistoricalRuntimeOutputError("historical metadata requires a plain object")
+        handled: set[str] = set()
         if "function_call" in value:
             _validate_function_call(value["function_call"])
+            handled.add("function_call")
         if "tool_calls" in value:
             calls = value["tool_calls"]
             raw = type(calls) is list and any(
                 type(item) is dict and "function" in item for item in calls
             )
             _validate_call_list(calls, kind="raw_tool_calls" if raw else "tool_calls")
+            handled.add("tool_calls")
         for field in ("invalid_tool_calls", "tool_call_chunks", "server_tool_call_chunks"):
             if field in value:
                 _validate_call_list(value[field], kind=field)
-        for item in value.values():
-            _validate_call_tree(item)
+                handled.add(field)
+        for field, item in value.items():
+            if field not in handled:
+                _validate_call_tree(item)
     elif type(value) is list:
         for item in value:
             _validate_call_tree(item)
@@ -334,10 +371,14 @@ def _validate_content_block(block: dict[str, object]) -> None:
     if kind is not None and type(kind) is not str:
         raise HistoricalRuntimeOutputError("historical content block type must be a string")
     if kind == "non_standard":
+        _reject_execution_carriers(block)
         wrapped = block.get("value")
         if type(wrapped) is not dict:
             raise HistoricalRuntimeOutputError("historical content wrapper requires a plain object")
         _validate_content_block(wrapped)
+        for field, item in block.items():
+            if field not in {"type", "value"}:
+                _validate_call_tree(item)
         return
     if kind in _OBJECT_CALL_BLOCKS | _ENCODED_CALL_BLOCKS | {"function_call"}:
         id_field = "call_id" if kind == "function_call" else "id"
@@ -352,6 +393,10 @@ def _validate_content_block(block: dict[str, object]) -> None:
             if type(block[field]) is not str and not (nullable and block[field] is None):
                 raise HistoricalRuntimeOutputError("invalid historical content-call identity")
         argument_field = "arguments" if kind == "function_call" else "args"
+        _reject_execution_carriers(
+            block,
+            allowed=_ARGUMENTS_CARRIER if argument_field == "arguments" else _ARGS_CARRIER,
+        )
         if kind in _OBJECT_CALL_BLOCKS:
             _validate_object_arguments(block.get(argument_field))
         else:
@@ -365,8 +410,12 @@ def _validate_content_block(block: dict[str, object]) -> None:
                 type(block[field]) not in types or (field == "index" and type(block[field]) is bool)
             ):
                 raise HistoricalRuntimeOutputError("invalid historical content-call metadata")
-    elif any(field in block for field in ("args", "arguments", "input", "function")):
-        raise HistoricalRuntimeOutputError("unsupported historical execution-bearing block")
+        for field, item in block.items():
+            if field != argument_field:
+                _validate_call_tree(item)
+    else:
+        _reject_execution_carriers(block)
+        _validate_call_tree(block)
 
 
 def _validate_message_content(content: object) -> None:
@@ -386,7 +435,6 @@ def _validate_message(message: object) -> None:
         if len(message) != 2 or type(message[0]) is not str or message[0] not in _MESSAGE_ROLES:
             raise HistoricalRuntimeOutputError("invalid historical role/content message")
         _validate_message_content(message[1])
-        _validate_call_tree(message)
         return
     if type(message) is not dict or "content" not in message:
         raise HistoricalRuntimeOutputError("unsupported historical message representation")
@@ -396,8 +444,11 @@ def _validate_message(message: object) -> None:
     selector = message[selectors[0]]
     if type(selector) is not str or selector not in _MESSAGE_ROLES:
         raise HistoricalRuntimeOutputError("invalid historical message role")
+    _reject_execution_carriers(message)
     _validate_message_content(message["content"])
-    _validate_call_tree(message)
+    for field, item in message.items():
+        if field not in {"role", "type", "content"}:
+            _validate_call_tree({field: item})
 
 
 def _assert_debate(value: object, *, field: str, required: set[str]) -> None:
