@@ -52,9 +52,13 @@ There is no fixed live risk number in this plan. Risk limits, allowlists, creden
 
 ## Current implementation and evidence index
 
-FND-01 through FND-04, PIT-01 through PIT-06 and SIG-01 are implemented. SIG-02 through later
-roadmap slices remain planned unless a newer reconciled main/PR record proves otherwise. This is
-contract/fixture evidence, not complete vendor capture, model-inference, alpha or trading readiness.
+FND-01 through FND-04, PIT-01 through PIT-06, SIG-01 and SIG-02 are implemented at their approved
+contract scope. SIG-03 and later roadmap slices remain planned unless a newer reconciled main/PR record
+proves otherwise. SIG-02 merged as PR #45 / `376c9c044722ee37f3fa36691b576420e3b6253d` and adds the
+sealed evidence-tool / deterministic `ResearchNote` boundary without authorizing inference, quant,
+portfolio, execution, PAPER or live behavior. This is contract/fixture evidence, not complete vendor
+capture, model-inference, alpha or trading readiness.
+
 Use [AGENT_STATE](AGENT_STATE.md) plus actual GitHub main and PR records for operational status;
 historical authorization is not permission to resume. The dated current-state audit is a historical
 baseline, not the live completion ledger. Use [implemented checks](appendices/B_TEST_MATRIX.md#implemented-productionization-checks)
