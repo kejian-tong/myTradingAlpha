@@ -60,6 +60,18 @@ jobs:
         # The repo is fully clean under the strict select, so we lint everything
         # (results/ and worklog/ are excluded via pyproject extend-exclude).
         run: uv run --no-sync ruff check .
+      # `ruff (strict, full repo)` is already a required main-protection status.
+      # Keep the status name stable and bind the harness/static contract to it so
+      # a harness failure cannot be merged even if the separate Foundation job is
+      # not configured as a required repository status check.
+      - name: Check agent harness
+        run: uv run --no-sync python scripts/check_agent_harness.py
+      - name: Check dependency direction
+        run: uv run --no-sync python scripts/check_dependency_direction.py
+      - name: Check lock consistency
+        run: uv run --no-sync python scripts/check_lock_consistency.py
+      - name: Check Markdown contracts
+        run: uv run --no-sync python scripts/check_markdown_contracts.py
 
   foundation-contract-docs-lock:
     name: Foundation contract/docs/lock
@@ -72,6 +84,8 @@ jobs:
           python-version: "3.14"
       - name: Install locked development environment
         run: uv sync --locked --extra dev
+      - name: Check agent harness
+        run: uv run --no-sync python scripts/check_agent_harness.py
       - name: Check dependency direction
         run: uv run --no-sync python scripts/check_dependency_direction.py
       - name: Check lock consistency
