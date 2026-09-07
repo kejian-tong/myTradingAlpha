@@ -447,6 +447,8 @@ class ResearchNoteBuilder:
         """Build a note from explicit source fields and claim-to-citation mapping."""
 
         _validate_bindings(self._bundle, self._context, self._response)
+        if type(source_agent) is not str:
+            raise ResearchNoteInputError("source_agent must be an exact built-in string")
         try:
             selected_source_agent = _SOURCE_AGENT_ADAPTER.validate_python(source_agent)
         except (TypeError, ValidationError, ValueError) as exc:

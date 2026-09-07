@@ -159,6 +159,13 @@ class ResearchNote(_ResearchContractModel):
     risks: tuple[StrictStr, ...]
     citations: tuple[EvidenceCitation, ...]
 
+    @field_validator("source_agent", mode="before")
+    @classmethod
+    def validate_source_agent_type(cls, value: object) -> object:
+        if type(value) is not str:
+            raise ValueError("source_agent requires an exact built-in string")
+        return value
+
     @field_validator("source_fields", mode="before")
     @classmethod
     def validate_source_fields(cls, value: object) -> object:
