@@ -12,6 +12,19 @@ harness must not dirty a candidate worktree, create a new source commit, or inva
 Do not commit raw telemetry by default. Publish only deliberately summarized, non-sensitive benchmark
 results through a reviewed harness PR when they change policy.
 
+## Automatic lifecycle observations
+
+The trusted project hooks call `scripts/codex_telemetry_hook.py` for three documented Codex lifecycle
+events:
+
+- `SubagentStart` records `agent_spawn`, role/agent type, and the active model only when Codex exposes it;
+- `SubagentStop` records `agent_stop` with the same narrow role/model boundary;
+- `PostCompact` records `context_compaction` and the documented `manual` or `auto` trigger.
+
+These hooks are asynchronous, best-effort, and fail open. They do not parse transcripts or store session
+IDs, agent IDs, prompts, assistant messages, permission state, tool inputs, source snippets, or secrets.
+A missing lifecycle record is an observability gap, not proof that the event did not happen.
+
 ## What to record
 
 Record only facts exposed by the runtime or directly observed by the master:
@@ -20,7 +33,7 @@ Record only facts exposed by the runtime or directly observed by the master:
 - role and phase completion duration when measured;
 - review round and BLOCKER/HIGH count;
 - exact-head invalidations and CI reruns;
-- context compaction when the runtime reports it;
+- context compaction and its documented trigger when the runtime reports them;
 - model/effort and input/cached/output token counts only when those values are actually exposed.
 
 Never estimate hidden token counts, reasoning tokens, credits, model routes, latency, or concurrency and

@@ -1,4 +1,5 @@
 {
+  "description": "myTradingAlpha lightweight harness guards and advisory lifecycle telemetry.",
   "hooks": {
     "SessionStart": [
       {
@@ -6,10 +7,50 @@
           {
             "type": "command",
             "command": "python3 -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'session-start'], check=True)\"",
-            "command_windows": "python -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'session-start'], check=True)\"",
-            "timeout_sec": 15,
+            "commandWindows": "python -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'session-start'], check=True)\"",
+            "timeout": 15,
             "async": false,
-            "status_message": "Checking myTradingAlpha Codex harness"
+            "statusMessage": "Checking myTradingAlpha Codex harness"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex_telemetry_hook.py\"",
+            "commandWindows": "python -c \"import pathlib,runpy,subprocess; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); runpy.run_path(str(r/'scripts'/'codex_telemetry_hook.py'), run_name='__main__')\"",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex_telemetry_hook.py\"",
+            "commandWindows": "python -c \"import pathlib,runpy,subprocess; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); runpy.run_path(str(r/'scripts'/'codex_telemetry_hook.py'), run_name='__main__')\"",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex_telemetry_hook.py\"",
+            "commandWindows": "python -c \"import pathlib,runpy,subprocess; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); runpy.run_path(str(r/'scripts'/'codex_telemetry_hook.py'), run_name='__main__')\"",
+            "timeout": 5,
+            "async": true
           }
         ]
       }
@@ -20,10 +61,10 @@
           {
             "type": "command",
             "command": "python3 -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'stop'], check=True)\"",
-            "command_windows": "python -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'stop'], check=True)\"",
-            "timeout_sec": 15,
+            "commandWindows": "python -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'stop'], check=True)\"",
+            "timeout": 15,
             "async": false,
-            "status_message": "Checking myTradingAlpha stop guard"
+            "statusMessage": "Checking myTradingAlpha stop guard"
           }
         ]
       }
