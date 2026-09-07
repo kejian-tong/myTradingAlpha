@@ -690,6 +690,85 @@ def test_direct_provenance_and_note_payloads_require_redacted_projection_fields(
             contracts.ResearchNote.model_validate(payload)
 
 
+def test_research_note_redacts_source_strings_before_artifact_construction() -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    output = make_output()
+    output["market_report"] = (
+        "source_locator=SIG02_LOCATOR_CANARY terms=SIG02_TERMS_CANARY "
+        '{"api_key":"SIG02_NESTED_KEY_CANARY"} Authorization: Bearer SIG02_BEARER_CANARY'
+    )
+    output["news_report"] = (
+        "source_locator=SIG02_RISK_LOCATOR_CANARY terms=SIG02_RISK_TERMS_CANARY "
+        '{"authorization":"Bearer SIG02_RISK_AUTH_CANARY"}'
+    )
+    capture_manifest = make_capture_manifest(output)
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=capture_manifest,
+            )
+        )
+    )
+    note = _note(
+        bundle,
+        context,
+        response,
+        claim_citations={
+            "thesis": (_reference(contracts, bundle, "actions", "action-acme-split"),),
+            "risks": (_reference(contracts, bundle, "events", "news-aapl-earnings"),),
+        },
+    )
+    serialized = note.canonical_bytes().decode("utf-8")
+    for canary in (
+        "SIG02_LOCATOR_CANARY",
+        "SIG02_TERMS_CANARY",
+        "SIG02_NESTED_KEY_CANARY",
+        "SIG02_BEARER_CANARY",
+        "SIG02_RISK_LOCATOR_CANARY",
+        "SIG02_RISK_TERMS_CANARY",
+        "SIG02_RISK_AUTH_CANARY",
+    ):
+        assert canary not in serialized
+    assert serialized.count("[REDACTED]") >= 7
+
+
+def test_source_agent_uses_stable_id_and_rejects_credential_shaped_values() -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    with pytest.raises(notes.ResearchNoteInputError):
+        _note(bundle, context, response, source_agent="api_key=SIG02_SOURCE_CANARY")
+
+    note = _note(bundle, context, response)
+    payload = note.model_dump(mode="python")
+    payload["source_agent"] = "api_key=SIG02_SOURCE_CANARY"
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_reference_raw_storage_extra_and_missing_fields_map_to_typed_error() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    toolset = evidence_tools.EvidenceToolset(bundle)
+
+    extra_calls: list[str] = []
+    extra = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    extra_storage = object.__getattribute__(extra, "__dict__")
+    extra_storage["unexpected"] = _Tripwire(extra_calls)
+    with pytest.raises(evidence_tools.MalformedEvidenceReferenceError):
+        toolset.get(extra)
+    assert extra_calls == []
+
+    missing = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    missing_storage = object.__getattribute__(missing, "__dict__")
+    del missing_storage["record_id"]
+    with pytest.raises(evidence_tools.MalformedEvidenceReferenceError):
+        toolset.get(missing)
+
+
 class _Tripwire:
     def __init__(self, calls: list[str]) -> None:
         object.__setattr__(self, "_calls", calls)
