@@ -7,8 +7,10 @@ they are not evidence of real capture or model inference.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib
+import inspect
 import json
 from collections.abc import Mapping
 from datetime import datetime, timezone, tzinfo
@@ -3225,3 +3227,29 @@ def test_credential_shaped_source_field_descriptors_fail_builder_typed_path(
                 ),
             },
         )
+
+
+def test_explicit_key_scanner_has_no_per_colon_prefix_search() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    source = inspect.getsource(redaction._scan_yaml_explicit_key)
+    tree = ast.parse(source)
+    prefix_searches = tuple(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "rfind"
+    )
+
+    assert not prefix_searches
+
+
+def test_many_rejected_colon_candidates_remain_bounded_safe_and_idempotent() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    raw = "x):" * 8192 + " ordinary safe text"
+
+    first = redaction.redact_artifact_text(raw)
+
+    assert first == raw
+    assert redaction.validate_artifact_text(first) == first
+    assert redaction.redact_artifact_text(first) == first
