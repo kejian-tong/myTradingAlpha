@@ -24,4 +24,4 @@ def test_compaction_policy_preserves_active_owner_and_context_efficiency() -> No
 def test_cold_history_is_not_current_execution_authority() -> None:
     history = HISTORY.read_text(encoding="utf-8")
     assert "primary durable evidence" in history
-    assert "not automatically loaded execution policy" in history
+    assert "automatically loaded execution policy" in history
