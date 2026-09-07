@@ -127,7 +127,7 @@ SIG-02 — Evidence tools and ResearchNote
 - alternating-encoding RED: `ce6524615b9ae4c1f026838a0926f64b8f41bd99`; repair GREEN:
   `7268f5353038b910fca118439deb9d4f1cbc8238`
 - local tests: PASS after final repair/latest-main integration; focused `150 passed`, required
-  regressions `870 passed`, full suite `2346 passed / 3 skipped / 18 warnings / 69 subtests`
+  regressions `870 passed`, full suite `2349 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
