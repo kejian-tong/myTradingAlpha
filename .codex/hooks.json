@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'session-start'], check=True)\"",
+            "command_windows": "python -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'session-start'], check=True)\"",
+            "timeout_sec": 15,
+            "async": false,
+            "status_message": "Checking myTradingAlpha Codex harness"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'stop'], check=True)\"",
+            "command_windows": "python -c \"import pathlib,subprocess,sys; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); subprocess.run([sys.executable,str(r/'scripts'/'codex_hook_guard.py'),'stop'], check=True)\"",
+            "timeout_sec": 15,
+            "async": false,
+            "status_message": "Checking myTradingAlpha stop guard"
+          }
+        ]
+      }
+    ]
+  }
+}
