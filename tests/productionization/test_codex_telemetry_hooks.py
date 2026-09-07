@@ -70,7 +70,7 @@ def test_runpy_loading_matches_windows_command_shape(tmp_path: Path) -> None:
         "agent_type": "test_auditor",
         "model": "gpt-5.6-luna",
     }
-    code = "import runpy; runpy.run_path(%r, run_name='__main__')" % str(HOOK)
+    code = f"import runpy; runpy.run_path({str(HOOK)!r}, run_name='__main__')"
     result = subprocess.run(
         [sys.executable, "-c", code],
         input=json.dumps(event),
