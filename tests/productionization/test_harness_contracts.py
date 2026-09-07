@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,14 +41,36 @@ def test_current_configuration_is_consistent() -> None:
     assert _checker().configuration_errors(ROOT) == []
 
 
+@pytest.mark.parametrize("event", ["session-start", "stop"])
+def test_hook_guard_passes_in_current_checkout(event: str) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/codex_hook_guard.py"), event],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout
+
+
 @pytest.mark.parametrize(
     "mutation",
-    ["missing_role", "writable_reviewer", "duplicate_name", "wrong_effort", "nested_delegation"],
+    [
+        "missing_role",
+        "writable_reviewer",
+        "duplicate_name",
+        "wrong_effort",
+        "nested_delegation",
+        "missing_stop_hook",
+    ],
 )
 def test_invalid_role_configuration_is_rejected(tmp_path: Path, mutation: str) -> None:
     shutil.copytree(ROOT / ".codex", tmp_path / ".codex")
     shutil.copytree(ROOT / "docs/productionization", tmp_path / "docs/productionization")
     shutil.copyfile(ROOT / "AGENTS.md", tmp_path / "AGENTS.md")
+    (tmp_path / "scripts").mkdir()
+    shutil.copyfile(ROOT / "scripts/codex_hook_guard.py", tmp_path / "scripts/codex_hook_guard.py")
     path = tmp_path / ".codex/agents/reviewer-high.toml"
     if mutation == "missing_role":
         path.unlink()
@@ -55,8 +80,13 @@ def test_invalid_role_configuration_is_rejected(tmp_path: Path, mutation: str) -
         path.write_text(path.read_text().replace('name = "reviewer_high"', 'name = "reviewer_xhigh"'))
     elif mutation == "wrong_effort":
         path.write_text(path.read_text().replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "low"'))
-    else:
+    elif mutation == "nested_delegation":
         path.write_text(path.read_text().replace("[agents]\nenabled = false", "[agents]\nenabled = true"))
+    else:
+        hook_path = tmp_path / ".codex/hooks.json"
+        hooks = json.loads(hook_path.read_text(encoding="utf-8"))
+        del hooks["hooks"]["Stop"]
+        hook_path.write_text(json.dumps(hooks), encoding="utf-8")
     assert _checker().configuration_errors(tmp_path)
 
 
