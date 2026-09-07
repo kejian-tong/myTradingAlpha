@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -41,8 +41,8 @@ SIG-02 — Evidence tools and ResearchNote
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `95216a6bf5a88388fa76cb5187984eaf02649957`
-  (tree `3f0772f4e85a26c1efe99bd2438693f6ed2181ed`); the final state-bearing head is
+  `9a3a609d84b98c73e25820b6c5621e86c9d9d61f`
+  (tree `331e10c2c1d04b3acafb12f54175997d68bd7635`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -89,8 +89,11 @@ SIG-02 — Evidence tools and ResearchNote
   `2 failed / 63 deselected`; repair GREEN: `5d9ca87ad2425371f8b1e3d34612b35b7a0f3efc`
 - public-wire/dependency repair RED: `7ae313a8cf33448ffdd933d3aeb5e1c0b7a1d0b0`, expected
   `7 failed / 65 deselected`; repair GREEN: `95216a6bf5a88388fa76cb5187984eaf02649957`
-- local tests: PASS after final repair; focused `127 passed`, required regressions `847 passed`, full
-  suite `2322 passed / 3 skipped / 18 warnings / 69 subtests`
+- single-component compact repair RED: `c8a88004cdfa45ea82435a75866d14e7b5bbb93d`, expected
+  focused leakage failure with controls preserved; repair GREEN:
+  `9a3a609d84b98c73e25820b6c5621e86c9d9d61f`
+- local tests: PASS after final repair; focused `128 passed`, required regressions `848 passed`, full
+  suite `2323 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: latest xhigh-review candidate `6deb4e0e4b02d272d0fa4ea8c33459aa26335aab` passed CI
@@ -135,7 +138,8 @@ SIG-02 — Evidence tools and ResearchNote
   pending. Fresh xhigh review at `6deb4e0e4b02d272d0fa4ea8c33459aa26335aab`
   returned REQUEST CHANGES for compact aliases ending in one-component sensitive paths; durable
   artifact: PR #45 comment `5564600922`. Focused repair RED/GREEN and fresh exact-head review are
-  required.
+  required. The mechanically complete compact suffix set and dead-remnant cleanup close the reproduced
+  aliases locally; fresh exact-head CI and xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
