@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -41,8 +41,8 @@ SIG-02 — Evidence tools and ResearchNote
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `51384c1c473ff1bd80be299aea74f9a48fdf2bbe`
-  (tree `f1fed9581dc9ea2c78847680c5aeb338ad795043`); the final state-bearing head is
+  `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
+  (tree `31311a19799a5f8615a1185fa6004482caa99e8b`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -72,13 +72,15 @@ SIG-02 — Evidence tools and ResearchNote
   `3 failed / 81 passed`; repair GREEN: `073362ec4758e62ab299e755205e521dbc92542f`
 - safe-storage/provenance repair RED: `fa2f265b5abda14fd27132c492b697bbab632450`, expected
   `6 failed / 84 passed`; repair GREEN: `51384c1c473ff1bd80be299aea74f9a48fdf2bbe`
-- local tests: PASS after final repair; focused `90 passed`, required regressions `810 passed`, full
-  suite `2285 passed / 3 skipped / 18 warnings / 69 subtests`
+- UTC/canonicalization repair RED: `9b56ccf65a58ca9a594ef26c9e0aeb6e854e9031`, expected
+  `10 failed / 90 passed`; repair GREEN: `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
+- local tests: PASS after final repair; focused `100 passed`, required regressions `820 passed`, full
+  suite `2295 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: escalated-review candidate `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` passed CI
+- CI: prior escalated-review candidate `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` passed CI
   `34069580695`, CodeQL `34069580687` and Dependency Review `34069580838`; fresh exact-head checks
-  required after repair
+  pending after this final state-bearing commit
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -93,7 +95,7 @@ SIG-02 — Evidence tools and ResearchNote
   escalated xhigh review at `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` returned REQUEST CHANGES for
   hostile timezone callbacks during bundle/context validation and unsafe canonicalization/hashing of
   caller-corrupted ResearchNote instances; durable artifact: PR #45 comment `5563423339`; focused
-  repair RED/GREEN and another fresh xhigh review are required.
+  repair RED/GREEN now closes those surfaces locally; another fresh exact-head xhigh review is pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
