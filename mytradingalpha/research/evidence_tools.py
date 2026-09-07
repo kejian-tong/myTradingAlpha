@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from math import isfinite
 from types import MappingProxyType
@@ -356,7 +356,11 @@ def _safe_bundle_value(value: object, *, seen: set[int], depth: int) -> object:
         if not value.is_finite():
             raise EvidenceToolError("evidence bundle requires finite decimals")
         return value
-    if value_type in (datetime, date):
+    if value_type is datetime:
+        if object.__getattribute__(value, "tzinfo") is not timezone.utc:
+            raise EvidenceToolError("evidence bundle timestamps require the exact UTC timezone")
+        return value
+    if value_type is date:
         return value
     if value_type in _SAFE_ENUM_TYPES:
         return value

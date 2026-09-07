@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from math import isfinite
 
 from mytradingalpha.contracts.research import (
@@ -16,6 +16,7 @@ from mytradingalpha.contracts.research import (
     ResearchNoteSerializationError,
     ResearchProvenance,
     ResearchSourceFields,
+    derive_research_note_id,
 )
 from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
@@ -206,12 +207,13 @@ def _copy_context(context: object) -> RunContext:
             raise ResearchNoteBindingError("context string fields are malformed")
         if type(fields["mode"]) is not Mode:
             raise ResearchNoteBindingError("context mode is malformed")
-        if any(type(fields[field]) is not datetime for field in (
-            "decision_time",
-            "knowledge_cutoff",
-            "earliest_execution_time",
-        )):
-            raise ResearchNoteBindingError("context timestamps are malformed")
+        for field in ("decision_time", "knowledge_cutoff", "earliest_execution_time"):
+            timestamp = fields[field]
+            if (
+                type(timestamp) is not datetime
+                or object.__getattribute__(timestamp, "tzinfo") is not timezone.utc
+            ):
+                raise ResearchNoteBindingError("context timestamps are malformed")
         policy = fields["network_policy"]
         policy_fields = _raw_fields(
             policy,
@@ -492,10 +494,10 @@ class ResearchNoteBuilder:
             "citations": tuple(citations),
         }
         try:
-            canonical_input = ResearchNote.model_validate(
+            provisional = ResearchNote.model_validate(
                 {**base, "note_id": "note-pending"}
-            ).model_dump(mode="json")
-            note_id = f"note-{hashlib.sha256(_canonical(canonical_input)).hexdigest()}"
+            )
+            note_id = derive_research_note_id(provisional)
             note = ResearchNote.model_validate({**base, "note_id": note_id})
             note.canonical_bytes()
             return note

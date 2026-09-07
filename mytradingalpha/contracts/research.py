@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
@@ -199,7 +200,7 @@ class ResearchNote(_ResearchContractModel):
     def canonical_bytes(self) -> bytes:
         """Return bounded canonical UTF-8 JSON for this note."""
 
-        raw = _canonical_json(self.model_dump(mode="json"))
+        raw = _canonical_note_bytes(self)
         if len(raw) > MAX_RESEARCH_NOTE_BYTES:
             raise ResearchNoteSerializationError(
                 "research note exceeds maximum canonical byte size"
@@ -213,6 +214,185 @@ class ResearchNote(_ResearchContractModel):
         return f"sha256:{hashlib.sha256(self.canonical_bytes()).hexdigest()}"
 
 
+_NOTE_MODEL_FIELDS: dict[type[object], tuple[str, ...]] = {
+    ResearchNote: (
+        "schema_version",
+        "note_id",
+        "run_id",
+        "variant_id",
+        "instrument_id",
+        "bundle_id",
+        "bundle_hash",
+        "knowledge_cutoff",
+        "calendar_id",
+        "replay_policy",
+        "response_id",
+        "response_hash",
+        "output_hash",
+        "graph_artifact_id",
+        "graph_artifact_hash",
+        "model_artifact_id",
+        "model_artifact_hash",
+        "runtime_manifest_id",
+        "runtime_manifest_hash",
+        "capture_manifest",
+        "source_agent",
+        "source_fields",
+        "thesis",
+        "risks",
+        "citations",
+    ),
+    ResearchSourceFields: ("thesis", "risks"),
+    ResearchProvenance: (
+        "schema_version",
+        "manifest_id",
+        "source",
+        "source_locator",
+        "fetched_at",
+        "event_time",
+        "published_at",
+        "available_at",
+        "ingested_at",
+        "checksum",
+        "terms",
+        "revision",
+        "manifest_hash",
+    ),
+    EvidenceCitation: ("claim", "reference", "provenance", "semantic_support"),
+    EvidenceReference: ("schema_version", "bundle_id", "domain", "record_id"),
+}
+_NOTE_FIELD_TYPES: dict[tuple[type[object], str], tuple[type[object], ...]] = {
+    (ResearchNote, "knowledge_cutoff"): (datetime,),
+    (ResearchNote, "capture_manifest"): (ResearchProvenance,),
+    (ResearchNote, "source_fields"): (ResearchSourceFields,),
+    (ResearchNote, "risks"): (tuple,),
+    (ResearchNote, "citations"): (tuple,),
+    (ResearchSourceFields, "thesis"): (str,),
+    (ResearchSourceFields, "risks"): (str,),
+    (ResearchProvenance, "source_locator"): (str,),
+    (ResearchProvenance, "fetched_at"): (datetime,),
+    (ResearchProvenance, "event_time"): (datetime, type(None)),
+    (ResearchProvenance, "published_at"): (datetime, type(None)),
+    (ResearchProvenance, "available_at"): (datetime,),
+    (ResearchProvenance, "ingested_at"): (datetime,),
+    (ResearchProvenance, "terms"): (str,),
+    (EvidenceCitation, "reference"): (EvidenceReference,),
+    (EvidenceCitation, "provenance"): (ResearchProvenance,),
+}
+
+
+def _raw_note_fields(value: object, expected_type: type[object]) -> dict[str, object]:
+    fields = _NOTE_MODEL_FIELDS[expected_type]
+    try:
+        storage = object.__getattribute__(value, "__dict__")
+    except (AttributeError, TypeError) as exc:
+        raise ResearchNoteSerializationError("research note storage is unavailable") from exc
+    if type(storage) is not dict:
+        raise ResearchNoteSerializationError("research note storage must be an exact dictionary")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(fields):
+        raise ResearchNoteSerializationError("research note fields are not canonical")
+    return {field: dict.__getitem__(storage, field) for field in fields}
+
+
+def _safe_note_value(value: object, *, seen: set[int], depth: int) -> object:
+    if depth > 64:
+        raise ResearchNoteSerializationError("research note exceeds maximum nesting depth")
+    value_type = type(value)
+    if value_type in (str, int, bool, type(None)):
+        return value
+    if value_type is datetime:
+        if object.__getattribute__(value, "tzinfo") is not timezone.utc:
+            raise ResearchNoteSerializationError(
+                "research note timestamps require the exact UTC timezone"
+            )
+        return value.isoformat().replace("+00:00", "Z")
+    if value_type is tuple:
+        identity = id(value)
+        if identity in seen:
+            raise ResearchNoteSerializationError("research note contains a cycle")
+        seen.add(identity)
+        try:
+            return [
+                _safe_note_value(item, seen=seen, depth=depth + 1)
+                for item in value
+            ]
+        finally:
+            seen.remove(identity)
+    if value_type is dict:
+        identity = id(value)
+        if identity in seen:
+            raise ResearchNoteSerializationError("research note contains a cycle")
+        seen.add(identity)
+        try:
+            result: dict[str, object] = {}
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ResearchNoteSerializationError(
+                        "research note object keys must be exact strings"
+                    )
+                result[key] = _safe_note_value(item, seen=seen, depth=depth + 1)
+            return result
+        finally:
+            seen.remove(identity)
+    if value_type not in _NOTE_MODEL_FIELDS:
+        raise ResearchNoteSerializationError("research note contains an unsupported object")
+    identity = id(value)
+    if identity in seen:
+        raise ResearchNoteSerializationError("research note contains a cycle")
+    seen.add(identity)
+    try:
+        fields = _raw_note_fields(value, value_type)
+        safe: dict[str, object] = {}
+        for field, item in fields.items():
+            allowed = _NOTE_FIELD_TYPES.get((value_type, field))
+            if allowed is not None and type(item) not in allowed:
+                raise ResearchNoteSerializationError(
+                    "research note contains a value of the wrong exact type"
+                )
+            safe[field] = _safe_note_value(item, seen=seen, depth=depth + 1)
+        return safe
+    finally:
+        seen.remove(identity)
+
+
+def _safe_note_payload(note: ResearchNote) -> dict[str, object]:
+    if type(note) is not ResearchNote:
+        raise ResearchNoteSerializationError("canonicalization requires an exact ResearchNote")
+    payload = _safe_note_value(note, seen=set(), depth=0)
+    if type(payload) is not dict:
+        raise ResearchNoteSerializationError("research note did not normalize to an object")
+    return payload
+
+
+def _derive_note_id_from_payload(payload: dict[str, object]) -> str:
+    preimage = dict(payload)
+    preimage["note_id"] = "note-pending"
+    return f"note-{hashlib.sha256(_canonical_json(preimage)).hexdigest()}"
+
+
+def derive_research_note_id(note: ResearchNote) -> str:
+    """Derive the deterministic note ID from a safe canonical preimage."""
+
+    return _derive_note_id_from_payload(_safe_note_payload(note))
+
+
+def _canonical_note_bytes(note: ResearchNote) -> bytes:
+    payload = _safe_note_payload(note)
+    if payload.get("note_id") != _derive_note_id_from_payload(payload):
+        raise ResearchNoteSerializationError("research note ID does not match canonical content")
+    try:
+        rebuilt = ResearchNote.model_validate(payload)
+        rebuilt_payload = _safe_note_payload(rebuilt)
+        return _canonical_json(rebuilt_payload)
+    except ResearchNoteSerializationError:
+        raise
+    except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
+        raise ResearchNoteSerializationError(
+            "research note failed safe canonical validation"
+        ) from exc
+
+
 __all__ = [
     "CitableDomain",
     "EvidenceCitation",
@@ -223,4 +403,5 @@ __all__ = [
     "ResearchProvenance",
     "ResearchSourceFields",
     "ResearchNoteSerializationError",
+    "derive_research_note_id",
 ]
