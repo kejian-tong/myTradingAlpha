@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -100,8 +100,12 @@ SIG-02 — Evidence tools and ResearchNote
   repair RED/GREEN closed those surfaces. Fresh xhigh re-review at
   `7dbfc166b91c059855997b14a53afc87d4668e0f` returned REQUEST CHANGES for incomplete artifact-level
   source text/source-agent redaction plus a MEDIUM reference-error classification issue; durable
-  artifact: PR #45 comment `5563577502`; the focused artifact-redaction/typed-reference repair closes
-  those surfaces locally; fresh exact-head checks and xhigh re-review are pending.
+  artifact: PR #45 comment `5563577502`; the focused artifact-redaction/typed-reference repair closed
+  the initial canaries. Fresh xhigh/boundary re-review at
+  `459c7514315c6ecdd4eb69cd9af2a73c2f81e4c9` again returned REQUEST CHANGES: escaped/multiword
+  artifact text, credential-shaped source-agent identifiers, hostile mapping keys and direct-wire
+  unredacted note text remain unsafe; controlling artifact `5563727608`, boundary addendum
+  `5563709052`. Focused repair RED/GREEN and fresh exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
