@@ -65,8 +65,8 @@ SIG-02 — Evidence tools and ResearchNote
 - final integrated base main: `3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `1d751c49795ff612487a6185c56ef2ac36012ca8`
-  (tree `541d1773cf4d6936107a81cee692e10f459c5ed0`); final latest-main integration commit
+  `2f3561c045bef70c7babd2349045e2e01060cda3`
+  (tree `a3aff6d24aefe2f2e890c1e188f1ad003040e325`); final latest-main integration commit
   `7e8a6dff31fd9c8b2fad719f64068b75dfb87e52` (tree
   `1ae1fd0eee6e737c4bae647e13edb94e27928995`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
@@ -145,8 +145,10 @@ SIG-02 — Evidence tools and ResearchNote
   linear-scan refactor: `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
 - final confidentiality RED: `d00d81b8ab473ebf33de3a28b291cb2df95c77be`, expected
   `14 failed / 104 passed`; repair GREEN: `1d751c49795ff612487a6185c56ef2ac36012ca8`
-- local tests: PASS after final repair/latest-main integration; focused SIG-02 `118 passed`, data/research
-  regressions `1108 passed`, full suite `2391 passed / 3 skipped / 18 warnings / 69 subtests`
+- final YAML/source-field RED: `62b8cf26f341faf6d26465bedf7e0a0df39394d9`, expected
+  `7 failed / 121 passed`; repair GREEN: `2f3561c045bef70c7babd2349045e2e01060cda3`
+- local tests: PASS after final repair/latest-main integration; focused SIG-02 `128 passed`, data/research
+  regressions `1118 passed`, full suite `2401 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
@@ -224,8 +226,12 @@ SIG-02 — Evidence tools and ResearchNote
   isolated xhigh/boundary review at `58098e86cc1a6f83963a1f8c7a7eaaee7707356c` found tagged/anchored
   YAML, TOML triple-quoted and credential-shaped sealed-ID leaks; durable artifact: PR #45 comment
   `5572900008`. The final confidentiality RED/GREEN closes those reproduced leaks locally and adds exact
-  provenance-hash, reordered-input determinism and non-empty social-domain coverage. Fresh exact-head CI
-  and isolated xhigh review are pending.
+  provenance-hash, reordered-input determinism and non-empty social-domain coverage. Concurrent review
+  at `0afdbd831d4f19b4903272e2f9e634eea24198db` produced controlling APPROVE but a boundary-specialist
+  REQUEST CHANGES for YAML doubled-single-quote escaping, YAML explicit-key block scalars and unsafe
+  source-field descriptors; the combined durable artifact is PR #45 comment `5573371521`. The final
+  YAML/source-field RED/GREEN closes those reproduced leaks locally. Fresh exact-head CI and isolated
+  xhigh/boundary review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: STOP after SIG-02 exact-head review, CI, Master gate, protected merge and post-merge checks;
   SIG-03 requires a fresh separately authorized task
