@@ -51,7 +51,7 @@ def validate(record: object) -> dict:
     if type(record) is not dict:
         raise ValueError("benchmark record must be an object")
     keys = set(record)
-    if not _REQUIRED <= keys or not keys <= (_REQUIRED | _OPTIONAL):
+    if not keys >= _REQUIRED or not keys <= (_REQUIRED | _OPTIONAL):
         raise ValueError("benchmark record fields differ from reviewed schema")
     for key in ("task_id", "task_class", "model", "effort"):
         if type(record[key]) is not str or not record[key].strip():
