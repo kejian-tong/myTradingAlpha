@@ -54,13 +54,39 @@ _JSON_MAX_FRAGMENTS = 32
 _ASSIGNMENT_PREFIX_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
-    r"(?P<key>[A-Za-z0-9_.-]+)"
+    r"(?P<key>[A-Za-z0-9_.\\-]+)"
+    r"(?P=key_escape)(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
+    re.IGNORECASE,
+)
+_PHRASE_ASSIGNMENT_PREFIX_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.-])"
+    r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
+    r"(?P<key>[A-Za-z0-9_.\\-]+(?:[/:\s]+[A-Za-z0-9_.\\-]+)+)"
     r"(?P=key_escape)(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
     re.IGNORECASE,
 )
 
 
+def _decode_key_escapes(value: str) -> tuple[str, bool]:
+    candidate = value
+    invalid = False
+    for _ in range(_JSON_MAX_UNESCAPE_ATTEMPTS):
+        if re.search(r"\\u(?![0-9a-fA-F]{4})", candidate, re.IGNORECASE):
+            invalid = True
+        updated = re.sub(
+            r"\\u([0-9a-fA-F]{4})",
+            lambda match: chr(int(match.group(1), 16)),
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if updated == candidate:
+            break
+        candidate = updated
+    return candidate, invalid
+
+
 def _key_parts(value: str) -> tuple[str, ...]:
+    value, _ = _decode_key_escapes(value)
     value = value.replace("\\", "").replace('"', "").replace("'", "")
     value = re.sub(
         r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
@@ -71,7 +97,14 @@ def _key_parts(value: str) -> tuple[str, ...]:
 
 
 def _is_sensitive_key(value: str) -> bool:
-    return _is_sensitive_parts(_key_parts(value))
+    decoded, invalid = _decode_key_escapes(value)
+    if _is_sensitive_parts(_key_parts(decoded)):
+        return True
+    if invalid and "\\u" in value.casefold():
+        prefix = value.casefold().split("\\u", 1)[0]
+        prefix_parts = _key_parts(prefix)
+        return any(path and path[: len(prefix_parts)] == prefix_parts for path in _SENSITIVE_KEY_PATHS)
+    return False
 
 
 def _is_sensitive_parts(parts: tuple[str, ...]) -> bool:
@@ -98,6 +131,10 @@ def _canonical_json(value: object) -> str:
 
 def _sensitive_structural_hint(value: str) -> bool:
     lowered = value.casefold()
+    if "\\u" in lowered:
+        prefix_parts = _key_parts(lowered.split("\\u", 1)[0])
+        if any(path and path[: len(prefix_parts)] == prefix_parts for path in _SENSITIVE_KEY_PATHS):
+            return True
     return any(
         len(path) > 1
         and all(
@@ -131,9 +168,21 @@ def _parse_and_redact_json(value: str) -> str | None:
 
 
 def _json_fragment_spans(value: str) -> tuple[tuple[int, int], ...]:
+    spans, _ = _json_fragment_spans_bounded(value)
+    return spans
+
+
+def _json_fragment_spans_bounded(
+    value: str,
+) -> tuple[tuple[tuple[int, int], ...], bool]:
     spans: list[tuple[int, int]] = []
     index = 0
-    while index < len(value) and len(spans) < _JSON_MAX_FRAGMENTS:
+    while index < len(value):
+        if value.startswith(_REDACTED, index):
+            index += len(_REDACTED)
+            continue
+        if len(spans) >= _JSON_MAX_FRAGMENTS:
+            return tuple(spans), any(character in "[{" for character in value[index:])
         if value[index] not in "[{":
             index += 1
             continue
@@ -165,7 +214,7 @@ def _json_fragment_spans(value: str) -> tuple[tuple[int, int], ...]:
             spans.append((start, index))
         else:
             index = start + 1
-    return tuple(spans)
+    return tuple(spans), False
 
 
 def _redact_structural_json(value: str) -> str:
@@ -174,9 +223,12 @@ def _redact_structural_json(value: str) -> str:
     full = _parse_and_redact_json(value)
     if full is not None:
         return value if full == "" else full
+    spans, exhausted = _json_fragment_spans_bounded(value)
+    if exhausted:
+        return _REDACTED
     replacements: dict[tuple[int, int], str] = {}
     recognized = False
-    for start, end in _json_fragment_spans(value):
+    for start, end in spans:
         fragment = value[start:end]
         parsed = _parse_and_redact_json(fragment)
         if parsed is None:
@@ -245,7 +297,14 @@ def _value_end(value: str, start: int) -> tuple[int, str, str]:
 def _redact_assignments(value: str) -> str:
     output: list[str] = []
     cursor = 0
-    for match in _ASSIGNMENT_PREFIX_PATTERN.finditer(value):
+    matches = sorted(
+        (
+            *_ASSIGNMENT_PREFIX_PATTERN.finditer(value),
+            *_PHRASE_ASSIGNMENT_PREFIX_PATTERN.finditer(value),
+        ),
+        key=lambda match: (match.start(), -(match.end() - match.start())),
+    )
+    for match in matches:
         if match.start() < cursor:
             continue
         output.append(value[cursor : match.start()])
@@ -304,10 +363,10 @@ def redact_plain_data(value: Any) -> Any:
     ) -> Any:
         if depth > _PLAIN_DATA_MAX_DEPTH:
             raise ValueError("plain data exceeds maximum redaction depth")
+        if _is_sensitive_parts(path_parts):
+            return _REDACTED
         item_type = type(item)
         if item_type is str:
-            if _is_sensitive_parts(path_parts):
-                return _REDACTED
             return redact_artifact_text(item)
         if item_type is float:
             if not isfinite(item):
