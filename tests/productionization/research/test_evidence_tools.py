@@ -2245,3 +2245,124 @@ def test_phrase_and_unicode_key_redaction_reaches_public_surfaces() -> None:
     payload["note_id"] = contracts.derive_research_note_id(note)
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
+
+
+def test_unicode_normalization_and_malformed_escape_candidates_fail_closed() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    sensitive = (
+        "ａｐｉ＿ｋｅｙ=SIG02_FULLWIDTH_CANARY",
+        "api_Key=SIG02_KELVIN_CANARY",
+        r"api_\uff4dey=SIG02_ESCAPED_FULLWIDTH_CANARY",
+        r"safe_\u00ZZkey=SIG02_MALFORMED_PREFIX_CANARY",
+    )
+    safe = (
+        "token_count=SIG02_UNICODE_TOKEN_COUNT_SAFE",
+        "secretary=SIG02_UNICODE_SECRETARY_SAFE",
+        "passwordless=SIG02_UNICODE_PASSWORDLESS_SAFE",
+    )
+    raw = "; ".join((*sensitive, *safe))
+    redacted = redaction.redact_artifact_text(raw)
+    assert all(canary not in redacted for canary in sensitive)
+    assert all(value in redacted for value in safe)
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+    plain = redaction.redact_plain_data(
+        {"ａｐｉ＿ｋｅｙ": "SIG02_FULLWIDTH_PLAIN_CANARY", "token_count": "SAFE"}
+    )
+    assert plain["ａｐｉ＿ｋｅｙ"] == "[REDACTED]"
+    assert plain["token_count"] == "SAFE"
+
+    class HostileKey(str):
+        def __new__(cls, value: str, callbacks: list[str]):
+            instance = str.__new__(cls, value)
+            instance.callbacks = callbacks
+            return instance
+
+        def __hash__(self) -> int:
+            self.callbacks.append("hash")
+            return super().__hash__()
+
+        def __eq__(self, other: object) -> bool:
+            self.callbacks.append("eq")
+            return super().__eq__(other)
+
+    callbacks: list[str] = []
+    hostile = HostileKey("api_key", callbacks)
+    with pytest.raises(TypeError):
+        redaction.redact_plain_data({hostile: "SIG02_HOSTILE_CANARY"})
+    assert callbacks == []
+
+
+def test_unicode_normalization_reaches_render_builder_and_direct_wire() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    raw = "ａｐｉ＿ｋｅｙ=SIG02_UNICODE_SURFACE_CANARY; token_count=SAFE"
+    assert "SIG02_UNICODE_SURFACE_CANARY" not in redaction.redact_artifact_text(raw)
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_UNICODE_SURFACE_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert "SIG02_UNICODE_SURFACE_CANARY" not in note.canonical_bytes().decode("utf-8")
+    object.__setattr__(note, "thesis", raw)
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_redaction_assignment_processing_is_bounded_and_single_pass() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    source = Path(redaction.__file__).read_text(encoding="utf-8")
+    assert "_PHRASE_ASSIGNMENT_PREFIX_PATTERN" not in source
+    assert "finditer(value)" not in source
+    near_match = ("safe_tokenizer_text " * 2200) + "broker account id " + ("x" * 4096)
+    large = ("ordinary evidence text; token_count=SAFE " * 20_000)[:1_048_000]
+    for value in (near_match, large):
+        first = redaction.redact_artifact_text(value)
+        assert first == redaction.redact_artifact_text(value)
+        assert type(first) is str
+
+    plain = redaction.redact_plain_data({"text": near_match})
+    assert plain["text"] == near_match
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": near_match})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    contracts, evidence_tools, _ = _load_sig02()
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "broker account id " in rendered
+
+    output = make_output()
+    output["market_report"] = near_match
+    output["news_report"] = "safe report"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert near_match[:128] in note.thesis
