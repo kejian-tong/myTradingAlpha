@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -98,8 +98,8 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2327 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest xhigh-review candidate `73407de8b039bbef854232f1b4eda17a811bda63` passed CI
-  `34080022904`, CodeQL `34080022993` and Dependency Review `34080022903`; fresh exact-head checks
+- CI: latest xhigh-review candidate `9856286a9e6b761c32b225878802be06325029cc` passed CI
+  `34081522181`, CodeQL `34081522184` and Dependency Review `34081522132`; fresh exact-head checks
   required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
@@ -146,7 +146,10 @@ SIG-02 — Evidence tools and ResearchNote
   the contracts-to-data checksum dependency; durable artifact: PR #45 comment `5564746093`. Focused
   repair RED/GREEN adds complete key lexing, ancestor/JSON structural redaction and contract-owned
   checksum aliases with compatibility re-exports, closing the reproduced surfaces locally; fresh
-  exact-head CI and xhigh review are pending.
+  exact-head CI/xhigh review found remaining structural confidentiality HIGHs for numeric/container
+  sensitive values, fragment-budget exhaustion, hierarchical key separators and Unicode-escaped keys;
+  durable artifact: PR #45 comment `5564938194`. Focused repair RED/GREEN and fresh exact-head review
+  are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
