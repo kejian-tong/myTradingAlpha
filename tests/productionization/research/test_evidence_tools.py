@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from math import nan
 from pathlib import Path
 from typing import Any
@@ -718,6 +718,26 @@ class _Tripwire:
         raise AssertionError("tripwire comparison")
 
 
+class _HostileTzInfo(tzinfo):
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def utcoffset(self, value):
+        del value
+        self._calls.append("utcoffset")
+        raise AssertionError("hostile tzinfo utcoffset called")
+
+    def tzname(self, value):
+        del value
+        self._calls.append("tzname")
+        raise AssertionError("hostile tzinfo tzname called")
+
+    def dst(self, value):
+        del value
+        self._calls.append("dst")
+        raise AssertionError("hostile tzinfo dst called")
+
+
 def test_caller_owned_reference_hooks_never_execute() -> None:
     contracts, evidence_tools, _ = _load_sig02()
     bundle, _, _, _ = _bundle_response()
@@ -778,6 +798,128 @@ def test_caller_owned_storage_extras_and_nested_containers_fail_closed() -> None
     with pytest.raises(evidence_tools.EvidenceToolError):
         evidence_tools.EvidenceToolset(bundle)
     assert calls == []
+
+
+@pytest.mark.parametrize("field", ["created_at", "knowledge_cutoff"])
+def test_bundle_rejects_non_utc_datetimes_without_tzinfo_callbacks(field: str) -> None:
+    _, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    calls: list[str] = []
+    hostile = datetime(2024, 6, 30, 23, 59, 59, tzinfo=_HostileTzInfo(calls))
+    object.__setattr__(bundle, field, hostile)
+    with pytest.raises(evidence_tools.EvidenceToolError):
+        evidence_tools.EvidenceToolset(bundle)
+    assert calls == []
+
+
+def test_nested_manifest_rejects_non_utc_datetime_without_tzinfo_callbacks() -> None:
+    _, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    calls: list[str] = []
+    hostile = datetime(2024, 2, 1, 16, 1, tzinfo=_HostileTzInfo(calls))
+    object.__setattr__(bundle.events[0].manifest, "available_at", hostile)
+    with pytest.raises(evidence_tools.EvidenceToolError):
+        evidence_tools.EvidenceToolset(bundle)
+    assert calls == []
+
+
+@pytest.mark.parametrize("field", ["decision_time", "knowledge_cutoff", "earliest_execution_time"])
+def test_context_rejects_non_utc_datetimes_without_tzinfo_callbacks(field: str) -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    calls: list[str] = []
+    hostile = datetime(2024, 7, 1, 20, tzinfo=_HostileTzInfo(calls))
+    object.__setattr__(context, field, hostile)
+    with pytest.raises(notes.ResearchNoteBindingError):
+        notes.ResearchNoteBuilder(bundle=bundle, context=context, response=response)
+    assert calls == []
+
+
+def test_note_canonicalization_rejects_mutated_identity_and_intrinsic_fields() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+
+    mutations = [
+        lambda note: object.__setattr__(note, "note_id", "note-other"),
+        lambda note: object.__setattr__(note, "bundle_id", "bundle-other"),
+        lambda note: object.__setattr__(note, "thesis", "mutated thesis"),
+        lambda note: object.__setattr__(note, "source_agent", "mutated-agent"),
+        lambda note: object.__setattr__(note, "citations", ()),
+    ]
+    for mutate in mutations:
+        note = _note(bundle, context, response)
+        mutate(note)
+        with pytest.raises(notes.ResearchNoteSerializationError):
+            note.canonical_bytes()
+        with pytest.raises(notes.ResearchNoteSerializationError):
+            note_hash = note.note_hash
+            del note_hash
+
+
+def test_note_canonicalization_rejects_duplicate_and_cross_bundle_citations() -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+
+    duplicate = _note(bundle, context, response)
+    object.__setattr__(duplicate, "citations", (duplicate.citations[0], duplicate.citations[0]))
+    with pytest.raises(notes.ResearchNoteSerializationError):
+        duplicate.canonical_bytes()
+
+    wrong_reference = _reference(contracts, bundle, "events", "news-aapl-earnings").model_copy(
+        update={"bundle_id": "bundle-other"}
+    )
+    wrong_citation = note.citations[0].model_copy(update={"reference": wrong_reference})
+    object.__setattr__(note, "citations", (wrong_citation, note.citations[1]))
+    with pytest.raises(notes.ResearchNoteSerializationError):
+        note.canonical_bytes()
+
+
+def test_note_canonicalization_rejects_checksum_cutoff_and_chronology_mutations() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+
+    mutations = [
+        lambda note: object.__setattr__(
+            note.capture_manifest,
+            "checksum",
+            f"sha256:{'0' * 64}",
+        ),
+        lambda note: object.__setattr__(
+            note.capture_manifest,
+            "available_at",
+            datetime(2024, 7, 1, tzinfo=timezone.utc),
+        ),
+        lambda note: object.__setattr__(
+            note.citations[0].provenance,
+            "ingested_at",
+            datetime(2024, 7, 1, tzinfo=timezone.utc),
+        ),
+    ]
+    for mutate in mutations:
+        note = _note(bundle, context, response)
+        mutate(note)
+        with pytest.raises(notes.ResearchNoteSerializationError):
+            note.canonical_bytes()
+
+
+def test_note_canonicalization_rejects_hostile_nested_values_without_callbacks() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    calls: list[str] = []
+    object.__setattr__(note, "thesis", _Tripwire(calls))
+    with pytest.raises(notes.ResearchNoteSerializationError):
+        note.canonical_bytes()
+    assert calls == []
+
+    tz_calls: list[str] = []
+    note = _note(bundle, context, response)
+    hostile = datetime(2024, 6, 30, 23, 59, 59, tzinfo=_HostileTzInfo(tz_calls))
+    object.__setattr__(note.capture_manifest, "available_at", hostile)
+    with pytest.raises(notes.ResearchNoteSerializationError):
+        note.canonical_bytes()
+    assert tz_calls == []
 
     _, clean_context, clean_response, _ = _bundle_response()
     context_storage = object.__getattribute__(clean_context, "__dict__")
