@@ -7,7 +7,7 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
+- `last_reconciled_main_sha`: `0882944a9f14c89d48b4f168faa1e9e36afd7605`
 - `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (informational only; requires fresh user authorization after this task stops)
@@ -43,16 +43,22 @@ While PR #45 was under exact-head review, disjoint harness-only PR #46 merged as
 routes are unchanged. The final SIG-02 candidate must integrate this main and rerun all exact-head
 gates; no product-scope conflict was found.
 
+Harness-only PR #47 subsequently merged as `0882944a9f14c89d48b4f168faa1e9e36afd7605`
+(tree `358cc79c8595806799124cee62a5a332e4a4b17f`), disabling nested delegation in every
+non-master role without changing model IDs or efforts. The Master integrated it after the final SIG-02
+repair. Only the Master delegated during this task; fresh final reviewers must load the updated role
+configuration and must not delegate.
+
 SIG-02 — Evidence tools and ResearchNote
 
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- final integrated base main: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
+- final integrated base main: `0882944a9f14c89d48b4f168faa1e9e36afd7605`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
   `7268f5353038b910fca118439deb9d4f1cbc8238`
-  (tree `e5516c60a903605e3999c62a5c9b82ae86095f1b`); latest-main integration commit
-  `249e8aaa38e1f976c7909b5575bcf32c70b1ed66` (tree
-  `041978a6a95f7f2747496d205cca81c434f1f4cb`); the final state-bearing head is
+  (tree `e5516c60a903605e3999c62a5c9b82ae86095f1b`); final latest-main integration commit
+  `271861e0277c55c2254ee383f7297f59152c2d35` (tree
+  `5af4ba39cd0d043169cb39529e5cc5d24e298182`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -124,9 +130,9 @@ SIG-02 — Evidence tools and ResearchNote
   regressions `870 passed`, full suite `2345 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: current-main xhigh-review candidate `1009d112defd5fbf6f244d8f6f8709e7d41e6f89` passed CI
-  `34087671927`, CodeQL `34087671922` and Dependency Review `34087671917`; fresh exact-head checks
-  required after repair
+- CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
+  `34089421094`, CodeQL `34089421071` and Dependency Review `34089421038`; fresh exact-head checks
+  required after the narrowed-scope state commit and PR #47 integration
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
