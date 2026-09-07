@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -120,8 +120,8 @@ SIG-02 — Evidence tools and ResearchNote
   regressions `866 passed`, full suite `2341 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: current-main xhigh-review candidate `f494605a5d252828af886a76996d2f06f4f1bc98` passed CI
-  `34086439679`, CodeQL `34086439684` and Dependency Review `34086439697`; fresh exact-head checks
+- CI: current-main xhigh-review candidate `1009d112defd5fbf6f244d8f6f8709e7d41e6f89` passed CI
+  `34087671927`, CodeQL `34087671922` and Dependency Review `34087671917`; fresh exact-head checks
   required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
@@ -185,7 +185,10 @@ SIG-02 — Evidence tools and ResearchNote
   and a one-pass structural stack, closing the reproduced surfaces locally; fresh exact-head CI and
   xhigh review found max-plus-one Unicode and URL-encoded assignment-delimiter HIGHs; durable artifact:
   PR #45 comment `5565548420`. Bounded Unicode/percent decoding now closes max-plus-one and URL
-  delimiter surfaces locally; fresh exact-head CI and xhigh review are pending.
+  delimiter surfaces locally. Fresh xhigh review at `1009d112defd5fbf6f244d8f6f8709e7d41e6f89`
+  returned REQUEST CHANGES for strict UTF-8/form percent decoding and surrogate handling; durable
+  artifact: PR #45 comment `5565702246`. Focused repair RED/GREEN and fresh exact-head review are
+  required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
