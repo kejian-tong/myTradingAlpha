@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -84,8 +84,8 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2304 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest xhigh-review candidate `7dbfc166b91c059855997b14a53afc87d4668e0f` passed CI
-  `34070942934`, CodeQL `34070942939` and Dependency Review `34070942954`; fresh exact-head checks
+- CI: latest xhigh-review candidate `92d226d11fdc81a760bc6b09302cf84f4f7f1278` passed CI
+  `34073904309`, CodeQL `34073904280` and Dependency Review `34073904298`; fresh exact-head checks
   required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
@@ -110,7 +110,10 @@ SIG-02 — Evidence tools and ResearchNote
   artifact text, credential-shaped source-agent identifiers, hostile mapping keys and direct-wire
   unredacted note text remain unsafe; controlling artifact `5563727608`, boundary addendum
   `5563709052`. The shared artifact policy, closed source-agent role set and exact caller-key/type
-  repairs close those surfaces locally; fresh exact-head CI and xhigh review are pending.
+  repairs closed those surfaces. Fresh xhigh/boundary re-review at
+  `92d226d11fdc81a760bc6b09302cf84f4f7f1278` returned REQUEST CHANGES for arbitrary escape-depth and
+  prefixed sensitive-key redaction plus hostile-timezone direct-wire validation; durable artifact:
+  PR #45 comment `5563936753`. Focused repair RED/GREEN and fresh exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
