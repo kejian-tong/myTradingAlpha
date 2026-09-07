@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, StrictInt, StrictStr, field_validator, m
 from mytradingalpha.data.provenance import CanonicalChecksum
 
 from .common import StableId, UtcDateTime
+from .redaction import validate_artifact_text
 from .schemas import ContractModel
 from .versions import CURRENT_SCHEMA_VERSION
 
@@ -27,6 +28,20 @@ CitableDomain = Literal[
     "macro",
 ]
 ResearchClaim = Literal["thesis", "risks"]
+ResearchSourceAgent = Literal[
+    "market_analyst",
+    "sentiment_analyst",
+    "news_analyst",
+    "fundamentals_analyst",
+    "bull_researcher",
+    "bear_researcher",
+    "research_manager",
+    "trader",
+    "aggressive_analyst",
+    "neutral_analyst",
+    "conservative_analyst",
+    "portfolio_manager",
+]
 MAX_RESEARCH_NOTE_BYTES = 4_194_304
 
 
@@ -138,7 +153,7 @@ class ResearchNote(_ResearchContractModel):
     runtime_manifest_id: StableId
     runtime_manifest_hash: CanonicalChecksum
     capture_manifest: ResearchProvenance
-    source_agent: StableId
+    source_agent: ResearchSourceAgent
     source_fields: ResearchSourceFields
     thesis: StrictStr
     risks: tuple[StrictStr, ...]
@@ -157,6 +172,16 @@ class ResearchNote(_ResearchContractModel):
         if type(value) not in (tuple, list):
             raise ValueError("research note risks require a sequence")
         return tuple(value)  # type: ignore[arg-type]
+
+    @field_validator("thesis")
+    @classmethod
+    def validate_thesis_text(cls, value: str) -> str:
+        return validate_artifact_text(value)
+
+    @field_validator("risks")
+    @classmethod
+    def validate_risk_texts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(validate_artifact_text(item) for item in value)
 
     @field_validator("citations", mode="before")
     @classmethod
@@ -401,6 +426,7 @@ __all__ = [
     "ResearchClaim",
     "ResearchNote",
     "ResearchProvenance",
+    "ResearchSourceAgent",
     "ResearchSourceFields",
     "ResearchNoteSerializationError",
     "derive_research_note_id",

@@ -10,7 +10,6 @@ from math import isfinite
 
 from pydantic import TypeAdapter, ValidationError
 
-from mytradingalpha.contracts.common import StableId
 from mytradingalpha.contracts.research import (
     MAX_RESEARCH_NOTE_BYTES,
     EvidenceCitation,
@@ -18,6 +17,7 @@ from mytradingalpha.contracts.research import (
     ResearchNote,
     ResearchNoteSerializationError,
     ResearchProvenance,
+    ResearchSourceAgent,
     ResearchSourceFields,
     derive_research_note_id,
 )
@@ -57,7 +57,7 @@ class ResearchNoteBindingError(ResearchNoteError):
     """Raised when bundle, context, or cached response bindings disagree."""
 
 
-_STABLE_ID_ADAPTER = TypeAdapter(StableId)
+_SOURCE_AGENT_ADAPTER = TypeAdapter(ResearchSourceAgent)
 
 
 _CONTEXT_FIELDS = (
@@ -203,6 +203,27 @@ def _redact_artifact_text(value: object) -> str:
     if type(redacted) is not dict or type(redacted.get("text")) is not str:
         raise ResearchNoteInputError("research source text did not redact to a string")
     return redacted["text"]
+
+
+def _plain_mapping(value: object, *, label: str) -> dict[str, object]:
+    if type(value) is not dict:
+        raise ResearchNoteInputError(f"{label} requires an exact dictionary")
+    keys = tuple(dict.keys(value))
+    if any(type(key) is not str for key in keys):
+        raise ResearchNoteInputError(f"{label} keys must be exact strings")
+    return {key: dict.__getitem__(value, key) for key in keys}
+
+
+def _plain_expected_mapping(
+    value: object,
+    *,
+    label: str,
+    expected: tuple[str, ...],
+) -> dict[str, object]:
+    plain = _plain_mapping(value, label=label)
+    if set(dict.keys(plain)) != set(expected):
+        raise ResearchNoteInputError(f"{label} keys are invalid")
+    return {key: dict.__getitem__(plain, key) for key in expected}
 
 
 def _copy_context(context: object) -> RunContext:
@@ -427,21 +448,25 @@ class ResearchNoteBuilder:
 
         _validate_bindings(self._bundle, self._context, self._response)
         try:
-            selected_source_agent = _STABLE_ID_ADAPTER.validate_python(source_agent)
+            selected_source_agent = _SOURCE_AGENT_ADAPTER.validate_python(source_agent)
         except (TypeError, ValidationError, ValueError) as exc:
             raise ResearchNoteInputError(
                 "source_agent must be a non-empty StableId"
             ) from exc
-        if type(source_fields) is not dict or set(source_fields) != {"thesis", "risks"}:
-            raise ResearchNoteInputError("source_fields must explicitly name thesis and risks")
+        source_fields_plain = _plain_expected_mapping(
+            source_fields,
+            label="source_fields",
+            expected=("thesis", "risks"),
+        )
         try:
-            selected_fields = ResearchSourceFields.model_validate(source_fields)
+            selected_fields = ResearchSourceFields.model_validate(source_fields_plain)
         except (TypeError, ValueError) as exc:
             raise ResearchNoteInputError("source_fields are invalid") from exc
-        if type(claim_citations) is not dict or set(claim_citations) != {"thesis", "risks"}:
-            raise ResearchNoteInputError(
-                "claim_citations must explicitly map thesis and risks"
-            )
+        claim_citations_plain = _plain_expected_mapping(
+            claim_citations,
+            label="claim_citations",
+            expected=("thesis", "risks"),
+        )
         output = self._response.output
         texts: dict[str, str] = {}
         for claim in ("thesis", "risks"):
@@ -458,7 +483,7 @@ class ResearchNoteBuilder:
         citations: list[EvidenceCitation] = []
         seen: set[tuple[str, str, str]] = set()
         for claim in ("thesis", "risks"):
-            references = claim_citations[claim]
+            references = dict.__getitem__(claim_citations_plain, claim)
             if type(references) not in (tuple, list) or not references:
                 raise ResearchNoteInputError(f"{claim} must cite at least one evidence record")
             try:

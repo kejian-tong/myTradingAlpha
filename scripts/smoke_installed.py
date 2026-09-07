@@ -15,6 +15,7 @@ MODULES = (
     "tradingagents",
     "mytradingalpha",
     "mytradingalpha.contracts",
+    "mytradingalpha.contracts.redaction",
     "mytradingalpha.contracts.research",
     "mytradingalpha.ops.config",
     "mytradingalpha.data.bundle",

@@ -14,6 +14,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from mytradingalpha.contracts.redaction import redact_artifact_text
+
 _REDACTED = "[REDACTED]"
 _PLAIN_DATA_MAX_DEPTH = 64
 _PLAIN_DATA_SENSITIVE_FIELDS = frozenset(
@@ -220,9 +222,7 @@ def _replace_plain_field_value(match: re.Match[str]) -> str:
 
 
 def _redact_plain_text(value: str) -> str:
-    return _redact_text(
-        _PLAIN_DATA_TEXT_FIELD_PATTERN.sub(_replace_plain_field_value, value)
-    )
+    return redact_artifact_text(value)
 
 
 def _redact_value(
