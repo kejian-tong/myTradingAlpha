@@ -4,7 +4,7 @@
 
 The target is a small, auditable daily research-to-order system around the existing Research Graph. It is not a rewrite of `tradingagents/`. The upstream-derived graph remains useful for evidence interpretation; the existing `mytradingalpha/` package owns Foundation, PIT, and closed cached-response replay. Production-owned numerical decisions, portfolio accounting, risk controls, execution simulation, and broker integration remain later roadmap work.
 
-The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, and SIG-01 are implemented at their contract scope; SIG-02 and subsequent behavior in this target diagram remain planned. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state rather than interpreting the diagram as shipped functionality.
+The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, SIG-01 and SIG-02 are implemented at their approved contract scope; SIG-03 and subsequent behavior in this target diagram remain planned. SIG-02 adds the sealed evidence-tool and deterministic `ResearchNote` boundary only; it does not add inference, QuantSignal, portfolio authority, orders, PAPER or live behavior. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state rather than interpreting the diagram as shipped functionality.
 
 ## System overview
 
