@@ -3,6 +3,9 @@ description = "Initial implementation agent for normal/high/critical myTradingAl
 model = "gpt-5.6-luna"
 model_reasoning_effort = "max"
 
+[agents]
+enabled = false
+
 developer_instructions = """
 You are the initial isolated implementer for one normal/high/critical productionization roadmap PR.
 Inherit the Master-assigned safety class, scope, acceptance criteria and escalation triggers; your
