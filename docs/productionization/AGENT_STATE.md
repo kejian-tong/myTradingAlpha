@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -114,9 +114,9 @@ SIG-02 — Evidence tools and ResearchNote
   regressions `860 passed`, full suite `2335 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest xhigh-review candidate `0823bc63f6880bc0eac5b605723fb16b8f6217ef` passed CI
-  `34083091616`, CodeQL `34083091615` and Dependency Review `34083091633`; fresh exact-head checks
-  required after repair and PR #46 main integration
+- CI: current-main xhigh-review candidate `872bddaa7a08750e27f8552729bd47443be0e785` passed CI
+  `34084813005`, CodeQL `34084813135` and Dependency Review `34084813020`; fresh exact-head checks
+  required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -171,8 +171,11 @@ SIG-02 — Evidence tools and ResearchNote
   malformed/compatibility-Unicode sensitive keys and quadratic hostile phrase scanning; durable
   artifact: PR #45 comment `5565153320`. Focused repair RED/GREEN, PR #46 main integration and fresh
   exact-head xhigh review were required. NFKC/malformed-Unicode fail-closed normalization and the
-  bounded single-pass assignment lexer now close those surfaces locally; disjoint PR #46 main is
-  integrated. Fresh exact-head CI and xhigh review are pending.
+  bounded single-pass assignment lexer closed those surfaces locally; disjoint PR #46 main is
+  integrated. Fresh xhigh review at `872bddaa7a08750e27f8552729bd47443be0e785`
+  returned REQUEST CHANGES for fullwidth/escaped delimiters, oversized compatibility-structural input
+  and quadratic unmatched-structure scanning; durable artifact: PR #45 comment `5565326762`. Focused
+  repair RED/GREEN and fresh exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
