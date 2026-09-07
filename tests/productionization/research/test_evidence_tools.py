@@ -2548,3 +2548,63 @@ def test_percent_encoded_delimiters_and_malformed_sensitive_encodings_reach_surf
     payload["note_id"] = contracts.derive_research_note_id(note)
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
+
+
+def test_percent_utf8_form_decoding_and_surrogate_escapes_fail_closed() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    sensitive = (
+        "api_key%EF%BC%9DSIG02_UTF8_FULLWIDTH_EQUALS_CANARY",
+        "api_key%EF%BC%9ASIG02_UTF8_FULLWIDTH_COLON_CANARY",
+        "api+key%3DSIG02_FORM_PLUS_CANARY",
+        r"api_key\uD800=SIG02_SURROGATE_LONE_CANARY",
+        r"api_key\uD83D\uDE00=SIG02_SURROGATE_PAIR_CANARY",
+        r"safe\uDE00=SIG02_SURROGATE_REVERSED_CANARY",
+        r"api_key\uD800=SIG02_SURROGATE_TRUNCATED_CANARY",
+    )
+    for raw in sensitive:
+        redacted = redaction.redact_artifact_text(raw)
+        assert "CANARY" not in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+    assert redaction.redact_artifact_text("50% growth") == "50% growth"
+    assert redaction.redact_artifact_text("https%3A%2F%2Fexample.invalid") == (
+        "https%3A%2F%2Fexample.invalid"
+    )
+
+
+def test_percent_utf8_and_surrogate_fail_closed_reaches_public_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    raw = "api_key%EF%BC%9DSIG02_UTF8_SURFACE_CANARY; token_count=SAFE"
+    assert "SIG02_UTF8_SURFACE_CANARY" not in redaction.redact_artifact_text(raw)
+    plain = redaction.redact_plain_data({"text": raw})
+    assert "SIG02_UTF8_SURFACE_CANARY" not in plain["text"]
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_UTF8_SURFACE_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = r"api_key\uD800=SIG02_SURFACE_SURROGATE_CANARY"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert "SIG02_UTF8_SURFACE_CANARY" not in canonical
+    assert "SIG02_SURFACE_SURROGATE_CANARY" not in canonical
+    object.__setattr__(note, "thesis", raw)
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
