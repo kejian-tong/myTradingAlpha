@@ -7,8 +7,8 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `0882944a9f14c89d48b4f168faa1e9e36afd7605`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `last_reconciled_main_sha`: `5b03c3e803666ae61dcd0e4bd5b355f31bfd0774`
+- `roadmap_status`: `sig_02_candidate_pending_final_exact_head_review`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (informational only; requires fresh user authorization after this task stops)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -17,8 +17,8 @@ contracts before any newly authorized roadmap work.
 - `stop_after_pr_id`: `SIG-02`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
-- `default_high_implementer_route`: `GPT-5.6 Luna / max`
-- `default_critical_implementer_route`: `GPT-5.6 Luna / max`
+- `default_high_implementer_route`: `GPT-5.6 Sol / high`
+- `default_critical_implementer_route`: `GPT-5.6 Sol / xhigh`
 - `default_reviewer_route`: `GPT-5.6 Sol / high; reviewer_xhigh / Sol xhigh when escalated`
 - `high_implementation_only_route`: `high_implementer Sol/high + reviewer_high Sol/high` (`sol_high_sol_high`)
 - `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
@@ -49,27 +49,37 @@ non-master role without changing model IDs or efforts. The Master integrated it 
 repair. Only the Master delegated during this task; fresh final reviewers must load the updated role
 configuration and must not delegate.
 
+Disjoint harness-only PRs #48 through #51 then merged through
+`5b03c3e803666ae61dcd0e4bd5b355f31bfd0774` (tree
+`c0ff95d0e6aa79617b4f033017fc1de38b5d0411`). They added project hooks, scoped instructions and
+repo workflow skills, isolated exact-head review worktrees, and advisory harness telemetry without
+changing SIG-02 production contracts or the Luna/Sol routing ladder. The Master integrated that exact
+main before final validation. The user explicitly approved a SIG-02-only runtime alternative in PR #45
+comment `5572425609`: named roles may expose collaboration controls but must not invoke them; the Master
+remains the sole orchestrator. The exception changes no config or route and expires after SIG-02.
+
 SIG-02 — Evidence tools and ResearchNote
 
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- final integrated base main: `0882944a9f14c89d48b4f168faa1e9e36afd7605`
+- final integrated base main: `5b03c3e803666ae61dcd0e4bd5b355f31bfd0774`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `7268f5353038b910fca118439deb9d4f1cbc8238`
-  (tree `e5516c60a903605e3999c62a5c9b82ae86095f1b`); final latest-main integration commit
-  `271861e0277c55c2254ee383f7297f59152c2d35` (tree
-  `5af4ba39cd0d043169cb39529e5cc5d24e298182`); the final state-bearing head is
+  `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
+  (tree `28cc3a5f539e5e919050188a41c4f1c2f67ae61f`); final latest-main integration commit
+  `175708c78c159c4e3affb5d64f2b32a9571c7509` (tree
+  `dbac3a3169f8080e82cce3213c90b31ed4937d75`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
-  artifact correctness; no writer escalation applied; review-only escalation applied
-- route: `luna_sol_xhigh` after review-only escalation; implementation remains the loaded
-  `normal_implementer` Luna/max, while controlling review advances from `reviewer_high` to
-  `reviewer_xhigh` because two high-review rounds found successive subtle hostile-object/provenance
-  correctness defects
+  artifact correctness; repeated confidentiality defects triggered implementation and review escalation
+- route: `sol_high_sol_xhigh` difficult escalation; the final repair used `high_implementer` Sol/high
+  and the controlling final review uses a fresh `reviewer_xhigh` Sol/xhigh
 - implementer: successfully loaded named `normal_implementer`,
   `.codex/agents/normal-implementer.toml`, configured actual `gpt-5.6-luna / max`; no separate backend
-  telemetry claim
+  telemetry claim. The final multiline-secret repair successfully loaded named `high_implementer`,
+  `.codex/agents/high-implementer.toml`, configured actual `gpt-5.6-sol / high`; it reported zero
+  collaboration-tool calls under the user-approved runtime alternative and no separate backend telemetry
+  claim
 - reviewer: prior controlling rounds successfully loaded named `reviewer_high`,
   `.codex/agents/reviewer-high.toml`, configured actual `gpt-5.6-sol / high`, and returned REQUEST
   CHANGES; review-only escalation successfully loaded named `reviewer_xhigh`,
@@ -126,13 +136,16 @@ SIG-02 — Evidence tools and ResearchNote
   `93d439238599087585cca97ed55329d80e952f15`
 - alternating-encoding RED: `ce6524615b9ae4c1f026838a0926f64b8f41bd99`; repair GREEN:
   `7268f5353038b910fca118439deb9d4f1cbc8238`
-- local tests: PASS after final repair/latest-main integration; focused `150 passed`, required
-  regressions `870 passed`, full suite `2349 passed / 3 skipped / 18 warnings / 69 subtests`
+- multiline-secret container RED: `2330475f48b81087082cfec1801874c1b8231f39`, expected
+  `4 failed / 95 deselected`; repair GREEN: `bce1fd069c28a6aa8453a937ffc24023be07f3ff`;
+  linear-scan refactor: `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
+- local tests: PASS after final repair/latest-main integration; focused SIG-02 `99 passed`, data/research
+  regressions `1089 passed`, full suite `2358 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
   `34089421094`, CodeQL `34089421071` and Dependency Review `34089421038`; fresh exact-head checks
-  required after the narrowed-scope state commit and PR #47 integration
+  required after the multiline-secret repair, current-main integration and this state commit
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -199,7 +212,10 @@ SIG-02 — Evidence tools and ResearchNote
   returned REQUEST CHANGES for strict UTF-8/form percent decoding and surrogate handling; durable
   artifact: PR #45 comment `5565702246`. Focused repair RED/GREEN and fresh exact-head review are
   required. Strict UTF-8 form decoding, surrogate rejection and the combined fixed-point encoding
-  budget close those surfaces locally; fresh exact-head CI and xhigh review are pending.
+  budget close those surfaces locally. The later exact-head boundary review found YAML block-scalar and
+  unmatched private-key confidentiality leaks; durable REQUEST CHANGES artifact: PR #45 comment
+  `5566390797`. The focused multiline-container RED/GREEN/refactor closes those reproduced leaks locally;
+  fresh exact-head CI and isolated xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: STOP after SIG-02 exact-head review, CI, Master gate, protected merge and post-merge checks;
   SIG-03 requires a fresh separately authorized task
