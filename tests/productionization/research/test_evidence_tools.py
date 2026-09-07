@@ -2608,3 +2608,73 @@ def test_percent_utf8_and_surrogate_fail_closed_reaches_public_surfaces() -> Non
     payload["note_id"] = contracts.derive_research_note_id(note)
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
+
+
+def test_alternating_unicode_percent_form_chains_use_one_combined_budget() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    limit = getattr(redaction, "_ANALYSIS_MAX_ITERATIONS", 4)
+
+    def percent_encode(value: str) -> str:
+        safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        return "".join(
+            character if character in safe else f"%{ord(character):02X}"
+            for character in value
+        )
+
+    def unicode_encode(value: str) -> str:
+        return "".join(
+            character
+            if character.isalnum()
+            else f"\\u{ord(character):04x}"
+            for character in value
+        )
+
+    def chain(depth: int) -> str:
+        value = "api+key=SIG02_ALTERNATING_CANARY"
+        for layer in range(depth):
+            value = percent_encode(value) if layer % 2 == 0 else unicode_encode(value)
+        return value
+
+    for depth in range(1, limit + 2):
+        redacted = redaction.redact_artifact_text(chain(depth))
+        assert "SIG02_ALTERNATING_CANARY" not in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+    assert redaction.redact_artifact_text(chain(limit + 8)) == "[REDACTED]"
+    assert redaction.redact_artifact_text("50%25 growth and ordinary prose") == (
+        "50%25 growth and ordinary prose"
+    )
+
+
+def test_alternating_analysis_chain_reaches_public_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    raw = "api%2Bkey%3DSIG02_ALTERNATING_SURFACE_CANARY"
+    assert "SIG02_ALTERNATING_SURFACE_CANARY" not in redaction.redact_artifact_text(raw)
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_ALTERNATING_SURFACE_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert "SIG02_ALTERNATING_SURFACE_CANARY" not in note.canonical_bytes().decode("utf-8")
+    object.__setattr__(note, "thesis", raw)
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
