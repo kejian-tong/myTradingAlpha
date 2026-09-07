@@ -8,6 +8,9 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from math import isfinite
 
+from pydantic import TypeAdapter, ValidationError
+
+from mytradingalpha.contracts.common import StableId
 from mytradingalpha.contracts.research import (
     MAX_RESEARCH_NOTE_BYTES,
     EvidenceCitation,
@@ -22,7 +25,7 @@ from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
 from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.universe import AssetClass, Instrument
-from mytradingalpha.ops.logging import redact_plain_data, redact_text
+from mytradingalpha.ops.logging import redact_plain_data
 from mytradingalpha.research.cached_response import (
     CachedGraphResponse,
     _safe_response_input,
@@ -52,6 +55,9 @@ class ResearchNoteInputError(ResearchNoteError):
 
 class ResearchNoteBindingError(ResearchNoteError):
     """Raised when bundle, context, or cached response bindings disagree."""
+
+
+_STABLE_ID_ADAPTER = TypeAdapter(StableId)
 
 
 _CONTEXT_FIELDS = (
@@ -185,6 +191,18 @@ def _canonical(value: object) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
         raise ResearchNoteSerializationError("research note is not canonical JSON data") from exc
+
+
+def _redact_artifact_text(value: object) -> str:
+    if type(value) is not str:
+        raise ResearchNoteInputError("research source text must be an exact string")
+    try:
+        redacted = redact_plain_data({"text": value})
+    except (TypeError, ValueError) as exc:
+        raise ResearchNoteInputError("research source text is not safe plain data") from exc
+    if type(redacted) is not dict or type(redacted.get("text")) is not str:
+        raise ResearchNoteInputError("research source text did not redact to a string")
+    return redacted["text"]
 
 
 def _copy_context(context: object) -> RunContext:
@@ -408,8 +426,12 @@ class ResearchNoteBuilder:
         """Build a note from explicit source fields and claim-to-citation mapping."""
 
         _validate_bindings(self._bundle, self._context, self._response)
-        if type(source_agent) is not str or not source_agent or source_agent != source_agent.strip():
-            raise ResearchNoteInputError("source_agent must be a non-empty plain string")
+        try:
+            selected_source_agent = _STABLE_ID_ADAPTER.validate_python(source_agent)
+        except (TypeError, ValidationError, ValueError) as exc:
+            raise ResearchNoteInputError(
+                "source_agent must be a non-empty StableId"
+            ) from exc
         if type(source_fields) is not dict or set(source_fields) != {"thesis", "risks"}:
             raise ResearchNoteInputError("source_fields must explicitly name thesis and risks")
         try:
@@ -430,7 +452,7 @@ class ResearchNoteBuilder:
                 raise ResearchNoteInputError(
                     f"{claim} source field must name an existing top-level string"
                 )
-            texts[claim] = redact_text(output[field])
+            texts[claim] = _redact_artifact_text(output[field])
 
         toolset = EvidenceToolset(self._bundle)
         citations: list[EvidenceCitation] = []
@@ -487,7 +509,7 @@ class ResearchNoteBuilder:
             "runtime_manifest_id": self._response.runtime_manifest_id,
             "runtime_manifest_hash": self._response.runtime_manifest_hash,
             "capture_manifest": _project_provenance(self._response.capture_manifest),
-            "source_agent": source_agent,
+            "source_agent": selected_source_agent,
             "source_fields": selected_fields,
             "thesis": texts["thesis"],
             "risks": (texts["risks"],),

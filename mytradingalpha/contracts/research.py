@@ -138,7 +138,7 @@ class ResearchNote(_ResearchContractModel):
     runtime_manifest_id: StableId
     runtime_manifest_hash: CanonicalChecksum
     capture_manifest: ResearchProvenance
-    source_agent: StrictStr
+    source_agent: StableId
     source_fields: ResearchSourceFields
     thesis: StrictStr
     risks: tuple[StrictStr, ...]

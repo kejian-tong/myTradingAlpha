@@ -429,11 +429,14 @@ def _copy_reference(value: object) -> EvidenceReference:
         raise MalformedEvidenceReferenceError(
             "evidence reference must be an exact structured EvidenceReference"
         )
-    fields = _raw_model_fields(
-        value,
-        expected_type=EvidenceReference,
-        expected_fields=_REFERENCE_FIELDS,
-    )
+    try:
+        fields = _raw_model_fields(
+            value,
+            expected_type=EvidenceReference,
+            expected_fields=_REFERENCE_FIELDS,
+        )
+    except EvidenceToolError as exc:
+        raise MalformedEvidenceReferenceError("evidence reference storage is malformed") from exc
     if any(type(fields[field]) is not str for field in _REFERENCE_FIELDS):
         raise MalformedEvidenceReferenceError("evidence reference fields must be exact strings")
     try:
