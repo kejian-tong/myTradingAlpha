@@ -22,6 +22,7 @@ _ALLOWED_EVENTS = {
     "context_compaction",
 }
 _ALLOWED_PHASES = {"preflight", "jit", "red", "green", "refactor", "review", "repair", "merge_gate"}
+_ALLOWED_COMPACTION_TRIGGERS = {"manual", "auto"}
 
 
 def telemetry_path(repo: Path) -> Path:
@@ -40,6 +41,11 @@ def _validate(record: dict) -> dict:
         raise ValueError("unsupported telemetry event")
     if "phase" in record and record["phase"] not in _ALLOWED_PHASES:
         raise ValueError("unsupported telemetry phase")
+    if "trigger" in record and (
+        record["event"] != "context_compaction"
+        or record["trigger"] not in _ALLOWED_COMPACTION_TRIGGERS
+    ):
+        raise ValueError("invalid compaction trigger")
     for key in ("active_agents", "review_round", "blocking_findings", "duration_ms", "input_tokens", "cached_input_tokens", "output_tokens"):
         if key in record and (type(record[key]) is not int or record[key] < 0):
             raise ValueError(f"{key} must be a non-negative integer")
@@ -47,7 +53,7 @@ def _validate(record: dict) -> dict:
         if key in record and (type(record[key]) is not str or not record[key].strip()):
             raise ValueError(f"{key} must be a non-empty string")
     allowed = {
-        "event", "phase", "pr_id", "role", "model", "effort", "head_sha",
+        "event", "phase", "pr_id", "role", "model", "effort", "head_sha", "trigger",
         "active_agents", "review_round", "blocking_findings", "duration_ms",
         "input_tokens", "cached_input_tokens", "output_tokens", "observed_at_ms",
     }
@@ -88,6 +94,7 @@ def summarize(repo: Path) -> dict:
         "records": len(rows),
         "events": dict(Counter(row["event"] for row in rows)),
         "roles": dict(Counter(row["role"] for row in rows if "role" in row)),
+        "compaction_triggers": dict(Counter(row["trigger"] for row in rows if "trigger" in row)),
         "peak_active_agents": peak_agents,
         "duration_ms_total": sum(durations),
         "review_round_max": max((row.get("review_round", 0) for row in rows), default=0),

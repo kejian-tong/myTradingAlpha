@@ -51,7 +51,8 @@ _TEXT_FIELDS = ("operation", "session_id", "authorized_session_id", "pr_id", "st
                 "implementer_context", "reviewer_context")
 _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers"}
-_HOOK_EVENTS = {"SessionStart": "session-start", "Stop": "stop"}
+_GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
+_TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 
 
@@ -66,32 +67,44 @@ def _toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _single_hook_handler(event_map: dict, event: str, errors: list[str]) -> tuple[dict, dict] | None:
+    entries = event_map.get(event)
+    if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+        errors.append(f"{event} must have exactly one project hook entry")
+        return None
+    entry = entries[0]
+    handlers = entry.get("hooks")
+    if not isinstance(handlers, list) or len(handlers) != 1 or not isinstance(handlers[0], dict):
+        errors.append(f"{event} must have exactly one command handler")
+        return None
+    return entry, handlers[0]
+
+
 def _hook_errors(root: Path) -> list[str]:
     errors = []
     hook_path = root / ".codex/hooks.json"
     guard_path = root / "scripts/codex_hook_guard.py"
+    telemetry_path = root / "scripts/codex_telemetry_hook.py"
     if not guard_path.is_file():
         errors.append("missing lightweight Codex hook guard")
+    if not telemetry_path.is_file():
+        errors.append("missing Codex lifecycle telemetry hook")
     hooks = json.loads(hook_path.read_text(encoding="utf-8"))
     event_map = hooks.get("hooks") if isinstance(hooks, dict) else None
-    if not isinstance(event_map, dict) or set(event_map) != set(_HOOK_EVENTS):
-        return [*errors, "project hooks must contain only SessionStart and Stop v1 events"]
-    for event, mode in _HOOK_EVENTS.items():
-        entries = event_map.get(event)
-        if not isinstance(entries, list) or len(entries) != 1:
-            errors.append(f"{event} must have exactly one project hook entry")
+    expected_events = set(_GUARD_HOOKS) | _TELEMETRY_HOOKS
+    if not isinstance(event_map, dict) or set(event_map) != expected_events:
+        return [*errors, "project hooks differ from reviewed v2 event set"]
+
+    for event, mode in _GUARD_HOOKS.items():
+        found = _single_hook_handler(event_map, event, errors)
+        if found is None:
             continue
-        entry = entries[0]
-        handlers = entry.get("hooks") if isinstance(entry, dict) else None
-        if not isinstance(handlers, list) or len(handlers) != 1:
-            errors.append(f"{event} must have exactly one command handler")
-            continue
-        handler = handlers[0]
-        command = handler.get("command") if isinstance(handler, dict) else None
-        command_windows = handler.get("command_windows") if isinstance(handler, dict) else None
+        _, handler = found
+        command = handler.get("command")
+        command_windows = handler.get("commandWindows")
         if handler.get("type") != "command" or handler.get("async") is not False:
             errors.append(f"{event} hook must be a synchronous command")
-        if handler.get("timeout_sec") != 15:
+        if handler.get("timeout") != 15:
             errors.append(f"{event} hook timeout differs from reviewed policy")
         if not isinstance(command, str) or "codex_hook_guard.py" not in command or mode not in command:
             errors.append(f"{event} Unix hook command differs from reviewed policy")
@@ -101,6 +114,32 @@ def _hook_errors(root: Path) -> list[str]:
             or mode not in command_windows
         ):
             errors.append(f"{event} Windows hook command differs from reviewed policy")
+
+    for event in _TELEMETRY_HOOKS:
+        found = _single_hook_handler(event_map, event, errors)
+        if found is None:
+            continue
+        entry, handler = found
+        if event == "PostCompact" and entry.get("matcher") != "manual|auto":
+            errors.append("PostCompact matcher differs from reviewed policy")
+        if event != "PostCompact" and "matcher" in entry:
+            errors.append(f"{event} should not narrow the reviewed telemetry matcher")
+        command = handler.get("command")
+        command_windows = handler.get("commandWindows")
+        if handler.get("type") != "command" or handler.get("async") is not True:
+            errors.append(f"{event} telemetry hook must be an asynchronous command")
+        if handler.get("timeout") != 5:
+            errors.append(f"{event} telemetry hook timeout differs from reviewed policy")
+        if not isinstance(command, str) or "codex_telemetry_hook.py" not in command:
+            errors.append(f"{event} Unix telemetry command differs from reviewed policy")
+        if not isinstance(command_windows, str) or "codex_telemetry_hook.py" not in command_windows:
+            errors.append(f"{event} Windows telemetry command differs from reviewed policy")
+
+    legacy_keys = {"timeout_sec", "command_windows", "status_message"}
+    for event in expected_events:
+        found = _single_hook_handler(event_map, event, [])
+        if found is not None and legacy_keys.intersection(found[1]):
+            errors.append(f"{event} uses legacy hooks.json field names")
     return errors
 
 
