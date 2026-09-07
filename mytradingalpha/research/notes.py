@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
+from math import isfinite
 
 from mytradingalpha.contracts.research import (
     MAX_RESEARCH_NOTE_BYTES,
@@ -16,12 +17,15 @@ from mytradingalpha.contracts.research import (
     ResearchProvenance,
     ResearchSourceFields,
 )
-from mytradingalpha.contracts.schemas import RunContext
-from mytradingalpha.data.bundle import EvidenceBundle
+from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
+from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
 from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.universe import AssetClass, Instrument
 from mytradingalpha.ops.logging import redact_plain_data, redact_text
-from mytradingalpha.research.cached_response import CachedGraphResponse
+from mytradingalpha.research.cached_response import (
+    CachedGraphResponse,
+    _safe_response_input,
+)
 
 from .evidence_tools import (
     AmbiguousEvidenceReferenceError,
@@ -32,6 +36,8 @@ from .evidence_tools import (
     IneligibleEvidenceReferenceError,
     MalformedEvidenceReferenceError,
     MissingEvidenceReferenceError,
+    _copy_bundle,
+    _copy_reference,
 )
 
 
@@ -47,6 +53,126 @@ class ResearchNoteBindingError(ResearchNoteError):
     """Raised when bundle, context, or cached response bindings disagree."""
 
 
+_CONTEXT_FIELDS = (
+    "schema_version",
+    "run_id",
+    "mode",
+    "variant_id",
+    "decision_time",
+    "knowledge_cutoff",
+    "earliest_execution_time",
+    "bundle_id",
+    "bundle_hash",
+    "calendar_id",
+    "base_currency",
+    "network_policy",
+)
+_NETWORK_POLICY_FIELDS = (
+    "data_capture_egress",
+    "model_provider_egress",
+    "research_tool_egress",
+    "paper_broker_egress",
+    "live_broker_egress",
+)
+_RESPONSE_FIELDS = (
+    "schema_version",
+    "response_id",
+    "response_hash",
+    "bundle_id",
+    "bundle_hash",
+    "knowledge_cutoff",
+    "calendar_id",
+    "replay_policy",
+    "variant_id",
+    "trade_date",
+    "ticker",
+    "instrument_id",
+    "asset_type",
+    "instrument_context",
+    "graph_artifact_id",
+    "graph_artifact_hash",
+    "model_artifact_id",
+    "model_artifact_hash",
+    "runtime_manifest_id",
+    "runtime_manifest_hash",
+    "capture_manifest",
+    "output",
+    "output_hash",
+)
+_RESPONSE_STRING_FIELDS = (
+    "schema_version",
+    "response_id",
+    "response_hash",
+    "bundle_id",
+    "bundle_hash",
+    "calendar_id",
+    "variant_id",
+    "trade_date",
+    "ticker",
+    "instrument_id",
+    "asset_type",
+    "instrument_context",
+    "graph_artifact_id",
+    "graph_artifact_hash",
+    "model_artifact_id",
+    "model_artifact_hash",
+    "runtime_manifest_id",
+    "runtime_manifest_hash",
+    "output_hash",
+)
+
+
+def _raw_fields(
+    value: object,
+    *,
+    expected_type: type[object],
+    expected_fields: tuple[str, ...],
+) -> dict[str, object]:
+    if type(value) is not expected_type:
+        raise ResearchNoteInputError("unexpected caller-owned contract type")
+    try:
+        storage = object.__getattribute__(value, "__dict__")
+    except (AttributeError, TypeError) as exc:
+        raise ResearchNoteInputError("caller-owned contract storage is unavailable") from exc
+    if type(storage) is not dict:
+        raise ResearchNoteInputError("caller-owned contract storage must be an exact dictionary")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(expected_fields):
+        raise ResearchNoteInputError("caller-owned contract fields are not canonical")
+    return {field: dict.__getitem__(storage, field) for field in expected_fields}
+
+
+def _safe_response_data(value: object, *, seen: set[int], depth: int) -> object:
+    if depth > 64:
+        raise ResearchNoteBindingError("cached response output exceeds maximum depth")
+    value_type = type(value)
+    if value_type in (str, int, bool, type(None)):
+        return value
+    if value_type is float:
+        if not isfinite(value):
+            raise ResearchNoteBindingError("cached response output requires finite numbers")
+        return value
+    if value_type not in (dict, list, tuple):
+        raise ResearchNoteBindingError("cached response output contains an unsupported object")
+    identity = id(value)
+    if identity in seen:
+        raise ResearchNoteBindingError("cached response output contains a cycle")
+    seen.add(identity)
+    try:
+        if value_type is dict:
+            result: dict[str, object] = {}
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ResearchNoteBindingError("cached response output keys must be strings")
+                result[key] = _safe_response_data(item, seen=seen, depth=depth + 1)
+            return result
+        return value_type(
+            _safe_response_data(item, seen=seen, depth=depth + 1) for item in value
+        )
+    finally:
+        seen.remove(identity)
+
+
 def _canonical(value: object) -> bytes:
     try:
         return json.dumps(
@@ -60,31 +186,68 @@ def _canonical(value: object) -> bytes:
         raise ResearchNoteSerializationError("research note is not canonical JSON data") from exc
 
 
-def _copy_bundle(bundle: object) -> EvidenceBundle:
-    if type(bundle) is not EvidenceBundle:
-        raise ResearchNoteInputError("ResearchNoteBuilder requires an exact EvidenceBundle")
-    try:
-        return EvidenceBundle.model_validate(EvidenceBundle.model_dump(bundle, mode="python"))
-    except (TypeError, ValueError) as exc:
-        raise ResearchNoteInputError("ResearchNoteBuilder received an invalid bundle") from exc
-
-
 def _copy_context(context: object) -> RunContext:
-    if type(context) is not RunContext:
-        raise ResearchNoteInputError("context requires an exact RunContext")
     try:
-        return RunContext.model_validate(RunContext.model_dump(context, mode="python"))
+        fields = _raw_fields(
+            context,
+            expected_type=RunContext,
+            expected_fields=_CONTEXT_FIELDS,
+        )
+        string_fields = (
+            "schema_version",
+            "run_id",
+            "variant_id",
+            "bundle_id",
+            "bundle_hash",
+            "calendar_id",
+            "base_currency",
+        )
+        if any(type(fields[field]) is not str for field in string_fields):
+            raise ResearchNoteBindingError("context string fields are malformed")
+        if type(fields["mode"]) is not Mode:
+            raise ResearchNoteBindingError("context mode is malformed")
+        if any(type(fields[field]) is not datetime for field in (
+            "decision_time",
+            "knowledge_cutoff",
+            "earliest_execution_time",
+        )):
+            raise ResearchNoteBindingError("context timestamps are malformed")
+        policy = fields["network_policy"]
+        policy_fields = _raw_fields(
+            policy,
+            expected_type=NetworkPolicy,
+            expected_fields=_NETWORK_POLICY_FIELDS,
+        )
+        if any(type(policy_fields[field]) is not bool for field in _NETWORK_POLICY_FIELDS):
+            raise ResearchNoteBindingError("context network policy is malformed")
+        fields["network_policy"] = policy_fields
+        return RunContext.model_validate(fields)
+    except ResearchNoteInputError:
+        raise
     except (TypeError, ValueError) as exc:
         raise ResearchNoteBindingError("context failed defensive validation") from exc
 
 
 def _copy_response(response: object) -> CachedGraphResponse:
-    if type(response) is not CachedGraphResponse:
-        raise ResearchNoteInputError("response requires an exact CachedGraphResponse")
     try:
-        return CachedGraphResponse.model_validate(
-            CachedGraphResponse.model_dump(response, mode="python")
+        fields = _raw_fields(
+            response,
+            expected_type=CachedGraphResponse,
+            expected_fields=_RESPONSE_FIELDS,
         )
+        if any(type(fields[field]) is not str for field in _RESPONSE_STRING_FIELDS):
+            raise ResearchNoteBindingError("cached response string fields are malformed")
+        if type(fields["knowledge_cutoff"]) not in (str, datetime):
+            raise ResearchNoteBindingError("cached response cutoff is malformed")
+        if type(fields["replay_policy"]) not in (str, BundleReplayPolicy):
+            raise ResearchNoteBindingError("cached response replay policy is malformed")
+        if type(fields["capture_manifest"]) is not SourceManifest:
+            raise ResearchNoteBindingError("cached response capture manifest is malformed")
+        fields["output"] = _safe_response_data(fields["output"], seen=set(), depth=0)
+        safe_fields = _safe_response_input(fields)
+        return CachedGraphResponse.model_validate(safe_fields)
+    except ResearchNoteInputError:
+        raise
     except (TypeError, ValueError) as exc:
         raise ResearchNoteBindingError("cached response failed defensive validation") from exc
 
@@ -175,19 +338,6 @@ def _resolve_instrument(
     return instrument, instrument_context
 
 
-def _copy_reference(value: object) -> EvidenceReference:
-    if type(value) is not EvidenceReference:
-        raise MalformedEvidenceReferenceError(
-            "claim citation must be an exact EvidenceReference"
-        )
-    try:
-        return EvidenceReference.model_validate(
-            EvidenceReference.model_dump(value, mode="python")
-        )
-    except (TypeError, ValueError) as exc:
-        raise MalformedEvidenceReferenceError("claim citation reference is invalid") from exc
-
-
 def _validate_bindings(
     bundle: EvidenceBundle,
     context: RunContext,
@@ -239,7 +389,10 @@ class ResearchNoteBuilder:
         context: RunContext,
         response: CachedGraphResponse,
     ) -> None:
-        self._bundle = _copy_bundle(bundle)
+        try:
+            self._bundle = _copy_bundle(bundle)
+        except EvidenceToolError as exc:
+            raise ResearchNoteInputError("ResearchNoteBuilder received an invalid bundle") from exc
         self._context = _copy_context(context)
         self._response = _copy_response(response)
 

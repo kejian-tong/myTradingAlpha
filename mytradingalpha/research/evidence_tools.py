@@ -4,24 +4,46 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
+from math import isfinite
 from types import MappingProxyType
 
 from mytradingalpha.contracts.research import EvidenceReference
 from mytradingalpha.data.actions import (
+    ActionType,
     DelistingAction,
     DividendAction,
     SplitAction,
     TickerChangeAction,
 )
-from mytradingalpha.data.bars import DailyBar
-from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
-from mytradingalpha.data.events import NewsEvent
-from mytradingalpha.data.fundamentals import FinancialFiling
-from mytradingalpha.data.macro import MacroObservation
+from mytradingalpha.data.bars import AdjustmentBasis, BarFinality, DailyBar
+from mytradingalpha.data.bundle import (
+    BundleReplayPolicy,
+    EvidenceBundle,
+    EvidenceDomain,
+    EvidenceRequirement,
+    MissingEvidence,
+)
+from mytradingalpha.data.calendar import (
+    CalendarClosure,
+    CalendarCoverageRange,
+    SessionType,
+    TradingCalendar,
+    TradingSession,
+)
+from mytradingalpha.data.events import EventKind, NewsEvent, ReplayPolicy
+from mytradingalpha.data.fundamentals import (
+    FinancialFact,
+    FinancialFiling,
+    ReportingPeriod,
+    StatementType,
+    UnitScale,
+)
+from mytradingalpha.data.macro import MacroFrequency, MacroObservation
 from mytradingalpha.data.provenance import SourceManifest
-from mytradingalpha.data.social import SocialPost
-from mytradingalpha.data.universe import Instrument, SymbolAlias, UniverseMembership
+from mytradingalpha.data.social import SocialPlatform, SocialPost
+from mytradingalpha.data.universe import AssetClass, Instrument, SymbolAlias, UniverseMembership
 from mytradingalpha.ops.logging import redact_plain_data
 
 
@@ -83,6 +105,338 @@ _DOMAIN_BY_NAME = {
     for domain, field, id_field, expected_types in _DOMAIN_FIELDS
 }
 
+_BUNDLE_FIELDS = (
+    "schema_version",
+    "bundle_id",
+    "bundle_hash",
+    "created_at",
+    "knowledge_cutoff",
+    "replay_policy",
+    "requirements",
+    "missing_optional",
+    "calendar",
+    "instruments",
+    "aliases",
+    "memberships",
+    "actions",
+    "bars",
+    "filings",
+    "events",
+    "social_posts",
+    "macro_observations",
+)
+_MODEL_FIELDS: dict[type[object], tuple[str, ...]] = {
+    EvidenceBundle: _BUNDLE_FIELDS,
+    EvidenceRequirement: ("schema_version", "domain", "required"),
+    MissingEvidence: ("schema_version", "domain", "reason"),
+    TradingCalendar: (
+        "schema_version",
+        "calendar_id",
+        "timezone",
+        "coverage_start",
+        "coverage_end",
+        "coverage_ranges",
+        "closures",
+        "schedule",
+    ),
+    CalendarCoverageRange: ("start", "end"),
+    CalendarClosure: ("schema_version", "calendar_id", "date", "reason"),
+    TradingSession: (
+        "schema_version",
+        "calendar_id",
+        "session_date",
+        "open_at",
+        "close_at",
+        "session_type",
+    ),
+    Instrument: (
+        "schema_version",
+        "instrument_id",
+        "initial_symbol",
+        "asset_class",
+        "currency",
+        "exchange",
+        "active_from",
+        "active_to",
+        "lot_size",
+        "manifest",
+    ),
+    SymbolAlias: (
+        "schema_version",
+        "alias_id",
+        "instrument_id",
+        "symbol",
+        "valid_from",
+        "valid_to",
+        "manifest",
+    ),
+    UniverseMembership: (
+        "schema_version",
+        "membership_id",
+        "universe_id",
+        "instrument_id",
+        "valid_from",
+        "valid_to",
+        "manifest",
+    ),
+    TickerChangeAction: (
+        "schema_version",
+        "action_type",
+        "action_id",
+        "instrument_id",
+        "effective_date",
+        "old_symbol",
+        "new_symbol",
+        "manifest",
+    ),
+    SplitAction: (
+        "schema_version",
+        "action_type",
+        "action_id",
+        "instrument_id",
+        "effective_date",
+        "new_shares_per_old_share",
+        "manifest",
+    ),
+    DividendAction: (
+        "schema_version",
+        "action_type",
+        "action_id",
+        "instrument_id",
+        "effective_date",
+        "amount_per_share",
+        "currency",
+        "payable_date",
+        "manifest",
+    ),
+    DelistingAction: (
+        "schema_version",
+        "action_type",
+        "action_id",
+        "instrument_id",
+        "effective_date",
+        "reason",
+        "manifest",
+    ),
+    DailyBar: (
+        "schema_version",
+        "bar_id",
+        "instrument_id",
+        "calendar_id",
+        "session_date",
+        "interval",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "adjustment_basis",
+        "adjustment_version",
+        "finality",
+        "manifest",
+    ),
+    FinancialFact: ("schema_version", "name", "value"),
+    FinancialFiling: (
+        "schema_version",
+        "filing_id",
+        "accession_id",
+        "instrument_id",
+        "statement_type",
+        "reporting_period",
+        "form_type",
+        "fiscal_period_start",
+        "fiscal_period_end",
+        "filed_at",
+        "currency",
+        "unit_scale",
+        "facts",
+        "manifest",
+    ),
+    NewsEvent: (
+        "schema_version",
+        "event_id",
+        "instrument_id",
+        "kind",
+        "title",
+        "body",
+        "publisher",
+        "url",
+        "replay_policy",
+        "manifest",
+    ),
+    SocialPost: (
+        "schema_version",
+        "post_id",
+        "instrument_id",
+        "platform",
+        "text",
+        "score",
+        "comments",
+        "replay_policy",
+        "manifest",
+    ),
+    MacroObservation: (
+        "schema_version",
+        "observation_id",
+        "series_id",
+        "observation_date",
+        "value",
+        "units",
+        "frequency",
+        "replay_policy",
+        "manifest",
+    ),
+    SourceManifest: (
+        "schema_version",
+        "manifest_id",
+        "source",
+        "source_locator",
+        "fetched_at",
+        "event_time",
+        "published_at",
+        "available_at",
+        "ingested_at",
+        "checksum",
+        "terms",
+        "revision",
+    ),
+}
+_SAFE_ENUM_TYPES = (
+    ActionType,
+    AdjustmentBasis,
+    AssetClass,
+    BarFinality,
+    BundleReplayPolicy,
+    EvidenceDomain,
+    EventKind,
+    MacroFrequency,
+    ReplayPolicy,
+    ReportingPeriod,
+    SessionType,
+    SocialPlatform,
+    StatementType,
+    UnitScale,
+)
+_MAX_BUNDLE_WALK_DEPTH = 64
+
+
+def _raw_model_fields(
+    value: object,
+    *,
+    expected_type: type[object] | tuple[type[object], ...],
+    expected_fields: tuple[str, ...],
+) -> dict[str, object]:
+    if type(value) not in (
+        expected_type if isinstance(expected_type, tuple) else (expected_type,)
+    ):
+        raise EvidenceToolError("unexpected contract object type")
+    try:
+        storage = object.__getattribute__(value, "__dict__")
+    except (AttributeError, TypeError) as exc:
+        raise EvidenceToolError("contract object storage is unavailable") from exc
+    if type(storage) is not dict:
+        raise EvidenceToolError("contract object storage must be an exact dictionary")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(expected_fields):
+        raise EvidenceToolError("contract object fields are not canonical")
+    return {field: dict.__getitem__(storage, field) for field in expected_fields}
+
+
+def _safe_bundle_value(value: object, *, seen: set[int], depth: int) -> object:
+    if depth > _MAX_BUNDLE_WALK_DEPTH:
+        raise EvidenceToolError("evidence bundle exceeds maximum nesting depth")
+    value_type = type(value)
+    if value_type in (str, int, bool, type(None)):
+        return value
+    if value_type is float:
+        if not isfinite(value):
+            raise EvidenceToolError("evidence bundle requires finite numbers")
+        return value
+    if value_type is Decimal:
+        if not value.is_finite():
+            raise EvidenceToolError("evidence bundle requires finite decimals")
+        return value
+    if value_type in (datetime, date):
+        return value
+    if value_type in _SAFE_ENUM_TYPES:
+        return value
+    if value_type in _MODEL_FIELDS:
+        identity = id(value)
+        if identity in seen:
+            raise EvidenceToolError("evidence bundle contains a cycle")
+        seen.add(identity)
+        try:
+            fields = _raw_model_fields(
+                value,
+                expected_type=value_type,
+                expected_fields=_MODEL_FIELDS[value_type],
+            )
+            return {
+                key: _safe_bundle_value(item, seen=seen, depth=depth + 1)
+                for key, item in fields.items()
+            }
+        finally:
+            seen.remove(identity)
+    if value_type is dict:
+        identity = id(value)
+        if identity in seen:
+            raise EvidenceToolError("evidence bundle contains a cycle")
+        seen.add(identity)
+        try:
+            result: dict[str, object] = {}
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise EvidenceToolError("evidence bundle object keys must be exact strings")
+                result[key] = _safe_bundle_value(item, seen=seen, depth=depth + 1)
+            return result
+        finally:
+            seen.remove(identity)
+    if value_type in (tuple, list):
+        identity = id(value)
+        if identity in seen:
+            raise EvidenceToolError("evidence bundle contains a cycle")
+        seen.add(identity)
+        try:
+            return value_type(
+                _safe_bundle_value(item, seen=seen, depth=depth + 1) for item in value
+            )
+        finally:
+            seen.remove(identity)
+    raise EvidenceToolError("evidence bundle contains an unsupported object")
+
+
+def _copy_bundle(bundle: object) -> EvidenceBundle:
+    if type(bundle) is not EvidenceBundle:
+        raise EvidenceToolError("evidence toolset requires an exact EvidenceBundle")
+    payload = _safe_bundle_value(bundle, seen=set(), depth=0)
+    if type(payload) is not dict:
+        raise EvidenceToolError("evidence bundle did not normalize to an object")
+    try:
+        return EvidenceBundle.model_validate(payload)
+    except (TypeError, ValueError) as exc:
+        raise EvidenceToolError("evidence bundle failed defensive validation") from exc
+
+
+_REFERENCE_FIELDS = ("schema_version", "bundle_id", "domain", "record_id")
+
+
+def _copy_reference(value: object) -> EvidenceReference:
+    if type(value) is not EvidenceReference:
+        raise MalformedEvidenceReferenceError(
+            "evidence reference must be an exact structured EvidenceReference"
+        )
+    fields = _raw_model_fields(
+        value,
+        expected_type=EvidenceReference,
+        expected_fields=_REFERENCE_FIELDS,
+    )
+    if any(type(fields[field]) is not str for field in _REFERENCE_FIELDS):
+        raise MalformedEvidenceReferenceError("evidence reference fields must be exact strings")
+    try:
+        return EvidenceReference.model_validate(fields)
+    except (TypeError, ValueError) as exc:
+        raise MalformedEvidenceReferenceError("evidence reference is invalid") from exc
+
 
 def _freeze(value: object) -> object:
     if isinstance(value, dict):
@@ -101,16 +455,7 @@ def _unfreeze(value: object) -> object:
 
 
 def _validate_reference(value: object) -> EvidenceReference:
-    if type(value) is not EvidenceReference:
-        raise MalformedEvidenceReferenceError(
-            "evidence reference must be an exact structured EvidenceReference"
-        )
-    try:
-        return EvidenceReference.model_validate(
-            EvidenceReference.model_dump(value, mode="python")
-        )
-    except (TypeError, ValueError) as exc:
-        raise MalformedEvidenceReferenceError("evidence reference is invalid") from exc
+    return _copy_reference(value)
 
 
 def _record_payload(record: object) -> tuple[dict[str, object], dict[str, object]]:
@@ -128,13 +473,7 @@ class EvidenceToolset:
     """Defensively copied, read-only evidence access for one sealed bundle."""
 
     def __init__(self, bundle: EvidenceBundle) -> None:
-        if type(bundle) is not EvidenceBundle:
-            raise EvidenceToolError("evidence toolset requires an exact EvidenceBundle")
-        try:
-            payload = EvidenceBundle.model_dump(bundle, mode="python")
-            self._bundle = EvidenceBundle.model_validate(payload)
-        except (TypeError, ValueError) as exc:
-            raise EvidenceToolError("evidence bundle failed defensive validation") from exc
+        self._bundle = _copy_bundle(bundle)
 
     @property
     def bundle_id(self) -> str:

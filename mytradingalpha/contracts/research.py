@@ -74,6 +74,12 @@ class ResearchProvenance(_ResearchContractModel):
     def validate_redacted_fields(self) -> ResearchProvenance:
         if self.source_locator != "[REDACTED]" or self.terms != "[REDACTED]":
             raise ValueError("research provenance requires redacted projection fields")
+        if self.published_at is not None and self.published_at > self.available_at:
+            raise ValueError("research provenance publication follows availability")
+        if self.available_at > self.fetched_at:
+            raise ValueError("research provenance availability follows fetch")
+        if self.fetched_at > self.ingested_at:
+            raise ValueError("research provenance fetch follows ingestion")
         return self
 
 
@@ -165,6 +171,17 @@ class ResearchNote(_ResearchContractModel):
     def validate_citation_integrity(self) -> ResearchNote:
         if not self.citations:
             raise ValueError("research note requires at least one citation")
+        if self.capture_manifest.checksum != self.output_hash:
+            raise ValueError("research note capture checksum does not match output hash")
+        manifests = (self.capture_manifest, *(citation.provenance for citation in self.citations))
+        for manifest in manifests:
+            if manifest.available_at > self.knowledge_cutoff:
+                raise ValueError("research note evidence is unavailable at cutoff")
+            if (
+                self.replay_policy == "archive_realistic"
+                and manifest.ingested_at > self.knowledge_cutoff
+            ):
+                raise ValueError("research note evidence is not archived at cutoff")
         seen: set[tuple[str, str]] = set()
         claims: set[str] = set()
         for citation in self.citations:
