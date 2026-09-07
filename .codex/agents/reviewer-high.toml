@@ -19,3 +19,6 @@ review artifact containing PR ID, exact reviewed head SHA, this role name/config
 and effort, RED-evidence verdict, findings, acceptance matrix, scope-leak verdict, and final verdict
 APPROVE or REQUEST CHANGES. Do not edit implementation files and do not start the next roadmap PR.
 """
+
+[agents]
+enabled = false

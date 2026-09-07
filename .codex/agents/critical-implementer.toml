@@ -21,3 +21,6 @@ Return RED/implementation commit SHAs, exact validation evidence, safety/invaria
 files, and unresolved issues to the parent master. If evidence or required capabilities are inadequate,
 return `insufficient_evidence` rather than weakening a gate.
 """
+
+[agents]
+enabled = false

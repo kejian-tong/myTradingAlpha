@@ -20,3 +20,6 @@ verdict. Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDI
 applicable, plus the exact SHA reviewed and the smallest test/evidence needed to close each material
 finding. Any BLOCKER/HIGH must be surfaced to the master and controlling reviewer.
 """
+
+[agents]
+enabled = false
