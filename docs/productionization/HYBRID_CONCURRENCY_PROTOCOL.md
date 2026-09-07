@@ -40,11 +40,13 @@ Project config currently uses:
 ```toml
 [agents]
 enabled = true
-max_concurrent_threads_per_session = 4
+max_concurrent_threads_per_session = 6
 ```
 
 Treat this as a **concurrently open spawned-thread guardrail**, not a total-per-PR or lifetime spawn cap.
-The master/root context is separate from these spawned-agent slots.
+The master/root context is separate from these spawned-agent slots. The six-slot cap is burst headroom,
+not a target: spawn only lanes with material independent work and continue closing completed threads
+promptly.
 
 The harness does not impose a numeric maximum on cumulative implement/review/repair cycles. Continue
 only while each cycle produces new evidence toward closure. Existing `AGENTS.md` stop conditions still
