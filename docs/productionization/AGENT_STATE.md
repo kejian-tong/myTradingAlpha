@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -41,8 +41,8 @@ SIG-02 — Evidence tools and ResearchNote
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `5d9ca87ad2425371f8b1e3d34612b35b7a0f3efc`
-  (tree `fadc27891db9393d2e08f99b5e9787f5c0e58fe9`); the final state-bearing head is
+  `95216a6bf5a88388fa76cb5187984eaf02649957`
+  (tree `3f0772f4e85a26c1efe99bd2438693f6ed2181ed`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -87,8 +87,10 @@ SIG-02 — Evidence tools and ResearchNote
   `5b185ececb96308b41df43bc8e0e2d8d1d3b53cc`
 - key-table repair RED: `3b71a757045b74fdf891dfb65f91fbfbb990d31e`, expected
   `2 failed / 63 deselected`; repair GREEN: `5d9ca87ad2425371f8b1e3d34612b35b7a0f3efc`
-- local tests: PASS after final repair; focused `120 passed`, required regressions `840 passed`, full
-  suite `2315 passed / 3 skipped / 18 warnings / 69 subtests`
+- public-wire/dependency repair RED: `7ae313a8cf33448ffdd933d3aeb5e1c0b7a1d0b0`, expected
+  `7 failed / 65 deselected`; repair GREEN: `95216a6bf5a88388fa76cb5187984eaf02649957`
+- local tests: PASS after final repair; focused `127 passed`, required regressions `847 passed`, full
+  suite `2322 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: latest xhigh-review candidate `4ed95b3fe7a2660b7b56e4ed683bbb03560409bf` passed CI
@@ -128,7 +130,9 @@ SIG-02 — Evidence tools and ResearchNote
   canaries locally. Fresh xhigh review at `4ed95b3fe7a2660b7b56e4ed683bbb03560409bf`
   returned REQUEST CHANGES for prefixed compact-key suffixes, hostile public-wire string/key callbacks
   and the research-to-ops redaction dependency; durable artifact: PR #45 comment `5564408011`.
-  Focused repair RED/GREEN and fresh exact-head xhigh review are required.
+  The suffix-aware compact matcher, contracts-owned plain-data redaction and callback-free exact wire
+  storage/scalar validators close those surfaces locally; fresh exact-head CI and xhigh review are
+  pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
