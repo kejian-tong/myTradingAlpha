@@ -29,6 +29,7 @@ from mytradingalpha.research.cached_response import (
 from tests.productionization.data.test_bundle_replay import (
     _build as build_fixture_bundle,
     _candidate_fields,
+    _social_candidates,
 )
 from tests.productionization.research.test_cached_response import (
     make_capture_manifest,
@@ -2762,3 +2763,306 @@ def test_unmatched_private_key_content_is_rejected_by_note_wire_and_canonical_pa
         contracts.ResearchNote.model_validate(payload)
     with pytest.raises(contracts.ResearchNoteSerializationError):
         note.canonical_bytes()
+
+
+@pytest.mark.parametrize(
+    ("raw", "canary"),
+    (
+        (
+            "api_key: !!str |\n  SIG02_TAGGED_YAML_CANARY\nsafe: ordinary",
+            "SIG02_TAGGED_YAML_CANARY",
+        ),
+        (
+            "api_key: &credential >-\n  SIG02_ANCHORED_YAML_CANARY\nsafe: ordinary",
+            "SIG02_ANCHORED_YAML_CANARY",
+        ),
+        (
+            'api_key = """\nSIG02_TOML_BASIC_CANARY\n"""\nsafe = "ordinary"',
+            "SIG02_TOML_BASIC_CANARY",
+        ),
+        (
+            "api_key = '''\nSIG02_TOML_LITERAL_CANARY\n'''\nsafe = 'ordinary'",
+            "SIG02_TOML_LITERAL_CANARY",
+        ),
+    ),
+)
+def test_final_multiline_containers_are_redacted_by_direct_helpers(
+    raw: str,
+    canary: str,
+) -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+
+    redacted = redaction.redact_artifact_text(raw)
+
+    assert canary not in redacted
+    assert "safe" in redacted and "ordinary" in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+    assert redaction.validate_artifact_text(redacted) == redacted
+    with pytest.raises(ValueError):
+        redaction.validate_artifact_text(raw)
+
+
+def test_final_multiline_scanning_is_bounded_and_preserves_safe_controls() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    overlong_property = (
+        "api_key: &"
+        + ("a" * 300)
+        + " |\n  SIG02_OVERLONG_YAML_PROPERTY_CANARY"
+    )
+    safe_yaml = "description: !!str |\n  ordinary multiline text\nsafe: ordinary"
+    safe_toml = 'description = """\nordinary multiline text\n"""\nsafe = "ordinary"'
+    large_safe = 'description = """\n' + ("ordinary text\n" * 4096) + '"""'
+
+    assert redaction.redact_artifact_text(overlong_property) == "[REDACTED]"
+    for safe in (safe_yaml, safe_toml, large_safe):
+        assert redaction.redact_artifact_text(safe) == safe
+        assert redaction.validate_artifact_text(safe) == safe
+
+
+def _final_multiline_surface_text() -> str:
+    return (
+        "api_key: !!str |\n"
+        "  SIG02_TAGGED_YAML_SURFACE_CANARY\n"
+        "safe: ordinary\n"
+        'client_secret = """\n'
+        "SIG02_TOML_SURFACE_CANARY\n"
+        '"""\n'
+        "safe_text = ordinary"
+    )
+
+
+def test_final_multiline_containers_do_not_reach_evidence_rendering() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    raw = _final_multiline_surface_text()
+    bundle, _, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+
+    assert "SIG02_TAGGED_YAML_SURFACE_CANARY" not in rendered
+    assert "SIG02_TOML_SURFACE_CANARY" not in rendered
+
+
+def test_final_multiline_containers_do_not_reach_note_builder() -> None:
+    raw = _final_multiline_surface_text()
+    bundle, context, _, _ = _bundle_response()
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+
+    canonical = _note(bundle, context, response).canonical_bytes().decode("utf-8")
+
+    assert "SIG02_TAGGED_YAML_SURFACE_CANARY" not in canonical
+    assert "SIG02_TOML_SURFACE_CANARY" not in canonical
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "api_key: !!str |\n  SIG02_TAGGED_YAML_WIRE_CANARY",
+        'api_key = """\nSIG02_TOML_WIRE_CANARY\n"""',
+    ),
+)
+def test_final_multiline_containers_are_rejected_by_note_wire_and_canonical_paths(
+    raw: str,
+) -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    object.__setattr__(note, "thesis", raw)
+    object.__setattr__(note, "note_id", contracts.derive_research_note_id(note))
+    payload = note.model_dump(mode="python")
+
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+    with pytest.raises(contracts.ResearchNoteSerializationError):
+        note.canonical_bytes()
+
+
+def _bundle_with_credential_shaped_evidence(field: str) -> Any:
+    fields = _candidate_fields()
+    events = list(fields["event_candidates"])
+    selected = events[1]
+    if field == "record_id":
+        selected = selected.model_copy(update={"event_id": "sk-proj-SIG02SEALEDID"})
+        events[1] = selected
+    else:
+        events = [
+            event.model_copy(
+                update={
+                    "manifest": SourceManifest.model_validate(
+                        {
+                            **event.manifest.model_dump(mode="python"),
+                            "source": "sk-proj-SIG02PROVENANCE",
+                        }
+                    )
+                }
+            )
+            if event.event_id == selected.event_id
+            else event
+            for event in events
+        ]
+    return build_fixture_bundle(event_candidates=tuple(events))
+
+
+@pytest.mark.parametrize("field", ("record_id", "provenance"))
+def test_credential_shaped_sealed_evidence_is_rejected_by_toolset(field: str) -> None:
+    _, evidence_tools, _ = _load_sig02()
+    bundle = _bundle_with_credential_shaped_evidence(field)
+
+    with pytest.raises(evidence_tools.MalformedEvidenceReferenceError):
+        evidence_tools.EvidenceToolset(bundle)
+
+
+@pytest.mark.parametrize("field", ("record_id", "provenance"))
+def test_credential_shaped_sealed_evidence_is_rejected_by_builder(field: str) -> None:
+    _, _, notes = _load_sig02()
+    bundle = _bundle_with_credential_shaped_evidence(field)
+    context = _context(bundle)
+    output = make_output()
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(bundle=bundle, context=context, output=output)
+        )
+    )
+
+    with pytest.raises(notes.ResearchNoteInputError):
+        notes.ResearchNoteBuilder(bundle=bundle, context=context, response=response)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("response_id", "citation_record_id", "citation_source"),
+)
+def test_credential_shaped_note_identity_and_provenance_fail_wire_and_canonical(
+    field: str,
+) -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    unsafe = "sk-proj-SIG02DIRECTWIRE"
+    if field == "response_id":
+        object.__setattr__(note, "response_id", unsafe)
+    elif field == "citation_record_id":
+        object.__setattr__(note.citations[0].reference, "record_id", unsafe)
+    else:
+        object.__setattr__(note.citations[0].provenance, "source", unsafe)
+    object.__setattr__(note, "note_id", contracts.derive_research_note_id(note))
+    payload = note.model_dump(mode="python")
+
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+    with pytest.raises(contracts.ResearchNoteSerializationError):
+        note.canonical_bytes()
+
+
+def test_projected_manifest_hash_is_exact_and_changes_for_manifest_mutation() -> None:
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    event = next(item for item in bundle.events if item.event_id == "news-aapl-earnings")
+    citation = next(
+        item
+        for item in note.citations
+        if item.reference.record_id == event.event_id
+    )
+    manifest_payload = event.manifest.model_dump(mode="json")
+    canonical = json.dumps(
+        manifest_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    expected = f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+    mutated_payload = {**manifest_payload, "revision": manifest_payload["revision"] + 1}
+    mutated_canonical = json.dumps(
+        mutated_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    mutated = f"sha256:{hashlib.sha256(mutated_canonical).hexdigest()}"
+
+    assert citation.provenance.manifest_hash == expected
+    assert citation.provenance.manifest_hash != mutated
+
+
+def test_equivalent_reordered_note_inputs_have_identical_bytes_and_hash() -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    thesis = (
+        _reference(contracts, bundle, "actions", "action-acme-dividend"),
+        _reference(contracts, bundle, "actions", "action-acme-split"),
+    )
+    risks = (
+        _reference(contracts, bundle, "events", "news-aapl-earnings"),
+        _reference(contracts, bundle, "events", "news-aapl-guidance"),
+    )
+    builder = notes.ResearchNoteBuilder(bundle=bundle, context=context, response=response)
+    first = builder.build(
+        source_agent="sentiment_analyst",
+        source_fields={"thesis": "market_report", "risks": "news_report"},
+        claim_citations={"thesis": thesis, "risks": risks},
+    )
+    second = builder.build(
+        source_agent="sentiment_analyst",
+        source_fields={"risks": "news_report", "thesis": "market_report"},
+        claim_citations={"risks": tuple(reversed(risks)), "thesis": tuple(reversed(thesis))},
+    )
+
+    assert first.canonical_bytes() == second.canonical_bytes()
+    assert first.note_hash == second.note_hash
+
+
+def test_nonempty_social_domain_lists_gets_renders_and_cites() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle = build_fixture_bundle(
+        social_post_candidates=_social_candidates(0, 1, 2),
+        missing_optional=(),
+    )
+    context = _context(bundle)
+    output = make_output()
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(bundle=bundle, context=context, output=output)
+        )
+    )
+    toolset = evidence_tools.EvidenceToolset(bundle)
+    social = tuple(
+        reference for reference in toolset.list_citations() if reference.domain == "social"
+    )
+
+    assert tuple(reference.record_id for reference in social) == (
+        "reddit-aapl-thread",
+        "reddit-aapl-tied",
+    )
+    item = toolset.get(social[0])
+    assert item.content["post_id"] == social[0].record_id
+    rendered = toolset.render(social[0])
+    assert "BEGIN UNTRUSTED EVIDENCE" in rendered
+    assert social[0].record_id in rendered
+
+    note = _note(
+        bundle,
+        context,
+        response,
+        claim_citations={
+            "thesis": (social[0],),
+            "risks": (_reference(contracts, bundle, "events", "news-aapl-earnings"),),
+        },
+    )
+    assert any(citation.reference == social[0] for citation in note.citations)
+    assert social[0].record_id in note.canonical_bytes().decode("utf-8")
