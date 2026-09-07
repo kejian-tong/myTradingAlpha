@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -46,7 +46,7 @@ SIG-02 — Evidence tools and ResearchNote
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
-  artifact correctness; no implementation or review escalation applied
+  artifact correctness; no writer escalation applied; review-only escalation applied
 - route: `luna_sol_xhigh` after review-only escalation; implementation remains the loaded
   `normal_implementer` Luna/max, while controlling review advances from `reviewer_high` to
   `reviewer_xhigh` because two high-review rounds found successive subtle hostile-object/provenance
@@ -56,9 +56,9 @@ SIG-02 — Evidence tools and ResearchNote
   telemetry claim
 - reviewer: prior controlling rounds successfully loaded named `reviewer_high`,
   `.codex/agents/reviewer-high.toml`, configured actual `gpt-5.6-sol / high`, and returned REQUEST
-  CHANGES; fresh review-only escalation requests `reviewer_xhigh`,
-  `.codex/agents/reviewer-xhigh.toml`, configured `gpt-5.6-sol / xhigh`; successful loading and verdict
-  pending; no separate backend telemetry claim
+  CHANGES; review-only escalation successfully loaded named `reviewer_xhigh`,
+  `.codex/agents/reviewer-xhigh.toml`, configured actual `gpt-5.6-sol / xhigh`, and returned REQUEST
+  CHANGES; no separate backend telemetry claim
 - master: configured/requested `gpt-5.6-sol / xhigh`; no separate backend telemetry claim
 - JIT: PR #45 body
 - RED: `8bca32021f03ecb1e9b34830277b8a6d2febdef6`, expected `12 failed, 55 passed`
@@ -76,9 +76,9 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2285 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest pre-escalation candidate `fcb0f088e8744cca098b155979ed54eccb96d0ed` passed CI
-  `34069386269`, CodeQL `34069386313` and Dependency Review `34069386268`; a fresh exact-head run is
-  pending after this final state-bearing route record
+- CI: escalated-review candidate `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` passed CI
+  `34069580695`, CodeQL `34069580687` and Dependency Review `34069580838`; fresh exact-head checks
+  required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -89,7 +89,11 @@ SIG-02 — Evidence tools and ResearchNote
   `5563190972`; the focused safe-storage/provenance repair now closes those surfaces locally, but
   fresh exact-head review is required. Standalone ResearchNote validation cannot prove a projected
   citation manifest belongs to a sealed record without that bundle; `ResearchNoteBuilder` remains
-  the authoritative referential-integrity boundary and verifies it against the exact bundle.
+  the authoritative referential-integrity boundary and verifies it against the exact bundle. The
+  escalated xhigh review at `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` returned REQUEST CHANGES for
+  hostile timezone callbacks during bundle/context validation and unsafe canonicalization/hashing of
+  caller-corrupted ResearchNote instances; durable artifact: PR #45 comment `5563423339`; focused
+  repair RED/GREEN and another fresh xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
