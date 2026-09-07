@@ -139,7 +139,7 @@ def main() -> int:
             raw = args.gate.read_bytes()
             if len(raw) > 65_536:
                 raise ValueError("gate evidence exceeds 64 KiB")
-            errors.extend(gate_errors(json.loads(raw, object_pairs_hook=_unique_object))
+            errors.extend(gate_errors(json.loads(raw, object_pairs_hook=_unique_object)))
         except (OSError, ValueError, UnicodeError) as exc:
             errors.append(f"invalid gate evidence: {exc}")
     for error in errors:
