@@ -1070,6 +1070,151 @@ def test_clean_install_smoke_lists_sig02_public_submodules() -> None:
         assert module in source
 
 
+def test_shared_artifact_redaction_handles_escaped_and_structural_credential_syntax() -> None:
+    try:
+        redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"shared artifact redaction utility is not implemented: {exc.name}")
+    raw = (
+        'source_locator=SIG02_LOCATOR_CANARY multi word tail, '
+        'terms=SIG02_TERMS_CANARY; '
+        '{"api_key":"SIG02_API_CANARY", "Authorization":"Bearer SIG02_AUTH_CANARY", '
+        '"private_key":"SIG02_PRIVATE_CANARY"} '
+        '{\\"api_key\\":\\"SIG02_ESCAPED_API_CANARY\\"} '
+        'sk-proj-SIG02_SK_CANARY AWS_ACCESS_KEY_ID=SIG02_AWS_CANARY'
+    )
+    redacted = redaction.redact_artifact_text(raw)
+    for canary in (
+        "SIG02_LOCATOR_CANARY",
+        "SIG02_TERMS_CANARY",
+        "SIG02_API_CANARY",
+        "SIG02_AUTH_CANARY",
+        "SIG02_PRIVATE_CANARY",
+        "SIG02_ESCAPED_API_CANARY",
+        "SIG02_SK_CANARY",
+        "SIG02_AWS_CANARY",
+    ):
+        assert canary not in redacted
+    assert redaction.validate_artifact_text(redacted) == redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+    with pytest.raises(ValueError):
+        redaction.validate_artifact_text(raw)
+
+
+def test_research_note_artifact_text_is_redacted_and_direct_recomputed_id_is_rejected() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    output = make_output()
+    output["market_report"] = (
+        'terms=SIG02_TERMS_CANARY source_locator=SIG02_LOCATOR_CANARY '
+        '{"api_key":"SIG02_API_CANARY"} Authorization: Bearer SIG02_AUTH_CANARY'
+    )
+    output["news_report"] = 'private_key=SIG02_PRIVATE_CANARY sk-proj-SIG02_SK_CANARY'
+    capture_manifest = make_capture_manifest(output)
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=capture_manifest,
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    serialized = note.canonical_bytes().decode("utf-8")
+    for canary in (
+        "SIG02_TERMS_CANARY",
+        "SIG02_LOCATOR_CANARY",
+        "SIG02_API_CANARY",
+        "SIG02_AUTH_CANARY",
+        "SIG02_PRIVATE_CANARY",
+        "SIG02_SK_CANARY",
+    ):
+        assert canary not in serialized
+
+    object.__setattr__(note, "thesis", "terms=SIG02_DIRECT_CANARY")
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_source_agent_is_a_closed_research_role_contract() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    valid_roles = (
+        "market_analyst",
+        "sentiment_analyst",
+        "news_analyst",
+        "fundamentals_analyst",
+        "bull_researcher",
+        "bear_researcher",
+        "research_manager",
+        "trader",
+        "aggressive_analyst",
+        "neutral_analyst",
+        "conservative_analyst",
+        "portfolio_manager",
+    )
+    for role in valid_roles:
+        _note(bundle, context, response, source_agent=role)
+    for invalid in ("random_agent", "api_key=SIG02_SOURCE_CANARY", "sentiment analyst"):
+        with pytest.raises(notes.ResearchNoteInputError):
+            _note(bundle, context, response, source_agent=invalid)
+
+
+def test_source_fields_and_claim_citations_reject_str_subclass_keys_without_callbacks() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    contracts, _, _ = _load_sig02()
+    thesis = _reference(contracts, bundle, "actions", "action-acme-split")
+    risks = _reference(contracts, bundle, "events", "news-aapl-earnings")
+
+    class ArmedKey(str):
+        def __new__(cls, value: str, calls: list[str]):
+            instance = str.__new__(cls, value)
+            instance.calls = calls
+            return instance
+
+        def __hash__(self) -> int:
+            self.calls.append("hash")
+            return super().__hash__()
+
+        def __eq__(self, other: object) -> bool:
+            self.calls.append("eq")
+            return super().__eq__(other)
+
+    for field in ("source_fields", "claim_citations"):
+        calls: list[str] = []
+        key = ArmedKey("thesis", calls)
+        mapping: dict[object, object] = {}
+        dict.__setitem__(mapping, key, "market_report" if field == "source_fields" else (thesis,))
+        dict.__setitem__(mapping, "risks", "news_report" if field == "source_fields" else (risks,))
+        calls.clear()
+        kwargs = {
+            "source_agent": "sentiment_analyst",
+            "source_fields": mapping,
+            "claim_citations": {"thesis": (thesis,), "risks": (risks,)},
+        }
+        if field == "claim_citations":
+            kwargs["claim_citations"] = mapping
+        else:
+            kwargs["source_fields"] = mapping
+        with pytest.raises(notes.ResearchNoteInputError):
+            notes.ResearchNoteBuilder(
+                bundle=bundle,
+                context=context,
+                response=response,
+            ).build(**kwargs)
+        assert calls == []
+
+
+def test_clean_install_smoke_lists_shared_redaction_submodule() -> None:
+    script = Path(__file__).resolve().parents[3] / "scripts/smoke_installed.py"
+    assert "mytradingalpha.contracts.redaction" in script.read_text(encoding="utf-8")
+
+
 def test_redaction_helper_preserves_existing_logging_behavior() -> None:
     _, _, _ = _load_sig02()
     logging_module = importlib.import_module("mytradingalpha.ops.logging")
