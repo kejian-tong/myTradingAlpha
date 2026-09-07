@@ -21,6 +21,7 @@ _ROLES = {
     "code_explorer": ("gpt-5.6-luna", "max", True),
     "test_auditor": ("gpt-5.6-luna", "max", True),
     "boundary_reviewer": ("gpt-5.6-sol", "high", True),
+    "external_spec_researcher": ("gpt-5.6-luna", "max", True),
 }
 _SCOPED_AGENT_PATHS = (
     "docs/productionization/AGENTS.md",
@@ -50,6 +51,7 @@ _TEXT_FIELDS = ("operation", "session_id", "authorized_session_id", "pr_id", "st
 _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers"}
 _HOOK_EVENTS = {"SessionStart": "session-start", "Stop": "stop"}
+_OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 
 
 def _toml(path: Path) -> dict:
@@ -149,6 +151,13 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append(f"{name} must disable nested delegation")
             if readonly and role.get("sandbox_mode") != "read-only":
                 errors.append(f"{name} must request read-only mode")
+            mcp_servers = role.get("mcp_servers")
+            if name == "external_spec_researcher":
+                expected_mcp = {"openaiDeveloperDocs": {"url": _OPENAI_DOCS_MCP_URL}}
+                if mcp_servers != expected_mcp:
+                    errors.append("external_spec_researcher OpenAI docs MCP differs from reviewed policy")
+            elif mcp_servers:
+                errors.append(f"{name} must not receive external MCP servers")
             if name == "normal_implementer" and "normal/high/critical" not in role.get("developer_instructions", ""):
                 errors.append("initial implementer must inherit normal/high/critical safety class")
         errors.extend(_hook_errors(root))
