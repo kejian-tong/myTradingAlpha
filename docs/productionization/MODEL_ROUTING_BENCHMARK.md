@@ -31,8 +31,8 @@ Official sources:
 - Enterprise token-based USD: https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing
 
 At the current rate, Astra costs 2.5x Sol for the same input/cached/output token mix; Terra costs about
-10x Luna for the same mix. Those are only token-rate priors. A stronger route may use fewer attempts or
-less wall-clock time, so compare measured **end-to-end attempts**, not assumed per-message cost.
+10x Luna for the same mix. Those are only token-rate priors. A stronger route may use fewer retries or
+less wall-clock time, so compare measured **end-to-end task runs**, not assumed per-message cost.
 
 Rate cards are mutable external facts. `RATE_CARD_AS_OF` is part of the benchmark evidence and cost-based
 Pareto output is allowed only while that rate card is at most 30 days old relative to the supplied
@@ -74,7 +74,8 @@ separate reviewed routing PR.
 
 ### Gate B — route reliability
 
-Reliability is calculated over **all attempts**, not only successful attempts. Failed attempts remain in:
+Reliability is calculated over **all end-to-end task runs**, not only successful runs. Failed task runs
+remain in:
 
 - quality mean;
 - duration mean;
@@ -103,7 +104,7 @@ A cost frontier is valid only when:
 1. the rate card is fresh;
 2. exact pairing and the five-task minimum are satisfied;
 3. at least one route is reliability-eligible; and
-4. **every reliability-eligible route** has all three observed token fields on every attempt.
+4. **every reliability-eligible route** has all three observed token fields on every task run.
 
 Token observations are all-or-none per run: `input_tokens`, `cached_input_tokens`, and `output_tokens`.
 If a reliable route lacks token evidence, output is `incomplete_cost_observation` and no other route is
@@ -113,10 +114,10 @@ allowed to become a false cost winner. Unknown usage stays unknown.
 
 Only after Gates A-C pass does the benchmark compare reliability-eligible routes on:
 
-- higher all-attempt quality mean;
-- lower all-attempt duration mean;
-- lower all-attempt retry mean;
-- lower all-attempt observed token-based credits.
+- higher all-run quality mean;
+- lower all-run duration mean;
+- lower all-run retry mean;
+- lower all-run observed token-based credits.
 
 Keep nondominated routes on the Pareto frontier. Do not collapse the frontier into a weighted global score
 unless a later reviewed policy defines such a business weighting. A frontier is evidence for discussion,
@@ -126,7 +127,9 @@ not permission to edit production routing.
 
 The benchmark deliberately emits explicit non-comparison states:
 
-- `unchecked_rate_card` / `stale_rate_card` / `evaluation_precedes_rate_card_rate_card`;
+- `unchecked_rate_card`;
+- `stale_rate_card`;
+- `evaluation_precedes_rate_card`;
 - `incomplete_pairing`;
 - `insufficient_sample`;
 - `no_reliable_routes`;
@@ -191,7 +194,7 @@ Each JSONL row contains:
 - measured `duration_ms` and `retries`;
 - optionally, all three observed `input_tokens`, `cached_input_tokens`, and `output_tokens`.
 
-Use one row per route/task identity. Failed attempts remain rows and must retain their observed duration,
-retry and token consumption. The benchmark output reports reliability, pairing, freshness, per-route
-aggregates and a task-class Pareto frontier when comparison is actually valid; it never grants routing or
-merge authority.
+Use one row per route/task identity. A failed end-to-end task run remains in the dataset with its observed
+duration, retries and token consumption. The benchmark output reports reliability, pairing, freshness,
+per-route aggregates and a task-class Pareto frontier when comparison is actually valid; it never grants
+routing or merge authority.
