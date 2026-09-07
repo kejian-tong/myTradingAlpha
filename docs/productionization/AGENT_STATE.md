@@ -7,8 +7,8 @@ removed from this snapshot remains immutable in Git commits, workflow runs and P
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `80fa2b9909bf38ad9718472242fa227bcc33ee25`
-- `last_reconciled_main_tree`: `c3ab106aa2f7108d1024778b37af7b90d6e20ded`
+- `last_reconciled_main_sha`: `acb4f971b584b0ba12d83d9e57c96c85c95da418`
+- `last_reconciled_main_tree`: `d16c6643a1cf250fa14f010169b51ff7fdc487cd`
 - `roadmap_status`: `sig_02_candidate_pending_final_exact_head_review`
 - `current_pr_id`: `SIG-02` / PR #45
 - `current_phase`: `02-evidence-agent-boundary`
@@ -28,11 +28,12 @@ authorized. Explicit human PAPER/live promotion gates remain mandatory and unexe
 ## Current main reconciliation
 
 The original recovery baseline was PR #44 at
-`24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`. GitHub was reconciled through harness-only PRs #46-#56.
-Current `main` is PR #56 at `80fa2b9909bf38ad9718472242fa227bcc33ee25`; its delta from the prior
+`24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`. GitHub was reconciled through harness-only PRs #46-#58.
+Current `main` is PR #58 at `acb4f971b584b0ba12d83d9e57c96c85c95da418`; its delta from the prior
 SIG-02 base adds only execution-harness policy, hooks, telemetry, review-worktree tooling, benchmark/
-canary configuration, required CI checks and state-compaction policy/tests. It does not change SIG-02
-production contracts or the active Luna/Sol production route.
+canary configuration, required CI checks, state-compaction policy/tests, scoped-instruction discovery
+and feature-watchlist guardrails. It does not change SIG-02 production contracts or the active Luna/Sol
+production route.
 
 PR #45 owns this state file. PR #56 deliberately did not compete for it and requires this owner-controlled
 compaction. This snapshot replaces the prior 37 KiB chronology with durable references and stays below
@@ -41,12 +42,12 @@ the 12 KiB target in `AGENT_STATE_COMPACTION.md`.
 ## SIG-02 candidate
 
 - original base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- final integrated base main: `80fa2b9909bf38ad9718472242fa227bcc33ee25`
+- final integrated base main: `acb4f971b584b0ba12d83d9e57c96c85c95da418`
 - latest product repair: `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
   (tree `ade6eb617dc74ef64f228d970f710b445af02705`)
 - latest main-integration commit before this compaction:
-  `0baaf84641d1195fee01dd374b96d0ab4c0c00dc`
-  (tree `0ed7563d9de61260d022b33d790c54e819b46a86`)
+  `64649885c61a018c0a227bbfbbe01a63d446a373`
+  (tree `c7cc27e812f7845a4f7f77c46d36d77a3c130e26`)
 - final state-bearing head: authoritative in the PR ref/conversation because this commit cannot embed
   its own SHA
 - PR: https://github.com/kejian-tong/myTradingAlpha/pull/45
@@ -104,11 +105,11 @@ All RED commits above are test-only and failed for the intended behavior. Comple
 chronology remains in the [pre-compaction snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/1192df7031442c189d46e4365b39088d08d9ac51/docs/productionization/AGENT_STATE.md)
 and PR #45 conversation.
 
-Latest local validation after integrating PRs #55/#56:
+Latest local validation after integrating PRs #55-#58:
 
 - focused SIG-02: `130 passed`
 - data/research regressions: `1120 passed`
-- full suite: `2412 passed, 3 skipped, 18 warnings, 69 subtests passed`
+- full suite: `2420 passed, 3 skipped, 18 warnings, 69 subtests passed`
 - full Ruff, dependency direction, offline harness, lock consistency, Markdown contracts and diff
   check: PASS
 - installed-package smoke: previously passed locally and must pass again in exact-head CI
@@ -125,7 +126,7 @@ exact-head controlling/boundary approval before current-main integration is comm
 head `1192df7031442c189d46e4365b39088d08d9ac51`; CI `34147150048`, CodeQL `34147150001` and Dependency
 Review `34147150107` passed there.
 
-That approval/check evidence is stale after integrating PRs #55/#56 and this compaction commit. Required
+That approval/check evidence is stale after integrating PRs #55-#58 and the compacted state update. Required
 next steps are:
 
 1. freeze the new exact PR head/tree and verify current `main` is still `80fa2b9...`;
