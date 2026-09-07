@@ -7,8 +7,8 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
+- `roadmap_status`: `sig_02_repair_and_main_integration_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -35,6 +35,13 @@ independently fetched GitHub at session start and verified PR #44 merged as
 `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4` (tree
 `0027a01129d48b6deffb202559b868980c9e2d8c`), with main-push CI `34056396662` and
 CodeQL `34056396669` successful and no open PR.
+
+While PR #45 was under exact-head review, disjoint harness-only PR #46 merged as
+`8ac5e654e4d39978faac8c60f26f09d9a1098541` (tree
+`7464755efe4878e91eba03d6a46e00749039bbd6`), changing only the concurrency cap in
+`.codex/config.toml`, `HYBRID_CONCURRENCY_PROTOCOL.md` and `check_agent_harness.py`. Named role/model
+routes are unchanged. The final SIG-02 candidate must integrate this main and rerun all exact-head
+gates; no product-scope conflict was found.
 
 SIG-02 — Evidence tools and ResearchNote
 
@@ -101,9 +108,9 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2332 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest xhigh-review candidate `9856286a9e6b761c32b225878802be06325029cc` passed CI
-  `34081522181`, CodeQL `34081522184` and Dependency Review `34081522132`; fresh exact-head checks
-  required after repair
+- CI: latest xhigh-review candidate `0823bc63f6880bc0eac5b605723fb16b8f6217ef` passed CI
+  `34083091616`, CodeQL `34083091615` and Dependency Review `34083091633`; fresh exact-head checks
+  required after repair and PR #46 main integration
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -153,8 +160,11 @@ SIG-02 — Evidence tools and ResearchNote
   sensitive values, fragment-budget exhaustion, hierarchical key separators and Unicode-escaped keys;
   durable artifact: PR #45 comment `5564938194`. Focused repair RED/GREEN and fresh exact-head review
   are required. The path-first any-type redaction, explicit fragment-budget fail-closed behavior,
-  hierarchical phrase lexer and bounded Unicode key analysis close those surfaces locally; fresh
-  exact-head CI and xhigh review are pending.
+  hierarchical phrase lexer and bounded Unicode key analysis closed those surfaces. Fresh xhigh
+  review at `0823bc63f6880bc0eac5b605723fb16b8f6217ef` returned REQUEST CHANGES for
+  malformed/compatibility-Unicode sensitive keys and quadratic hostile phrase scanning; durable
+  artifact: PR #45 comment `5565153320`. Focused repair RED/GREEN, PR #46 main integration and fresh
+  exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
