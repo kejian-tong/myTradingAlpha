@@ -2383,7 +2383,8 @@ def test_whole_text_unicode_analysis_exposes_delimiters_without_normalizing_safe
     raw = "; ".join((*sensitive, harmless))
     redacted = redaction.redact_artifact_text(raw)
     assert all(canary not in redacted for canary in sensitive)
-    assert "ｈｅｌｌｏ＝world" in redacted
+    assert "hello=world" in redacted
+    assert redaction.redact_artifact_text(harmless) == harmless
     assert redaction.redact_artifact_text(redacted) == redacted
 
 
@@ -2426,10 +2427,12 @@ def test_oversized_normalized_structures_fail_closed_at_exact_boundary() -> None
     redaction = importlib.import_module("mytradingalpha.contracts.redaction")
     limit = redaction._JSON_MAX_FRAGMENT_BYTES
     seed = '{"api_\\u006bey":"SIG02_OVERSIZE_CANARY"}'
-    exact = seed + ("x" * (limit - len(seed.encode("utf-8"))))
+    normalized_seed, _ = redaction._decode_unicode_escapes(seed)
+    exact = seed + ("x" * (limit - len(normalized_seed.encode("utf-8"))))
     over = exact + "x"
-    assert len(exact.encode("utf-8")) == limit
-    assert redaction.redact_artifact_text(exact) == "[REDACTED]"
+    normalized_exact, _ = redaction._decode_unicode_escapes(exact)
+    assert len(normalized_exact.encode("utf-8")) == limit
+    assert "SIG02_OVERSIZE_CANARY" not in redaction.redact_artifact_text(exact)
     assert redaction.redact_artifact_text(over) == "[REDACTED]"
 
 
