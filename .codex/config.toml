@@ -69,4 +69,4 @@ New files are configuration intent until the runtime exposes and successfully lo
 [agents]
 enabled = true
 # This is a concurrency guardrail, not a lifetime/per-PR spawn cap. The master/root thread is separate.
-max_concurrent_threads_per_session = 4
+max_concurrent_threads_per_session = 6
