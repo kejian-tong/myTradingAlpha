@@ -7,7 +7,7 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `5b03c3e803666ae61dcd0e4bd5b355f31bfd0774`
+- `last_reconciled_main_sha`: `3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b`
 - `roadmap_status`: `sig_02_candidate_pending_final_exact_head_review`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (informational only; requires fresh user authorization after this task stops)
@@ -24,7 +24,7 @@ contracts before any newly authorized roadmap work.
 - `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
 - `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
-- `active_gpt6_routes`: `none (temporarily disabled in the project harness)`
+- `active_gpt6_routes`: `none for production; optional astra_canary is shadow-only and cannot work on an active PR`
 
 ## Active Evidence and Signal execution
 
@@ -49,25 +49,26 @@ non-master role without changing model IDs or efforts. The Master integrated it 
 repair. Only the Master delegated during this task; fresh final reviewers must load the updated role
 configuration and must not delegate.
 
-Disjoint harness-only PRs #48 through #51 then merged through
-`5b03c3e803666ae61dcd0e4bd5b355f31bfd0774` (tree
-`c0ff95d0e6aa79617b4f033017fc1de38b5d0411`). They added project hooks, scoped instructions and
-repo workflow skills, isolated exact-head review worktrees, and advisory harness telemetry without
-changing SIG-02 production contracts or the Luna/Sol routing ladder. The Master integrated that exact
-main before final validation. The user explicitly approved a SIG-02-only runtime alternative in PR #45
+Disjoint harness-only PRs #48 through #53 then merged through
+`3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b` (tree
+`c29b007248986b144479797c9e71fc4837e4a300`). They added project hooks, scoped instructions and
+repo workflow skills, isolated exact-head review worktrees, advisory harness telemetry, routing benchmark
+tooling and a shadow-only Astra canary without changing SIG-02 production contracts or the active
+Luna/Sol production routing ladder. The Master integrated that exact main before final validation. The
+user explicitly approved a SIG-02-only runtime alternative in PR #45
 comment `5572425609`: named roles may expose collaboration controls but must not invoke them; the Master
 remains the sole orchestrator. The exception changes no config or route and expires after SIG-02.
 
 SIG-02 — Evidence tools and ResearchNote
 
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- final integrated base main: `5b03c3e803666ae61dcd0e4bd5b355f31bfd0774`
+- final integrated base main: `3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
-  (tree `28cc3a5f539e5e919050188a41c4f1c2f67ae61f`); final latest-main integration commit
-  `175708c78c159c4e3affb5d64f2b32a9571c7509` (tree
-  `dbac3a3169f8080e82cce3213c90b31ed4937d75`); the final state-bearing head is
+  `1d751c49795ff612487a6185c56ef2ac36012ca8`
+  (tree `541d1773cf4d6936107a81cee692e10f459c5ed0`); final latest-main integration commit
+  `7e8a6dff31fd9c8b2fad719f64068b75dfb87e52` (tree
+  `1ae1fd0eee6e737c4bae647e13edb94e27928995`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -79,7 +80,10 @@ SIG-02 — Evidence tools and ResearchNote
   telemetry claim. The final multiline-secret repair successfully loaded named `high_implementer`,
   `.codex/agents/high-implementer.toml`, configured actual `gpt-5.6-sol / high`; it reported zero
   collaboration-tool calls under the user-approved runtime alternative and no separate backend telemetry
-  claim
+  claim. During the final repair, the first high-implementer attempt was terminated after no committed
+  progress but had left an uncommitted test draft; a fresh replacement writer started only after that
+  termination, preserved and corrected the draft, committed the test-only RED, and reported zero
+  collaboration-tool calls. No production writers overlapped.
 - reviewer: prior controlling rounds successfully loaded named `reviewer_high`,
   `.codex/agents/reviewer-high.toml`, configured actual `gpt-5.6-sol / high`, and returned REQUEST
   CHANGES; review-only escalation successfully loaded named `reviewer_xhigh`,
@@ -139,13 +143,15 @@ SIG-02 — Evidence tools and ResearchNote
 - multiline-secret container RED: `2330475f48b81087082cfec1801874c1b8231f39`, expected
   `4 failed / 95 deselected`; repair GREEN: `bce1fd069c28a6aa8453a937ffc24023be07f3ff`;
   linear-scan refactor: `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
-- local tests: PASS after final repair/latest-main integration; focused SIG-02 `99 passed`, data/research
-  regressions `1089 passed`, full suite `2358 passed / 3 skipped / 18 warnings / 69 subtests`
+- final confidentiality RED: `d00d81b8ab473ebf33de3a28b291cb2df95c77be`, expected
+  `14 failed / 104 passed`; repair GREEN: `1d751c49795ff612487a6185c56ef2ac36012ca8`
+- local tests: PASS after final repair/latest-main integration; focused SIG-02 `118 passed`, data/research
+  regressions `1108 passed`, full suite `2391 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
   `34089421094`, CodeQL `34089421071` and Dependency Review `34089421038`; fresh exact-head checks
-  required after the multiline-secret repair, current-main integration and this state commit
+  required after the final confidentiality repair, current-main integration and this state commit
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -215,7 +221,11 @@ SIG-02 — Evidence tools and ResearchNote
   budget close those surfaces locally. The later exact-head boundary review found YAML block-scalar and
   unmatched private-key confidentiality leaks; durable REQUEST CHANGES artifact: PR #45 comment
   `5566390797`. The focused multiline-container RED/GREEN/refactor closes those reproduced leaks locally;
-  fresh exact-head CI and isolated xhigh review are pending.
+  isolated xhigh/boundary review at `58098e86cc1a6f83963a1f8c7a7eaaee7707356c` found tagged/anchored
+  YAML, TOML triple-quoted and credential-shaped sealed-ID leaks; durable artifact: PR #45 comment
+  `5572900008`. The final confidentiality RED/GREEN closes those reproduced leaks locally and adds exact
+  provenance-hash, reordered-input determinism and non-empty social-domain coverage. Fresh exact-head CI
+  and isolated xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: STOP after SIG-02 exact-head review, CI, Master gate, protected merge and post-merge checks;
   SIG-03 requires a fresh separately authorized task
