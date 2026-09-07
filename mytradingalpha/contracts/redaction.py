@@ -374,12 +374,11 @@ def _quoted_value_bounds(value: str, start: int) -> tuple[int, str, str] | None:
 
 
 def _line_bounds(value: str, start: int) -> tuple[int, int]:
-    carriage_return = value.find("\r", start)
-    line_feed = value.find("\n", start)
-    candidates = tuple(index for index in (carriage_return, line_feed) if index >= 0)
-    if not candidates:
-        return len(value), len(value)
-    end = min(candidates)
+    end = start
+    while end < len(value) and value[end] not in "\r\n":
+        end += 1
+    if end == len(value):
+        return end, end
     next_start = end + 1
     if value[end : end + 2] == "\r\n":
         next_start += 1
