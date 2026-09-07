@@ -10,11 +10,11 @@ contracts before any newly authorized roadmap work.
 - `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
 - `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
-- `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
+- `next_pr_id`: `SIG-03` (informational only; requires fresh user authorization after this task stops)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: enabled only for SIG-02 through SIG-05 by the current user request
+- `autonomy_mode`: enabled only for SIG-02 by the user's narrowed current objective
 - `last_completed_roadmap_pr`: `SIG-01`
-- `stop_after_pr_id`: `SIG-05`
+- `stop_after_pr_id`: `SIG-02`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_high_implementer_route`: `GPT-5.6 Luna / max`
@@ -28,8 +28,8 @@ contracts before any newly authorized roadmap work.
 
 ## Active Evidence and Signal execution
 
-The current user explicitly authorized one-at-a-time autonomous completion of SIG-02 through SIG-05
-and set `stop_after_pr_id: SIG-05`. This authorization does not extend to BT-01 or any later slice,
+The user narrowed the active objective to autonomous completion of SIG-02 only and set
+`stop_after_pr_id: SIG-02`. This authorization does not extend to SIG-03, SIG-04, SIG-05, BT-01 or any later slice,
 deployment, real inference/provider calls, broker/PAPER/live activity, or promotion. The Master
 independently fetched GitHub at session start and verified PR #44 merged as
 `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4` (tree
@@ -195,7 +195,8 @@ SIG-02 — Evidence tools and ResearchNote
   required. Strict UTF-8 form decoding, surrogate rejection and the combined fixed-point encoding
   budget close those surfaces locally; fresh exact-head CI and xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
-- next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
+- next: STOP after SIG-02 exact-head review, CI, Master gate, protected merge and post-merge checks;
+  SIG-03 requires a fresh separately authorized task
 
 ## Current maintenance checkpoint
 
