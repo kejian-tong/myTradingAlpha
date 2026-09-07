@@ -20,6 +20,7 @@ CREDIT_RATES = {
     "gpt-5.6-luna": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
     "gpt-5.6-terra": {"input": 50.0, "cached_input": 5.0, "output": 300.0},
     "gpt-5.6-sol": {"input": 100.0, "cached_input": 10.0, "output": 500.0},
+    "gpt-6-astra": {"input": 250.0, "cached_input": 25.0, "output": 1250.0},
 }
 
 # Enterprise token-based USD rates per 1M tokens, used only when useful for comparison.
@@ -27,6 +28,7 @@ USD_RATES = {
     "gpt-5.6-luna": {"input": 0.20, "cached_input": 0.02, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00},
     "gpt-5.6-sol": {"input": 4.00, "cached_input": 0.40, "output": 20.00},
+    "gpt-6-astra": {"input": 10.00, "cached_input": 1.00, "output": 50.00},
 }
 
 _MODELS = frozenset(CREDIT_RATES)
@@ -57,7 +59,7 @@ def validate(record: object) -> dict:
         if type(record[key]) is not str or not record[key].strip():
             raise ValueError(f"{key} must be a non-empty string")
     if record["model"] not in _MODELS:
-        raise ValueError("model is not in the GPT-5.6 benchmark set")
+        raise ValueError("model is not in the routing benchmark set")
     for key in ("acceptance_pass", "safety_gate_pass"):
         if type(record[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
@@ -129,10 +131,39 @@ def _dominates(left: dict, right: dict) -> bool:
     return higher_or_equal_quality and lower_or_equal_time and lower_or_equal_retries and lower_or_equal_cost and strictly_better
 
 
+def _astra_pairing(rows: list[dict]) -> dict[str, dict]:
+    by_class: dict[str, dict[str, set[str]]] = defaultdict(lambda: {"sol_xhigh": set(), "astra_xhigh": set()})
+    for row in rows:
+        key = None
+        if (row["model"], row["effort"]) == ("gpt-5.6-sol", "xhigh"):
+            key = "sol_xhigh"
+        elif (row["model"], row["effort"]) == ("gpt-6-astra", "xhigh"):
+            key = "astra_xhigh"
+        if key is not None:
+            by_class[row["task_class"]][key].add(row["task_id"])
+
+    result = {}
+    for task_class, ids in sorted(by_class.items()):
+        baseline = ids["sol_xhigh"]
+        canary = ids["astra_xhigh"]
+        shared = baseline & canary
+        result[task_class] = {
+            "baseline_task_ids": sorted(baseline),
+            "canary_task_ids": sorted(canary),
+            "shared_task_ids": sorted(shared),
+            "baseline_only": sorted(baseline - canary),
+            "canary_only": sorted(canary - baseline),
+            "pairing_complete": bool(shared) and baseline == canary,
+        }
+    return result
+
+
 def analyze(records: list[dict]) -> dict:
     grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    validated = []
     for raw in records:
         row = validate(raw)
+        validated.append(row)
         grouped[(row["task_class"], row["model"], row["effort"])].append(row)
 
     by_class: dict[str, list[dict]] = defaultdict(list)
@@ -162,6 +193,7 @@ def analyze(records: list[dict]) -> dict:
         "rate_card_as_of": RATE_CARD_AS_OF,
         "credit_rate_source": CREDIT_RATE_SOURCE,
         "usd_rate_source": USD_RATE_SOURCE,
+        "astra_canary_pairing": _astra_pairing(validated),
         "task_classes": result_classes,
     }
 

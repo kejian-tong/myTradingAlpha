@@ -21,14 +21,23 @@ policy is present on the checked-out base branch:
 - review-only escalation: retain the existing implementer and use `reviewer_xhigh`
 - hybrid read-only specialists: `code_explorer`, `test_auditor`, `boundary_reviewer`
 - on-demand external specification research: `external_spec_researcher`
+- shadow-only hardest/critical historical replay: `astra_canary`
 
 Master uses GPT-5.6 Sol / xhigh (Extra High). reviewer_high and boundary_reviewer use Sol/high;
 reviewer_xhigh uses Sol/xhigh. Normal and critical implementation stays on Luna/max. Difficult
-escalation uses Sol/high implementation, and the hardest layer uses Sol/xhigh implementation with a
-fresh Sol/xhigh reviewer. The external_spec_researcher uses Luna/max and is read-only; its dedicated
-OpenAI Developer Docs MCP is capability-isolated to that role and configured availability is not proof
-that the runtime exposed or successfully called the MCP. GPT-6 production routes are temporarily
-disabled. Record the selected route, evidence-based reason, and affected roles in the JIT and
+escalation uses Sol/high implementation, and the hardest production layer uses Sol/xhigh implementation
+with a fresh Sol/xhigh reviewer. The external_spec_researcher uses Luna/max and is read-only; its
+dedicated OpenAI Developer Docs MCP is capability-isolated to that role and configured availability is
+not proof that the runtime exposed or successfully called the MCP.
+
+The astra_canary uses GPT-6 Astra / xhigh in a read-only, no-child, no-MCP shadow context for closed
+historical or immutable replay tasks only. It may not implement, repair, control-review, merge, or act as
+Master for an active PR. Adding this canary does not activate a GPT-6 production route. GPT-6 production
+routes remain disabled until a separate reviewed harness change promotes one from representative
+repo-specific evidence. Record only observed canary runtime/model/token evidence; unavailable or
+uncomparable runs are `insufficient_evidence`.
+
+Record the selected production route, evidence-based reason, and affected roles in the JIT and
 AGENT_STATE.md before spawning. These tiers do not replace normal/high/critical safety classification,
 raise concurrency, resolve a human architecture decision, or waive any stop/promotion gate.
 
