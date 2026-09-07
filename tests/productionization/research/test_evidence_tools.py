@@ -1277,3 +1277,173 @@ def test_sig02_modules_are_pure_and_do_not_add_runtime_or_network_surfaces() -> 
         assert "pickle" not in source
         assert "eval(" not in source
         assert "exec(" not in source
+
+
+def test_shared_artifact_scanner_handles_arbitrary_escapes_prefixes_and_overlaps() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    for depth in range(4):
+        escaped_quote = ("\\" * depth) + '"'
+        canary = f"SIG02_DEPTH_{depth}_CANARY"
+        raw = f"{escaped_quote}api_key{escaped_quote}={escaped_quote}{canary}{escaped_quote}"
+        redacted = redaction.redact_artifact_text(raw)
+        assert canary not in redacted
+        assert "[REDACTED]" in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+
+    raw = (
+        "x-api-key=SIG02_X_API_CANARY multiword x; "
+        "openai_api_key=SIG02_OPENAI_CANARY; "
+        "github_token=SIG02_GITHUB_CANARY; "
+        "broker_account_id=SIG02_BROKER_CANARY; "
+        "AWSSecretAccessKey=SIG02_AWS_SECRET_CANARY; "
+        "api_key=SIG02_OUTER_CANARY terms=SIG02_INNER_CANARY, safe=ordinary; "
+        'nested={"Authorization":"Bearer SIG02_BEARER_CANARY", '
+        '"private_key":"SIG02_PRIVATE_CANARY", '
+        '"api_key":"sk-proj-SIG02_SK_CANARY"}'
+    )
+    redacted = redaction.redact_artifact_text(raw)
+    for canary in (
+        "SIG02_X_API_CANARY",
+        "SIG02_OPENAI_CANARY",
+        "SIG02_GITHUB_CANARY",
+        "SIG02_BROKER_CANARY",
+        "SIG02_AWS_SECRET_CANARY",
+        "SIG02_OUTER_CANARY",
+        "SIG02_INNER_CANARY",
+        "SIG02_BEARER_CANARY",
+        "SIG02_PRIVATE_CANARY",
+        "SIG02_SK_CANARY",
+    ):
+        assert canary not in redacted
+    assert "safe=ordinary" in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+
+def test_redaction_scanner_is_used_by_renderer_sealed_response_and_note_id_validation() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(
+        update={
+            "body": (
+                'x-api-key=SIG02_RENDER_X; terms=SIG02_RENDER_TERMS; '
+                'Authorization: Bearer SIG02_RENDER_BEARER'
+            )
+        }
+    )
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    for canary in ("SIG02_RENDER_X", "SIG02_RENDER_TERMS", "SIG02_RENDER_BEARER"):
+        assert canary not in rendered
+
+    output = make_output()
+    output["market_report"] = (
+        'x-api-key=SIG02_SEALED_X; openai_api_key=SIG02_SEALED_OPENAI; '
+        'github_token=SIG02_SEALED_GITHUB; AWSSecretAccessKey=SIG02_SEALED_AWS; '
+        'terms=SIG02_SEALED_TERMS multiword tail'
+    )
+    output["news_report"] = (
+        'broker_account_id=SIG02_SEALED_BROKER; '
+        'Authorization=Bearer SIG02_SEALED_BEARER; '
+        'private_key=SIG02_SEALED_PRIVATE; sk-proj-SIG02_SEALED_SK'
+    )
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    for canary in (
+        "SIG02_SEALED_X",
+        "SIG02_SEALED_OPENAI",
+        "SIG02_SEALED_GITHUB",
+        "SIG02_SEALED_AWS",
+        "SIG02_SEALED_TERMS",
+        "SIG02_SEALED_BROKER",
+        "SIG02_SEALED_BEARER",
+        "SIG02_SEALED_PRIVATE",
+        "SIG02_SEALED_SK",
+    ):
+        assert canary not in canonical
+
+    object.__setattr__(note, "thesis", "x-api-key=SIG02_DIRECT_NOTE_CANARY")
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_research_wire_timestamps_reject_hostile_timezone_and_datetime_subclasses() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    baseline = note.capture_manifest.model_dump(mode="python")
+    for field in (
+        "fetched_at",
+        "event_time",
+        "published_at",
+        "available_at",
+        "ingested_at",
+    ):
+        calls: list[str] = []
+        payload = dict(baseline)
+        payload[field] = datetime(2024, 6, 30, 23, 59, 59, tzinfo=_HostileTzInfo(calls))
+        with pytest.raises(ValidationError):
+            contracts.ResearchProvenance.model_validate(payload)
+        assert calls == []
+
+    class EvilDateTime(datetime):
+        pass
+
+    subclass_payload = dict(baseline)
+    subclass_payload["available_at"] = EvilDateTime(
+        2024, 6, 30, 23, 59, 59, tzinfo=timezone.utc
+    )
+    with pytest.raises(ValidationError):
+        contracts.ResearchProvenance.model_validate(subclass_payload)
+
+    note_payload = note.model_dump(mode="python")
+    calls = []
+    note_payload["knowledge_cutoff"] = datetime(
+        2024, 6, 30, 23, 59, 59, tzinfo=_HostileTzInfo(calls)
+    )
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(note_payload)
+    assert calls == []
+    note_payload["knowledge_cutoff"] = EvilDateTime(
+        2024, 6, 30, 23, 59, 59, tzinfo=timezone.utc
+    )
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(note_payload)
+
+
+@pytest.mark.parametrize(
+    "context_update",
+    [
+        {"mode": Mode.FORWARD_PAPER},
+        {"network_policy": NetworkPolicy(data_capture_egress=True)},
+        {"network_policy": NetworkPolicy(model_provider_egress=True)},
+        {"network_policy": NetworkPolicy(research_tool_egress=True)},
+        {"network_policy": NetworkPolicy(paper_broker_egress=True)},
+        {"network_policy": NetworkPolicy(live_broker_egress=True)},
+    ],
+)
+def test_research_note_builder_requires_historical_mode_and_no_egress(
+    context_update: dict[str, object],
+) -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    if "network_policy" in context_update:
+        raw = context.model_dump(mode="python")
+        raw["network_policy"] = context_update["network_policy"]
+        candidate_context = RunContext.model_construct(**raw)
+    else:
+        candidate_context = context.model_copy(update=context_update)
+    with pytest.raises(notes.ResearchNoteBindingError):
+        _note(bundle, candidate_context, response)
