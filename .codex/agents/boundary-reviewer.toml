@@ -20,3 +20,6 @@ Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDIUM/LOW/NI
 paths/invariants, the exact SHA inspected, and the smallest safe closure evidence. Any BLOCKER/HIGH
 blocks the master gate until repaired and re-reviewed.
 """
+
+[agents]
+enabled = false

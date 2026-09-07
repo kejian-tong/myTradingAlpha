@@ -38,7 +38,10 @@ def test_current_configuration_is_consistent() -> None:
     assert _checker().configuration_errors(ROOT) == []
 
 
-@pytest.mark.parametrize("mutation", ["missing_role", "writable_reviewer", "duplicate_name", "wrong_effort"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing_role", "writable_reviewer", "duplicate_name", "wrong_effort", "nested_delegation"],
+)
 def test_invalid_role_configuration_is_rejected(tmp_path: Path, mutation: str) -> None:
     shutil.copytree(ROOT / ".codex", tmp_path / ".codex")
     shutil.copytree(ROOT / "docs/productionization", tmp_path / "docs/productionization")
@@ -50,8 +53,10 @@ def test_invalid_role_configuration_is_rejected(tmp_path: Path, mutation: str) -
         path.write_text(path.read_text().replace('sandbox_mode = "read-only"', 'sandbox_mode = "workspace-write"'))
     elif mutation == "duplicate_name":
         path.write_text(path.read_text().replace('name = "reviewer_high"', 'name = "reviewer_xhigh"'))
-    else:
+    elif mutation == "wrong_effort":
         path.write_text(path.read_text().replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "low"'))
+    else:
+        path.write_text(path.read_text().replace("[agents]\nenabled = false", "[agents]\nenabled = true"))
     assert _checker().configuration_errors(tmp_path)
 
 

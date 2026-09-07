@@ -20,3 +20,6 @@ architecture decisions reserved for the master. Return a concise evidence report
 base/head SHA, relevant paths/symbols, current-state findings, doc/code drift, dependencies, risks, and
 unresolved questions. The master synthesizes your report with other lanes into the JIT spec.
 """
+
+[agents]
+enabled = false
