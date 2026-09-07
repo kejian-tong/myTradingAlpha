@@ -74,14 +74,32 @@ def test_pareto_frontier_keeps_tradeoffs_and_removes_dominated_route() -> None:
 def test_astra_and_sol_both_remain_when_canary_buys_quality_and_latency_at_higher_cost() -> None:
     benchmark = _module()
     rows = [
-        _row("gpt-5.6-sol", task_id="hard-sol", quality=96, duration=100, effort="xhigh"),
-        _row("gpt-6-astra", task_id="hard-astra", quality=99, duration=70, effort="xhigh"),
+        _row("gpt-5.6-sol", task_id="hard-1", quality=96, duration=100, effort="xhigh"),
+        _row("gpt-6-astra", task_id="hard-1", quality=99, duration=70, effort="xhigh"),
     ]
-    frontier = benchmark.analyze(rows)["task_classes"]["exploration"]["pareto_frontier"]
+    result = benchmark.analyze(rows)
+    frontier = result["task_classes"]["exploration"]["pareto_frontier"]
     assert {(item["model"], item["effort"]) for item in frontier} == {
         ("gpt-5.6-sol", "xhigh"),
         ("gpt-6-astra", "xhigh"),
     }
+    pairing = result["astra_canary_pairing"]["exploration"]
+    assert pairing["shared_task_ids"] == ["hard-1"]
+    assert pairing["pairing_complete"] is True
+
+
+def test_astra_pairing_rejects_unequal_historical_task_sets() -> None:
+    benchmark = _module()
+    rows = [
+        _row("gpt-5.6-sol", task_id="hard-1", effort="xhigh"),
+        _row("gpt-5.6-sol", task_id="hard-2", effort="xhigh"),
+        _row("gpt-6-astra", task_id="hard-1", effort="xhigh"),
+    ]
+    pairing = benchmark.analyze(rows)["astra_canary_pairing"]["exploration"]
+    assert pairing["shared_task_ids"] == ["hard-1"]
+    assert pairing["baseline_only"] == ["hard-2"]
+    assert pairing["canary_only"] == []
+    assert pairing["pairing_complete"] is False
 
 
 def test_missing_token_observation_never_becomes_false_cost_winner() -> None:
