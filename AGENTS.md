@@ -1,8 +1,12 @@
 # myTradingAlpha Agent Harness
 
-This file defines repository-wide agent policy. Deeper `AGENTS.md` files add path-specific instructions;
-the closest applicable file wins for local details, while the global safety, authority, language,
-routing, and merge rules below always remain in force.
+This file defines repository-wide agent policy. Codex automatic project-instruction discovery walks from
+the project root to the current working directory (CWD) and stops there; deeper `AGENTS.md` files on that
+root-to-CWD chain add path-specific instructions, with the closest discovered file providing local detail.
+Do not assume a nested `AGENTS.md` outside the current CWD chain becomes loaded merely because a file in
+that subtree is opened or edited. For every in-scope path outside the current CWD chain, the
+`productionization-preflight` skill must explicitly read the applicable scoped `AGENTS.md` before edits.
+The global safety, authority, language, routing, and merge rules below always remain in force.
 
 ## Repository language
 
@@ -32,6 +36,9 @@ Path-specific rules:
 - `mytradingalpha/AGENTS.md` — production dependency, determinism, compatibility, side-effect rules.
 - `tradingagents/AGENTS.md` — upstream/research compatibility boundary.
 - `tests/productionization/AGENTS.md` — deterministic TDD/contract-test rules.
+
+These scoped files are authoritative for their paths when applicable, but automatic discovery depends on
+the root-to-CWD chain. Preflight explicitly loads any other scoped file needed by the authorized change.
 
 ## 3. Productionization authority and roadmap
 
