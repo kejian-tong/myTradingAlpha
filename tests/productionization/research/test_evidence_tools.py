@@ -2252,7 +2252,7 @@ def test_unicode_normalization_and_malformed_escape_candidates_fail_closed() -> 
     sensitive = (
         "ａｐｉ＿ｋｅｙ=SIG02_FULLWIDTH_CANARY",
         "api_Key=SIG02_KELVIN_CANARY",
-        r"api_\uff4dey=SIG02_ESCAPED_FULLWIDTH_CANARY",
+        r"api_\uff4bey=SIG02_ESCAPED_FULLWIDTH_CANARY",
         r"safe_\u00ZZkey=SIG02_MALFORMED_PREFIX_CANARY",
     )
     safe = (
@@ -2288,8 +2288,11 @@ def test_unicode_normalization_and_malformed_escape_candidates_fail_closed() -> 
 
     callbacks: list[str] = []
     hostile = HostileKey("api_key", callbacks)
+    mapping: dict[object, object] = {}
+    dict.__setitem__(mapping, hostile, "SIG02_HOSTILE_CANARY")
+    callbacks.clear()
     with pytest.raises(TypeError):
-        redaction.redact_plain_data({hostile: "SIG02_HOSTILE_CANARY"})
+        redaction.redact_plain_data(mapping)
     assert callbacks == []
 
 
