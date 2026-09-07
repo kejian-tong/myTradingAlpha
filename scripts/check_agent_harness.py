@@ -22,6 +22,19 @@ _ROLES = {
     "test_auditor": ("gpt-5.6-luna", "max", True),
     "boundary_reviewer": ("gpt-5.6-sol", "high", True),
 }
+_SCOPED_AGENT_PATHS = (
+    "docs/productionization/AGENTS.md",
+    "mytradingalpha/AGENTS.md",
+    "tradingagents/AGENTS.md",
+    "tests/productionization/AGENTS.md",
+)
+_SKILL_NAMES = (
+    "productionization-preflight",
+    "jit-scope-contract",
+    "tdd-red-green-evidence",
+    "exact-head-review",
+    "merge-gate",
+)
 _ORDER = tuple(
     f"{prefix}-{number:02d}"
     for prefix, count in (("FND", 4), ("PIT", 6), ("SIG", 5), ("BT", 6), ("RSK", 5),
@@ -43,8 +56,6 @@ def _toml(path: Path) -> dict:
     try:
         import tomllib
     except ModuleNotFoundError:
-        # The locked Python 3.10 pytest environment includes tomli. A standalone
-        # unsupported environment fails explicitly instead of pretending it parsed.
         try:
             import tomli as tomllib
         except ModuleNotFoundError as exc:
@@ -81,8 +92,40 @@ def _hook_errors(root: Path) -> list[str]:
             errors.append(f"{event} hook timeout differs from reviewed policy")
         if not isinstance(command, str) or "codex_hook_guard.py" not in command or mode not in command:
             errors.append(f"{event} Unix hook command differs from reviewed policy")
-        if not isinstance(command_windows, str) or "codex_hook_guard.py" not in command_windows or mode not in command_windows:
+        if (
+            not isinstance(command_windows, str)
+            or "codex_hook_guard.py" not in command_windows
+            or mode not in command_windows
+        ):
             errors.append(f"{event} Windows hook command differs from reviewed policy")
+    return errors
+
+
+def _instruction_and_skill_errors(root: Path) -> list[str]:
+    errors = []
+    root_agents = root / "AGENTS.md"
+    root_text = root_agents.read_text(encoding="utf-8")
+    if len(root_text.encode("utf-8")) > 18_000:
+        errors.append("root AGENTS.md exceeds reviewed compact instruction budget")
+    for relative in _SCOPED_AGENT_PATHS:
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"missing scoped agent instructions: {relative}")
+        if relative not in root_text:
+            errors.append(f"root AGENTS.md does not route to scoped instructions: {relative}")
+    for name in _SKILL_NAMES:
+        relative = f".agents/skills/{name}/SKILL.md"
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"missing repo skill: {name}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---\n") or f"name: {name}\n" not in text:
+            errors.append(f"invalid skill metadata: {name}")
+        if "description:" not in text.split("---", 2)[1]:
+            errors.append(f"missing skill description: {name}")
+        if name not in root_text:
+            errors.append(f"root AGENTS.md does not advertise repo skill: {name}")
     return errors
 
 
@@ -109,6 +152,7 @@ def configuration_errors(root: Path) -> list[str]:
             if name == "normal_implementer" and "normal/high/critical" not in role.get("developer_instructions", ""):
                 errors.append("initial implementer must inherit normal/high/critical safety class")
         errors.extend(_hook_errors(root))
+        errors.extend(_instruction_and_skill_errors(root))
         for filename in ("AGENT_AUDIT_PROTOCOL.md", "PR_IMPLEMENTATION_SPEC_TEMPLATE.md"):
             if "sol_high_sol_high" not in (root / "docs/productionization" / filename).read_text():
                 errors.append(f"missing approved implementation-only route in {filename}")
