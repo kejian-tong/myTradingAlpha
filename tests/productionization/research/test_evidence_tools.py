@@ -1447,3 +1447,95 @@ def test_research_note_builder_requires_historical_mode_and_no_egress(
         candidate_context = context.model_copy(update=context_update)
     with pytest.raises(notes.ResearchNoteBindingError):
         _note(bundle, candidate_context, response)
+
+
+def test_shared_redaction_matches_every_established_multicomponent_suffix_form() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    paths = (
+        ("aws", "secret", "access", "key"),
+        ("aws", "access", "key", "id"),
+        ("broker", "account", "id"),
+        ("consumer", "secret"),
+        ("client", "secret"),
+        ("session", "token"),
+        ("refresh", "token"),
+        ("access", "token"),
+        ("bearer", "token"),
+        ("auth", "token"),
+        ("api", "secret"),
+        ("api", "key"),
+        ("private", "key"),
+        ("account", "number"),
+        ("account", "id"),
+    )
+    acronym = {"api": "API", "aws": "AWS", "id": "ID"}
+    assignments: list[str] = []
+    canaries: list[str] = []
+    for index, path in enumerate(paths):
+        suffix = "_".join(path)
+        forms = (
+            suffix,
+            f"x_{suffix}",
+            "prod" + "".join(part.title() for part in path),
+            "prod" + "".join(acronym.get(part, part.title()) for part in path),
+            "".join(path),
+        )
+        for form_index, field_name in enumerate(forms):
+            canary = f"SIG02_POLICY_{index}_{form_index}_CANARY"
+            canaries.append(canary)
+            assignments.append(f"{field_name}={canary}")
+    raw = "; ".join(assignments)
+    raw += (
+        "; broker_account_identity=SIG02_SAFE_BROKER; "
+        "account_numbering=SIG02_SAFE_ACCOUNT; "
+        "accesstoken_count=7"
+    )
+    redacted = redaction.redact_artifact_text(raw)
+    for canary in canaries:
+        assert canary not in redacted
+    assert "SIG02_SAFE_BROKER" in redacted
+    assert "SIG02_SAFE_ACCOUNT" in redacted
+    assert "accesstoken_count=7" in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+
+def test_broker_and_access_suffixes_are_redacted_by_renderer_builder_and_wire() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(
+        update={
+            "body": (
+                "x_broker_account_id=SIG02_BROKER_RENDER_CANARY; "
+                "access_token=SIG02_ACCESS_RENDER_CANARY"
+            )
+        }
+    )
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_BROKER_RENDER_CANARY" not in rendered
+    assert "SIG02_ACCESS_RENDER_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = "x_broker_account_id=SIG02_BROKER_BUILDER_CANARY"
+    output["news_report"] = "access_token=SIG02_ACCESS_BUILDER_CANARY"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert "SIG02_BROKER_BUILDER_CANARY" not in canonical
+    assert "SIG02_ACCESS_BUILDER_CANARY" not in canonical
+
+    object.__setattr__(note, "thesis", "x_broker_account_id=SIG02_BROKER_WIRE_CANARY")
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
