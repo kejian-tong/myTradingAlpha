@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
-- `roadmap_status`: `sig_02_repair_and_main_integration_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -46,10 +46,13 @@ gates; no product-scope conflict was found.
 SIG-02 — Evidence tools and ResearchNote
 
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
+- final integrated base main: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `aa14d0156de18f966477b7971b2fecd6ce46fa89`
-  (tree `0c547aca89f51015eeadfd593dba3c56d920cee5`); the final state-bearing head is
+  `585c15b2c7d98e9709a8fd1f37f52aaec682c3ea`
+  (tree `d97f6cf7d35bf2322ced82040ccfcc88f55fa8f5`); latest-main integration commit
+  `249e8aaa38e1f976c7909b5575bcf32c70b1ed66` (tree
+  `041978a6a95f7f2747496d205cca81c434f1f4cb`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -104,8 +107,11 @@ SIG-02 — Evidence tools and ResearchNote
 - structural fail-closed RED: `13cc4cf2a3b91260a2740836a967bdbdb4d54a72` plus test-only
   assertion correction `bea0784b04044bc4a2a6fcfb366810b605ce47ba`; repair GREEN:
   `aa14d0156de18f966477b7971b2fecd6ce46fa89`
-- local tests: PASS after final repair; focused `137 passed`, required regressions `857 passed`, full
-  suite `2332 passed / 3 skipped / 18 warnings / 69 subtests`
+- Unicode/bounded-lexer RED: `2b5cc19f67e00fa3e75f2b891af4927125960db7` plus test-only
+  fixture correction `bc52db304515ecf341a68bdb3965f710e34fc8ce`; repair GREEN:
+  `585c15b2c7d98e9709a8fd1f37f52aaec682c3ea`
+- local tests: PASS after final repair/latest-main integration; focused `140 passed`, required
+  regressions `860 passed`, full suite `2335 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: latest xhigh-review candidate `0823bc63f6880bc0eac5b605723fb16b8f6217ef` passed CI
@@ -164,7 +170,9 @@ SIG-02 — Evidence tools and ResearchNote
   review at `0823bc63f6880bc0eac5b605723fb16b8f6217ef` returned REQUEST CHANGES for
   malformed/compatibility-Unicode sensitive keys and quadratic hostile phrase scanning; durable
   artifact: PR #45 comment `5565153320`. Focused repair RED/GREEN, PR #46 main integration and fresh
-  exact-head xhigh review are required.
+  exact-head xhigh review were required. NFKC/malformed-Unicode fail-closed normalization and the
+  bounded single-pass assignment lexer now close those surfaces locally; disjoint PR #46 main is
+  integrated. Fresh exact-head CI and xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
