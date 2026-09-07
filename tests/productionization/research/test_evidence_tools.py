@@ -2678,3 +2678,87 @@ def test_alternating_analysis_chain_reaches_public_surfaces() -> None:
     payload["note_id"] = contracts.derive_research_note_id(note)
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("raw", "canary"),
+    (
+        (
+            "api_key: |\n  SIG02_YAML_BLOCK_CANARY\nsafe: ordinary",
+            "SIG02_YAML_BLOCK_CANARY",
+        ),
+        (
+            "-----BEGIN PRIVATE KEY-----\nSIG02_UNMATCHED_PEM_CANARY",
+            "SIG02_UNMATCHED_PEM_CANARY",
+        ),
+    ),
+)
+def test_multiline_secret_containers_fail_closed_in_shared_redaction(
+    raw: str,
+    canary: str,
+) -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+
+    redacted = redaction.redact_artifact_text(raw)
+
+    assert canary not in redacted
+    assert "[REDACTED]" in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+    assert redaction.validate_artifact_text(redacted) == redacted
+    with pytest.raises(ValueError):
+        redaction.validate_artifact_text(raw)
+
+
+def test_multiline_secret_containers_do_not_reach_renderer_or_note_builder() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    raw = (
+        "api_key: |\n"
+        "  SIG02_YAML_SURFACE_CANARY\n"
+        "safe: ordinary\n"
+        "-----BEGIN PRIVATE KEY-----\n"
+        "SIG02_UNMATCHED_PEM_SURFACE_CANARY"
+    )
+    canaries = (
+        "SIG02_YAML_SURFACE_CANARY",
+        "SIG02_UNMATCHED_PEM_SURFACE_CANARY",
+    )
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert all(canary not in rendered for canary in canaries)
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert all(canary not in canonical for canary in canaries)
+
+
+def test_unmatched_private_key_content_is_rejected_by_note_wire_and_canonical_paths() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    raw = "-----BEGIN PRIVATE KEY-----\nSIG02_UNMATCHED_PEM_WIRE_CANARY"
+
+    note = _note(bundle, context, response)
+    object.__setattr__(note, "thesis", raw)
+    object.__setattr__(note, "note_id", contracts.derive_research_note_id(note))
+    payload = note.model_dump(mode="python")
+
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+    with pytest.raises(contracts.ResearchNoteSerializationError):
+        note.canonical_bytes()
