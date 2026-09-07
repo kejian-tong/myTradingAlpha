@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from math import isfinite
 from typing import Any
 
@@ -51,20 +52,10 @@ _PLAIN_DATA_MAX_DEPTH = 64
 _JSON_MAX_UNESCAPE_ATTEMPTS = 5
 _JSON_MAX_FRAGMENT_BYTES = 1_048_576
 _JSON_MAX_FRAGMENTS = 32
-_ASSIGNMENT_PREFIX_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_.-])"
-    r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
-    r"(?P<key>[A-Za-z0-9_.\\-]+)"
-    r"(?P=key_escape)(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
-    re.IGNORECASE,
-)
-_PHRASE_ASSIGNMENT_PREFIX_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_.-])"
-    r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
-    r"(?P<key>[A-Za-z0-9_.\\-]+(?:[/:\s]+[A-Za-z0-9_.\\-]+)+)"
-    r"(?P=key_escape)(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
-    re.IGNORECASE,
-)
+_MAX_ASSIGNMENT_KEY_CHARS = 256
+_MAX_ASSIGNMENT_KEY_COMPONENTS = 16
+_MAX_ASSIGNMENT_WORK = 1_000_000
+_ASSIGNMENT_KEY_SEPARATORS = frozenset("_./:-\\\"'")
 
 
 def _decode_key_escapes(value: str) -> tuple[str, bool]:
@@ -87,6 +78,7 @@ def _decode_key_escapes(value: str) -> tuple[str, bool]:
 
 def _key_parts(value: str) -> tuple[str, ...]:
     value, _ = _decode_key_escapes(value)
+    value = unicodedata.normalize("NFKC", value)
     value = value.replace("\\", "").replace('"', "").replace("'", "")
     value = re.sub(
         r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
@@ -100,11 +92,7 @@ def _is_sensitive_key(value: str) -> bool:
     decoded, invalid = _decode_key_escapes(value)
     if _is_sensitive_parts(_key_parts(decoded)):
         return True
-    if invalid and "\\u" in value.casefold():
-        prefix = value.casefold().split("\\u", 1)[0]
-        prefix_parts = _key_parts(prefix)
-        return any(path and path[: len(prefix_parts)] == prefix_parts for path in _SENSITIVE_KEY_PATHS)
-    return False
+    return bool(invalid and "\\u" in value.casefold())
 
 
 def _is_sensitive_parts(parts: tuple[str, ...]) -> bool:
@@ -131,10 +119,8 @@ def _canonical_json(value: object) -> str:
 
 def _sensitive_structural_hint(value: str) -> bool:
     lowered = value.casefold()
-    if "\\u" in lowered:
-        prefix_parts = _key_parts(lowered.split("\\u", 1)[0])
-        if any(path and path[: len(prefix_parts)] == prefix_parts for path in _SENSITIVE_KEY_PATHS):
-            return True
+    if re.search(r"\\u(?![0-9a-fA-F]{4})", lowered):
+        return True
     return any(
         len(path) > 1
         and all(
@@ -294,32 +280,83 @@ def _value_end(value: str, start: int) -> tuple[int, str, str]:
     return index, "", ""
 
 
+def _assignment_key_char(character: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", character)
+    return normalized.isalnum() or normalized in _ASSIGNMENT_KEY_SEPARATORS or normalized.isspace()
+
+
+def _scan_assignment_prefix(
+    value: str,
+    delimiter: int,
+    cursor: int,
+    work: int,
+) -> tuple[int, int, str, int] | None:
+    position = delimiter - 1
+    scanned = 0
+    while position >= 0 and value[position].isspace():
+        position -= 1
+        scanned += 1
+    if position < 0:
+        return None
+    scan_end = position + 1
+    while position >= 0:
+        scanned += 1
+        if scanned > _MAX_ASSIGNMENT_KEY_CHARS:
+            raise OverflowError("assignment key scan exceeded its bound")
+        character = value[position]
+        if character == "=" or character in "\r\n,;{}[]":
+            break
+        if not _assignment_key_char(character):
+            break
+        position -= 1
+    start = position + 1
+    while start < scan_end and value[start].isspace():
+        start += 1
+    candidate = value[start:scan_end].strip()
+    if not candidate or not any(character.isalnum() for character in candidate):
+        return None
+    components = _key_parts(candidate)
+    if not components or len(components) > _MAX_ASSIGNMENT_KEY_COMPONENTS:
+        raise OverflowError("assignment key components exceeded their bound")
+    value_start = delimiter + 1
+    while value_start < len(value) and value[value_start].isspace():
+        value_start += 1
+    if start < cursor:
+        return None
+    return start, value_start, candidate, work + scanned
+
+
 def _redact_assignments(value: str) -> str:
     output: list[str] = []
     cursor = 0
-    matches = sorted(
-        (
-            *_ASSIGNMENT_PREFIX_PATTERN.finditer(value),
-            *_PHRASE_ASSIGNMENT_PREFIX_PATTERN.finditer(value),
-        ),
-        key=lambda match: (match.start(), -(match.end() - match.start())),
-    )
-    for match in matches:
-        if match.start() < cursor:
+    index = 0
+    work = 0
+    while index < len(value):
+        if value[index] not in ":=":
+            index += 1
             continue
-        output.append(value[cursor : match.start()])
-        if not _is_sensitive_key(match.group("key")):
-            output.append(match.group(0))
-            cursor = match.end()
+        try:
+            scanned = _scan_assignment_prefix(value, index, cursor, work)
+        except OverflowError:
+            return _REDACTED
+        if scanned is None:
+            index += 1
             continue
-        end, quote_prefix, quote_suffix = _value_end(value, match.end())
-        prefix = f"{match.group('prefix')}{match.group('spacing')}"
+        start, value_start, candidate, work = scanned
+        if work > _MAX_ASSIGNMENT_WORK:
+            return _REDACTED
+        if not _is_sensitive_key(candidate):
+            index += 1
+            continue
+        end, quote_prefix, quote_suffix = _value_end(value, value_start)
+        output.append(value[cursor:start])
+        prefix = value[start:value_start]
         if quote_prefix:
-            replacement = f"{prefix}{quote_prefix}{_REDACTED}{quote_suffix}"
+            output.append(f"{prefix}{quote_prefix}{_REDACTED}{quote_suffix}")
         else:
-            replacement = f"{prefix}{_REDACTED}"
-        output.append(replacement)
+            output.append(f"{prefix}{_REDACTED}")
         cursor = end
+        index = max(end, index + 1)
     output.append(value[cursor:])
     return "".join(output)
 
