@@ -36,6 +36,7 @@ _TEXT_FIELDS = ("operation", "session_id", "authorized_session_id", "pr_id", "st
                 "implementer_context", "reviewer_context")
 _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers"}
+_HOOK_EVENTS = {"SessionStart": "session-start", "Stop": "stop"}
 
 
 def _toml(path: Path) -> dict:
@@ -49,6 +50,40 @@ def _toml(path: Path) -> dict:
         except ModuleNotFoundError as exc:
             raise ValueError("TOML parser unavailable; use Python 3.11+ or locked dev") from exc
     return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _hook_errors(root: Path) -> list[str]:
+    errors = []
+    hook_path = root / ".codex/hooks.json"
+    guard_path = root / "scripts/codex_hook_guard.py"
+    if not guard_path.is_file():
+        errors.append("missing lightweight Codex hook guard")
+    hooks = json.loads(hook_path.read_text(encoding="utf-8"))
+    event_map = hooks.get("hooks") if isinstance(hooks, dict) else None
+    if not isinstance(event_map, dict) or set(event_map) != set(_HOOK_EVENTS):
+        return [*errors, "project hooks must contain only SessionStart and Stop v1 events"]
+    for event, mode in _HOOK_EVENTS.items():
+        entries = event_map.get(event)
+        if not isinstance(entries, list) or len(entries) != 1:
+            errors.append(f"{event} must have exactly one project hook entry")
+            continue
+        entry = entries[0]
+        handlers = entry.get("hooks") if isinstance(entry, dict) else None
+        if not isinstance(handlers, list) or len(handlers) != 1:
+            errors.append(f"{event} must have exactly one command handler")
+            continue
+        handler = handlers[0]
+        command = handler.get("command") if isinstance(handler, dict) else None
+        command_windows = handler.get("command_windows") if isinstance(handler, dict) else None
+        if handler.get("type") != "command" or handler.get("async") is not False:
+            errors.append(f"{event} hook must be a synchronous command")
+        if handler.get("timeout_sec") != 15:
+            errors.append(f"{event} hook timeout differs from reviewed policy")
+        if not isinstance(command, str) or "codex_hook_guard.py" not in command or mode not in command:
+            errors.append(f"{event} Unix hook command differs from reviewed policy")
+        if not isinstance(command_windows, str) or "codex_hook_guard.py" not in command_windows or mode not in command_windows:
+            errors.append(f"{event} Windows hook command differs from reviewed policy")
+    return errors
 
 
 def configuration_errors(root: Path) -> list[str]:
@@ -73,13 +108,14 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append(f"{name} must request read-only mode")
             if name == "normal_implementer" and "normal/high/critical" not in role.get("developer_instructions", ""):
                 errors.append("initial implementer must inherit normal/high/critical safety class")
+        errors.extend(_hook_errors(root))
         for filename in ("AGENT_AUDIT_PROTOCOL.md", "PR_IMPLEMENTATION_SPEC_TEMPLATE.md"):
             if "sol_high_sol_high" not in (root / "docs/productionization" / filename).read_text():
                 errors.append(f"missing approved implementation-only route in {filename}")
         for path in (root / "AGENTS.md", root / "docs/productionization/AGENT_STATE.md"):
             if "strongest available compatible" in path.read_text():
                 errors.append(f"generic fallback contradicts named-role policy: {path.name}")
-    except (OSError, ValueError, TypeError) as exc:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         errors.append(f"configuration unavailable/invalid: {exc}")
     return errors
 
