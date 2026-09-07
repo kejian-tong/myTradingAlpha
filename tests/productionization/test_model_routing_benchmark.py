@@ -16,12 +16,12 @@ def _module():
 
 def _row(model: str, *, task_id: str = "t1", quality: float = 90, duration: int = 100,
          retries: int = 0, acceptance: bool = True, safety: bool = True,
-         missed: int = 0, tokens: bool = True) -> dict:
+         missed: int = 0, tokens: bool = True, effort: str = "max") -> dict:
     row = {
         "task_id": task_id,
         "task_class": "exploration",
         "model": model,
-        "effort": "max",
+        "effort": effort,
         "acceptance_pass": acceptance,
         "safety_gate_pass": safety,
         "missed_blocker_high": missed,
@@ -37,6 +37,15 @@ def _row(model: str, *, task_id: str = "t1", quality: float = 90, duration: int 
 def test_current_luna_credit_formula() -> None:
     benchmark = _module()
     assert benchmark.token_cost(_row("gpt-5.6-luna"), benchmark.CREDIT_RATES) == 0.81
+
+
+def test_astra_credit_formula_is_two_point_five_times_sol_for_same_tokens() -> None:
+    benchmark = _module()
+    sol = benchmark.token_cost(_row("gpt-5.6-sol", effort="xhigh"), benchmark.CREDIT_RATES)
+    astra = benchmark.token_cost(_row("gpt-6-astra", effort="xhigh"), benchmark.CREDIT_RATES)
+    assert sol == 15.2
+    assert astra == 38.0
+    assert astra / sol == 2.5
 
 
 def test_cheaper_route_is_excluded_when_safety_or_acceptance_fails() -> None:
@@ -60,6 +69,19 @@ def test_pareto_frontier_keeps_tradeoffs_and_removes_dominated_route() -> None:
     ]
     frontier = benchmark.analyze(rows)["task_classes"]["exploration"]["pareto_frontier"]
     assert {item["model"] for item in frontier} == {"gpt-5.6-luna", "gpt-5.6-terra"}
+
+
+def test_astra_and_sol_both_remain_when_canary_buys_quality_and_latency_at_higher_cost() -> None:
+    benchmark = _module()
+    rows = [
+        _row("gpt-5.6-sol", task_id="hard-sol", quality=96, duration=100, effort="xhigh"),
+        _row("gpt-6-astra", task_id="hard-astra", quality=99, duration=70, effort="xhigh"),
+    ]
+    frontier = benchmark.analyze(rows)["task_classes"]["exploration"]["pareto_frontier"]
+    assert {(item["model"], item["effort"]) for item in frontier} == {
+        ("gpt-5.6-sol", "xhigh"),
+        ("gpt-6-astra", "xhigh"),
+    }
 
 
 def test_missing_token_observation_never_becomes_false_cost_winner() -> None:
