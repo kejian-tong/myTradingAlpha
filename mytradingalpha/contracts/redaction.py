@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from math import isfinite
 from typing import Any
@@ -47,11 +48,13 @@ _SENSITIVE_COMPACT_KEYS = frozenset(
     "".join(path) for path in _SENSITIVE_KEY_PATHS
 )
 _PLAIN_DATA_MAX_DEPTH = 64
-_PLAIN_DATA_SENSITIVE_FIELDS = frozenset({"source_locator", "terms"})
+_JSON_MAX_UNESCAPE_ATTEMPTS = 5
+_JSON_MAX_FRAGMENT_BYTES = 1_048_576
+_JSON_MAX_FRAGMENTS = 32
 _ASSIGNMENT_PREFIX_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
-    r"(?P<key>[A-Za-z][A-Za-z0-9_.-]*)"
+    r"(?P<key>[A-Za-z0-9_.-]+)"
     r"(?P=key_escape)(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
     re.IGNORECASE,
 )
@@ -68,7 +71,10 @@ def _key_parts(value: str) -> tuple[str, ...]:
 
 
 def _is_sensitive_key(value: str) -> bool:
-    parts = _key_parts(value)
+    return _is_sensitive_parts(_key_parts(value))
+
+
+def _is_sensitive_parts(parts: tuple[str, ...]) -> bool:
     if not parts:
         return False
     compact = "".join(parts)
@@ -78,6 +84,123 @@ def _is_sensitive_key(value: str) -> bool:
         len(parts) >= len(path) and parts[-len(path) :] == path
         for path in _SENSITIVE_KEY_PATHS
     )
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _sensitive_structural_hint(value: str) -> bool:
+    lowered = value.casefold()
+    return any(
+        len(path) > 1
+        and all(
+            re.search(rf"(?<![a-z0-9]){re.escape(part)}(?![a-z0-9])", lowered)
+            for part in path
+        )
+        for path in _SENSITIVE_KEY_PATHS
+    )
+
+
+def _parse_and_redact_json(value: str) -> str | None:
+    candidate = value
+    for _ in range(_JSON_MAX_UNESCAPE_ATTEMPTS):
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if type(parsed) in (dict, list):
+            try:
+                redacted = redact_plain_data(parsed)
+                if redacted == parsed:
+                    return ""
+                return _canonical_json(redacted)
+            except (TypeError, ValueError, OverflowError, UnicodeError):
+                return _REDACTED
+        if type(parsed) is str:
+            candidate = parsed
+            continue
+        return None
+    return None
+
+
+def _json_fragment_spans(value: str) -> tuple[tuple[int, int], ...]:
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(value) and len(spans) < _JSON_MAX_FRAGMENTS:
+        if value[index] not in "[{":
+            index += 1
+            continue
+        start = index
+        stack = ["]" if value[index] == "[" else "}"]
+        quoted = False
+        escaped = False
+        index += 1
+        while index < len(value) and stack:
+            character = value[index]
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    quoted = False
+            elif character == '"':
+                quoted = True
+            elif character in "[{":
+                stack.append("]" if character == "[" else "}")
+            elif character in "]}":
+                if character != stack[-1]:
+                    stack.clear()
+                    break
+                stack.pop()
+            index += 1
+        if not stack:
+            spans.append((start, index))
+        else:
+            index = start + 1
+    return tuple(spans)
+
+
+def _redact_structural_json(value: str) -> str:
+    if len(value.encode("utf-8")) > _JSON_MAX_FRAGMENT_BYTES:
+        return _REDACTED if _sensitive_structural_hint(value) else value
+    full = _parse_and_redact_json(value)
+    if full is not None:
+        return value if full == "" else full
+    replacements: dict[tuple[int, int], str] = {}
+    recognized = False
+    for start, end in _json_fragment_spans(value):
+        fragment = value[start:end]
+        parsed = _parse_and_redact_json(fragment)
+        if parsed is None:
+            if _sensitive_structural_hint(fragment):
+                replacements[(start, end)] = _REDACTED
+        else:
+            recognized = True
+            if parsed:
+                replacements[(start, end)] = parsed
+    if replacements:
+        output: list[str] = []
+        cursor = 0
+        for start, end in sorted(replacements):
+            output.append(value[cursor:start])
+            output.append(replacements[(start, end)])
+            cursor = end
+        output.append(value[cursor:])
+        return "".join(output)
+    if recognized:
+        return value
+    has_array = re.search(r"\[(?!REDACTED\])", value) is not None
+    if ("{" in value or has_array) and _sensitive_structural_hint(value):
+        return _REDACTED
+    return value
 
 
 def _quoted_value_bounds(value: str, start: int) -> tuple[int, str, str] | None:
@@ -107,6 +230,10 @@ def _value_end(value: str, start: int) -> tuple[int, str, str]:
     quoted = _quoted_value_bounds(value, start)
     if quoted is not None:
         return quoted
+    if value[start : start + 1] in "[{":
+        spans = _json_fragment_spans(value[start:])
+        if spans and spans[0][0] == 0:
+            return start + spans[0][1], '"', '"'
     if value.startswith(_REDACTED, start):
         return start + len(_REDACTED), "", ""
     index = start
@@ -143,7 +270,8 @@ def redact_artifact_text(value: str) -> str:
 
     if type(value) is not str:
         raise TypeError("artifact redaction requires an exact string")
-    redacted = _PRIVATE_KEY_PATTERN.sub(_REDACTED, value)
+    redacted = _redact_structural_json(value)
+    redacted = _PRIVATE_KEY_PATTERN.sub(_REDACTED, redacted)
     for _ in range(3):
         updated = _redact_assignments(redacted)
         updated = _BEARER_PATTERN.sub(rf"\1{_REDACTED}", updated)
@@ -167,15 +295,18 @@ def validate_artifact_text(value: str) -> str:
 def redact_plain_data(value: Any) -> Any:
     """Redact exact built-in JSON data before it is serialized to an artifact."""
 
-    def visit(item: Any, *, field_name: Any, seen: set[int], depth: int) -> Any:
+    def visit(
+        item: Any,
+        *,
+        path_parts: tuple[str, ...],
+        seen: set[int],
+        depth: int,
+    ) -> Any:
         if depth > _PLAIN_DATA_MAX_DEPTH:
             raise ValueError("plain data exceeds maximum redaction depth")
         item_type = type(item)
         if item_type is str:
-            if type(field_name) is str and (
-                field_name in _PLAIN_DATA_SENSITIVE_FIELDS
-                or _is_sensitive_key(field_name)
-            ):
+            if _is_sensitive_parts(path_parts):
                 return _REDACTED
             return redact_artifact_text(item)
         if item_type is float:
@@ -196,16 +327,21 @@ def redact_plain_data(value: Any) -> Any:
                 for key, child in dict.items(item):
                     if type(key) is not str:
                         raise TypeError("plain data object keys must be exact strings")
-                    result[key] = visit(child, field_name=key, seen=seen, depth=depth + 1)
+                    result[key] = visit(
+                        child,
+                        path_parts=path_parts + _key_parts(key),
+                        seen=seen,
+                        depth=depth + 1,
+                    )
                 return result
             return [
-                visit(child, field_name=None, seen=seen, depth=depth + 1)
+                visit(child, path_parts=path_parts, seen=seen, depth=depth + 1)
                 for child in item
             ]
         finally:
             seen.remove(identity)
 
-    return visit(value, field_name=None, seen=set(), depth=0)
+    return visit(value, path_parts=(), seen=set(), depth=0)
 
 
 __all__ = ["redact_artifact_text", "redact_plain_data", "validate_artifact_text"]

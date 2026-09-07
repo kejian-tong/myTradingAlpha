@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, PlainSerializer, WithJsonSchema
+from pydantic import BeforeValidator, PlainSerializer, StrictStr, WithJsonSchema
 
 _STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$")
+_CHECKSUM_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 _UTC_DATETIME_STRING_PATTERN = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T"
     r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
@@ -21,6 +22,18 @@ _UTC_DATETIME_STRING_PATTERN = re.compile(
 def _validate_stable_id(value: Any) -> str:
     if not isinstance(value, str) or not _STABLE_ID_PATTERN.fullmatch(value):
         raise ValueError("invalid_identifier: expected a non-whitespace stable token")
+    return value
+
+
+def _validate_required_reference(value: object) -> object:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("invalid_reference: expected a non-empty trimmed string")
+    return value
+
+
+def _validate_checksum(value: object) -> object:
+    if not isinstance(value, str) or _CHECKSUM_PATTERN.fullmatch(value) is None:
+        raise ValueError("invalid_checksum: expected canonical SHA-256")
     return value
 
 
@@ -95,6 +108,17 @@ StableId = Annotated[
 ]
 """A non-empty, whitespace-free identifier suitable for persisted keys."""
 
+RequiredReference = Annotated[
+    StrictStr,
+    BeforeValidator(_validate_required_reference),
+]
+
+CanonicalChecksum = Annotated[
+    StrictStr,
+    BeforeValidator(_validate_checksum),
+    WithJsonSchema({"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}),
+]
+
 UtcDateTime = Annotated[
     datetime,
     BeforeValidator(_validate_utc_datetime),
@@ -116,4 +140,10 @@ DecimalString = Annotated[
 """A finite :class:`~decimal.Decimal` serialized as its decimal string."""
 
 
-__all__ = ["DecimalString", "StableId", "UtcDateTime"]
+__all__ = [
+    "CanonicalChecksum",
+    "DecimalString",
+    "RequiredReference",
+    "StableId",
+    "UtcDateTime",
+]

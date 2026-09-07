@@ -17,9 +17,7 @@ from pydantic import (
     model_validator,
 )
 
-from mytradingalpha.data.provenance import CanonicalChecksum
-
-from .common import StableId, UtcDateTime
+from .common import CanonicalChecksum, StableId, UtcDateTime
 from .redaction import validate_artifact_text
 from .schemas import ContractModel
 from .versions import CURRENT_SCHEMA_VERSION
