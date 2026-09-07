@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -93,8 +93,8 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2322 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest xhigh-review candidate `4ed95b3fe7a2660b7b56e4ed683bbb03560409bf` passed CI
-  `34077157027`, CodeQL `34077156996` and Dependency Review `34077157019`; fresh exact-head checks
+- CI: latest xhigh-review candidate `6deb4e0e4b02d272d0fa4ea8c33459aa26335aab` passed CI
+  `34078805563`, CodeQL `34078805575` and Dependency Review `34078805521`; fresh exact-head checks
   required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
@@ -132,7 +132,10 @@ SIG-02 — Evidence tools and ResearchNote
   and the research-to-ops redaction dependency; durable artifact: PR #45 comment `5564408011`.
   The suffix-aware compact matcher, contracts-owned plain-data redaction and callback-free exact wire
   storage/scalar validators close those surfaces locally; fresh exact-head CI and xhigh review are
-  pending.
+  pending. Fresh xhigh review at `6deb4e0e4b02d272d0fa4ea8c33459aa26335aab`
+  returned REQUEST CHANGES for compact aliases ending in one-component sensitive paths; durable
+  artifact: PR #45 comment `5564600922`. Focused repair RED/GREEN and fresh exact-head review are
+  required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
