@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -78,9 +78,9 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2295 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: prior escalated-review candidate `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` passed CI
-  `34069580695`, CodeQL `34069580687` and Dependency Review `34069580838`; fresh exact-head checks
-  pending after this final state-bearing commit
+- CI: latest xhigh-review candidate `7dbfc166b91c059855997b14a53afc87d4668e0f` passed CI
+  `34070942934`, CodeQL `34070942939` and Dependency Review `34070942954`; fresh exact-head checks
+  required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
@@ -95,7 +95,10 @@ SIG-02 — Evidence tools and ResearchNote
   escalated xhigh review at `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` returned REQUEST CHANGES for
   hostile timezone callbacks during bundle/context validation and unsafe canonicalization/hashing of
   caller-corrupted ResearchNote instances; durable artifact: PR #45 comment `5563423339`; focused
-  repair RED/GREEN now closes those surfaces locally; another fresh exact-head xhigh review is pending.
+  repair RED/GREEN closed those surfaces. Fresh xhigh re-review at
+  `7dbfc166b91c059855997b14a53afc87d4668e0f` returned REQUEST CHANGES for incomplete artifact-level
+  source text/source-agent redaction plus a MEDIUM reference-error classification issue; durable
+  artifact: PR #45 comment `5563577502`; focused repair and fresh exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
