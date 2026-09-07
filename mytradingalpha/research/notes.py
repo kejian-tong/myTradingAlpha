@@ -445,6 +445,7 @@ class ResearchNoteBuilder:
     ) -> None:
         try:
             self._bundle = _copy_bundle(bundle)
+            self._toolset = EvidenceToolset(self._bundle)
         except EvidenceToolError as exc:
             raise ResearchNoteInputError("ResearchNoteBuilder received an invalid bundle") from exc
         self._context = _copy_context(context)
@@ -494,7 +495,6 @@ class ResearchNoteBuilder:
                 )
             texts[claim] = _redact_artifact_text(output[field])
 
-        toolset = EvidenceToolset(self._bundle)
         citations: list[EvidenceCitation] = []
         seen: set[tuple[str, str, str]] = set()
         for claim in ("thesis", "risks"):
@@ -514,7 +514,7 @@ class ResearchNoteBuilder:
                     raise DuplicateEvidenceReferenceError(
                         f"duplicate evidence citation: {reference.domain}/{reference.record_id}"
                     )
-                item = toolset.get(reference)
+                item = self._toolset.get(reference)
                 provenance = _project_provenance(
                     SourceManifest.model_validate(dict(item.provenance))
                 )

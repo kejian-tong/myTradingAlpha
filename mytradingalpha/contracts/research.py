@@ -80,6 +80,13 @@ def _validate_exact_integer(value: object) -> int:
     return value
 
 
+def _validate_artifact_identity(value: str) -> str:
+    try:
+        return validate_artifact_text(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("research identity contains sensitive material") from exc
+
+
 def _validate_nested_model_input(value: object, model: type[object]) -> object:
     if type(value) is dict or type(value) is model:
         return value
@@ -179,6 +186,11 @@ class ResearchProvenance(_ResearchContractModel):
     def validate_exact_string_inputs(cls, value: object) -> str:
         return _validate_exact_string(value)
 
+    @field_validator("manifest_id", "source")
+    @classmethod
+    def validate_artifact_safe_identity(cls, value: str) -> str:
+        return _validate_artifact_identity(value)
+
     @field_validator("revision", mode="before")
     @classmethod
     def validate_exact_revision(cls, value: object) -> int:
@@ -221,6 +233,11 @@ class EvidenceReference(_ResearchContractModel):
     @classmethod
     def validate_exact_string_inputs(cls, value: object) -> str:
         return _validate_exact_string(value)
+
+    @field_validator("bundle_id", "record_id")
+    @classmethod
+    def validate_artifact_safe_identity(cls, value: str) -> str:
+        return _validate_artifact_identity(value)
 
 
 class EvidenceCitation(_ResearchContractModel):
@@ -315,6 +332,22 @@ class ResearchNote(_ResearchContractModel):
     @classmethod
     def validate_exact_string_inputs(cls, value: object) -> str:
         return _validate_exact_string(value)
+
+    @field_validator(
+        "note_id",
+        "run_id",
+        "variant_id",
+        "instrument_id",
+        "bundle_id",
+        "calendar_id",
+        "response_id",
+        "graph_artifact_id",
+        "model_artifact_id",
+        "runtime_manifest_id",
+    )
+    @classmethod
+    def validate_artifact_safe_identity(cls, value: str) -> str:
+        return _validate_artifact_identity(value)
 
     @field_validator("knowledge_cutoff", mode="before")
     @classmethod

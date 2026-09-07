@@ -9,7 +9,10 @@ from decimal import Decimal
 from math import isfinite
 from types import MappingProxyType
 
-from mytradingalpha.contracts.redaction import redact_plain_data
+from mytradingalpha.contracts.redaction import (
+    redact_plain_data,
+    validate_artifact_text,
+)
 from mytradingalpha.contracts.research import EvidenceReference
 from mytradingalpha.data.actions import (
     ActionType,
@@ -476,11 +479,58 @@ def _record_payload(record: object) -> tuple[dict[str, object], dict[str, object
     return payload, manifest
 
 
+def _validate_artifact_identity(value: object) -> None:
+    if type(value) is not str:
+        raise MalformedEvidenceReferenceError("sealed evidence identity is malformed")
+    try:
+        validate_artifact_text(value)
+    except (TypeError, ValueError) as exc:
+        raise MalformedEvidenceReferenceError(
+            "sealed evidence identity contains sensitive material"
+        ) from exc
+
+
+def _validate_sealed_identities(bundle: EvidenceBundle) -> None:
+    _validate_artifact_identity(bundle.bundle_id)
+    for domain, field, _, expected_types in _DOMAIN_FIELDS:
+        records = getattr(bundle, field)
+        if type(records) is not tuple:
+            raise MalformedEvidenceReferenceError(
+                f"evidence domain {domain} is not canonical"
+            )
+        for record in records:
+            if type(record) not in expected_types:
+                raise MalformedEvidenceReferenceError(
+                    f"evidence domain {domain} contains a malformed record"
+                )
+            fields = _raw_model_fields(
+                record,
+                expected_type=expected_types,
+                expected_fields=_MODEL_FIELDS[type(record)],
+            )
+            for name, value in fields.items():
+                if name.endswith("_id"):
+                    _validate_artifact_identity(value)
+            manifest = fields.get("manifest")
+            if type(manifest) is not SourceManifest:
+                raise MalformedEvidenceReferenceError(
+                    f"evidence domain {domain} contains malformed provenance"
+                )
+            manifest_fields = _raw_model_fields(
+                manifest,
+                expected_type=SourceManifest,
+                expected_fields=_MODEL_FIELDS[SourceManifest],
+            )
+            _validate_artifact_identity(manifest_fields["manifest_id"])
+            _validate_artifact_identity(manifest_fields["source"])
+
+
 class EvidenceToolset:
     """Defensively copied, read-only evidence access for one sealed bundle."""
 
     def __init__(self, bundle: EvidenceBundle) -> None:
         self._bundle = _copy_bundle(bundle)
+        _validate_sealed_identities(self._bundle)
 
     @property
     def bundle_id(self) -> str:

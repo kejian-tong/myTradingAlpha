@@ -358,17 +358,19 @@ def _quoted_value_bounds(value: str, start: int) -> tuple[int, str, str] | None:
         return None
     quote = value[index]
     escape_depth = index - start
-    content_start = index + 1
+    delimiter_width = 3 if value.startswith(quote * 3, index) else 1
+    content_start = index + delimiter_width
     cursor = content_start
     while cursor < len(value):
-        if value[cursor] == quote:
+        if value.startswith(quote * delimiter_width, cursor):
             run = 0
             preceding = cursor - 1
             while preceding >= content_start and value[preceding] == "\\":
                 run += 1
                 preceding -= 1
-            if run == escape_depth or (escape_depth == 0 and run % 2 == 0):
-                return cursor + 1, value[start : content_start], value[cursor - run : cursor + 1]
+            if quote == "'" or run == escape_depth or (escape_depth == 0 and run % 2 == 0):
+                end = cursor + delimiter_width
+                return end, value[start:content_start], value[cursor - run : end]
         cursor += 1
     return len(value), value[start : content_start], ""
 
@@ -387,14 +389,33 @@ def _line_bounds(value: str, start: int) -> tuple[int, int]:
 
 def _yaml_block_scalar_marker(value: str) -> bool:
     marker = value.split("#", 1)[0].strip()
-    if not marker or marker[0] not in "|>":
+    if not marker:
         return False
-    modifiers = marker[1:]
-    return (
+    if marker[0] not in "|>!&":
+        return False
+    if len(marker) > _MAX_ASSIGNMENT_KEY_CHARS:
+        raise OverflowError("YAML block scalar properties exceeded their bound")
+    tokens = marker.split()
+    scalar = tokens[-1]
+    if scalar[0] not in "|>":
+        return False
+    modifiers = scalar[1:]
+    valid_scalar = (
         len(modifiers) <= 2
         and all(character in "+-123456789" for character in modifiers)
         and sum(character in "+-" for character in modifiers) <= 1
         and sum(character.isdigit() for character in modifiers) <= 1
+    )
+    properties = tokens[:-1]
+    if not valid_scalar or len(properties) > 2:
+        return False
+    tags = sum(property_.startswith("!") for property_ in properties)
+    anchors = sum(property_.startswith("&") for property_ in properties)
+    return (
+        tags <= 1
+        and anchors <= 1
+        and tags + anchors == len(properties)
+        and all(len(property_) > 1 for property_ in properties)
     )
 
 
@@ -513,7 +534,10 @@ def _redact_assignments(value: str) -> str:
         if not _is_sensitive_key(candidate):
             index += 1
             continue
-        end, quote_prefix, quote_suffix = _value_end(value, value_start, start)
+        try:
+            end, quote_prefix, quote_suffix = _value_end(value, value_start, start)
+        except OverflowError:
+            return _REDACTED
         output.append(value[cursor:start])
         prefix = value[start:value_start]
         if quote_prefix:
