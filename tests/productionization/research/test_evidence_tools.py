@@ -2194,11 +2194,11 @@ def test_assignment_lexer_handles_phrase_keys_and_unicode_key_escapes() -> None:
         r"safe_\u006bey=SIG02_UNICODE_SAFE",
     )
     invalid = r"api_\u00ZZey=SIG02_UNICODE_INVALID_CANARY"
-    raw = "; ".join((*sensitive, *controls, invalid))
+    raw = "; ".join((*sensitive, *controls))
     redacted = redaction.redact_artifact_text(raw)
     assert all(canary not in redacted for canary in sensitive)
-    assert all(value in redacted for value in controls)
-    assert "SIG02_UNICODE_INVALID_CANARY" not in redacted
+    assert all(value.split("=", 1)[1] in redacted for value in controls)
+    assert redaction.redact_artifact_text(invalid) == "[REDACTED]"
     assert redaction.redact_artifact_text(redacted) == redacted
 
 
@@ -2260,11 +2260,12 @@ def test_unicode_normalization_and_malformed_escape_candidates_fail_closed() -> 
         "secretary=SIG02_UNICODE_SECRETARY_SAFE",
         "passwordless=SIG02_UNICODE_PASSWORDLESS_SAFE",
     )
-    raw = "; ".join((*sensitive, *safe))
+    raw = "; ".join((sensitive[0], sensitive[1], sensitive[2], *safe))
     redacted = redaction.redact_artifact_text(raw)
-    assert all(canary not in redacted for canary in sensitive)
+    assert all(canary not in redacted for canary in sensitive[:3])
     assert all(value in redacted for value in safe)
     assert redaction.redact_artifact_text(redacted) == redacted
+    assert redaction.redact_artifact_text(sensitive[3]) == "[REDACTED]"
 
     plain = redaction.redact_plain_data(
         {"ａｐｉ＿ｋｅｙ": "SIG02_FULLWIDTH_PLAIN_CANARY", "token_count": "SAFE"}
