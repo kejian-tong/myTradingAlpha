@@ -3066,3 +3066,162 @@ def test_nonempty_social_domain_lists_gets_renders_and_cites() -> None:
     )
     assert any(citation.reference == social[0] for citation in note.citations)
     assert social[0].record_id in note.canonical_bytes().decode("utf-8")
+
+
+@pytest.mark.parametrize(
+    ("raw", "canary"),
+    (
+        (
+            "api_key: 'prefix''SIG02_YAML_DOUBLED_QUOTE_CANARY'\nsafe: ordinary",
+            "SIG02_YAML_DOUBLED_QUOTE_CANARY",
+        ),
+        (
+            "? api_key\r\n: |-\r\n  SIG02_YAML_EXPLICIT_KEY_CANARY\r\nsafe: ordinary",
+            "SIG02_YAML_EXPLICIT_KEY_CANARY",
+        ),
+    ),
+)
+def test_final_yaml_quoted_and_explicit_key_values_are_fully_redacted(
+    raw: str,
+    canary: str,
+) -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+
+    redacted = redaction.redact_artifact_text(raw)
+
+    assert canary not in redacted
+    assert "safe" in redacted and "ordinary" in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+    assert redaction.validate_artifact_text(redacted) == redacted
+    with pytest.raises(ValueError):
+        redaction.validate_artifact_text(raw)
+
+
+def test_final_yaml_explicit_key_scanning_is_bounded_and_preserves_safe_controls() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    overlong = (
+        "? "
+        + ("a" * 300)
+        + " api_key\r\n: |\r\n  SIG02_YAML_EXPLICIT_OVERLONG_CANARY"
+    )
+    safe = "? description\r\n: |\r\n  ordinary multiline text\r\nsafe: ordinary"
+    large_safe = "? description\n: |\n" + ("  ordinary text\n" * 4096)
+
+    assert redaction.redact_artifact_text(overlong) == "[REDACTED]"
+    for value in (safe, large_safe):
+        assert redaction.redact_artifact_text(value) == value
+        assert redaction.validate_artifact_text(value) == value
+
+
+def _final_yaml_surface_text() -> str:
+    return (
+        "api_key: 'prefix''SIG02_YAML_QUOTED_SURFACE_CANARY'\r\n"
+        "? client_secret\r\n"
+        ": >-\r\n"
+        "  SIG02_YAML_EXPLICIT_SURFACE_CANARY\r\n"
+        "safe: ordinary"
+    )
+
+
+def test_final_yaml_forms_do_not_reach_renderer_or_note_builder() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    raw = _final_yaml_surface_text()
+    canaries = (
+        "SIG02_YAML_QUOTED_SURFACE_CANARY",
+        "SIG02_YAML_EXPLICIT_SURFACE_CANARY",
+    )
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert all(canary not in rendered for canary in canaries)
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    canonical = _note(bundle, context, response).canonical_bytes().decode("utf-8")
+    assert all(canary not in canonical for canary in canaries)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "api_key: 'prefix''SIG02_YAML_QUOTED_WIRE_CANARY'",
+        "? api_key\r\n: |\r\n  SIG02_YAML_EXPLICIT_WIRE_CANARY",
+    ),
+)
+def test_final_yaml_forms_are_rejected_by_note_wire_and_canonical_paths(
+    raw: str,
+) -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    object.__setattr__(note, "thesis", raw)
+    object.__setattr__(note, "note_id", contracts.derive_research_note_id(note))
+    payload = note.model_dump(mode="python")
+
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+    with pytest.raises(contracts.ResearchNoteSerializationError):
+        note.canonical_bytes()
+
+
+@pytest.mark.parametrize("field", ("thesis", "risks"))
+def test_credential_shaped_source_field_descriptors_fail_direct_wire_and_canonical(
+    field: str,
+) -> None:
+    contracts, _, _ = _load_sig02()
+    unsafe = "sk-proj-SIG02SOURCEFIELD"
+    fields_payload = {"thesis": "market_report", "risks": "news_report"}
+    fields_payload[field] = unsafe
+
+    with pytest.raises(ValidationError):
+        contracts.ResearchSourceFields.model_validate(fields_payload)
+
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    object.__setattr__(note.source_fields, field, unsafe)
+    object.__setattr__(note, "note_id", contracts.derive_research_note_id(note))
+    payload = note.model_dump(mode="python")
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+    with pytest.raises(contracts.ResearchNoteSerializationError):
+        note.canonical_bytes()
+
+
+@pytest.mark.parametrize("field", ("thesis", "risks"))
+def test_credential_shaped_source_field_descriptors_fail_builder_typed_path(
+    field: str,
+) -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    fields = {"thesis": "market_report", "risks": "news_report"}
+    fields[field] = "sk-proj-SIG02SOURCEFIELD"
+
+    with pytest.raises(notes.ResearchNoteInputError, match="source_fields are invalid"):
+        _note(
+            bundle,
+            context,
+            response,
+            source_fields=fields,
+            claim_citations={
+                "thesis": (
+                    _reference(contracts, bundle, "actions", "action-acme-dividend"),
+                ),
+                "risks": (
+                    _reference(contracts, bundle, "events", "news-aapl-earnings"),
+                ),
+            },
+        )
