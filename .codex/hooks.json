@@ -1,5 +1,5 @@
 {
-  "description": "myTradingAlpha lightweight harness guards and advisory lifecycle telemetry.",
+  "description": "myTradingAlpha lightweight harness guards, destructive-command deny guard, and advisory lifecycle telemetry.",
   "hooks": {
     "SessionStart": [
       {
@@ -11,6 +11,21 @@
             "timeout": 15,
             "async": false,
             "statusMessage": "Checking myTradingAlpha Codex harness"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex_pretool_guard.py\"",
+            "commandWindows": "python -c \"import pathlib,runpy,subprocess; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()); runpy.run_path(str(r/'scripts'/'codex_pretool_guard.py'), run_name='__main__')\"",
+            "timeout": 5,
+            "async": false,
+            "statusMessage": "Checking destructive Bash command guard"
           }
         ]
       }
