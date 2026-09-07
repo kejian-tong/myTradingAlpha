@@ -44,6 +44,10 @@ Use hybrid concurrency rather than concurrent production writers:
 - collect durable results and close completed subagent threads before spawning replacements when no
   follow-up is expected.
 
+The master/root thread is the only orchestration role allowed to spawn subagents. Every project-scoped
+non-master role must load `[agents] enabled = false`; if a child role exposes multi-agent tools despite
+that configuration, treat its runtime loading evidence as conflicting and stop before relying on it.
+
 The controlling reviewer required by AGENT_AUDIT_PROTOCOL.md remains mandatory. Specialist lanes are
 additional evidence and never self-approve merge. Any unresolved BLOCKER/HIGH from any review lane
 blocks the master merge gate. A controlling reviewer verdict of APPROVE means the PR is eligible for
