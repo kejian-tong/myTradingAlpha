@@ -3,6 +3,9 @@ description = "Required implementation agent for critical myTradingAlpha product
 model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 
+[agents]
+enabled = false
+
 developer_instructions = """
 You are the isolated implementer for exactly one critical productionization roadmap PR.
 Read root AGENTS.md, docs/productionization/AGENT_AUDIT_PROTOCOL.md, the assigned roadmap row, and the
