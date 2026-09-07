@@ -23,6 +23,7 @@ As of 2026-09-07, the current ChatGPT Work/Codex token-based credit rate card li
 | GPT-5.6 Luna | 5 | 0.5 | 30 |
 | GPT-5.6 Terra | 50 | 5 | 300 |
 | GPT-5.6 Sol | 100 | 10 | 500 |
+| GPT-6 Astra | 250 | 25 | 1,250 |
 
 Source: https://help.openai.com/en/articles/11481834
 
@@ -33,8 +34,13 @@ The corresponding current Enterprise token-based USD rates are:
 | GPT-5.6 Luna | 0.20 | 0.02 | 1.20 |
 | GPT-5.6 Terra | 2.00 | 0.20 | 12.00 |
 | GPT-5.6 Sol | 4.00 | 0.40 | 20.00 |
+| GPT-6 Astra | 10.00 | 1.00 | 50.00 |
 
 Source: https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing
+
+At the current token rate, Astra costs 2.5x Sol for the same input/cached/output token mix. That is only
+a token-rate prior: Astra may use fewer tokens or finish a task in fewer attempts, so compare measured
+end-to-end task cost rather than multiplying a per-token ratio into an assumed conclusion.
 
 Rate cards are mutable external facts. Re-verify the official sources before a future policy change and
 update the benchmark constants only through a reviewed harness PR. Do not mix older launch/API list
@@ -48,6 +54,18 @@ remains strongest. Treat those public evaluations only as priors when selecting 
 they do not prove performance on myTradingAlpha's PIT, accounting, replay, OMS, or safety contracts.
 
 Source: https://openai.com/index/gpt-5-6/
+
+OpenAI describes GPT-6 Astra as its most capable model for the hardest end-to-end work, including complex
+reasoning and coding, and documents `gpt-6-astra` with reasoning efforts through `xhigh` and `max`. The
+current Work/Codex rate card also notes that Astra requires Codex CLI 0.153.0 or newer and that rollout
+availability can vary. These are capability/availability priors only; they do not promote Astra in this
+repository.
+
+Sources:
+
+- https://developers.openai.com/api/docs/models/gpt-6-astra
+- https://developers.openai.com/api/docs/guides/latest-model
+- https://help.openai.com/en/articles/11481834
 
 ## Three-stage decision rule
 
@@ -94,13 +112,44 @@ Initial replay/shadow candidates should include:
 | test/CI audit | Luna / max | Terra / medium, Terra / high |
 | normal bounded implementation | Luna / max | Terra / high, Sol / high |
 | elevated accounting/temporal review | Sol / high | Terra / high, Terra / xhigh, Sol / xhigh |
-| critical/adjudication review | Sol / xhigh | shadow alternatives only; no automatic downgrade |
-| master synthesis/merge gate | Sol / xhigh | shadow alternatives only; no automatic downgrade |
+| critical/adjudication review | Sol / xhigh | Astra / xhigh canary; no automatic promotion/downgrade |
+| hardest implementation/review synthesis | Sol / xhigh | Astra / xhigh canary; no active-PR authority |
+| master synthesis/merge-gate reasoning | Sol / xhigh | Astra / xhigh historical canary only |
 
 Keep prompts, repository state, acceptance matrix, and exact task evidence equivalent across compared
 runs. Prefer at least 10 representative tasks per ordinary task class before replacing a production
-baseline. A critical reviewer/master downgrade requires a separate reviewed policy change and must not
-be triggered automatically by a cost result.
+baseline. A critical reviewer/master route change requires a separate reviewed policy change and must
+not be triggered automatically by a cost result.
+
+## GPT-6 Astra canary protocol
+
+`astra_canary` is deliberately not a production route. It exists to compare Astra/xhigh against the
+current Sol/xhigh hardest/critical baseline without changing active work.
+
+A valid Astra A/B case must:
+
+1. be a closed historical task or immutable replay fixture, never an active candidate PR;
+2. freeze the same repository/base/head evidence, task scope, acceptance matrix, known findings and
+   validation evidence before either route is scored;
+3. use Sol/xhigh as the baseline and Astra/xhigh as the canary so the first comparison changes the model,
+   not both model and nominal effort;
+4. run in read-only contexts with no child delegation, MCP, commit, push, review approval, merge, broker,
+   credential, or paper/live authority;
+5. record acceptance/safety, known BLOCKER/HIGH recall, quality score, measured duration/retries and token
+   counts only when the runtime exposes them;
+6. mark unavailable, uncomparable or partially observed runs `insufficient_evidence` rather than filling
+   missing fields with estimates.
+
+Canary promotion is intentionally manual. Before proposing Astra for any production role, require a
+representative set of hardest/critical replay cases with zero acceptance/safety failures and zero known
+BLOCKER/HIGH misses, then compare quality, wall-clock, retries and observed credits against Sol/xhigh.
+Astra's public benchmarks or stronger average score alone are insufficient. Promotion requires a new
+reviewed harness PR that names the exact production role being changed; it never waives human paper/live
+gates.
+
+This harness PR establishes the canary role and evaluation contract only. It does not claim that a
+repo-specific Astra replay has run in this GitHub-only maintenance session, and therefore it does not
+promote Astra from canary to production.
 
 ## Current routing conclusion
 
@@ -113,6 +162,9 @@ Until repo-specific benchmark evidence accumulates, keep the current production 
   longer completion. Its roughly 10x Luna token-credit rate must buy measurable task-level improvement.
 - Sol remains the controlling independent review, boundary, difficult implementation, and master model
   where correctness risk dominates raw token price.
+- Astra/xhigh remains shadow-only until the canary protocol produces representative repo-specific evidence
+  strong enough to justify a separate promotion PR. Same-token usage currently costs 2.5x Sol, so any
+  promotion should demonstrate meaningful quality, latency, retry or total-task efficiency gains.
 
 This is a benchmark starting position, not a permanent model ranking. Promotion/demotion requires
 representative evidence plus a separate reviewed harness change.

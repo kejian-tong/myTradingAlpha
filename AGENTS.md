@@ -101,9 +101,12 @@ Named specialist roles:
 
 - `code_explorer` — read-only code/current-state exploration;
 - `test_auditor` — read-only TDD/test/CI audit;
-- `boundary_reviewer` — read-only architecture/security/scope boundary review.
+- `boundary_reviewer` — read-only architecture/security/scope boundary review;
+- `external_spec_researcher` — on-demand read-only authoritative mutable external specification research.
 
 Specialists add evidence; they never replace the controlling independent reviewer or self-authorize merge.
+The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
+immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
 
 ## 6. Adaptive model routing
 
@@ -124,8 +127,10 @@ Default named roles:
 | `code_explorer` | GPT-5.6 Luna / max |
 | `test_auditor` | GPT-5.6 Luna / max |
 | `boundary_reviewer` | GPT-5.6 Sol / high |
+| `external_spec_researcher` | GPT-5.6 Luna / max, read-only |
+| `astra_canary` | GPT-6 Astra / xhigh, shadow-only read-only |
 
-Complexity and routes:
+Complexity and production routes:
 
 - `normal`: `normal_implementer` + `reviewer_high`;
 - `high` initial: `normal_implementer` + `reviewer_high`;
@@ -144,7 +149,10 @@ Stop the prior role before replacement and record the evidence-based reason. Do 
 a serious correctness finding.
 
 GPT-6 production routes remain disabled unless a later reviewed harness change explicitly activates one.
-Experimental/canary evaluation is not authorization to change default routing.
+The `astra_canary` does not activate GPT-6 for production: it may only replay frozen historical hardest/
+critical tasks under the same acceptance and safety matrix as the Sol/xhigh baseline. Public model evals
+are priors, not myTradingAlpha evidence. Canary promotion requires representative repo-specific evidence
+and a separate reviewed harness PR; unavailable or incomparable canary runs remain `insufficient_evidence`.
 
 ## 7. Runtime evidence and fresh contexts
 
@@ -153,7 +161,9 @@ requested route, configured route, successfully loaded named-role configured act
 runtime telemetry. Conflicting telemetry must be resolved before claiming a route.
 
 If a required named role cannot be loaded, record `insufficient_evidence` and stop the affected merge gate.
-Do not silently substitute a generic worker or different model and claim the intended route.
+Do not silently substitute a generic worker or different model and claim the intended route. An unavailable
+optional `astra_canary` blocks only that canary comparison; it never weakens or replaces the active Sol
+production route.
 
 Routing/config/hook changes apply prospectively after merge, refreshed checkout, and fresh session/agent
 loading. Running agents retain their historical routes. Do not relabel prior evidence.
