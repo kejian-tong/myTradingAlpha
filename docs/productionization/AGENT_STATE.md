@@ -7,7 +7,7 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b`
+- `last_reconciled_main_sha`: `36e70b6d5221116e8c15f3593098d05e3a8d1a48`
 - `roadmap_status`: `sig_02_candidate_pending_final_exact_head_review`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (informational only; requires fresh user authorization after this task stops)
@@ -49,12 +49,13 @@ non-master role without changing model IDs or efforts. The Master integrated it 
 repair. Only the Master delegated during this task; fresh final reviewers must load the updated role
 configuration and must not delegate.
 
-Disjoint harness-only PRs #48 through #53 then merged through
-`3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b` (tree
-`c29b007248986b144479797c9e71fc4837e4a300`). They added project hooks, scoped instructions and
+Disjoint harness-only PRs #48 through #54 then merged through
+`36e70b6d5221116e8c15f3593098d05e3a8d1a48` (tree
+`8a8690a73bf8a4e8fdedbb79f7b62059d90eb4a7`). They added project hooks, scoped instructions and
 repo workflow skills, isolated exact-head review worktrees, advisory harness telemetry, routing benchmark
-tooling and a shadow-only Astra canary without changing SIG-02 production contracts or the active
-Luna/Sol production routing ladder. The Master integrated that exact main before final validation. The
+tooling, a shadow-only Astra canary and a required static harness CI gate without changing SIG-02
+production contracts or the active Luna/Sol production routing ladder. The Master integrated that exact
+main before final validation. The
 user explicitly approved a SIG-02-only runtime alternative in PR #45
 comment `5572425609`: named roles may expose collaboration controls but must not invoke them; the Master
 remains the sole orchestrator. The exception changes no config or route and expires after SIG-02.
@@ -62,13 +63,13 @@ remains the sole orchestrator. The exception changes no config or route and expi
 SIG-02 — Evidence tools and ResearchNote
 
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- final integrated base main: `3b0555f162ca8dfbc2b25ebc27ea0a2a97c71f2b`
+- final integrated base main: `36e70b6d5221116e8c15f3593098d05e3a8d1a48`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
   `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
   (tree `ade6eb617dc74ef64f228d970f710b445af02705`); final latest-main integration commit
-  `7e8a6dff31fd9c8b2fad719f64068b75dfb87e52` (tree
-  `1ae1fd0eee6e737c4bae647e13edb94e27928995`); the final state-bearing head is
+  `5e6c64c2f6a12203614b95211996b5ce605ca882` (tree
+  `a6e6486294e6b95c8df9f670c4525331362f2e51`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -150,7 +151,7 @@ SIG-02 — Evidence tools and ResearchNote
 - explicit-key work-bound RED: `cf7218da99d6c29f1c3188185a51f22545e9adf5`, expected
   `1 failed / 129 passed`; repair GREEN: `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
 - local tests: PASS after final repair/latest-main integration; focused SIG-02 `130 passed`, data/research
-  regressions `1120 passed`, full suite `2403 passed / 3 skipped / 18 warnings / 69 subtests`
+  regressions `1120 passed`, full suite `2405 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
@@ -237,7 +238,10 @@ SIG-02 — Evidence tools and ResearchNote
   findings, but controlling review found a HIGH unbounded prefix-scan path for repeated rejected colons;
   durable artifact: PR #45 comment `5573628363`. The explicit-key work-bound RED/GREEN replaces that
   path with single-pass line-state tracking and closes the reproduced complexity defect locally. Fresh
-  exact-head CI and isolated xhigh review are pending.
+  exact-head review at `51e6c1ff57ba900874016ba8a974aac0d09aa8b4` then returned controlling
+  APPROVE with boundary follow-up APPROVE and no findings; durable artifact: PR #45 comment `5573838805`.
+  Harness-only PR #54 merged immediately afterward, so that approval/check evidence became stale when the
+  Master integrated current main. Fresh exact-head CI and isolated xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: STOP after SIG-02 exact-head review, CI, Master gate, protected merge and post-merge checks;
   SIG-03 requires a fresh separately authorized task
