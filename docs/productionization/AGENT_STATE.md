@@ -7,14 +7,14 @@ contracts before any newly authorized roadmap work.
 ## State schema
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`
-- `roadmap_status`: `sig_01_merged_stopped`
-- `current_pr_id`: none (no active roadmap implementation)
-- `next_pr_id`: `SIG-02` (informational; requires fresh authorization and reconciled gates)
+- `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `current_pr_id`: `SIG-02` / PR #45
+- `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: disabled for roadmap execution
+- `autonomy_mode`: enabled only for SIG-02 through SIG-05 by the current user request
 - `last_completed_roadmap_pr`: `SIG-01`
-- `stop_after_pr_id`: `SIG-01` (satisfied; do not auto-start SIG-02)
+- `stop_after_pr_id`: `SIG-05`
 - `default_master_route`: `GPT-5.6 Sol / xhigh`
 - `default_normal_implementer_route`: `GPT-5.6 Luna / max`
 - `default_high_implementer_route`: `GPT-5.6 Luna / max`
@@ -25,6 +25,104 @@ contracts before any newly authorized roadmap work.
 - `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
 - `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
 - `active_gpt6_routes`: `none (temporarily disabled in the project harness)`
+
+## Active Evidence and Signal execution
+
+The current user explicitly authorized one-at-a-time autonomous completion of SIG-02 through SIG-05
+and set `stop_after_pr_id: SIG-05`. This authorization does not extend to BT-01 or any later slice,
+deployment, real inference/provider calls, broker/PAPER/live activity, or promotion. The Master
+independently fetched GitHub at session start and verified PR #44 merged as
+`24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4` (tree
+`0027a01129d48b6deffb202559b868980c9e2d8c`), with main-push CI `34056396662` and
+CodeQL `34056396669` successful and no open PR.
+
+SIG-02 — Evidence tools and ResearchNote
+
+- base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
+- PR: #45
+- final repaired implementation head before Master bookkeeping:
+  `5b185ececb96308b41df43bc8e0e2d8d1d3b53cc`
+  (tree `ff82cc0301b88790efd0d6c02743d8a7844e3b46`); the final state-bearing head is
+  authoritative in the PR ref/conversation because a commit cannot embed its own SHA
+- merge: pending
+- complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
+  artifact correctness; no writer escalation applied; review-only escalation applied
+- route: `luna_sol_xhigh` after review-only escalation; implementation remains the loaded
+  `normal_implementer` Luna/max, while controlling review advances from `reviewer_high` to
+  `reviewer_xhigh` because two high-review rounds found successive subtle hostile-object/provenance
+  correctness defects
+- implementer: successfully loaded named `normal_implementer`,
+  `.codex/agents/normal-implementer.toml`, configured actual `gpt-5.6-luna / max`; no separate backend
+  telemetry claim
+- reviewer: prior controlling rounds successfully loaded named `reviewer_high`,
+  `.codex/agents/reviewer-high.toml`, configured actual `gpt-5.6-sol / high`, and returned REQUEST
+  CHANGES; review-only escalation successfully loaded named `reviewer_xhigh`,
+  `.codex/agents/reviewer-xhigh.toml`, configured actual `gpt-5.6-sol / xhigh`, and returned REQUEST
+  CHANGES; no separate backend telemetry claim
+- master: configured/requested `gpt-5.6-sol / xhigh`; no separate backend telemetry claim
+- JIT: PR #45 body
+- RED: `8bca32021f03ecb1e9b34830277b8a6d2febdef6`, expected `12 failed, 55 passed`
+- GREEN: `28d09cf4bf92d030c3c649ebdc28a3be091ebe2d`
+- Master repair RED: `e649f5b377a79178f7035c9059ca48cf3b06fc26`, expected
+  `4 failed, 67 passed`
+- repair GREEN: `b162ecb8c8924470a7774a0381548f7e0e020ea1`
+- adversarial repair RED: `5f65b60413d9887bcf1156e632519b717d36b125`, expected
+  `11 failed / 70 passed`; repair GREEN: `344256df4945655c30bdbd665f58ea64298a9678`
+- redaction repair RED: `cf1f0fcd700ec96a8c33a8003744532e144f3b1d`, expected
+  `3 failed / 81 passed`; repair GREEN: `073362ec4758e62ab299e755205e521dbc92542f`
+- safe-storage/provenance repair RED: `fa2f265b5abda14fd27132c492b697bbab632450`, expected
+  `6 failed / 84 passed`; repair GREEN: `51384c1c473ff1bd80be299aea74f9a48fdf2bbe`
+- UTC/canonicalization repair RED: `9b56ccf65a58ca9a594ef26c9e0aeb6e854e9031`, expected
+  `10 failed / 90 passed`; repair GREEN: `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
+- artifact-redaction repair RED: `d2931a5e2af8ab9f7f91845761c19f98779e1ff5`, expected
+  `3 failed / 100 passed`; repair GREEN: `404c907982cfc2ff6e1fd12fdbb6f5a7cde22084`
+- shared artifact-policy repair RED: `47b179da1599926d5eef7ceba85db6747b491afd`, expected
+  `5 failed / 103 passed`; repair GREEN: `95ba4e8b2607a6f53c9fa61764ec234c7624940b`
+- exact source-agent repair RED: `8b1caaaefcfe013df2710af59d81e059b36f4da7`, expected
+  `1 failed / 108 passed`; repair GREEN: `a36cbabe2d4996b1561688201abfe825119319c1`
+- source-agent adapter repair RED: `00cfea41713cba66fdce20f496f4cbe1f6524921`, expected
+  `1 failed / 108 passed`; repair GREEN: `f362b1f7f17d9fae4b86764dc8a6371c76227341`
+- escaped-key/wire-time repair RED: `9d34838507e637fdb41ee769ef5df1e680a8b655`, expected
+  `4 failed / 5 passed / 54 deselected`; repair GREEN:
+  `5b185ececb96308b41df43bc8e0e2d8d1d3b53cc`
+- local tests: PASS after final repair; focused `118 passed`, required regressions `838 passed`, full
+  suite `2313 passed / 3 skipped / 18 warnings / 69 subtests`
+- local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
+  diff check and clean installed-package/public-submodule smoke PASS
+- CI: latest xhigh-review candidate `92d226d11fdc81a760bc6b09302cf84f4f7f1278` passed CI
+  `34073904309`, CodeQL `34073904280` and Dependency Review `34073904298`; fresh exact-head checks
+  required after repair
+- review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
+  controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
+  instrument binding, provenance/render redaction and public-wire citation-integrity defects;
+  durable artifact: PR #45 comment `5562924431`; three focused repair RED/GREEN cycles now close the
+  reported surfaces locally; re-review at `82d3812d52818607131048866f1c7f1a513d7b11` again returned
+  `REQUEST CHANGES` for hostile nested-object execution during defensive serialization and missing
+  public-wire provenance chronology/checksum/cutoff invariants; durable artifact: PR #45 comment
+  `5563190972`; the focused safe-storage/provenance repair now closes those surfaces locally, but
+  fresh exact-head review is required. Standalone ResearchNote validation cannot prove a projected
+  citation manifest belongs to a sealed record without that bundle; `ResearchNoteBuilder` remains
+  the authoritative referential-integrity boundary and verifies it against the exact bundle. The
+  escalated xhigh review at `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` returned REQUEST CHANGES for
+  hostile timezone callbacks during bundle/context validation and unsafe canonicalization/hashing of
+  caller-corrupted ResearchNote instances; durable artifact: PR #45 comment `5563423339`; focused
+  repair RED/GREEN closed those surfaces. Fresh xhigh re-review at
+  `7dbfc166b91c059855997b14a53afc87d4668e0f` returned REQUEST CHANGES for incomplete artifact-level
+  source text/source-agent redaction plus a MEDIUM reference-error classification issue; durable
+  artifact: PR #45 comment `5563577502`; the focused artifact-redaction/typed-reference repair closed
+  the initial canaries. Fresh xhigh/boundary re-review at
+  `459c7514315c6ecdd4eb69cd9af2a73c2f81e4c9` again returned REQUEST CHANGES: escaped/multiword
+  artifact text, credential-shaped source-agent identifiers, hostile mapping keys and direct-wire
+  unredacted note text remain unsafe; controlling artifact `5563727608`, boundary addendum
+  `5563709052`. The shared artifact policy, closed source-agent role set and exact caller-key/type
+  repairs closed those surfaces. Fresh xhigh/boundary re-review at
+  `92d226d11fdc81a760bc6b09302cf84f4f7f1278` returned REQUEST CHANGES for arbitrary escape-depth and
+  prefixed sensitive-key redaction plus hostile-timezone direct-wire validation; durable artifact:
+  PR #45 comment `5563936753`. The suffix-aware arbitrary-escape artifact scanner, public wire-time
+  prevalidation and explicit historical/all-egress-false binding close those surfaces locally; fresh
+  exact-head CI and xhigh review are pending.
+- scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
+- next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
 ## Current maintenance checkpoint
 

@@ -9,11 +9,21 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from pydantic import BaseModel
 
+from mytradingalpha.contracts.redaction import redact_artifact_text
+
 _REDACTED = "[REDACTED]"
+_PLAIN_DATA_MAX_DEPTH = 64
+_PLAIN_DATA_SENSITIVE_FIELDS = frozenset(
+    {
+        "source_locator",
+        "terms",
+    }
+)
 _CORRELATION_FIELDS = (
     "correlation_id",
     "run_id",
@@ -101,6 +111,16 @@ _KEY_VALUE_PATTERN = re.compile(
     r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\];]+))",
     re.IGNORECASE,
 )
+_PLAIN_DATA_TEXT_FIELD_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.-])"
+    r"(?P<prefix>(?P<key_quote>[\"']?)(?P<key>source_locator|terms)"
+    r"(?P=key_quote)\s*[:=])"
+    r"(?!\s*[\"']?\[REDACTED\][\"']?)"
+    r"(?P<spacing>\s*)"
+    r"(?P<value>"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\[[^\]]*\]|[^\s,}\];]+))",
+    re.IGNORECASE,
+)
 _PRIVATE_KEY_PATTERN = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
     re.IGNORECASE | re.DOTALL,
@@ -130,6 +150,55 @@ def _redact_text(value: str) -> str:
     return _BEARER_PATTERN.sub(rf"\1{_REDACTED}", value)
 
 
+def redact_text(value: str) -> str:
+    """Return text redacted with the same rules used by structured logging."""
+
+    if type(value) is not str:
+        raise TypeError("redact_text requires an exact string")
+    return _redact_text(value)
+
+
+def redact_plain_data(value: Any) -> Any:
+    """Redact exact built-in JSON data before it is serialized to an artifact."""
+
+    def visit(item: Any, *, field_name: Any, seen: set[int], depth: int) -> Any:
+        if depth > _PLAIN_DATA_MAX_DEPTH:
+            raise ValueError("plain data exceeds maximum redaction depth")
+        item_type = type(item)
+        if item_type is str:
+            if field_name in _PLAIN_DATA_SENSITIVE_FIELDS or _is_sensitive_field(field_name):
+                return _REDACTED
+            return _redact_plain_text(item)
+        if item_type is float:
+            if not isfinite(item):
+                raise ValueError("plain data requires finite numbers")
+            return item
+        if item_type in (int, bool, type(None)):
+            return item
+        if item_type not in (dict, list, tuple):
+            raise TypeError("plain data redaction accepts exact built-in JSON values")
+        identity = id(item)
+        if identity in seen:
+            raise ValueError("plain data contains a cycle")
+        seen.add(identity)
+        try:
+            if item_type is dict:
+                result: dict[str, Any] = {}
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise TypeError("plain data object keys must be exact strings")
+                    result[key] = visit(child, field_name=key, seen=seen, depth=depth + 1)
+                return result
+            return [
+                visit(child, field_name=None, seen=seen, depth=depth + 1)
+                for child in item
+            ]
+        finally:
+            seen.remove(identity)
+
+    return visit(value, field_name=None, seen=set(), depth=0)
+
+
 def _replace_sensitive_value(match: re.Match[str]) -> str:
     if not _is_sensitive_field(match.group("key")):
         return match.group(0)
@@ -140,6 +209,20 @@ def _replace_sensitive_value(match: re.Match[str]) -> str:
             f"{raw_value[0]}{_REDACTED}{raw_value[0]}"
         )
     return f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
+
+
+def _replace_plain_field_value(match: re.Match[str]) -> str:
+    raw_value = match.group("value")
+    if raw_value[0] in {'"', "'"}:
+        return (
+            f"{match.group('prefix')}{match.group('spacing')}"
+            f"{raw_value[0]}{_REDACTED}{raw_value[0]}"
+        )
+    return f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
+
+
+def _redact_plain_text(value: str) -> str:
+    return redact_artifact_text(value)
 
 
 def _redact_value(
@@ -243,4 +326,10 @@ def configure_logging(*, logger: logging.Logger, stream: Any) -> logging.Logger:
     return logger
 
 
-__all__ = ["RedactionFilter", "configure_logging", "correlation_scope"]
+__all__ = [
+    "RedactionFilter",
+    "configure_logging",
+    "correlation_scope",
+    "redact_plain_data",
+    "redact_text",
+]
