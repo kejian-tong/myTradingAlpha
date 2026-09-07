@@ -105,7 +105,7 @@ def token_cost(record: dict, rates: dict[str, dict[str, float]]) -> float | None
 
 
 def _aggregate(rows: list[dict]) -> dict:
-    """Aggregate every attempt so failed runs cannot disappear from route economics."""
+    """Aggregate every end-to-end task run so failures cannot disappear from route economics."""
     run_count = len(rows)
     eligible_count = sum(eligible(row) for row in rows)
     acceptance_count = sum(row["acceptance_pass"] is True for row in rows)
@@ -251,7 +251,11 @@ def _rate_card_freshness(evaluation_date: date | None) -> dict:
 
 def _comparison_status(routes: list[dict], pairing: dict, freshness: dict) -> str:
     if not freshness["fresh"]:
-        return f"{freshness['status']}_rate_card"
+        return {
+            "unchecked": "unchecked_rate_card",
+            "stale": "stale_rate_card",
+            "evaluation_precedes_rate_card": "evaluation_precedes_rate_card",
+        }[freshness["status"]]
     if not pairing["pairing_complete"]:
         return "incomplete_pairing"
     if not pairing["minimum_pairing_met"]:
