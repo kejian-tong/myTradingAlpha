@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -76,7 +76,10 @@ SIG-02 — Evidence tools and ResearchNote
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
   instrument binding, provenance/render redaction and public-wire citation-integrity defects;
   durable artifact: PR #45 comment `5562924431`; three focused repair RED/GREEN cycles now close the
-  reported surfaces locally, but fresh exact-head review remains required
+  reported surfaces locally; re-review at `82d3812d52818607131048866f1c7f1a513d7b11` again returned
+  `REQUEST CHANGES` for hostile nested-object execution during defensive serialization and missing
+  public-wire provenance chronology/checksum/cutoff invariants; durable artifact: PR #45 comment
+  `5563190972`; another focused repair RED/GREEN and fresh exact-head review are required
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
