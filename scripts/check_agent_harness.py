@@ -53,6 +53,7 @@ _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers"}
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
+_PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
 
@@ -86,15 +87,18 @@ def _hook_errors(root: Path) -> list[str]:
     hook_path = root / ".codex/hooks.json"
     guard_path = root / "scripts/codex_hook_guard.py"
     telemetry_path = root / "scripts/codex_telemetry_hook.py"
+    pretool_path = root / "scripts/codex_pretool_guard.py"
     if not guard_path.is_file():
         errors.append("missing lightweight Codex hook guard")
     if not telemetry_path.is_file():
         errors.append("missing Codex lifecycle telemetry hook")
+    if not pretool_path.is_file():
+        errors.append("missing Codex PreToolUse destructive-command guard")
     hooks = json.loads(hook_path.read_text(encoding="utf-8"))
     event_map = hooks.get("hooks") if isinstance(hooks, dict) else None
-    expected_events = set(_GUARD_HOOKS) | _TELEMETRY_HOOKS
+    expected_events = set(_GUARD_HOOKS) | _TELEMETRY_HOOKS | {_PRETOOL_HOOK}
     if not isinstance(event_map, dict) or set(event_map) != expected_events:
-        return [*errors, "project hooks differ from reviewed v2 event set"]
+        return [*errors, "project hooks differ from reviewed v3 event set"]
 
     for event, mode in _GUARD_HOOKS.items():
         found = _single_hook_handler(event_map, event, errors)
@@ -115,6 +119,22 @@ def _hook_errors(root: Path) -> list[str]:
             or mode not in command_windows
         ):
             errors.append(f"{event} Windows hook command differs from reviewed policy")
+
+    pretool = _single_hook_handler(event_map, _PRETOOL_HOOK, errors)
+    if pretool is not None:
+        entry, handler = pretool
+        command = handler.get("command")
+        command_windows = handler.get("commandWindows")
+        if entry.get("matcher") != "Bash":
+            errors.append("PreToolUse matcher must remain the reviewed Bash-only guard")
+        if handler.get("type") != "command" or handler.get("async") is not False:
+            errors.append("PreToolUse destructive-command guard must be synchronous")
+        if handler.get("timeout") != 5:
+            errors.append("PreToolUse destructive-command guard timeout differs from reviewed policy")
+        if not isinstance(command, str) or "codex_pretool_guard.py" not in command:
+            errors.append("PreToolUse Unix command differs from reviewed policy")
+        if not isinstance(command_windows, str) or "codex_pretool_guard.py" not in command_windows:
+            errors.append("PreToolUse Windows command differs from reviewed policy")
 
     for event in _TELEMETRY_HOOKS:
         found = _single_hook_handler(event_map, event, errors)
