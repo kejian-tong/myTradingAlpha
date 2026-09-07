@@ -54,6 +54,7 @@ _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
+_WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
 
 
 def _toml(path: Path) -> dict:
@@ -143,6 +144,25 @@ def _hook_errors(root: Path) -> list[str]:
     return errors
 
 
+def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
+    """Reject project-local adoption of deliberately watched Codex capabilities."""
+    errors = []
+    if (root / ".codex/rules").exists():
+        errors.append("project-local Codex Rules require a separate reviewed adoption PR")
+    if "default_permissions" in config or "permissions" in config:
+        errors.append("Codex Permission Profiles are watch-only while sandbox_mode isolation is active")
+    features = config.get("features")
+    if isinstance(features, dict) and features.get("memories") not in (None, False):
+        errors.append("Codex Memories are watch-only for this auditable repository harness")
+    if "memories" in config:
+        errors.append("Codex Memories configuration is watch-only for this repository")
+    if "otel" in config:
+        errors.append("Codex OpenTelemetry exporters require a separate reviewed adoption PR")
+    if "plugins" in config:
+        errors.append("repo-level Codex plugin configuration requires a separate reviewed adoption PR")
+    return errors
+
+
 def _instruction_and_skill_errors(root: Path) -> list[str]:
     errors = []
     root_agents = root / "AGENTS.md"
@@ -170,6 +190,14 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
             errors.append(f"root AGENTS.md does not advertise repo skill: {name}")
     if "`astra_canary`" not in root_text or "GPT-6 production routes remain disabled" not in root_text:
         errors.append("root Astra canary policy is missing or activates GPT-6 production routing")
+    watchlist = root / _WATCHLIST_PATH
+    if not watchlist.is_file():
+        errors.append("missing Codex feature adoption watchlist")
+    else:
+        text = watchlist.read_text(encoding="utf-8")
+        for term in ("Codex Rules", "Permission Profiles", "Codex Memories", "OpenTelemetry", "plugin"):
+            if term not in text:
+                errors.append(f"Codex feature watchlist is missing decision: {term}")
     return errors
 
 
@@ -181,6 +209,7 @@ def configuration_errors(root: Path) -> list[str]:
             errors.append("Master route differs from reviewed policy")
         if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 6}:
             errors.append("agent enablement/concurrency differs from reviewed policy")
+        errors.extend(_watch_only_feature_errors(root, config))
         actual_paths = {path.name for path in (root / ".codex/agents").glob("*.toml")}
         expected_paths = {name.replace("_", "-") + ".toml" for name in _ROLES}
         if actual_paths != expected_paths:
