@@ -4,6 +4,9 @@ model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 
+[agents]
+enabled = false
+
 developer_instructions = """
 You are the independent xhigh reviewer for exactly one critical or escalated productionization roadmap
 PR. You are not the implementer. Read root AGENTS.md, docs/productionization/AGENT_AUDIT_PROTOCOL.md,
