@@ -14,6 +14,10 @@ _PRIVATE_KEY_PATTERN = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
     re.IGNORECASE | re.DOTALL,
 )
+_PRIVATE_KEY_HEADER_PATTERN = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+    re.IGNORECASE,
+)
 _BEARER_PATTERN = re.compile(
     r"(\bBearer\s+)(?!\[REDACTED\])[^\s,}\]]+",
     re.IGNORECASE,
@@ -369,10 +373,58 @@ def _quoted_value_bounds(value: str, start: int) -> tuple[int, str, str] | None:
     return len(value), value[start : content_start], ""
 
 
-def _value_end(value: str, start: int) -> tuple[int, str, str]:
+def _line_bounds(value: str, start: int) -> tuple[int, int]:
+    carriage_return = value.find("\r", start)
+    line_feed = value.find("\n", start)
+    candidates = tuple(index for index in (carriage_return, line_feed) if index >= 0)
+    if not candidates:
+        return len(value), len(value)
+    end = min(candidates)
+    next_start = end + 1
+    if value[end : end + 2] == "\r\n":
+        next_start += 1
+    return end, next_start
+
+
+def _yaml_block_scalar_marker(value: str) -> bool:
+    marker = value.split("#", 1)[0].strip()
+    if not marker or marker[0] not in "|>":
+        return False
+    modifiers = marker[1:]
+    return (
+        len(modifiers) <= 2
+        and all(character in "+-123456789" for character in modifiers)
+        and sum(character in "+-" for character in modifiers) <= 1
+        and sum(character.isdigit() for character in modifiers) <= 1
+    )
+
+
+def _yaml_block_scalar_end(value: str, start: int, assignment_start: int) -> int | None:
+    marker_end, cursor = _line_bounds(value, start)
+    if not _yaml_block_scalar_marker(value[start:marker_end]):
+        return None
+    line_start = max(value.rfind("\n", 0, assignment_start), value.rfind("\r", 0, assignment_start)) + 1
+    indentation = assignment_start - line_start
+    block_end = marker_end
+    while cursor < len(value):
+        line_end, next_start = _line_bounds(value, cursor)
+        line = value[cursor:line_end]
+        if line.strip():
+            leading = len(line) - len(line.lstrip(" \t"))
+            if leading <= indentation:
+                break
+        block_end = line_end
+        cursor = next_start
+    return block_end
+
+
+def _value_end(value: str, start: int, assignment_start: int) -> tuple[int, str, str]:
     quoted = _quoted_value_bounds(value, start)
     if quoted is not None:
         return quoted
+    block_scalar_end = _yaml_block_scalar_end(value, start, assignment_start)
+    if block_scalar_end is not None:
+        return block_scalar_end, "", ""
     if value[start : start + 1] in "[{":
         spans = _json_fragment_spans(value[start:])
         if spans and spans[0][0] == 0:
@@ -462,7 +514,7 @@ def _redact_assignments(value: str) -> str:
         if not _is_sensitive_key(candidate):
             index += 1
             continue
-        end, quote_prefix, quote_suffix = _value_end(value, value_start)
+        end, quote_prefix, quote_suffix = _value_end(value, value_start, start)
         output.append(value[cursor:start])
         prefix = value[start:value_start]
         if quote_prefix:
@@ -478,6 +530,8 @@ def _redact_assignments(value: str) -> str:
 def _redact_analysis_text(value: str) -> str:
     redacted = _redact_structural_json(value)
     redacted = _PRIVATE_KEY_PATTERN.sub(_REDACTED, redacted)
+    if _PRIVATE_KEY_HEADER_PATTERN.search(redacted):
+        return _REDACTED
     for _ in range(3):
         updated = _redact_assignments(redacted)
         updated = _BEARER_PATTERN.sub(rf"\1{_REDACTED}", updated)
