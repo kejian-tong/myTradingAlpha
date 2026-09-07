@@ -1,462 +1,139 @@
 # Productionization Agent State
 
-This is operational recovery state, not architecture or reusable authorization. GitHub/current main
-is authoritative. Read [AGENTS.md](../../AGENTS.md), the audit/hybrid protocols and applicable phase
-contracts before any newly authorized roadmap work.
+This is the compact operational recovery snapshot. GitHub and current `main` are authoritative.
+Approved architecture remains in the productionization roadmap and phase documents. Historical detail
+removed from this snapshot remains immutable in Git commits, workflow runs and PR conversations.
 
-## State schema
+## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `36e70b6d5221116e8c15f3593098d05e3a8d1a48`
+- `last_reconciled_main_sha`: `80fa2b9909bf38ad9718472242fa227bcc33ee25`
+- `last_reconciled_main_tree`: `c3ab106aa2f7108d1024778b37af7b90d6e20ded`
 - `roadmap_status`: `sig_02_candidate_pending_final_exact_head_review`
 - `current_pr_id`: `SIG-02` / PR #45
-- `next_pr_id`: `SIG-03` (informational only; requires fresh user authorization after this task stops)
 - `current_phase`: `02-evidence-agent-boundary`
-- `autonomy_mode`: enabled only for SIG-02 by the user's narrowed current objective
-- `last_completed_roadmap_pr`: `SIG-01`
+- `last_completed_roadmap_pr`: `SIG-01` / PR #24 / merge
+  `a614b8a27c6a822477235304f4749dc9c8163165`
+- `next_pr_id`: `SIG-03` (informational only; not authorized by this task)
 - `stop_after_pr_id`: `SIG-02`
-- `default_master_route`: `GPT-5.6 Sol / xhigh`
-- `default_normal_implementer_route`: `GPT-5.6 Luna / max`
-- `default_high_implementer_route`: `GPT-5.6 Sol / high`
-- `default_critical_implementer_route`: `GPT-5.6 Sol / xhigh`
-- `default_reviewer_route`: `GPT-5.6 Sol / high; reviewer_xhigh / Sol xhigh when escalated`
-- `high_implementation_only_route`: `high_implementer Sol/high + reviewer_high Sol/high` (`sol_high_sol_high`)
-- `high_review_only_route`: `normal_implementer Luna/max + reviewer_xhigh Sol/xhigh`
-- `difficult_escalation_route`: `high_implementer Sol/high + reviewer_xhigh Sol/xhigh`
-- `hardest_escalation_route`: `critical_implementer Sol/xhigh + fresh reviewer_xhigh Sol/xhigh`
-- `active_gpt6_routes`: `none for production; optional astra_canary is shadow-only and cannot work on an active PR`
+- `autonomy_mode`: authorized for SIG-02 implementation, repair, review, exact-head merge and
+  post-merge verification only
+- `active_writer`: none
+- `merge`: pending
 
-## Active Evidence and Signal execution
+The user explicitly prohibited SIG-03, SIG-04, SIG-05, BT-01 and all later work in this task. No model
+or provider inference, paid data, deployment, broker, PAPER/live, real order or promotion action is
+authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
 
-The user narrowed the active objective to autonomous completion of SIG-02 only and set
-`stop_after_pr_id: SIG-02`. This authorization does not extend to SIG-03, SIG-04, SIG-05, BT-01 or any later slice,
-deployment, real inference/provider calls, broker/PAPER/live activity, or promotion. The Master
-independently fetched GitHub at session start and verified PR #44 merged as
-`24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4` (tree
-`0027a01129d48b6deffb202559b868980c9e2d8c`), with main-push CI `34056396662` and
-CodeQL `34056396669` successful and no open PR.
+## Current main reconciliation
 
-While PR #45 was under exact-head review, disjoint harness-only PR #46 merged as
-`8ac5e654e4d39978faac8c60f26f09d9a1098541` (tree
-`7464755efe4878e91eba03d6a46e00749039bbd6`), changing only the concurrency cap in
-`.codex/config.toml`, `HYBRID_CONCURRENCY_PROTOCOL.md` and `check_agent_harness.py`. Named role/model
-routes are unchanged. The final SIG-02 candidate must integrate this main and rerun all exact-head
-gates; no product-scope conflict was found.
+The original recovery baseline was PR #44 at
+`24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`. GitHub was reconciled through harness-only PRs #46-#56.
+Current `main` is PR #56 at `80fa2b9909bf38ad9718472242fa227bcc33ee25`; its delta from the prior
+SIG-02 base adds only execution-harness policy, hooks, telemetry, review-worktree tooling, benchmark/
+canary configuration, required CI checks and state-compaction policy/tests. It does not change SIG-02
+production contracts or the active Luna/Sol production route.
 
-Harness-only PR #47 subsequently merged as `0882944a9f14c89d48b4f168faa1e9e36afd7605`
-(tree `358cc79c8595806799124cee62a5a332e4a4b17f`), disabling nested delegation in every
-non-master role without changing model IDs or efforts. The Master integrated it after the final SIG-02
-repair. Only the Master delegated during this task; fresh final reviewers must load the updated role
-configuration and must not delegate.
+PR #45 owns this state file. PR #56 deliberately did not compete for it and requires this owner-controlled
+compaction. This snapshot replaces the prior 37 KiB chronology with durable references and stays below
+the 12 KiB target in `AGENT_STATE_COMPACTION.md`.
 
-Disjoint harness-only PRs #48 through #54 then merged through
-`36e70b6d5221116e8c15f3593098d05e3a8d1a48` (tree
-`8a8690a73bf8a4e8fdedbb79f7b62059d90eb4a7`). They added project hooks, scoped instructions and
-repo workflow skills, isolated exact-head review worktrees, advisory harness telemetry, routing benchmark
-tooling, a shadow-only Astra canary and a required static harness CI gate without changing SIG-02
-production contracts or the active Luna/Sol production routing ladder. The Master integrated that exact
-main before final validation. The
-user explicitly approved a SIG-02-only runtime alternative in PR #45
-comment `5572425609`: named roles may expose collaboration controls but must not invoke them; the Master
-remains the sole orchestrator. The exception changes no config or route and expires after SIG-02.
+## SIG-02 candidate
 
-SIG-02 — Evidence tools and ResearchNote
+- original base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
+- final integrated base main: `80fa2b9909bf38ad9718472242fa227bcc33ee25`
+- latest product repair: `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
+  (tree `ade6eb617dc74ef64f228d970f710b445af02705`)
+- latest main-integration commit before this compaction:
+  `0baaf84641d1195fee01dd374b96d0ab4c0c00dc`
+  (tree `0ed7563d9de61260d022b33d790c54e819b46a86`)
+- final state-bearing head: authoritative in the PR ref/conversation because this commit cannot embed
+  its own SHA
+- PR: https://github.com/kejian-tong/myTradingAlpha/pull/45
+- JIT: PR body; final amendments/comments `5572425609`, `5572923666`, `5573381099`, `5573635143`
+- scope leak: none; the diff contains no Quant, overlay, envelope, backtest, portfolio, risk, OMS,
+  broker, PAPER or live implementation
 
-- base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- final integrated base main: `36e70b6d5221116e8c15f3593098d05e3a8d1a48`
-- PR: #45
-- final repaired implementation head before Master bookkeeping:
-  `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
-  (tree `ade6eb617dc74ef64f228d970f710b445af02705`); final latest-main integration commit
-  `5e6c64c2f6a12203614b95211996b5ce605ca882` (tree
-  `a6e6486294e6b95c8df9f670c4525331362f2e51`); the final state-bearing head is
-  authoritative in the PR ref/conversation because a commit cannot embed its own SHA
-- merge: pending
-- complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
-  artifact correctness; repeated confidentiality defects triggered implementation and review escalation
-- route: `sol_high_sol_xhigh` difficult escalation; the final repair used `high_implementer` Sol/high
-  and the controlling final review uses a fresh `reviewer_xhigh` Sol/xhigh
-- implementer: successfully loaded named `normal_implementer`,
-  `.codex/agents/normal-implementer.toml`, configured actual `gpt-5.6-luna / max`; no separate backend
-  telemetry claim. The final multiline-secret repair successfully loaded named `high_implementer`,
-  `.codex/agents/high-implementer.toml`, configured actual `gpt-5.6-sol / high`; it reported zero
-  collaboration-tool calls under the user-approved runtime alternative and no separate backend telemetry
-  claim. During the final repair, the first high-implementer attempt was terminated after no committed
-  progress but had left an uncommitted test draft; a fresh replacement writer started only after that
-  termination, preserved and corrected the draft, committed the test-only RED, and reported zero
-  collaboration-tool calls. No production writers overlapped.
-- reviewer: prior controlling rounds successfully loaded named `reviewer_high`,
-  `.codex/agents/reviewer-high.toml`, configured actual `gpt-5.6-sol / high`, and returned REQUEST
-  CHANGES; review-only escalation successfully loaded named `reviewer_xhigh`,
-  `.codex/agents/reviewer-xhigh.toml`, configured actual `gpt-5.6-sol / xhigh`, and returned REQUEST
-  CHANGES; no separate backend telemetry claim
-- master: configured/requested `gpt-5.6-sol / xhigh`; no separate backend telemetry claim
-- JIT: PR #45 body
-- RED: `8bca32021f03ecb1e9b34830277b8a6d2febdef6`, expected `12 failed, 55 passed`
-- GREEN: `28d09cf4bf92d030c3c649ebdc28a3be091ebe2d`
-- Master repair RED: `e649f5b377a79178f7035c9059ca48cf3b06fc26`, expected
-  `4 failed, 67 passed`
-- repair GREEN: `b162ecb8c8924470a7774a0381548f7e0e020ea1`
-- adversarial repair RED: `5f65b60413d9887bcf1156e632519b717d36b125`, expected
-  `11 failed / 70 passed`; repair GREEN: `344256df4945655c30bdbd665f58ea64298a9678`
-- redaction repair RED: `cf1f0fcd700ec96a8c33a8003744532e144f3b1d`, expected
-  `3 failed / 81 passed`; repair GREEN: `073362ec4758e62ab299e755205e521dbc92542f`
-- safe-storage/provenance repair RED: `fa2f265b5abda14fd27132c492b697bbab632450`, expected
-  `6 failed / 84 passed`; repair GREEN: `51384c1c473ff1bd80be299aea74f9a48fdf2bbe`
-- UTC/canonicalization repair RED: `9b56ccf65a58ca9a594ef26c9e0aeb6e854e9031`, expected
-  `10 failed / 90 passed`; repair GREEN: `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
-- artifact-redaction repair RED: `d2931a5e2af8ab9f7f91845761c19f98779e1ff5`, expected
-  `3 failed / 100 passed`; repair GREEN: `404c907982cfc2ff6e1fd12fdbb6f5a7cde22084`
-- shared artifact-policy repair RED: `47b179da1599926d5eef7ceba85db6747b491afd`, expected
-  `5 failed / 103 passed`; repair GREEN: `95ba4e8b2607a6f53c9fa61764ec234c7624940b`
-- exact source-agent repair RED: `8b1caaaefcfe013df2710af59d81e059b36f4da7`, expected
-  `1 failed / 108 passed`; repair GREEN: `a36cbabe2d4996b1561688201abfe825119319c1`
-- source-agent adapter repair RED: `00cfea41713cba66fdce20f496f4cbe1f6524921`, expected
-  `1 failed / 108 passed`; repair GREEN: `f362b1f7f17d9fae4b86764dc8a6371c76227341`
-- escaped-key/wire-time repair RED: `9d34838507e637fdb41ee769ef5df1e680a8b655`, expected
-  `4 failed / 5 passed / 54 deselected`; repair GREEN:
-  `5b185ececb96308b41df43bc8e0e2d8d1d3b53cc`
-- key-table repair RED: `3b71a757045b74fdf891dfb65f91fbfbb990d31e`, expected
-  `2 failed / 63 deselected`; repair GREEN: `5d9ca87ad2425371f8b1e3d34612b35b7a0f3efc`
-- public-wire/dependency repair RED: `7ae313a8cf33448ffdd933d3aeb5e1c0b7a1d0b0`, expected
-  `7 failed / 65 deselected`; repair GREEN: `95216a6bf5a88388fa76cb5187984eaf02649957`
-- single-component compact repair RED: `c8a88004cdfa45ea82435a75866d14e7b5bbb93d`, expected
-  focused leakage failure with controls preserved; repair GREEN:
-  `9a3a609d84b98c73e25820b6c5621e86c9d9d61f`
-- structural-redaction/alias-ownership repair RED: `8ba3631336313353d80090baf0307fd2cdbd5514`,
-  expected `3` focused failures; repair GREEN: `3142cfce0d9f9e9bbcecafca4b962f515d568a61`
-- structural fail-closed RED: `13cc4cf2a3b91260a2740836a967bdbdb4d54a72` plus test-only
-  assertion correction `bea0784b04044bc4a2a6fcfb366810b605ce47ba`; repair GREEN:
-  `aa14d0156de18f966477b7971b2fecd6ce46fa89`
-- Unicode/bounded-lexer RED: `2b5cc19f67e00fa3e75f2b891af4927125960db7` plus test-only
-  fixture correction `bc52db304515ecf341a68bdb3965f710e34fc8ce`; repair GREEN:
-  `585c15b2c7d98e9709a8fd1f37f52aaec682c3ea`
-- delimiter/one-pass structural RED: `0c466079dd945fb0ffe11d92c851ab4255a15ec8` plus test-only
-  corrections `c24bd58ed093f44f40c04068d64a7957c4039f3f` and
-  `9c66861783ff68654c4269d40cfb0d3dbd4ad0b8`; repair GREEN:
-  `141241cb70204869a071c1d54264389a220686fe`
-- encoded-delimiter budget RED: `68c98d97407a6b9742b902dcb2e625ffc14302a0`; repair GREEN:
-  `4ac515d4a92ffb5e9e70b4931f057636c50b6112`
-- strict UTF-8/surrogate RED: `a0b89fb88279c418842df58e98e03c5afeeaee0e`; repair GREEN:
-  `93d439238599087585cca97ed55329d80e952f15`
-- alternating-encoding RED: `ce6524615b9ae4c1f026838a0926f64b8f41bd99`; repair GREEN:
-  `7268f5353038b910fca118439deb9d4f1cbc8238`
-- multiline-secret container RED: `2330475f48b81087082cfec1801874c1b8231f39`, expected
-  `4 failed / 95 deselected`; repair GREEN: `bce1fd069c28a6aa8453a937ffc24023be07f3ff`;
-  linear-scan refactor: `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
-- final confidentiality RED: `d00d81b8ab473ebf33de3a28b291cb2df95c77be`, expected
-  `14 failed / 104 passed`; repair GREEN: `1d751c49795ff612487a6185c56ef2ac36012ca8`
-- final YAML/source-field RED: `62b8cf26f341faf6d26465bedf7e0a0df39394d9`, expected
-  `7 failed / 121 passed`; repair GREEN: `2f3561c045bef70c7babd2349045e2e01060cda3`
-- explicit-key work-bound RED: `cf7218da99d6c29f1c3188185a51f22545e9adf5`, expected
-  `1 failed / 129 passed`; repair GREEN: `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
-- local tests: PASS after final repair/latest-main integration; focused SIG-02 `130 passed`, data/research
-  regressions `1120 passed`, full suite `2405 passed / 3 skipped / 18 warnings / 69 subtests`
-- local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
-  diff check and clean installed-package/public-submodule smoke PASS
-- CI: pre-scope/current-main candidate `bffa4ba30df9e5593085d9affd2b7921baa13872` passed CI
-  `34089421094`, CodeQL `34089421071` and Dependency Review `34089421038`; fresh exact-head checks
-  required after the final confidentiality repair, current-main integration and this state commit
-- review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
-  controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
-  instrument binding, provenance/render redaction and public-wire citation-integrity defects;
-  durable artifact: PR #45 comment `5562924431`; three focused repair RED/GREEN cycles now close the
-  reported surfaces locally; re-review at `82d3812d52818607131048866f1c7f1a513d7b11` again returned
-  `REQUEST CHANGES` for hostile nested-object execution during defensive serialization and missing
-  public-wire provenance chronology/checksum/cutoff invariants; durable artifact: PR #45 comment
-  `5563190972`; the focused safe-storage/provenance repair now closes those surfaces locally, but
-  fresh exact-head review is required. Standalone ResearchNote validation cannot prove a projected
-  citation manifest belongs to a sealed record without that bundle; `ResearchNoteBuilder` remains
-  the authoritative referential-integrity boundary and verifies it against the exact bundle. The
-  escalated xhigh review at `380ff92a7ef0b939d3eec3a90cdb1ce8124fa299` returned REQUEST CHANGES for
-  hostile timezone callbacks during bundle/context validation and unsafe canonicalization/hashing of
-  caller-corrupted ResearchNote instances; durable artifact: PR #45 comment `5563423339`; focused
-  repair RED/GREEN closed those surfaces. Fresh xhigh re-review at
-  `7dbfc166b91c059855997b14a53afc87d4668e0f` returned REQUEST CHANGES for incomplete artifact-level
-  source text/source-agent redaction plus a MEDIUM reference-error classification issue; durable
-  artifact: PR #45 comment `5563577502`; the focused artifact-redaction/typed-reference repair closed
-  the initial canaries. Fresh xhigh/boundary re-review at
-  `459c7514315c6ecdd4eb69cd9af2a73c2f81e4c9` again returned REQUEST CHANGES: escaped/multiword
-  artifact text, credential-shaped source-agent identifiers, hostile mapping keys and direct-wire
-  unredacted note text remain unsafe; controlling artifact `5563727608`, boundary addendum
-  `5563709052`. The shared artifact policy, closed source-agent role set and exact caller-key/type
-  repairs closed those surfaces. Fresh xhigh/boundary re-review at
-  `92d226d11fdc81a760bc6b09302cf84f4f7f1278` returned REQUEST CHANGES for arbitrary escape-depth and
-  prefixed sensitive-key redaction plus hostile-timezone direct-wire validation; durable artifact:
-  PR #45 comment `5563936753`. The suffix-aware arbitrary-escape artifact scanner, public wire-time
-  prevalidation and explicit historical/all-egress-false binding close those surfaces locally; fresh
-  exact-head CI/xhigh review found one remaining artifact key-table HIGH: missing broker/account/id and
-  inconsistent compact access-token spelling; durable artifact: PR #45 comment `5564252940`. Focused
-  repair RED/GREEN mechanically aligns the complete path/compact-key policy and closes the reproduced
-  canaries locally. Fresh xhigh review at `4ed95b3fe7a2660b7b56e4ed683bbb03560409bf`
-  returned REQUEST CHANGES for prefixed compact-key suffixes, hostile public-wire string/key callbacks
-  and the research-to-ops redaction dependency; durable artifact: PR #45 comment `5564408011`.
-  The suffix-aware compact matcher, contracts-owned plain-data redaction and callback-free exact wire
-  storage/scalar validators close those surfaces locally; fresh exact-head CI and xhigh review are
-  pending. Fresh xhigh review at `6deb4e0e4b02d272d0fa4ea8c33459aa26335aab`
-  returned REQUEST CHANGES for compact aliases ending in one-component sensitive paths; durable
-  artifact: PR #45 comment `5564600922`. Focused repair RED/GREEN and fresh exact-head review are
-  required. The mechanically complete compact suffix set and dead-remnant cleanup close the reproduced
-  aliases locally. Fresh xhigh review at `73407de8b039bbef854232f1b4eda17a811bda63`
-  returned REQUEST CHANGES for leading non-letter key prefixes, structural nested key paths/JSON and
-  the contracts-to-data checksum dependency; durable artifact: PR #45 comment `5564746093`. Focused
-  repair RED/GREEN adds complete key lexing, ancestor/JSON structural redaction and contract-owned
-  checksum aliases with compatibility re-exports, closing the reproduced surfaces locally; fresh
-  exact-head CI/xhigh review found remaining structural confidentiality HIGHs for numeric/container
-  sensitive values, fragment-budget exhaustion, hierarchical key separators and Unicode-escaped keys;
-  durable artifact: PR #45 comment `5564938194`. Focused repair RED/GREEN and fresh exact-head review
-  are required. The path-first any-type redaction, explicit fragment-budget fail-closed behavior,
-  hierarchical phrase lexer and bounded Unicode key analysis closed those surfaces. Fresh xhigh
-  review at `0823bc63f6880bc0eac5b605723fb16b8f6217ef` returned REQUEST CHANGES for
-  malformed/compatibility-Unicode sensitive keys and quadratic hostile phrase scanning; durable
-  artifact: PR #45 comment `5565153320`. Focused repair RED/GREEN, PR #46 main integration and fresh
-  exact-head xhigh review were required. NFKC/malformed-Unicode fail-closed normalization and the
-  bounded single-pass assignment lexer closed those surfaces locally; disjoint PR #46 main is
-  integrated. Fresh xhigh review at `872bddaa7a08750e27f8552729bd47443be0e785`
-  returned REQUEST CHANGES for fullwidth/escaped delimiters, oversized compatibility-structural input
-  and quadratic unmatched-structure scanning; durable artifact: PR #45 comment `5565326762`. Focused
-  repair RED/GREEN adds whole-text delimiter normalization, unconditional oversized-structure closure
-  and a one-pass structural stack, closing the reproduced surfaces locally; fresh exact-head CI and
-  xhigh review found max-plus-one Unicode and URL-encoded assignment-delimiter HIGHs; durable artifact:
-  PR #45 comment `5565548420`. Bounded Unicode/percent decoding now closes max-plus-one and URL
-  delimiter surfaces locally. Fresh xhigh review at `1009d112defd5fbf6f244d8f6f8709e7d41e6f89`
-  returned REQUEST CHANGES for strict UTF-8/form percent decoding and surrogate handling; durable
-  artifact: PR #45 comment `5565702246`. Focused repair RED/GREEN and fresh exact-head review are
-  required. Strict UTF-8 form decoding, surrogate rejection and the combined fixed-point encoding
-  budget close those surfaces locally. The later exact-head boundary review found YAML block-scalar and
-  unmatched private-key confidentiality leaks; durable REQUEST CHANGES artifact: PR #45 comment
-  `5566390797`. The focused multiline-container RED/GREEN/refactor closes those reproduced leaks locally;
-  isolated xhigh/boundary review at `58098e86cc1a6f83963a1f8c7a7eaaee7707356c` found tagged/anchored
-  YAML, TOML triple-quoted and credential-shaped sealed-ID leaks; durable artifact: PR #45 comment
-  `5572900008`. The final confidentiality RED/GREEN closes those reproduced leaks locally and adds exact
-  provenance-hash, reordered-input determinism and non-empty social-domain coverage. Concurrent review
-  at `0afdbd831d4f19b4903272e2f9e634eea24198db` produced controlling APPROVE but a boundary-specialist
-  REQUEST CHANGES for YAML doubled-single-quote escaping, YAML explicit-key block scalars and unsafe
-  source-field descriptors; the combined durable artifact is PR #45 comment `5573371521`. The final
-  YAML/source-field RED/GREEN closes those reproduced leaks locally. Fresh exact-head CI and isolated
-  xhigh/boundary review at `e8f21cc1ec5ab3333fc3eeda7c79f830bfad617d` closed the functional
-  findings, but controlling review found a HIGH unbounded prefix-scan path for repeated rejected colons;
-  durable artifact: PR #45 comment `5573628363`. The explicit-key work-bound RED/GREEN replaces that
-  path with single-pass line-state tracking and closes the reproduced complexity defect locally. Fresh
-  exact-head review at `51e6c1ff57ba900874016ba8a974aac0d09aa8b4` then returned controlling
-  APPROVE with boundary follow-up APPROVE and no findings; durable artifact: PR #45 comment `5573838805`.
-  Harness-only PR #54 merged immediately afterward, so that approval/check evidence became stale when the
-  Master integrated current main. Fresh exact-head CI and isolated xhigh review are pending.
-- scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
-- next: STOP after SIG-02 exact-head review, CI, Master gate, protected merge and post-merge checks;
-  SIG-03 requires a fresh separately authorized task
+Implemented behavior is a pure sealed EvidenceBundle/cached-response-to-ResearchNote transformation:
+domain-qualified typed references, exact bundle/reference integrity, defensive immutable access,
+semantic-support separation, exact provenance/cutoff/artifact binding, deterministic bounded canonical
+serialization, typed failures, hostile-data redaction and zero provider/network/graph fallback. SIG-01
+sealed replay bytes, hashes, UTC cutoff/date semantics and callable/loader/provider denial remain intact.
 
-## Current maintenance checkpoint
+## Routing and runtime evidence
 
-Reconciled on 2026-09-06 from actual GitHub PR/ref/commit/workflow reads through the last product-code
-merge, PR #43 at `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`. PRs #31 through #43 are merged;
-the prior pending #31 row was checkpoint lag, not an active writer or a state-machine failure. The
-[pre-SIG-02 remediation report](PRE_SIG02_REMEDIATION_2026_09_06.md) now contains a prominent
-independent-audit supersession while preserving the original #28-#39 report as historical evidence.
+- complexity: `high`; successive hostile-data confidentiality and bounded-work findings justified the
+  difficult route `sol_high_sol_xhigh`
+- original implementer: named `normal_implementer`, configured actual `gpt-5.6-luna / max`
+- final repair implementer: named `high_implementer`, configured actual `gpt-5.6-sol / high`
+- final reviewer: fresh named `reviewer_xhigh`, configured actual `gpt-5.6-sol / xhigh`
+- Master: configured/requested `gpt-5.6-sol / xhigh`
+- no separate backend model/effort telemetry was exposed; no historical route is relabeled
+- GPT-6 remains disabled for production; `astra_canary` is optional shadow-only and cannot work on an
+  active PR
 
-PR #39 has zero issue comments and zero review objects. The earlier statement that its conversation
-contained the final receipt was false. Its actual final head, merge/tree and candidate/post-push
-checks are established by immutable GitHub PR, ref, commit and workflow records listed below. This
-file records the last verified product-code main as the base for the final documentation correction;
-do not add a self-referential follow-up merely to embed that correction PR's own future merge SHA.
+The user approved a SIG-02-only runtime alternative in PR comment `5572425609`: correctly loaded named
+roles may expose collaboration controls but must not invoke them; the Master remains the sole
+orchestrator. Final writers/reviewers reported zero collaboration-tool calls. This exception changes no
+configuration or route and expires immediately after SIG-02 post-merge verification.
 
-The owner renewed the bounded serial repair authorization on 2026-09-05T22:59:26Z and
-2026-09-06T01:25:32Z, and explicitly approved the operations at 2026-09-06T01:26:29Z. Chat may be
-Chinese; all repository/GitHub engineering prose is English. Root AGENTS already enforces this rule
-from merged PR #36. No authorization to implement SIG-02 or resume the roadmap is implied.
+Only one production writer ran at a time. One stalled writer was terminated before replacement; its
+uncommitted test draft was preserved/corrected by the replacement and committed as a dedicated test-only
+RED. No production writers overlapped.
 
-The user authorized audit remediation A01-A12 on 2026-09-05 and explicitly updated the instruction
-at `2026-09-05T18:20:41Z`: verify and merge one passing remediation PR, refresh main, then proceed to
-the next. Independent PR review is waived **only for this bounded remediation batch**. This is an
-explicit current-user exception, not an independent APPROVE, permanent routing change, or permission
-to execute SIG-02. It does not waive required CI, branch protections, architecture invariants or
-paper/live approval. The waiver expires when this batch stops or completes and is not inherited by
-a future roadmap session merely because it appears in this file.
+## TDD and validation
 
-That no-independent-review statement applies only to the historical #28-#39 batch. The later
-independent audit and PRs #40-#43 used a loaded `high_implementer` configured actual Sol/high and a
-separate `reviewer_xhigh` configured actual Sol/xhigh, with exact-head re-review after every
-repair. These are successful named-role configured-actual records, not claims of separately exposed
-backend telemetry. The Master used the actually selected root runtime without relabeling it. Project
-Luna/Sol configuration remained unchanged, and no GPT-6 route was enabled.
+Initial contract evidence:
 
-| Maintenance scope | PR | Exact validated head | Actual merge / current state |
-| --- | --- | --- | --- |
-| REM-01 / A01-A03 runtime boundaries | #28 | `f76e18b8669160df420c7fa51a0e95485f07c7d7` | `1d467cb4edfcbb322cbdd45baeefdbaede816495`; merged, main refreshed |
-| REM-02 / A04-A06 validation boundaries | #29 | `8624c9502258d7e06ec3a1229cae532021e3efbf` | `fcdebebbb1ea667b255d97f6350fad2e0d0ae2d8`; merged after fresh integration CI |
-| REM-03 / A07 and state reconciliation | #30 | `d66ae19b8ffa58bc6447c0ba2c349e85e7e6acaa` | `908ee66cdbae755f301816f16156d04dcd6e2e90`; merged, main refreshed |
-| REM-04 / A08-A12 design handoffs | #31 | `d32c0b85f30fd8ffab1b7fd1d359b29d5a3a1da0` | `af610844cd9de744e911486185b7869dca369f2d`; merged 2026-09-05T20:00:08Z |
-| REM-05 / A06 lexical scope and branches | #32 | `f10a511efe90442ca090909c93e63fe0dc6b01c7` | `b6ce5a3faaf7fe7d35e760d8a7d7be7c79f8d5d3`; merged 2026-09-05T20:14:38Z |
-| N01 / N03 input error classification | #33 | `b20baf94a031abcba263c872b805974f075d96c7` | `07c63438e976f6a5a05586f7570a35443cdedac0`; merged 2026-09-05T21:53:12Z |
-| N02 annotation dependency traversal | #34 | `30eae5b331656e8cb33e801c126fe2155e7b0e7e` | `3c42ac939c57c33df10c29f9fce07e7215fd1399`; merged 2026-09-05T23:09:09Z |
-| FRESH-01 assignment-target dependencies | #35 | `6efc1ba2aa4399b0f513287c48cc78097127f8aa` | `1e522e49d181633499e3077ce3350f3a2548f25a`; merged 2026-09-05T23:21:00Z |
-| LANG-01 English repository and GitHub prose | #36 | `1e6ad59687b3019d327baa31104bcf99aff28309` | `c8ed290b74549d3c373e97f772eda5ed9c2dc157`; merged 2026-09-05T23:36:16Z |
-| FRESH-02 approved closed-replay documentation | #37 | `e71e892ff6270cf2437849e9094768860d723368` | `9078921d7fd071183b53dda6f53e17b6601f93c7`; merged 2026-09-06T01:34:42Z |
-| FRESH-03 malformed historical content selectors | #38 | `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4` | `58b7d1bf02d21f19c9efdcd10f6705559dd9ebd9`; merged 2026-09-06T02:09:11Z |
-| STATE-01 recovery publication | #39 | `bb79a13e0bca1f498b14e584d852e72a46e5d658` | `c02243ea25cb3e1be4c302c10b2e447a587604b2`; merged 2026-09-06T02:28:32Z |
-| AUD-H03 closed-replay import purity | #40 | `7b566757ddcbe45d8b8f2f90d1c37699abeca74b` | `ca61fdc020bfa95e67a19fa518ee6427abde651a`; merged 2026-09-06T15:40:37Z |
-| AUD-H02 historical call-field placement | #41 | `b35c83a5f742ccbc869ef2945ca422c3cc716767` | `56ee0a5d0a0633b8ae17b4095e7063d93f5da268`; merged 2026-09-06T16:10:38Z |
-| AUD-H01 structured-log redaction | #42 | `0afae2986a1772897c939b20670d9a7353d142e4` | `5240885ebe15132b11fca17ccbf175c180675b9b`; merged 2026-09-06T18:07:30Z |
-| AUD-M01 dependency control-flow analysis | #43 | `20370f67c601f5dbd5693830a7805f5919f73fc4` | `b1f019c498cb84d630fc923447b0d41e7bfcb0dc`; merged 2026-09-06T19:33:30Z |
+- RED `8bca32021f03ecb1e9b34830277b8a6d2febdef6`: expected `12 failed, 55 passed`
+- GREEN `28d09cf4bf92d030c3c649ebdc28a3be091ebe2d`
 
-REM-01 CI/CodeQL/Dependency Review: `33980970330` / `33980970259` / `33980970220`.
-REM-02 fresh integration CI/CodeQL/Dependency Review: `33984025011` / `33984025097` / `33984025007`.
-REM-03 fresh integration CI/CodeQL/Dependency Review: `33984551684` / `33984551666` / `33984551669`.
-#39 candidate CI/CodeQL/Dependency Review: `34006302600` / `34006302440` / `34006302913`;
-main-push CI/CodeQL: `34006575330` / `34006575329`; head and merge share tree
-`8917ad6a156a7b45df450fd3fe157e43d96d1d7f`.
-#40 candidate: `34042663314` / `34042663311` / `34042663317`; main push:
-`34043061438` / `34043061463`; merge tree `6ee1f21b5b7636693d36fe64df61beebc2956b3f`.
-#41 candidate: `34044170605` / `34044170589` / `34044170583`; main push:
-`34044607182` / `34044607180`; merge tree `606c072d6f89c7018b33cda1e9df8f809cd4eff8`.
-#42 candidate: `34050312728` / `34050312642` / `34050312669`; main push:
-`34050719401` / `34050719320`; merge tree `61aeaaada13f174a67f9a800ce844074f2d00292`.
-#43 candidate: `34054706215` / `34054706207` / `34054706271`; main push:
-`34055267326` / `34055267342`; merge tree `03d185859827d9f8013f6f1744fef3f191a2aad0`.
+Latest material repair evidence:
 
-PRs #40-#43 contain durable independent-review and Master-gate comments. Those comments accurately
-index the independent agent evidence but are not submitted GitHub review objects. Earlier candidate
-reviews became stale whenever the head changed; only each final frozen-head APPROVE and exact-head
-checks control its merge.
+- multiline RED `2330475f48b81087082cfec1801874c1b8231f39`: `4 failed, 95 deselected`;
+  GREEN/refactor `bce1fd069c28a6aa8453a937ffc24023be07f3ff` /
+  `0a842a327f373d2fa2dda0f3266d66b38f2de42c`
+- confidentiality RED `d00d81b8ab473ebf33de3a28b291cb2df95c77be`: `14 failed, 104 passed`;
+  GREEN `1d751c49795ff612487a6185c56ef2ac36012ca8`
+- YAML/source-field RED `62b8cf26f341faf6d26465bedf7e0a0df39394d9`: `7 failed, 121 passed`;
+  GREEN `2f3561c045bef70c7babd2349045e2e01060cda3`
+- explicit-key work-bound RED `cf7218da99d6c29f1c3188185a51f22545e9adf5`:
+  `1 failed, 129 passed`; GREEN `bc792afb9638e7a3a47997d1f97e397a44f38a3a`
 
-The complete diffs, RED/GREEN history, limits and merge decisions remain in the respective PRs.
-Optional live-provider/Bedrock skips are not passed integrations. Local focused results use a
-non-locked environment; the complete locked matrix comes from GitHub Actions. No alpha or promotion
-claim follows from these results.
+All RED commits above are test-only and failed for the intended behavior. Complete superseded repair
+chronology remains in the [pre-compaction snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/1192df7031442c189d46e4365b39088d08d9ac51/docs/productionization/AGENT_STATE.md)
+and PR #45 conversation.
 
-### PR #31 recovery and withdrawn completion claim
+Latest local validation after integrating PRs #55/#56:
 
-The user's `2026-09-05T19:27:30Z` recheck found #31 still open at test-only RED
-`2b9d72fb4f505b1ad85f57b7a544be272f081612`; CI `33985052574` failed. The earlier external completion
-report claiming a #31 merge and 1777 passing tests was incorrect and is
-[withdrawn](https://github.com/kejian-tong/myTradingAlpha/pull/31#issuecomment-5554253842).
-Do not use that report, its tentative head/merge IDs, or an unmerged PR's synthetic merge SHA as proof.
+- focused SIG-02: `130 passed`
+- data/research regressions: `1120 passed`
+- full suite: `2412 passed, 3 skipped, 18 warnings, 69 subtests passed`
+- full Ruff, dependency direction, offline harness, lock consistency, Markdown contracts and diff
+  check: PASS
+- installed-package smoke: previously passed locally and must pass again in exact-head CI
 
-Recovery published the previously unreferenced phase-document child `8f51c3ad92170002415002dcd468bcb2fc0dcd90`
-and then the missing shared contracts, roadmap, indexes and compatibility text. The original RED
-assertions remain intact. These are future implementation specifications, not shipped ledger/OMS/capture
-services. The final candidate must pass actual exact-head CI before an expected-head-protected merge.
-After a successful merge, read back merged state, main, parents and tree; failed publish/merge results
-are failures, never receipts. Record that final verification in the PR conversation without trying to
-embed this commit's own final SHA here. SIG-02 remains unstarted until a fresh authorized JIT.
+The three skips are the supported Python-version/optional Bedrock/disabled real DeepSeek cases, not
+passed integrations. Green software evidence does not prove source authenticity, real inference,
+statistical alpha, PAPER readiness or live readiness.
 
-### Verified recovery result, 2026-09-06
+## Review and merge gate
 
-The withdrawal above remains valid: the initial completion claim was false at the time. Later
-GitHub records establish the actual #31 final head and merge shown in the table. Subsequent chat
-summaries also incorrectly said that #33-#36 had not been written/merged and that the language rule
-was absent. Those summaries are superseded by the actual PR records, current code and root AGENTS;
-do not recreate completed repairs or reinterpret historical RED commits as the current head.
+All prior BLOCKER/HIGH findings were repaired through dedicated RED/GREEN cycles. Key durable review
+artifacts are PR comments `5566390797`, `5572900008`, `5573371521` and `5573628363`. The most recent
+exact-head controlling/boundary approval before current-main integration is comment `5573958340` for
+head `1192df7031442c189d46e4365b39088d08d9ac51`; CI `34147150048`, CodeQL `34147150001` and Dependency
+Review `34147150107` passed there.
 
-PR #37's final head, CI synthetic merge `fdc79ac1ca14a85496e6e56dae1004c73cb93494`, and actual
-merge share tree `7b05deb2b720c5c273faea2d2a3c2cae201024bd`. Its actual main parents are
-`c8ed290b74549d3c373e97f772eda5ed9c2dc157` and `e71e892ff6270cf2437849e9094768860d723368`.
-Final-head CI `33999602851`, CodeQL `33999602899`, and Dependency Review `33999602846` passed.
-Raw Python 3.14, Foundation, and installed-origin logs were inspected: 1902 passed / 2 skipped /
-69 subtests; 1326 productionization tests; all ten smoke origins in installed site-packages.
-Actual main-push CI `34004259861` and CodeQL `34004259837` then completed successfully before the
-checkpoint-publication branch was created. See the [post-merge evidence](https://github.com/kejian-tong/myTradingAlpha/pull/37#issuecomment-5556118766).
+That approval/check evidence is stale after integrating PRs #55/#56 and this compaction commit. Required
+next steps are:
 
-PR #38 then repaired a typed-error leak for list/object content-block selectors without changing
-valid replay behavior. Final head `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4`, CI synthetic merge
-`fcb1484412d059392be129ede98a57e4e0729863`, and actual merge share tree
-`c66a7a7e72cfc7a19c48126757daf1cd4c5c7295`. Actual main parents are
-`9078921d7fd071183b53dda6f53e17b6601f93c7` and `cfd82241a2b254ce9d6d9518e2d80e2d546de0f4`.
-Final-head CI `34005509441`, CodeQL `34005509451`, and Dependency Review `34005509452` passed;
-raw logs show 1926 passed / 2 skipped / 69 subtests and 1350 productionization tests.
-Actual main-push CI `34005733778` and CodeQL `34005733823` passed before the fresh evidence-publication
-branch was created. See the [post-merge evidence](https://github.com/kejian-tong/myTradingAlpha/pull/38#issuecomment-5556284139).
-The earlier unused checkpoint branch was paused without remote edits; it did not bypass serial order.
+1. freeze the new exact PR head/tree and verify current `main` is still `80fa2b9...`;
+2. run exact-head Python 3.10-3.14, required harness/Ruff, Foundation, clean-install, CodeQL and
+   Dependency Review checks;
+3. obtain a fresh isolated controlling `reviewer_xhigh` APPROVE with all prior findings closed;
+4. persist the Master MERGE gate and merge with expected-head protection;
+5. read back merge parents/tree/time, wait for main-push CI/CodeQL, run proportionate final SIG-02
+   verification and stop without starting SIG-03.
 
-The two optional skips and existing warnings are not real integrations. Reconciliation and green
-software CI do not prove source authenticity, real inference, alpha, PAPER or live readiness.
-The approved v1 response cutoff remains policy-specific: availability is always required by cutoff;
-ingestion is additionally required by cutoff for archive-realistic replay only. PR #37 corrects the
-older contrary handoff wording without changing code, sealed bytes, or the approved UTC date rule.
-
-## Roadmap PR ledger
-
-The completed Foundation/PIT rows below are a compact index. Exact original base/head/RED/GREEN,
-requested/configured-actual/unknown routes, tests, CI, reviews, Master gates and deferred findings
-remain in the [immutable pre-remediation ledger](https://github.com/kejian-tong/myTradingAlpha/blob/a614b8a27c6a822477235304f4749dc9c8163165/docs/productionization/AGENT_STATE.md#roadmap-pr-ledger)
-and linked PR conversations. No historical route or test is relabeled as a current run. FND-01/02
-unknown runtime fields remain unknown; later configured-actual records retain their successful-loading
-scope, not a newly invented telemetry claim.
-
-| Roadmap ID | PR | Actual merge SHA | Evidence status |
-| --- | --- | --- | --- |
-| FND-01 | #8 | `2993820d473c84b674de1f4e11f137e89b2c04d1` | historical evidence retained |
-| FND-02 | #10 | `09bb07689483b5a3507f2b230a32b90c6dd788b6` | historical evidence retained |
-| FND-03 | #13 | `06075e4a8aba7ee21cb5d911bd41b4360e00a9dc` | historical evidence retained |
-| FND-04 | #14 | `0fbd318c4421eb303b6aa090458b9e844e0416e6` | historical evidence retained |
-| PIT-01 | #18 | `9f706c4242825fe0c6b46fab54d559c9370c2700` | historical evidence retained |
-| PIT-02 | #19 | `47f2c325e4d71a3d79c601f9f3e25eb722df3809` | historical evidence retained |
-| PIT-03 | #20 | `f7d96ccfc311d4e48cf32748b4645343272eeb21` | historical evidence retained |
-| PIT-04 | #21 | `63a167f6fa737f48a7a5525ab19384afdca9fc37` | historical evidence retained |
-| PIT-05 | #22 | `4782754746e02efb28b3078707d7c266728b0970` | historical evidence retained |
-| PIT-06 | #23 | `1a185d4035db8807c12c5070c30cfe6d2979d968` | historical evidence retained |
-| SIG-01 | #24 | `a614b8a27c6a822477235304f4749dc9c8163165` | exact-head review, CI and post-merge records below |
-
-## SIG-01 final reconciliation
-
-- Original base: `1a185d4035db8807c12c5070c30cfe6d2979d968`.
-- Final base: `62a5b5cf7393e5a83b10de69289ac72789dbd12d`.
-- Final reviewed head: `3144fe6a03b4899bd9f5e3a52d8b6c229a1b614e`.
-- Production GREEN: `ebb59b99bbfe2a6b107f89bf7c90320af14b3c98`.
-- Actual merge time: `2026-09-05T06:27:42Z`.
-- CI synthetic merge: `a99b70a02c7c17415285c326aab0ce0d5cea983e`.
-- PR head, synthetic merge and actual merge share tree `e93293f7c6adb1c5ed8acd6eef2e8e23ccc0629c`.
-- Complexity/route: high, difficult `sol_high_sol_xhigh`; named high_implementer configured actual
-  Sol/high; different fresh reviewer_xhigh configured actual Sol/xhigh. No extra backend telemetry.
-- [Final review](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549964899): APPROVE.
-- [Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549969969): MERGE.
-- [Post-merge verification](https://github.com/kejian-tong/myTradingAlpha/pull/24#issuecomment-5549975071): merged and stopped; no SIG-02 work.
-- Historical CI: `33949092698`, CodeQL `33949092708`, Dependency Review `33949092682`; recorded
-  full suite 1646 passed / 2 skipped. These are historical results, not new remediation validation.
-- Scope leak: none in the recorded SIG-01 review. Closed response replay is fixture-only contract
-  evidence, not real inference/capture, full PIT assurance, alpha, paper or live readiness.
-
-The stale pending fields in the previous checkpoint were normal post-merge reconciliation lag,
-not evidence of a duplicate run or authority to resume. Original and repair RED/GREEN history,
-prior REQUEST CHANGES, approved JIT/amendment and historical model corrections remain in the
-[immutable history](https://github.com/kejian-tong/myTradingAlpha/blob/a614b8a27c6a822477235304f4749dc9c8163165/docs/productionization/AGENT_STATE.md)
-and PR #24. The approved [SIG-01 amendment](phases/02-evidence-agent-boundary/SIG_01_AMENDMENT_PROPOSAL.md)
-still controls closed replay and the UTC cutoff-date rule.
-
-## Recovery and authority
-
-1. Read current instructions and this checkpoint; fetch actual main, open/merged PRs and checks.
-2. Reconcile pending state using exact PR head/base, merge parents/tree, review artifacts and CI.
-3. Verify a fresh user authorization for this session and operation. Historical autonomy is not consent.
-4. If stop_after has been reached, stop; next_pr_id is informational, not a command.
-5. Do not create a duplicate PR. Adopt an existing authorized task only after its owner is stopped.
-6. Required named-role unavailability or conflicting runtime route evidence is insufficient_evidence.
-   Do not substitute a generic worker; an alternative needs explicit user approval and fresh review.
-7. Under the normal roadmap policy, freeze and independently review the candidate, verify exact
-   head/base/tree CI and persist the Master gate before any separately authorized merge. Any explicit
-   current-user maintenance exception must be narrowly recorded, never forged as a review or reused.
-
-Review/CI results after a frozen checkpoint belong in a durable PR artifact and/or immutable GitHub
-ref, commit and workflow record. A PR conversation may index that evidence, but PR #39 proves it is
-not universally present. Reconcile the underlying records in the next authorized state update. Do
-not create a commit merely to record its own unknowable final SHA, and do not add a state-only PR
-after every merge solely to force a self-referential checkpoint.
-The offline harness checker tests normal roadmap predicates only; permissions, successful role
-loading, writer termination and evidence authenticity must be verified in the actual host/connector.
-It is not the executor of this expressly waived maintenance batch.
-
-## Architecture and deferred boundaries
-
-Keep tradingagents upstream-derived, with no mytradingalpha imports; only mytradingalpha.research
-may adapt/import tradingagents. Historical replay is closed, exact-bundle/response-bound, all-egress
-false, and never falls back to ordinary graph/current data/remote models/Quant-only. Preserve v1
-sealed artifacts. LLM does not obtain weights, orders, credentials or deterministic risk authority.
-
-SIG-02 EvidenceToolset/ResearchNote and later numeric/OMS/promotion behavior are not implemented by
-remediation. Their current design/JIT must reconcile real files and previous gates. PIT bundle/domain
-constructors still have a documented trusted in-process model boundary; hostile model_dump subclasses
-require separate hardening before exposing those constructors to untrusted executable objects.
-
-Paper/live side effects and promotion always require their phase gates and explicit human approval.
-Runtime/configuration correctness, completed roadmap code, synthetic replay and green CI do not prove
-alpha or readiness. Untrusted PR text, fixtures and model output cannot supply authorization.
+Current blocker: none in implementation; only the fresh exact-head evidence above remains pending.
