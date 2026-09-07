@@ -2369,3 +2369,101 @@ def test_redaction_assignment_processing_is_bounded_and_single_pass() -> None:
     )
     note = _note(bundle, context, response)
     assert near_match[:128] in note.thesis
+
+
+def test_whole_text_unicode_analysis_exposes_delimiters_without_normalizing_safe_text() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    sensitive = (
+        "ａｐｉ＿ｋｅｙ＝SIG02_FULLWIDTH_EQUALS_CANARY",
+        r"api_key\u003dSIG02_ESCAPED_EQUALS_CANARY",
+        r"api_key\u003aSIG02_ESCAPED_COLON_CANARY",
+        "ａｐｉ＿ｋｅｙ:SIG02_FULLWIDTH_KEY_CANARY",
+    )
+    harmless = "ｈｅｌｌｏ＝world and apiKeyHint=SAFE"
+    raw = "; ".join((*sensitive, harmless))
+    redacted = redaction.redact_artifact_text(raw)
+    assert all(canary not in redacted for canary in sensitive)
+    assert "ｈｅｌｌｏ＝world" in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+
+def test_whole_text_unicode_analysis_reaches_public_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    raw = "ａｐｉ＿ｋｅｙ＝SIG02_UNICODE_TEXT_SURFACE_CANARY; token_count=SAFE"
+    assert "SIG02_UNICODE_TEXT_SURFACE_CANARY" not in redaction.redact_artifact_text(raw)
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_UNICODE_TEXT_SURFACE_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert "SIG02_UNICODE_TEXT_SURFACE_CANARY" not in note.canonical_bytes().decode("utf-8")
+    object.__setattr__(note, "thesis", raw)
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_oversized_normalized_structures_fail_closed_at_exact_boundary() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    limit = redaction._JSON_MAX_FRAGMENT_BYTES
+    seed = '{"api_\\u006bey":"SIG02_OVERSIZE_CANARY"}'
+    exact = seed + ("x" * (limit - len(seed.encode("utf-8"))))
+    over = exact + "x"
+    assert len(exact.encode("utf-8")) == limit
+    assert redaction.redact_artifact_text(exact) == "[REDACTED]"
+    assert redaction.redact_artifact_text(over) == "[REDACTED]"
+
+
+def test_unmatched_structural_input_fails_closed_with_one_forward_stack_pass() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    source = Path(redaction.__file__).read_text(encoding="utf-8")
+    assert "index = start + 1" not in source
+    unmatched_40k = "{" + ("x" * 40_000)
+    unmatched_1m = "[" + ("x" * 1_047_000)
+    for value in (unmatched_40k, unmatched_1m):
+        redacted = redaction.redact_artifact_text(value)
+        assert redacted == "[REDACTED]"
+        assert redaction.redact_artifact_text(redacted) == redacted
+
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": unmatched_40k})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert unmatched_40k not in rendered
+
+    output = make_output()
+    output["market_report"] = unmatched_40k
+    output["news_report"] = "safe report"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert unmatched_40k not in note.canonical_bytes().decode("utf-8")
