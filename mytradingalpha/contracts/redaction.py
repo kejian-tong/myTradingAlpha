@@ -44,7 +44,7 @@ _SENSITIVE_KEY_PATHS = (
     ("token",),
 )
 _SENSITIVE_COMPACT_KEYS = frozenset(
-    "".join(path) for path in _SENSITIVE_KEY_PATHS if len(path) > 1
+    "".join(path) for path in _SENSITIVE_KEY_PATHS
 )
 _PLAIN_DATA_MAX_DEPTH = 64
 _PLAIN_DATA_SENSITIVE_FIELDS = frozenset({"source_locator", "terms"})

@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from mytradingalpha.contracts.redaction import redact_artifact_text, redact_plain_data
+from mytradingalpha.contracts.redaction import redact_plain_data
 
 _REDACTED = "[REDACTED]"
 _CORRELATION_FIELDS = (
@@ -103,16 +103,6 @@ _KEY_VALUE_PATTERN = re.compile(
     r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\];]+))",
     re.IGNORECASE,
 )
-_PLAIN_DATA_TEXT_FIELD_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_.-])"
-    r"(?P<prefix>(?P<key_quote>[\"']?)(?P<key>source_locator|terms)"
-    r"(?P=key_quote)\s*[:=])"
-    r"(?!\s*[\"']?\[REDACTED\][\"']?)"
-    r"(?P<spacing>\s*)"
-    r"(?P<value>"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\[[^\]]*\]|[^\s,}\];]+))",
-    re.IGNORECASE,
-)
 _PRIVATE_KEY_PATTERN = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
     re.IGNORECASE | re.DOTALL,
@@ -160,20 +150,6 @@ def _replace_sensitive_value(match: re.Match[str]) -> str:
             f"{raw_value[0]}{_REDACTED}{raw_value[0]}"
         )
     return f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
-
-
-def _replace_plain_field_value(match: re.Match[str]) -> str:
-    raw_value = match.group("value")
-    if raw_value[0] in {'"', "'"}:
-        return (
-            f"{match.group('prefix')}{match.group('spacing')}"
-            f"{raw_value[0]}{_REDACTED}{raw_value[0]}"
-        )
-    return f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
-
-
-def _redact_plain_text(value: str) -> str:
-    return redact_artifact_text(value)
 
 
 def _redact_value(
