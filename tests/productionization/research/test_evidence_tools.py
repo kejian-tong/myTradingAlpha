@@ -1817,3 +1817,75 @@ def test_research_provenance_rejects_hostile_revision_without_callbacks() -> Non
     with pytest.raises(ValidationError):
         contracts.ResearchProvenance.model_validate(payload)
     assert callbacks == []
+
+
+def test_single_component_compact_suffixes_redact_all_public_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    sensitive = (
+        ("githubtoken", "SIG02_GITHUB_TOKEN_CANARY"),
+        ("prodsecret", "SIG02_PROD_SECRET_CANARY"),
+        ("xauthorization", "SIG02_AUTHORIZATION_CANARY"),
+        ("prodpassword", "SIG02_PASSWORD_CANARY"),
+        ("oauthbearer", "SIG02_BEARER_CANARY"),
+        ("prodterms", "SIG02_TERMS_CANARY"),
+        ("prodtoken", "SIG02_TOKEN_CANARY"),
+    )
+    controls = (
+        ("token_count", "SIG02_TOKEN_COUNT_SAFE"),
+        ("secret_count", "SIG02_SECRET_COUNT_SAFE"),
+        ("password_policy", "SIG02_PASSWORD_POLICY_SAFE"),
+        ("authorization_status", "SIG02_AUTHORIZATION_STATUS_SAFE"),
+        ("bearer_count", "SIG02_BEARER_COUNT_SAFE"),
+        ("tokenizer", "SIG02_TOKENIZER_SAFE"),
+        ("secretary", "SIG02_SECRETARY_SAFE"),
+        ("passwordless", "SIG02_PASSWORDLESS_SAFE"),
+    )
+    raw = "; ".join(
+        [*(f"{field}={value}" for field, value in sensitive), *(f"{field}={value}" for field, value in controls)]
+    )
+    redacted = redaction.redact_artifact_text(raw)
+    assert all(value not in redacted for _, value in sensitive)
+    assert all(value in redacted for _, value in controls)
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+    plain = redaction.redact_plain_data(dict((*sensitive, *controls)))
+    assert all(plain[field] == "[REDACTED]" for field, _ in sensitive)
+    assert all(plain[field] == value for field, value in controls)
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert all(value not in rendered for _, value in sensitive)
+    assert all(value in rendered for _, value in controls)
+
+    output = make_output()
+    output["market_report"] = "prodsecret=SIG02_BUILDER_SECRET_CANARY; tokenizer=SIG02_BUILDER_SAFE"
+    output["news_report"] = "githubtoken=SIG02_BUILDER_TOKEN_CANARY; secretary=SIG02_BUILDER_SAFE"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert "SIG02_BUILDER_SECRET_CANARY" not in canonical
+    assert "SIG02_BUILDER_TOKEN_CANARY" not in canonical
+    assert "SIG02_BUILDER_SAFE" in canonical
+
+    object.__setattr__(
+        note,
+        "thesis",
+        "xauthorization=SIG02_DIRECT_AUTHORIZATION_CANARY; passwordless=SIG02_DIRECT_SAFE",
+    )
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
