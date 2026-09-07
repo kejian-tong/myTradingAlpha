@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -49,8 +49,8 @@ SIG-02 — Evidence tools and ResearchNote
 - final integrated base main: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `4ac515d4a92ffb5e9e70b4931f057636c50b6112`
-  (tree `df536f6fbe3698b44f9fabf8ad3ef926860a9c79`); latest-main integration commit
+  `7268f5353038b910fca118439deb9d4f1cbc8238`
+  (tree `e5516c60a903605e3999c62a5c9b82ae86095f1b`); latest-main integration commit
   `249e8aaa38e1f976c7909b5575bcf32c70b1ed66` (tree
   `041978a6a95f7f2747496d205cca81c434f1f4cb`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
@@ -116,8 +116,12 @@ SIG-02 — Evidence tools and ResearchNote
   `141241cb70204869a071c1d54264389a220686fe`
 - encoded-delimiter budget RED: `68c98d97407a6b9742b902dcb2e625ffc14302a0`; repair GREEN:
   `4ac515d4a92ffb5e9e70b4931f057636c50b6112`
-- local tests: PASS after final repair/latest-main integration; focused `146 passed`, required
-  regressions `866 passed`, full suite `2341 passed / 3 skipped / 18 warnings / 69 subtests`
+- strict UTF-8/surrogate RED: `a0b89fb88279c418842df58e98e03c5afeeaee0e`; repair GREEN:
+  `93d439238599087585cca97ed55329d80e952f15`
+- alternating-encoding RED: `ce6524615b9ae4c1f026838a0926f64b8f41bd99`; repair GREEN:
+  `7268f5353038b910fca118439deb9d4f1cbc8238`
+- local tests: PASS after final repair/latest-main integration; focused `150 passed`, required
+  regressions `870 passed`, full suite `2345 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: current-main xhigh-review candidate `1009d112defd5fbf6f244d8f6f8709e7d41e6f89` passed CI
@@ -188,7 +192,8 @@ SIG-02 — Evidence tools and ResearchNote
   delimiter surfaces locally. Fresh xhigh review at `1009d112defd5fbf6f244d8f6f8709e7d41e6f89`
   returned REQUEST CHANGES for strict UTF-8/form percent decoding and surrogate handling; durable
   artifact: PR #45 comment `5565702246`. Focused repair RED/GREEN and fresh exact-head review are
-  required.
+  required. Strict UTF-8 form decoding, surrogate rejection and the combined fixed-point encoding
+  budget close those surfaces locally; fresh exact-head CI and xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
