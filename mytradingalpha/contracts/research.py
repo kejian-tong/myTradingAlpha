@@ -5,9 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from mytradingalpha.data.provenance import CanonicalChecksum
 
@@ -28,7 +36,7 @@ CitableDomain = Literal[
     "macro",
 ]
 ResearchClaim = Literal["thesis", "risks"]
-ResearchSourceAgent = Literal[
+_ResearchSourceAgentLiteral = Literal[
     "market_analyst",
     "sentiment_analyst",
     "news_analyst",
@@ -41,6 +49,18 @@ ResearchSourceAgent = Literal[
     "neutral_analyst",
     "conservative_analyst",
     "portfolio_manager",
+]
+
+
+def _validate_source_agent_type(value: object) -> object:
+    if type(value) is not str:
+        raise ValueError("research source agent requires an exact built-in string")
+    return value
+
+
+ResearchSourceAgent = Annotated[
+    _ResearchSourceAgentLiteral,
+    BeforeValidator(_validate_source_agent_type),
 ]
 MAX_RESEARCH_NOTE_BYTES = 4_194_304
 
