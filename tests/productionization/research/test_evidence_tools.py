@@ -2471,3 +2471,80 @@ def test_unmatched_structural_input_fails_closed_with_one_forward_stack_pass() -
     )
     note = _note(bundle, context, response)
     assert unmatched_40k not in note.canonical_bytes().decode("utf-8")
+
+
+def test_unicode_escape_chain_budget_fails_closed_and_preserves_harmless_text() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    attempts = redaction._JSON_MAX_UNESCAPE_ATTEMPTS
+
+    def escaped_delimiter(depth: int, delimiter: str = "=") -> str:
+        digits = "003d" if delimiter == "=" else "003a"
+        encoded = f"\\u{digits}"
+        for _ in range(depth - 1):
+            encoded = "\\u005c" + encoded[1:]
+        return encoded
+
+    for depth in range(1, attempts + 2):
+        raw = f"api_key{escaped_delimiter(depth)}SIG02_UNICODE_CHAIN_{depth}_CANARY"
+        redacted = redaction.redact_artifact_text(raw)
+        assert f"SIG02_UNICODE_CHAIN_{depth}_CANARY" not in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+    harmless = "50% growth and ordinary prose with no encoded delimiter"
+    assert redaction.redact_artifact_text(harmless) == harmless
+    assert redaction.redact_plain_data({"text": harmless})["text"] == harmless
+
+
+def test_percent_encoded_delimiters_and_malformed_sensitive_encodings_reach_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    attempts = redaction._JSON_MAX_UNESCAPE_ATTEMPTS
+
+    def percent_delimiter(depth: int, delimiter: str) -> str:
+        encoded = "%3D" if delimiter == "=" else "%3a"
+        for _ in range(depth - 1):
+            encoded = encoded.replace("%", "%25")
+        return encoded
+
+    for depth in range(1, attempts + 2):
+        raw = f"api_key{percent_delimiter(depth, '=')}SIG02_PERCENT_{depth}_CANARY"
+        redacted = redaction.redact_artifact_text(raw)
+        assert f"SIG02_PERCENT_{depth}_CANARY" not in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+    for raw in (
+        "api_key%3G_SIG02_PERCENT_INVALID_CANARY",
+        "api_key%SIG02_PERCENT_INVALID_CANARY",
+        "api_key%3aSIG02_PERCENT_COLON_CANARY",
+    ):
+        assert "SIG02_PERCENT_" not in redaction.redact_artifact_text(raw)
+    assert redaction.redact_artifact_text("50% growth") == "50% growth"
+
+    raw = "api_key%3dSIG02_PERCENT_SURFACE_CANARY; token_count=SAFE"
+    plain = redaction.redact_plain_data({"text": raw})
+    assert "SIG02_PERCENT_SURFACE_CANARY" not in plain["text"]
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_PERCENT_SURFACE_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert "SIG02_PERCENT_SURFACE_CANARY" not in note.canonical_bytes().decode("utf-8")
+    object.__setattr__(note, "thesis", raw)
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
