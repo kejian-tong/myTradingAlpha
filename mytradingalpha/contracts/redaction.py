@@ -26,8 +26,12 @@ _SENSITIVE_KEY_PATHS = (
     ("aws", "secret", "access", "key"),
     ("bearer",),
     ("bearer", "token"),
+    ("auth", "token"),
+    ("broker", "account", "id"),
     ("client", "secret"),
     ("consumer", "secret"),
+    ("account", "number"),
+    ("account", "id"),
     ("password",),
     ("private", "key"),
     ("refresh", "token"),
@@ -38,19 +42,7 @@ _SENSITIVE_KEY_PATHS = (
     ("token",),
 )
 _SENSITIVE_COMPACT_KEYS = frozenset(
-    {
-        "access_token",
-        "apikey",
-        "apisecret",
-        "awsaccesskeyid",
-        "awssecretaccesskey",
-        "bearertoken",
-        "brokeraccountid",
-        "clientsecret",
-        "consumersecret",
-        "refreshtoken",
-        "sessiontoken",
-    }
+    "".join(path) for path in _SENSITIVE_KEY_PATHS if len(path) > 1
 )
 _ASSIGNMENT_PREFIX_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.-])"
