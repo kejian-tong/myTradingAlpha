@@ -2053,3 +2053,179 @@ def test_cached_response_and_bundle_fixtures_remain_exactly_unchanged() -> None:
     assert hashlib.sha256(bundle.read_bytes()).hexdigest() == (
         "7e4c4a65dbfd85396a370ff39a5ae130d7e1853fed1c53e8de3e89756ce0ad5a"
     )
+
+
+def test_plain_data_redacts_sensitive_ancestor_paths_before_value_dispatch() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    paths = (
+        ("access", "token"),
+        ("api", "key"),
+        ("api", "secret"),
+        ("aws", "access", "key", "id"),
+        ("aws", "secret", "access", "key"),
+        ("bearer", "token"),
+        ("auth", "token"),
+        ("broker", "account", "id"),
+        ("client", "secret"),
+        ("consumer", "secret"),
+        ("account", "number"),
+        ("account", "id"),
+        ("private", "key"),
+        ("refresh", "token"),
+        ("session", "token"),
+        ("source", "locator"),
+    )
+    values = (
+        "SIG02_ANCESTOR_STRING_CANARY",
+        42,
+        True,
+        None,
+        ["SIG02_ANCESTOR_LIST_CANARY"],
+        ("SIG02_ANCESTOR_TUPLE_CANARY",),
+        {"nested": "SIG02_ANCESTOR_DICT_CANARY"},
+    )
+    for path in paths:
+        for value in values:
+            payload: dict[str, object] = {"safe": {"token_count": "SAFE_SIBLING"}}
+            cursor = payload
+            for component in path[:-1]:
+                child = cursor.setdefault(component, {})
+                assert type(child) is dict
+                cursor = child
+            cursor[path[-1]] = value
+            redacted = redaction.redact_plain_data(payload)
+            leaf: object = redacted
+            for component in path:
+                assert type(leaf) is dict
+                leaf = leaf[component]
+            assert leaf == "[REDACTED]"
+            assert redacted["safe"]["token_count"] == "SAFE_SIBLING"  # type: ignore[index]
+
+
+def test_json_fragment_budget_fails_closed_after_bounded_scan() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    safe_fragments = [json.dumps({"safe": index}, separators=(",", ":")) for index in range(32)]
+    for position in (31, 32, 63):
+        fragments = list(safe_fragments)
+        while len(fragments) <= position:
+            fragments.append(json.dumps({"safe": len(fragments)}, separators=(",", ":")))
+        fragments[position] = json.dumps(
+            {"api": {"key": f"SIG02_FRAGMENT_{position}_CANARY"}},
+            separators=(",", ":"),
+        )
+        raw = " ".join(fragments)
+        redacted = redaction.redact_artifact_text(raw)
+        assert f"SIG02_FRAGMENT_{position}_CANARY" not in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+
+    bounded = " ".join(safe_fragments[:3])
+    assert redaction.redact_artifact_text(bounded) == bounded
+
+
+def test_json_fragment_budget_closure_reaches_render_builder_and_direct_wire() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    fragments = [json.dumps({"safe": index}, separators=(",", ":")) for index in range(32)]
+    fragments.append(
+        json.dumps({"api": {"key": "SIG02_FRAGMENT_SURFACE_CANARY"}}, separators=(",", ":"))
+    )
+    raw = " ".join(fragments)
+    assert "SIG02_FRAGMENT_SURFACE_CANARY" not in redaction.redact_artifact_text(raw)
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_FRAGMENT_SURFACE_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = raw
+    output["news_report"] = raw
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    assert "SIG02_FRAGMENT_SURFACE_CANARY" not in note.canonical_bytes().decode("utf-8")
+    object.__setattr__(note, "thesis", raw)
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_assignment_lexer_handles_phrase_keys_and_unicode_key_escapes() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    sensitive = (
+        "broker/account/id=SIG02_PHRASE_SLASH_CANARY",
+        "broker:account:id=SIG02_PHRASE_COLON_CANARY",
+        "broker account id=SIG02_PHRASE_SPACE_CANARY",
+        r"api_\u006bey=SIG02_UNICODE_KEY_CANARY",
+        r"api_\\u006bey=SIG02_UNICODE_ESCAPED_KEY_CANARY",
+        r'"api_\u006bey":"SIG02_UNICODE_JSON_CANARY"',
+    )
+    controls = (
+        "broker/account/identity=SIG02_PHRASE_SAFE",
+        "broker:account:identity=SIG02_PHRASE_SAFE_COLON",
+        "broker account identity=SIG02_PHRASE_SAFE_SPACE",
+        r"safe_\u006bey=SIG02_UNICODE_SAFE",
+    )
+    invalid = r"api_\u00ZZey=SIG02_UNICODE_INVALID_CANARY"
+    raw = "; ".join((*sensitive, *controls, invalid))
+    redacted = redaction.redact_artifact_text(raw)
+    assert all(canary not in redacted for canary in sensitive)
+    assert all(value in redacted for value in controls)
+    assert "SIG02_UNICODE_INVALID_CANARY" not in redacted
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+
+def test_phrase_and_unicode_key_redaction_reaches_public_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    raw = (
+        "broker/account/id=SIG02_PHRASE_RENDER_CANARY; "
+        r"api_\u006bey=SIG02_UNICODE_RENDER_CANARY"
+    )
+    plain = redaction.redact_plain_data(
+        {"broker/account/id": "SIG02_PHRASE_PLAIN_CANARY", r"api_\u006bey": "SIG02_UNICODE_PLAIN_CANARY"}
+    )
+    assert all("CANARY" not in value for value in plain.values())
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert "SIG02_PHRASE_RENDER_CANARY" not in rendered
+    assert "SIG02_UNICODE_RENDER_CANARY" not in rendered
+
+    output = make_output()
+    output["market_report"] = "broker account id=SIG02_PHRASE_BUILDER_CANARY"
+    output["news_report"] = r"api_\u006bey=SIG02_UNICODE_BUILDER_CANARY"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert "SIG02_PHRASE_BUILDER_CANARY" not in canonical
+    assert "SIG02_UNICODE_BUILDER_CANARY" not in canonical
+
+    object.__setattr__(note, "thesis", r"api_\u006bey=SIG02_UNICODE_DIRECT_CANARY")
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
