@@ -152,7 +152,7 @@ class ResearchSourceFields(_ResearchContractModel):
     def validate_field_name(cls, value: str) -> str:
         if not value or value != value.strip():
             raise ValueError("research source field names must be non-empty and trimmed")
-        return value
+        return _validate_artifact_identity(value)
 
 
 class ResearchProvenance(_ResearchContractModel):

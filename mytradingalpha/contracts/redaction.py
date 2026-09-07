@@ -362,6 +362,9 @@ def _quoted_value_bounds(value: str, start: int) -> tuple[int, str, str] | None:
     content_start = index + delimiter_width
     cursor = content_start
     while cursor < len(value):
+        if delimiter_width == 1 and quote == "'" and value.startswith("''", cursor):
+            cursor += 2
+            continue
         if value.startswith(quote * delimiter_width, cursor):
             run = 0
             preceding = cursor - 1
@@ -471,12 +474,68 @@ def _assignment_key_char(character: str) -> bool:
     return normalized.isalnum() or normalized in _ASSIGNMENT_KEY_SEPARATORS or normalized.isspace()
 
 
+def _scan_yaml_explicit_key(
+    value: str,
+    delimiter: int,
+    cursor: int,
+    work: int,
+) -> tuple[int, int, str, int, int] | None:
+    if value[delimiter] != ":":
+        return None
+    line_start = max(
+        value.rfind("\n", 0, delimiter),
+        value.rfind("\r", 0, delimiter),
+    ) + 1
+    indentation = value[line_start:delimiter]
+    if any(character not in " \t" for character in indentation):
+        return None
+    previous_end = line_start
+    if previous_end > 0 and value[previous_end - 1] == "\n":
+        previous_end -= 1
+    if previous_end > 0 and value[previous_end - 1] == "\r":
+        previous_end -= 1
+    if previous_end <= 0:
+        return None
+    previous_start = max(
+        value.rfind("\n", 0, previous_end),
+        value.rfind("\r", 0, previous_end),
+    ) + 1
+    previous_line = value[previous_start:previous_end]
+    previous_indentation = len(previous_line) - len(previous_line.lstrip(" \t"))
+    if previous_indentation != len(indentation):
+        return None
+    question = previous_start + previous_indentation
+    if value[question : question + 1] != "?":
+        return None
+    key_text = value[question + 1 : previous_end]
+    scanned = len(key_text) + len(indentation) + 1
+    if scanned > _MAX_ASSIGNMENT_KEY_CHARS:
+        raise OverflowError("YAML explicit key scan exceeded its bound")
+    if not key_text[:1].isspace():
+        return None
+    candidate = key_text.strip()
+    if not candidate or not any(character.isalnum() for character in candidate):
+        return None
+    components = _key_parts(candidate)
+    if not components or len(components) > _MAX_ASSIGNMENT_KEY_COMPONENTS:
+        raise OverflowError("assignment key components exceeded their bound")
+    value_start = delimiter + 1
+    while value_start < len(value) and value[value_start] in " \t":
+        value_start += 1
+    if question < cursor:
+        return None
+    return question, value_start, candidate, work + scanned, delimiter
+
+
 def _scan_assignment_prefix(
     value: str,
     delimiter: int,
     cursor: int,
     work: int,
-) -> tuple[int, int, str, int] | None:
+) -> tuple[int, int, str, int, int] | None:
+    explicit = _scan_yaml_explicit_key(value, delimiter, cursor, work)
+    if explicit is not None:
+        return explicit
     position = delimiter - 1
     scanned = 0
     while position >= 0 and value[position].isspace():
@@ -509,7 +568,7 @@ def _scan_assignment_prefix(
         value_start += 1
     if start < cursor:
         return None
-    return start, value_start, candidate, work + scanned
+    return start, value_start, candidate, work + scanned, start
 
 
 def _redact_assignments(value: str) -> str:
@@ -528,14 +587,18 @@ def _redact_assignments(value: str) -> str:
         if scanned is None:
             index += 1
             continue
-        start, value_start, candidate, work = scanned
+        start, value_start, candidate, work, assignment_start = scanned
         if work > _MAX_ASSIGNMENT_WORK:
             return _REDACTED
         if not _is_sensitive_key(candidate):
             index += 1
             continue
         try:
-            end, quote_prefix, quote_suffix = _value_end(value, value_start, start)
+            end, quote_prefix, quote_suffix = _value_end(
+                value,
+                value_start,
+                assignment_start,
+            )
         except OverflowError:
             return _REDACTED
         output.append(value[cursor:start])
