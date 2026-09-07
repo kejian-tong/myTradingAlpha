@@ -11,8 +11,11 @@ Use this skill before writing a JIT scope contract or editing productionization 
 
 1. Fetch/sync current `main`; record its exact SHA and verify the active worktree/branch will not overwrite
    unrelated user changes.
-2. Read the applicable instruction chain: root `AGENTS.md` plus every deeper `AGENTS.md` for the paths in
-   scope.
+2. Read the applicable instruction chain. Codex automatically discovers project instructions only along
+   the project-root-to-current-working-directory chain and stops at the CWD. Always read root `AGENTS.md`;
+   then explicitly read every deeper `AGENTS.md` applicable to any in-scope path that is not already on
+   the discovered CWD chain. Opening or editing a file does not by itself prove its nested instructions
+   were automatically loaded.
 3. Read `docs/productionization/AGENT_STATE.md` completely and reconcile it against current GitHub PR,
    merge, and CI/check evidence. GitHub/current main wins on conflict.
 4. Identify the explicitly authorized roadmap PR ID or bounded maintenance scope. Do not infer authority
