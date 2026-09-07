@@ -96,7 +96,7 @@ def test_telemetry_hook_is_best_effort_and_fail_open(tmp_path: Path) -> None:
 
 def test_hooks_json_uses_current_official_field_names() -> None:
     hooks = json.loads((ROOT / ".codex/hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert set(hooks) == {"SessionStart", "SubagentStart", "SubagentStop", "PostCompact", "Stop"}
+    assert set(hooks) == {"SessionStart", "PreToolUse", "SubagentStart", "SubagentStop", "PostCompact", "Stop"}
     for entries in hooks.values():
         handler = entries[0]["hooks"][0]
         assert "timeout" in handler
