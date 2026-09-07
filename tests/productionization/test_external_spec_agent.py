@@ -21,6 +21,7 @@ def test_external_spec_researcher_is_capability_isolated() -> None:
 
 
 def test_mcp_endpoint_drift_is_rejected(tmp_path: Path) -> None:
+    checker = _checker()
     shutil.copytree(ROOT / ".codex", tmp_path / ".codex")
     shutil.copytree(ROOT / "docs/productionization", tmp_path / "docs/productionization")
     shutil.copytree(ROOT / ".agents", tmp_path / ".agents")
@@ -35,6 +36,7 @@ def test_mcp_endpoint_drift_is_rejected(tmp_path: Path) -> None:
 
 
 def test_mcp_leak_to_reviewer_is_rejected(tmp_path: Path) -> None:
+    checker = _checker()
     shutil.copytree(ROOT / ".codex", tmp_path / ".codex")
     shutil.copytree(ROOT / "docs/productionization", tmp_path / "docs/productionization")
     shutil.copytree(ROOT / ".agents", tmp_path / ".agents")
