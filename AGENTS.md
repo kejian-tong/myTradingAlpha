@@ -7,9 +7,9 @@ routing, and merge rules below always remain in force.
 ## Repository language
 
 All repository-authored engineering prose must be English, including docs, code comments/docstrings,
-commit messages, PR text, reviews, and reports. Preserve product localization data, fixtures, exact
-identifiers, sealed artifacts, and immutable historical evidence as data. Do not rewrite an original
-review/model verdict merely to make it match a newer policy.
+commit messages, PR text, reviews, and reports, even when the user asks in Chinese or another language.
+Preserve product localization data, fixtures, exact identifiers, sealed artifacts, and immutable historical
+evidence as data. Do not rewrite an original review/model verdict merely to make it match a newer policy.
 
 ## 2. Ownership and architecture invariants
 
