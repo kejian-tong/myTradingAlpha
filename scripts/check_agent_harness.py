@@ -57,7 +57,7 @@ def configuration_errors(root: Path) -> list[str]:
         config = _toml(root / ".codex/config.toml")
         if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-5.6-sol", "xhigh"):
             errors.append("Master route differs from reviewed policy")
-        if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 4}:
+        if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 6}:
             errors.append("agent enablement/concurrency differs from reviewed policy")
         actual_paths = {path.name for path in (root / ".codex/agents").glob("*.toml")}
         expected_paths = {name.replace("_", "-") + ".toml" for name in _ROLES}
@@ -139,7 +139,7 @@ def main() -> int:
             raw = args.gate.read_bytes()
             if len(raw) > 65_536:
                 raise ValueError("gate evidence exceeds 64 KiB")
-            errors.extend(gate_errors(json.loads(raw, object_pairs_hook=_unique_object)))
+            errors.extend(gate_errors(json.loads(raw, object_pairs_hook=_unique_object))
         except (OSError, ValueError, UnicodeError) as exc:
             errors.append(f"invalid gate evidence: {exc}")
     for error in errors:
