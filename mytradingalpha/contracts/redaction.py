@@ -474,46 +474,80 @@ def _assignment_key_char(character: str) -> bool:
     return normalized.isalnum() or normalized in _ASSIGNMENT_KEY_SEPARATORS or normalized.isspace()
 
 
+def _advance_assignment_line_state(
+    value: str,
+    start: int,
+    end: int,
+    *,
+    line_start: int,
+    line_first_content: int | None,
+    previous_line_start: int | None,
+    previous_line_end: int | None,
+    previous_line_first_content: int | None,
+) -> tuple[int, int | None, int | None, int | None, int | None]:
+    index = start
+    while index < end:
+        character = value[index]
+        if character in "\r\n":
+            previous_line_start = line_start
+            previous_line_end = index
+            previous_line_first_content = line_first_content
+            if character == "\r" and index + 1 < end and value[index + 1] == "\n":
+                index += 2
+            else:
+                index += 1
+            line_start = index
+            line_first_content = None
+            continue
+        if line_first_content is None and character not in " \t":
+            line_first_content = index
+        index += 1
+    return (
+        line_start,
+        line_first_content,
+        previous_line_start,
+        previous_line_end,
+        previous_line_first_content,
+    )
+
+
 def _scan_yaml_explicit_key(
     value: str,
     delimiter: int,
     cursor: int,
     work: int,
+    *,
+    line_start: int,
+    line_first_content: int | None,
+    previous_line_start: int | None,
+    previous_line_end: int | None,
+    previous_line_first_content: int | None,
 ) -> tuple[int, int, str, int, int] | None:
-    if value[delimiter] != ":":
+    if (
+        value[delimiter] != ":"
+        or line_first_content != delimiter
+        or previous_line_start is None
+        or previous_line_end is None
+        or previous_line_first_content is None
+    ):
         return None
-    line_start = max(
-        value.rfind("\n", 0, delimiter),
-        value.rfind("\r", 0, delimiter),
-    ) + 1
-    indentation = value[line_start:delimiter]
-    if any(character not in " \t" for character in indentation):
+    if previous_line_first_content < previous_line_start:
         return None
-    previous_end = line_start
-    if previous_end > 0 and value[previous_end - 1] == "\n":
-        previous_end -= 1
-    if previous_end > 0 and value[previous_end - 1] == "\r":
-        previous_end -= 1
-    if previous_end <= 0:
+    indentation = delimiter - line_start
+    previous_indentation = previous_line_first_content - previous_line_start
+    if previous_indentation != indentation:
         return None
-    previous_start = max(
-        value.rfind("\n", 0, previous_end),
-        value.rfind("\r", 0, previous_end),
-    ) + 1
-    previous_line = value[previous_start:previous_end]
-    previous_indentation = len(previous_line) - len(previous_line.lstrip(" \t"))
-    if previous_indentation != len(indentation):
-        return None
-    question = previous_start + previous_indentation
+    question = previous_line_first_content
     if value[question : question + 1] != "?":
         return None
-    key_text = value[question + 1 : previous_end]
-    scanned = len(key_text) + len(indentation) + 1
+    key_start = question + 1
+    key_length = previous_line_end - key_start
+    scanned = key_length + indentation + 1
     if scanned > _MAX_ASSIGNMENT_KEY_CHARS:
         raise OverflowError("YAML explicit key scan exceeded its bound")
-    if not key_text[:1].isspace():
+    if key_length <= 0 or not value[key_start].isspace():
         return None
-    candidate = key_text.strip()
+    candidate = value[key_start:previous_line_end].strip()
     if not candidate or not any(character.isalnum() for character in candidate):
         return None
     components = _key_parts(candidate)
@@ -532,8 +566,24 @@ def _scan_assignment_prefix(
     delimiter: int,
     cursor: int,
     work: int,
+    *,
+    line_start: int,
+    line_first_content: int | None,
+    previous_line_start: int | None,
+    previous_line_end: int | None,
+    previous_line_first_content: int | None,
 ) -> tuple[int, int, str, int, int] | None:
-    explicit = _scan_yaml_explicit_key(value, delimiter, cursor, work)
+    explicit = _scan_yaml_explicit_key(
+        value,
+        delimiter,
+        cursor,
+        work,
+        line_start=line_start,
+        line_first_content=line_first_content,
+        previous_line_start=previous_line_start,
+        previous_line_end=previous_line_end,
+        previous_line_first_content=previous_line_first_content,
+    )
     if explicit is not None:
         return explicit
     position = delimiter - 1
@@ -576,12 +626,56 @@ def _redact_assignments(value: str) -> str:
     cursor = 0
     index = 0
     work = 0
+    line_start = 0
+    line_first_content: int | None = None
+    previous_line_start: int | None = None
+    previous_line_end: int | None = None
+    previous_line_first_content: int | None = None
     while index < len(value):
-        if value[index] not in ":=":
+        character = value[index]
+        if character in "\r\n":
+            next_index = (
+                index + 2
+                if character == "\r"
+                and index + 1 < len(value)
+                and value[index + 1] == "\n"
+                else index + 1
+            )
+            (
+                line_start,
+                line_first_content,
+                previous_line_start,
+                previous_line_end,
+                previous_line_first_content,
+            ) = _advance_assignment_line_state(
+                value,
+                index,
+                next_index,
+                line_start=line_start,
+                line_first_content=line_first_content,
+                previous_line_start=previous_line_start,
+                previous_line_end=previous_line_end,
+                previous_line_first_content=previous_line_first_content,
+            )
+            index = next_index
+            continue
+        if line_first_content is None and character not in " \t":
+            line_first_content = index
+        if character not in ":=":
             index += 1
             continue
         try:
-            scanned = _scan_assignment_prefix(value, index, cursor, work)
+            scanned = _scan_assignment_prefix(
+                value,
+                index,
+                cursor,
+                work,
+                line_start=line_start,
+                line_first_content=line_first_content,
+                previous_line_start=previous_line_start,
+                previous_line_end=previous_line_end,
+                previous_line_first_content=previous_line_first_content,
+            )
         except OverflowError:
             return _REDACTED
         if scanned is None:
@@ -608,7 +702,24 @@ def _redact_assignments(value: str) -> str:
         else:
             output.append(f"{prefix}{_REDACTED}")
         cursor = end
-        index = max(end, index + 1)
+        next_index = max(end, index + 1)
+        (
+            line_start,
+            line_first_content,
+            previous_line_start,
+            previous_line_end,
+            previous_line_first_content,
+        ) = _advance_assignment_line_state(
+            value,
+            index,
+            next_index,
+            line_start=line_start,
+            line_first_content=line_first_content,
+            previous_line_start=previous_line_start,
+            previous_line_end=previous_line_end,
+            previous_line_first_content=previous_line_first_content,
+        )
+        index = next_index
     output.append(value[cursor:])
     return "".join(output)
 
