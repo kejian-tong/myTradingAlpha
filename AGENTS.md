@@ -4,7 +4,7 @@ This file defines repository-wide agent policy. Deeper `AGENTS.md` files add pat
 the closest applicable file wins for local details, while the global safety, authority, language,
 routing, and merge rules below always remain in force.
 
-## 1. Repository language
+## Repository language
 
 All repository-authored engineering prose must be English, including docs, code comments/docstrings,
 commit messages, PR text, reviews, and reports. Preserve product localization data, fixtures, exact
