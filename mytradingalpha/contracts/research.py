@@ -70,6 +70,45 @@ def _validate_wire_utc_datetime(value: object) -> object:
     raise ValueError("research timestamps require an exact string or UTC datetime")
 
 
+def _validate_exact_string(value: object) -> str:
+    if type(value) is not str:
+        raise ValueError("research wire strings require an exact built-in string")
+    return value
+
+
+def _validate_exact_integer(value: object) -> int:
+    if type(value) is not int:
+        raise ValueError("research wire integers require an exact built-in integer")
+    return value
+
+
+def _validate_nested_model_input(value: object, model: type[object]) -> object:
+    if type(value) is dict or type(value) is model:
+        return value
+    raise ValueError("research nested models require exact plain data or model instances")
+
+
+def _validate_research_model_storage(cls: type[object], value: object) -> object:
+    if type(value) is dict:
+        storage = value
+    elif type(value) is cls:
+        try:
+            storage = object.__getattribute__(value, "__dict__")
+        except (AttributeError, TypeError) as exc:
+            raise ValueError("research model storage is unavailable") from exc
+    else:
+        raise ValueError("research models require exact plain data or model instances")
+    if type(storage) is not dict:
+        raise ValueError("research model storage must be an exact dictionary")
+    fields = tuple(cls.model_fields)
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys):
+        raise ValueError("research model keys require exact built-in strings")
+    if len(keys) != len(fields) or any(key not in fields for key in keys):
+        raise ValueError("research model fields are not canonical")
+    return {field: dict.__getitem__(storage, field) for field in fields}
+
+
 ResearchSourceAgent = Annotated[
     _ResearchSourceAgentLiteral,
     BeforeValidator(_validate_source_agent_type),
@@ -86,12 +125,22 @@ class _ResearchContractModel(ContractModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_raw_storage(cls, value: object) -> object:
+        return _validate_research_model_storage(cls, value)
+
 
 class ResearchSourceFields(_ResearchContractModel):
     """Exact cached-response fields selected for thesis and risks."""
 
     thesis: StrictStr
     risks: StrictStr
+
+    @field_validator("thesis", "risks", mode="before")
+    @classmethod
+    def validate_exact_field_name_input(cls, value: object) -> str:
+        return _validate_exact_string(value)
 
     @field_validator("thesis", "risks")
     @classmethod
@@ -117,6 +166,25 @@ class ResearchProvenance(_ResearchContractModel):
     terms: StrictStr
     revision: StrictInt = Field(ge=0)
     manifest_hash: CanonicalChecksum
+
+    @field_validator(
+        "schema_version",
+        "manifest_id",
+        "source",
+        "source_locator",
+        "checksum",
+        "terms",
+        "manifest_hash",
+        mode="before",
+    )
+    @classmethod
+    def validate_exact_string_inputs(cls, value: object) -> str:
+        return _validate_exact_string(value)
+
+    @field_validator("revision", mode="before")
+    @classmethod
+    def validate_exact_revision(cls, value: object) -> int:
+        return _validate_exact_integer(value)
 
     @field_validator(
         "fetched_at",
@@ -151,6 +219,11 @@ class EvidenceReference(_ResearchContractModel):
     domain: CitableDomain
     record_id: StableId
 
+    @field_validator("schema_version", "bundle_id", "domain", "record_id", mode="before")
+    @classmethod
+    def validate_exact_string_inputs(cls, value: object) -> str:
+        return _validate_exact_string(value)
+
 
 class EvidenceCitation(_ResearchContractModel):
     """One validated citation whose semantic support remains unassessed."""
@@ -159,6 +232,21 @@ class EvidenceCitation(_ResearchContractModel):
     reference: EvidenceReference
     provenance: ResearchProvenance
     semantic_support: Literal["unassessed"] = "unassessed"
+
+    @field_validator("claim", "semantic_support", mode="before")
+    @classmethod
+    def validate_exact_string_inputs(cls, value: object) -> str:
+        return _validate_exact_string(value)
+
+    @field_validator("reference", mode="before")
+    @classmethod
+    def validate_reference_input(cls, value: object) -> object:
+        return _validate_nested_model_input(value, EvidenceReference)
+
+    @field_validator("provenance", mode="before")
+    @classmethod
+    def validate_provenance_input(cls, value: object) -> object:
+        return _validate_nested_model_input(value, ResearchProvenance)
 
 
 def _canonical_json(value: object) -> bytes:
@@ -203,6 +291,33 @@ class ResearchNote(_ResearchContractModel):
     risks: tuple[StrictStr, ...]
     citations: tuple[EvidenceCitation, ...]
 
+    @field_validator(
+        "schema_version",
+        "note_id",
+        "run_id",
+        "variant_id",
+        "instrument_id",
+        "bundle_id",
+        "bundle_hash",
+        "calendar_id",
+        "replay_policy",
+        "response_id",
+        "response_hash",
+        "output_hash",
+        "graph_artifact_id",
+        "graph_artifact_hash",
+        "model_artifact_id",
+        "model_artifact_hash",
+        "runtime_manifest_id",
+        "runtime_manifest_hash",
+        "source_agent",
+        "thesis",
+        mode="before",
+    )
+    @classmethod
+    def validate_exact_string_inputs(cls, value: object) -> str:
+        return _validate_exact_string(value)
+
     @field_validator("knowledge_cutoff", mode="before")
     @classmethod
     def validate_wire_knowledge_cutoff(cls, value: object) -> object:
@@ -218,16 +333,22 @@ class ResearchNote(_ResearchContractModel):
     @field_validator("source_fields", mode="before")
     @classmethod
     def validate_source_fields(cls, value: object) -> object:
-        if type(value) not in (dict, ResearchSourceFields):
-            raise ValueError("research note source fields require plain data")
-        return value
+        return _validate_nested_model_input(value, ResearchSourceFields)
+
+    @field_validator("capture_manifest", mode="before")
+    @classmethod
+    def validate_capture_manifest(cls, value: object) -> object:
+        return _validate_nested_model_input(value, ResearchProvenance)
 
     @field_validator("risks", mode="before")
     @classmethod
     def normalize_risks(cls, value: object) -> tuple[str, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("research note risks require a sequence")
-        return tuple(value)  # type: ignore[arg-type]
+        result = tuple(value)  # type: ignore[arg-type]
+        if any(type(item) is not str for item in result):
+            raise ValueError("research note risks require exact built-in strings")
+        return result
 
     @field_validator("thesis")
     @classmethod

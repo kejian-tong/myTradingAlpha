@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from math import isfinite
+from typing import Any
 
 _REDACTED = "[REDACTED]"
 _PRIVATE_KEY_PATTERN = re.compile(
@@ -44,6 +46,8 @@ _SENSITIVE_KEY_PATHS = (
 _SENSITIVE_COMPACT_KEYS = frozenset(
     "".join(path) for path in _SENSITIVE_KEY_PATHS if len(path) > 1
 )
+_PLAIN_DATA_MAX_DEPTH = 64
+_PLAIN_DATA_SENSITIVE_FIELDS = frozenset({"source_locator", "terms"})
 _ASSIGNMENT_PREFIX_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
@@ -68,7 +72,7 @@ def _is_sensitive_key(value: str) -> bool:
     if not parts:
         return False
     compact = "".join(parts)
-    if compact in _SENSITIVE_COMPACT_KEYS:
+    if any(compact.endswith(key) for key in _SENSITIVE_COMPACT_KEYS):
         return True
     return any(
         len(parts) >= len(path) and parts[-len(path) :] == path
@@ -160,4 +164,48 @@ def validate_artifact_text(value: str) -> str:
     return value
 
 
-__all__ = ["redact_artifact_text", "validate_artifact_text"]
+def redact_plain_data(value: Any) -> Any:
+    """Redact exact built-in JSON data before it is serialized to an artifact."""
+
+    def visit(item: Any, *, field_name: Any, seen: set[int], depth: int) -> Any:
+        if depth > _PLAIN_DATA_MAX_DEPTH:
+            raise ValueError("plain data exceeds maximum redaction depth")
+        item_type = type(item)
+        if item_type is str:
+            if type(field_name) is str and (
+                field_name in _PLAIN_DATA_SENSITIVE_FIELDS
+                or _is_sensitive_key(field_name)
+            ):
+                return _REDACTED
+            return redact_artifact_text(item)
+        if item_type is float:
+            if not isfinite(item):
+                raise ValueError("plain data requires finite numbers")
+            return item
+        if item_type in (int, bool, type(None)):
+            return item
+        if item_type not in (dict, list, tuple):
+            raise TypeError("plain data redaction accepts exact built-in JSON values")
+        identity = id(item)
+        if identity in seen:
+            raise ValueError("plain data contains a cycle")
+        seen.add(identity)
+        try:
+            if item_type is dict:
+                result: dict[str, Any] = {}
+                for key, child in dict.items(item):
+                    if type(key) is not str:
+                        raise TypeError("plain data object keys must be exact strings")
+                    result[key] = visit(child, field_name=key, seen=seen, depth=depth + 1)
+                return result
+            return [
+                visit(child, field_name=None, seen=seen, depth=depth + 1)
+                for child in item
+            ]
+        finally:
+            seen.remove(identity)
+
+    return visit(value, field_name=None, seen=set(), depth=0)
+
+
+__all__ = ["redact_artifact_text", "redact_plain_data", "validate_artifact_text"]

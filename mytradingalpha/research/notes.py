@@ -10,6 +10,7 @@ from math import isfinite
 
 from pydantic import TypeAdapter, ValidationError
 
+from mytradingalpha.contracts.redaction import redact_plain_data
 from mytradingalpha.contracts.research import (
     MAX_RESEARCH_NOTE_BYTES,
     EvidenceCitation,
@@ -25,7 +26,6 @@ from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
 from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.universe import AssetClass, Instrument
-from mytradingalpha.ops.logging import redact_plain_data
 from mytradingalpha.research.cached_response import (
     CachedGraphResponse,
     _safe_response_input,

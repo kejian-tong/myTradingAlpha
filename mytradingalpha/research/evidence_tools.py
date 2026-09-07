@@ -9,6 +9,7 @@ from decimal import Decimal
 from math import isfinite
 from types import MappingProxyType
 
+from mytradingalpha.contracts.redaction import redact_plain_data
 from mytradingalpha.contracts.research import EvidenceReference
 from mytradingalpha.data.actions import (
     ActionType,
@@ -44,7 +45,6 @@ from mytradingalpha.data.macro import MacroFrequency, MacroObservation
 from mytradingalpha.data.provenance import SourceManifest
 from mytradingalpha.data.social import SocialPlatform, SocialPost
 from mytradingalpha.data.universe import AssetClass, Instrument, SymbolAlias, UniverseMembership
-from mytradingalpha.ops.logging import redact_plain_data
 
 
 class EvidenceToolError(ValueError):
