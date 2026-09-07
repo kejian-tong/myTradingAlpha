@@ -61,6 +61,27 @@ def test_subagent_and_compaction_hooks_record_only_narrow_metadata(tmp_path: Pat
     assert all(forbidden.isdisjoint(row) for row in rows)
 
 
+def test_runpy_loading_matches_windows_command_shape(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    event = {
+        "hook_event_name": "SubagentStart",
+        "cwd": str(repo),
+        "agent_type": "test_auditor",
+        "model": "gpt-5.6-luna",
+    }
+    code = "import runpy; runpy.run_path(%r, run_name='__main__')" % str(HOOK)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert _rows(repo)[0]["role"] == "test_auditor"
+
+
 def test_telemetry_hook_is_best_effort_and_fail_open(tmp_path: Path) -> None:
     event = {
         "hook_event_name": "SubagentStart",
