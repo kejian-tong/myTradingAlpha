@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -41,8 +41,8 @@ SIG-02 — Evidence tools and ResearchNote
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
-  (tree `31311a19799a5f8615a1185fa6004482caa99e8b`); the final state-bearing head is
+  `404c907982cfc2ff6e1fd12fdbb6f5a7cde22084`
+  (tree `36ef89ac99af7984b9c50d1830c853567eaf3ba2`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -74,8 +74,10 @@ SIG-02 — Evidence tools and ResearchNote
   `6 failed / 84 passed`; repair GREEN: `51384c1c473ff1bd80be299aea74f9a48fdf2bbe`
 - UTC/canonicalization repair RED: `9b56ccf65a58ca9a594ef26c9e0aeb6e854e9031`, expected
   `10 failed / 90 passed`; repair GREEN: `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
-- local tests: PASS after final repair; focused `100 passed`, required regressions `820 passed`, full
-  suite `2295 passed / 3 skipped / 18 warnings / 69 subtests`
+- artifact-redaction repair RED: `d2931a5e2af8ab9f7f91845761c19f98779e1ff5`, expected
+  `3 failed / 100 passed`; repair GREEN: `404c907982cfc2ff6e1fd12fdbb6f5a7cde22084`
+- local tests: PASS after final repair; focused `103 passed`, required regressions `823 passed`, full
+  suite `2298 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: latest xhigh-review candidate `7dbfc166b91c059855997b14a53afc87d4668e0f` passed CI
@@ -98,7 +100,8 @@ SIG-02 — Evidence tools and ResearchNote
   repair RED/GREEN closed those surfaces. Fresh xhigh re-review at
   `7dbfc166b91c059855997b14a53afc87d4668e0f` returned REQUEST CHANGES for incomplete artifact-level
   source text/source-agent redaction plus a MEDIUM reference-error classification issue; durable
-  artifact: PR #45 comment `5563577502`; focused repair and fresh exact-head xhigh review are required.
+  artifact: PR #45 comment `5563577502`; the focused artifact-redaction/typed-reference repair closes
+  those surfaces locally; fresh exact-head checks and xhigh re-review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
