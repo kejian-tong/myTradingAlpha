@@ -7,6 +7,7 @@ they are not evidence of real capture or model inference.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 from collections.abc import Mapping
@@ -444,12 +445,15 @@ def test_research_note_builder_maps_corrupt_response_to_typed_error() -> None:
 
 
 def test_research_note_canonical_bytes_have_a_named_bounded_limit() -> None:
-    _, _, notes = _load_sig02()
+    contracts, _, notes = _load_sig02()
     bundle, context, response, _ = _bundle_response()
     note = _note(bundle, context, response)
     limit = notes.MAX_RESEARCH_NOTE_BYTES
     assert type(limit) is int and limit == 4_194_304
     oversized = note.model_copy(update={"thesis": "x" * limit})
+    oversized = oversized.model_copy(
+        update={"note_id": contracts.derive_research_note_id(oversized)}
+    )
     with pytest.raises(notes.ResearchNoteSerializationError):
         oversized.canonical_bytes()
 
@@ -1889,3 +1893,163 @@ def test_single_component_compact_suffixes_redact_all_public_surfaces() -> None:
     payload["note_id"] = contracts.derive_research_note_id(note)
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
+
+
+def test_assignment_lexer_sweeps_normalized_leading_key_tokens_and_controls() -> None:
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    paths = (
+        ("access", "token"),
+        ("api", "key"),
+        ("api", "secret"),
+        ("authorization",),
+        ("aws", "access", "key", "id"),
+        ("aws", "secret", "access", "key"),
+        ("bearer",),
+        ("bearer", "token"),
+        ("auth", "token"),
+        ("broker", "account", "id"),
+        ("client", "secret"),
+        ("consumer", "secret"),
+        ("account", "number"),
+        ("account", "id"),
+        ("password",),
+        ("private", "key"),
+        ("refresh", "token"),
+        ("secret",),
+        ("session", "token"),
+        ("source", "locator"),
+        ("terms",),
+        ("token",),
+    )
+    prefixes = ("_", "9.", "-", ".", "x-")
+    assignments: list[str] = []
+    canaries: list[str] = []
+    for path_index, path in enumerate(paths):
+        for prefix_index, prefix in enumerate(prefixes):
+            field = prefix + "_".join(path)
+            canary = f"SIG02_LEXER_{path_index}_{prefix_index}_CANARY"
+            canaries.append(canary)
+            assignments.append(f"{field}={canary}")
+    controls = (
+        "_token_count=SIG02_LEXER_TOKEN_COUNT_SAFE",
+        "9.secret_count=SIG02_LEXER_SECRET_COUNT_SAFE",
+        "-password_policy=SIG02_LEXER_PASSWORD_POLICY_SAFE",
+        ".authorization_status=SIG02_LEXER_AUTHORIZATION_STATUS_SAFE",
+        "x-bearer_count=SIG02_LEXER_BEARER_COUNT_SAFE",
+        "_tokenizer=SIG02_LEXER_TOKENIZER_SAFE",
+        "9.secretary=SIG02_LEXER_SECRETARY_SAFE",
+        "-passwordless=SIG02_LEXER_PASSWORDLESS_SAFE",
+    )
+    redacted = redaction.redact_artifact_text("; ".join((*assignments, *controls)))
+    assert all(canary not in redacted for canary in canaries)
+    assert all(control.split("=", 1)[1] in redacted for control in controls)
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+
+def test_ancestor_aware_plain_data_and_structural_json_redaction_across_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    paths = (
+        ("access", "token"),
+        ("api", "key"),
+        ("api", "secret"),
+        ("aws", "access", "key", "id"),
+        ("aws", "secret", "access", "key"),
+        ("bearer", "token"),
+        ("auth", "token"),
+        ("broker", "account", "id"),
+        ("client", "secret"),
+        ("consumer", "secret"),
+        ("account", "number"),
+        ("account", "id"),
+        ("private", "key"),
+        ("refresh", "token"),
+        ("session", "token"),
+        ("source", "locator"),
+    )
+    payload: dict[str, object] = {"safe": {"token_count": "SIG02_JSON_TOKEN_COUNT_SAFE"}}
+    canaries: list[str] = []
+    for index, path in enumerate(paths):
+        cursor = payload
+        for component in path[:-1]:
+            child = cursor.setdefault(component, {})
+            assert type(child) is dict
+            cursor = child
+        canary = f"SIG02_JSON_{index}_CANARY"
+        canaries.append(canary)
+        cursor[path[-1]] = canary
+    payload["safe_sibling"] = {
+        "secret_count": "SIG02_JSON_SECRET_COUNT_SAFE",
+        "account": {"identity": "SIG02_JSON_ACCOUNT_IDENTITY_SAFE"},
+    }
+
+    redacted_plain = redaction.redact_plain_data(payload)
+    encoded_plain = json.dumps(redacted_plain, sort_keys=True, separators=(",", ":"))
+    assert all(canary not in encoded_plain for canary in canaries)
+    assert "SIG02_JSON_TOKEN_COUNT_SAFE" in encoded_plain
+    assert "SIG02_JSON_SECRET_COUNT_SAFE" in encoded_plain
+    assert "SIG02_JSON_ACCOUNT_IDENTITY_SAFE" in encoded_plain
+
+    json_text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    for depth in range(4):
+        encoded = json_text
+        for _ in range(depth):
+            encoded = json.dumps(encoded, ensure_ascii=False, separators=(",", ":"))
+        redacted = redaction.redact_artifact_text(encoded)
+        assert all(canary not in redacted for canary in canaries)
+        assert "SIG02_JSON_TOKEN_COUNT_SAFE" in redacted
+        assert redaction.redact_artifact_text(redacted) == redacted
+    embedded = redaction.redact_artifact_text(f"prefix {json_text} suffix")
+    assert all(canary not in embedded for canary in canaries)
+    assert "prefix " in embedded and " suffix" in embedded
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": f"prefix {json_text} suffix"})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert all(canary not in rendered for canary in canaries)
+
+    output = make_output()
+    output["market_report"] = json_text
+    output["news_report"] = f"embedded {json_text}"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert all(canary not in canonical for canary in canaries)
+    object.__setattr__(note, "thesis", f"embedded {json_text}")
+    note_payload = note.model_dump(mode="python")
+    note_payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(note_payload)
+
+
+def test_research_scalar_aliases_are_contract_owned_and_compatibly_reexported() -> None:
+    common = importlib.import_module("mytradingalpha.contracts.common")
+    provenance = importlib.import_module("mytradingalpha.data.provenance")
+    assert common.RequiredReference is provenance.RequiredReference
+    assert common.CanonicalChecksum is provenance.CanonicalChecksum
+    root = Path(__file__).resolve().parents[3]
+    for path in (root / "mytradingalpha/contracts").glob("*.py"):
+        assert "mytradingalpha.data" not in path.read_text(encoding="utf-8")
+
+
+def test_cached_response_and_bundle_fixtures_remain_exactly_unchanged() -> None:
+    root = Path(__file__).resolve().parents[3]
+    cached = root / "tests/productionization/fixtures/research/cached_graph_response_v1.json"
+    bundle = root / "tests/productionization/fixtures/pit/evidence_bundle_v1.json"
+    assert hashlib.sha256(cached.read_bytes()).hexdigest() == (
+        "5e910a0542fe1ec3fe6b7f78d8f3736d7056ab768c8803046f8af0b27f2a2793"
+    )
+    assert hashlib.sha256(bundle.read_bytes()).hexdigest() == (
+        "7e4c4a65dbfd85396a370ff39a5ae130d7e1853fed1c53e8de3e89756ce0ad5a"
+    )
