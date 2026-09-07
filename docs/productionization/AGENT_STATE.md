@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -41,8 +41,8 @@ SIG-02 — Evidence tools and ResearchNote
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `3142cfce0d9f9e9bbcecafca4b962f515d568a61`
-  (tree `d9423d00daadabdf0817e16b96768da31c00b566`); the final state-bearing head is
+  `aa14d0156de18f966477b7971b2fecd6ce46fa89`
+  (tree `0c547aca89f51015eeadfd593dba3c56d920cee5`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -94,8 +94,11 @@ SIG-02 — Evidence tools and ResearchNote
   `9a3a609d84b98c73e25820b6c5621e86c9d9d61f`
 - structural-redaction/alias-ownership repair RED: `8ba3631336313353d80090baf0307fd2cdbd5514`,
   expected `3` focused failures; repair GREEN: `3142cfce0d9f9e9bbcecafca4b962f515d568a61`
-- local tests: PASS after final repair; focused `132 passed`, required regressions `852 passed`, full
-  suite `2327 passed / 3 skipped / 18 warnings / 69 subtests`
+- structural fail-closed RED: `13cc4cf2a3b91260a2740836a967bdbdb4d54a72` plus test-only
+  assertion correction `bea0784b04044bc4a2a6fcfb366810b605ce47ba`; repair GREEN:
+  `aa14d0156de18f966477b7971b2fecd6ce46fa89`
+- local tests: PASS after final repair; focused `137 passed`, required regressions `857 passed`, full
+  suite `2332 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: latest xhigh-review candidate `9856286a9e6b761c32b225878802be06325029cc` passed CI
@@ -149,7 +152,9 @@ SIG-02 — Evidence tools and ResearchNote
   exact-head CI/xhigh review found remaining structural confidentiality HIGHs for numeric/container
   sensitive values, fragment-budget exhaustion, hierarchical key separators and Unicode-escaped keys;
   durable artifact: PR #45 comment `5564938194`. Focused repair RED/GREEN and fresh exact-head review
-  are required.
+  are required. The path-first any-type redaction, explicit fragment-budget fail-closed behavior,
+  hierarchical phrase lexer and bounded Unicode key analysis close those surfaces locally; fresh
+  exact-head CI and xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
