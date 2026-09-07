@@ -6,14 +6,24 @@ telemetry write failure must not steer or block an agentic turn.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
-
-import harness_telemetry
+from types import ModuleType
 
 _SUPPORTED = {"SubagentStart", "SubagentStop", "PostCompact"}
+
+
+def _telemetry_module() -> ModuleType:
+    path = Path(__file__).resolve().with_name("harness_telemetry.py")
+    spec = importlib.util.spec_from_file_location("codex_harness_telemetry", path)
+    if spec is None or spec.loader is None:
+        raise OSError("cannot load harness telemetry module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _repo_root(cwd: object) -> Path:
@@ -57,7 +67,7 @@ def main() -> int:
         payload = _payload(event)
         if payload is None:
             return 0
-        harness_telemetry.record(_repo_root(event.get("cwd")), payload)
+        _telemetry_module().record(_repo_root(event.get("cwd")), payload)
     except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError):
         # Telemetry is observability, never an execution or merge authority.
         return 0
