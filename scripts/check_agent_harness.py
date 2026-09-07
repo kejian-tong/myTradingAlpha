@@ -22,6 +22,7 @@ _ROLES = {
     "test_auditor": ("gpt-5.6-luna", "max", True),
     "boundary_reviewer": ("gpt-5.6-sol", "high", True),
     "external_spec_researcher": ("gpt-5.6-luna", "max", True),
+    "astra_canary": ("gpt-6-astra", "xhigh", True),
 }
 _SCOPED_AGENT_PATHS = (
     "docs/productionization/AGENTS.md",
@@ -128,6 +129,8 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
             errors.append(f"missing skill description: {name}")
         if name not in root_text:
             errors.append(f"root AGENTS.md does not advertise repo skill: {name}")
+    if "`astra_canary`" not in root_text or "GPT-6 production routes remain disabled" not in root_text:
+        errors.append("root Astra canary policy is missing or activates GPT-6 production routing")
     return errors
 
 
@@ -158,8 +161,11 @@ def configuration_errors(root: Path) -> list[str]:
                     errors.append("external_spec_researcher OpenAI docs MCP differs from reviewed policy")
             elif mcp_servers:
                 errors.append(f"{name} must not receive external MCP servers")
-            if name == "normal_implementer" and "normal/high/critical" not in role.get("developer_instructions", ""):
+            instructions = role.get("developer_instructions", "")
+            if name == "normal_implementer" and "normal/high/critical" not in instructions:
                 errors.append("initial implementer must inherit normal/high/critical safety class")
+            if name == "astra_canary" and not all(term in instructions for term in ("shadow-only", "historical", "active candidate")):
+                errors.append("astra_canary instructions must remain shadow-only historical evaluation")
         errors.extend(_hook_errors(root))
         errors.extend(_instruction_and_skill_errors(root))
         for filename in ("AGENT_AUDIT_PROTOCOL.md", "PR_IMPLEMENTATION_SPEC_TEMPLATE.md"):
