@@ -20,6 +20,7 @@ CREDIT_RATES = {
     "gpt-5.6-luna": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
     "gpt-5.6-terra": {"input": 50.0, "cached_input": 5.0, "output": 300.0},
     "gpt-5.6-sol": {"input": 100.0, "cached_input": 10.0, "output": 500.0},
+    "gpt-6-astra": {"input": 250.0, "cached_input": 25.0, "output": 1250.0},
 }
 
 # Enterprise token-based USD rates per 1M tokens, used only when useful for comparison.
@@ -27,6 +28,7 @@ USD_RATES = {
     "gpt-5.6-luna": {"input": 0.20, "cached_input": 0.02, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00},
     "gpt-5.6-sol": {"input": 4.00, "cached_input": 0.40, "output": 20.00},
+    "gpt-6-astra": {"input": 10.00, "cached_input": 1.00, "output": 50.00},
 }
 
 _MODELS = frozenset(CREDIT_RATES)
@@ -57,7 +59,7 @@ def validate(record: object) -> dict:
         if type(record[key]) is not str or not record[key].strip():
             raise ValueError(f"{key} must be a non-empty string")
     if record["model"] not in _MODELS:
-        raise ValueError("model is not in the GPT-5.6 benchmark set")
+        raise ValueError("model is not in the routing benchmark set")
     for key in ("acceptance_pass", "safety_gate_pass"):
         if type(record[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
