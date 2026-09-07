@@ -7,6 +7,7 @@ import re
 import unicodedata
 from math import isfinite
 from typing import Any
+from urllib.parse import unquote_plus
 
 _REDACTED = "[REDACTED]"
 _PRIVATE_KEY_PATTERN = re.compile(
@@ -62,7 +63,7 @@ _ASSIGNMENT_KEY_SEPARATORS = frozenset("_./:-\\\"'")
 
 def _decode_unicode_escapes(value: str) -> tuple[str, bool]:
     candidate = value
-    invalid = False
+    invalid = any(0xD800 <= ord(character) <= 0xDFFF for character in candidate)
     for _ in range(_JSON_MAX_UNESCAPE_ATTEMPTS):
         if re.search(r"\\u(?![0-9a-fA-F]{4})", candidate, re.IGNORECASE):
             invalid = True
@@ -75,6 +76,8 @@ def _decode_unicode_escapes(value: str) -> tuple[str, bool]:
         if updated == candidate:
             break
         candidate = updated
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in candidate):
+            invalid = True
     if re.search(r"\\u[0-9a-fA-F]{4}", candidate):
         invalid = True
     return candidate, invalid
@@ -99,29 +102,15 @@ def _decode_percent_escapes(value: str) -> tuple[str, bool]:
     candidate = value
     unresolved = False
     for _ in range(_PERCENT_MAX_UNESCAPE_ATTEMPTS):
-        output: list[str] = []
-        index = 0
-        work = 0
-        changed = False
-        while index < len(candidate):
-            work += 1
-            if work > _PERCENT_MAX_WORK:
-                return candidate, True
-            if (
-                candidate[index] == "%"
-                and index + 2 < len(candidate)
-                and all(character in "0123456789abcdefABCDEF" for character in candidate[index + 1 : index + 3])
-            ):
-                output.append(chr(int(candidate[index + 1 : index + 3], 16)))
-                index += 3
-                changed = True
-                continue
-            output.append(candidate[index])
-            index += 1
-        updated = "".join(output)
-        candidate = updated
-        if not changed:
+        if len(candidate) > _PERCENT_MAX_WORK:
+            return candidate, True
+        try:
+            updated = unquote_plus(candidate, encoding="utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return candidate, True
+        if updated == candidate:
             break
+        candidate = updated
     if re.search(r"%[0-9a-fA-F]{2}", candidate):
         unresolved = True
     index = 0
@@ -151,7 +140,7 @@ def _is_sensitive_key(value: str) -> bool:
     decoded, invalid = _decode_key_escapes(value)
     if _is_sensitive_parts(_key_parts(decoded)):
         return True
-    return bool(invalid and "\\u" in value.casefold())
+    return bool(invalid)
 
 
 def _is_sensitive_parts(parts: tuple[str, ...]) -> bool:
