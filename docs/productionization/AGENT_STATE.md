@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `8ac5e654e4d39978faac8c60f26f09d9a1098541`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -118,8 +118,8 @@ SIG-02 — Evidence tools and ResearchNote
   regressions `864 passed`, full suite `2339 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: current-main xhigh-review candidate `872bddaa7a08750e27f8552729bd47443be0e785` passed CI
-  `34084813005`, CodeQL `34084813135` and Dependency Review `34084813020`; fresh exact-head checks
+- CI: current-main xhigh-review candidate `f494605a5d252828af886a76996d2f06f4f1bc98` passed CI
+  `34086439679`, CodeQL `34086439684` and Dependency Review `34086439697`; fresh exact-head checks
   required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
@@ -181,7 +181,8 @@ SIG-02 — Evidence tools and ResearchNote
   and quadratic unmatched-structure scanning; durable artifact: PR #45 comment `5565326762`. Focused
   repair RED/GREEN adds whole-text delimiter normalization, unconditional oversized-structure closure
   and a one-pass structural stack, closing the reproduced surfaces locally; fresh exact-head CI and
-  xhigh review are pending.
+  xhigh review found max-plus-one Unicode and URL-encoded assignment-delimiter HIGHs; durable artifact:
+  PR #45 comment `5565548420`. Focused repair RED/GREEN and fresh exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
