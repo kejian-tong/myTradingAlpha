@@ -58,6 +58,18 @@ def _validate_source_agent_type(value: object) -> object:
     return value
 
 
+def _validate_wire_utc_datetime(value: object) -> object:
+    """Reject datetime subclasses and hostile tzinfo before UtcDateTime runs."""
+
+    if type(value) is str:
+        return value
+    if type(value) is datetime and object.__getattribute__(value, "tzinfo") is timezone.utc:
+        return value
+    if value is None:
+        return None
+    raise ValueError("research timestamps require an exact string or UTC datetime")
+
+
 ResearchSourceAgent = Annotated[
     _ResearchSourceAgentLiteral,
     BeforeValidator(_validate_source_agent_type),
@@ -105,6 +117,18 @@ class ResearchProvenance(_ResearchContractModel):
     terms: StrictStr
     revision: StrictInt = Field(ge=0)
     manifest_hash: CanonicalChecksum
+
+    @field_validator(
+        "fetched_at",
+        "event_time",
+        "published_at",
+        "available_at",
+        "ingested_at",
+        mode="before",
+    )
+    @classmethod
+    def validate_wire_timestamps(cls, value: object) -> object:
+        return _validate_wire_utc_datetime(value)
 
     @model_validator(mode="after")
     def validate_redacted_fields(self) -> ResearchProvenance:
@@ -178,6 +202,11 @@ class ResearchNote(_ResearchContractModel):
     thesis: StrictStr
     risks: tuple[StrictStr, ...]
     citations: tuple[EvidenceCitation, ...]
+
+    @field_validator("knowledge_cutoff", mode="before")
+    @classmethod
+    def validate_wire_knowledge_cutoff(cls, value: object) -> object:
+        return _validate_wire_utc_datetime(value)
 
     @field_validator("source_agent", mode="before")
     @classmethod

@@ -384,6 +384,19 @@ def _validate_bindings(
     context: RunContext,
     response: CachedGraphResponse,
 ) -> None:
+    if context.mode is not Mode.HISTORICAL:
+        raise ResearchNoteBindingError("ResearchNoteBuilder requires historical mode")
+    policy = context.network_policy
+    if (
+        policy.data_capture_egress
+        or policy.model_provider_egress
+        or policy.research_tool_egress
+        or policy.paper_broker_egress
+        or policy.live_broker_egress
+    ):
+        raise ResearchNoteBindingError(
+            "ResearchNoteBuilder requires every network egress flag to be disabled"
+        )
     if context.bundle_id != bundle.bundle_id or context.bundle_hash != bundle.bundle_hash:
         raise ResearchNoteBindingError("run context is bound to a different evidence bundle")
     if context.knowledge_cutoff != bundle.knowledge_cutoff:

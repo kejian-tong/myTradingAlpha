@@ -17,97 +17,125 @@ _TOKEN_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}"
     r"|(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])"
 )
-_SENSITIVE_KEYS = frozenset(
+_SENSITIVE_KEY_PATHS = (
+    ("access", "token"),
+    ("api", "key"),
+    ("api", "secret"),
+    ("authorization",),
+    ("aws", "access", "key", "id"),
+    ("aws", "secret", "access", "key"),
+    ("bearer",),
+    ("bearer", "token"),
+    ("client", "secret"),
+    ("consumer", "secret"),
+    ("password",),
+    ("private", "key"),
+    ("refresh", "token"),
+    ("secret",),
+    ("session", "token"),
+    ("source", "locator"),
+    ("terms",),
+    ("token",),
+)
+_SENSITIVE_COMPACT_KEYS = frozenset(
     {
         "access_token",
-        "api_key",
-        "authorization",
-        "aws_access_key_id",
-        "aws_secret_access_key",
-        "bearer",
-        "bearer_token",
-        "client_secret",
-        "consumer_secret",
-        "password",
-        "private_key",
-        "refresh_token",
-        "secret",
-        "session_token",
-        "source_locator",
-        "terms",
-        "token",
+        "apikey",
+        "apisecret",
+        "awsaccesskeyid",
+        "awssecretaccesskey",
+        "bearertoken",
+        "brokeraccountid",
+        "clientsecret",
+        "consumersecret",
+        "refreshtoken",
+        "sessiontoken",
     }
 )
 _ASSIGNMENT_PREFIX_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.-])"
-    r"(?P<prefix>(?P<key_quote>\\?[\"']?)"
+    r"(?P<prefix>(?P<key_escape>\\*)(?P<key_quote>[\"']?)"
     r"(?P<key>[A-Za-z][A-Za-z0-9_.-]*)"
-    r"(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
+    r"(?P=key_escape)(?P=key_quote)\s*[:=])(?P<spacing>\s*)",
     re.IGNORECASE,
 )
 
 
-def _normalize_key(value: str) -> str:
-    value = value.replace("\\\"", "").replace("\\'", "")
-    value = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", value)
-    return re.sub(r"[-.]", "_", value).casefold()
+def _key_parts(value: str) -> tuple[str, ...]:
+    value = value.replace("\\", "").replace('"', "").replace("'", "")
+    value = re.sub(
+        r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
+        "_",
+        value,
+    )
+    return tuple(part.casefold() for part in re.findall(r"[A-Za-z0-9]+", value))
 
 
 def _is_sensitive_key(value: str) -> bool:
-    return _normalize_key(value) in _SENSITIVE_KEYS
+    parts = _key_parts(value)
+    if not parts:
+        return False
+    compact = "".join(parts)
+    if compact in _SENSITIVE_COMPACT_KEYS:
+        return True
+    return any(
+        len(parts) >= len(path) and parts[-len(path) :] == path
+        for path in _SENSITIVE_KEY_PATHS
+    )
 
 
-def _value_end(value: str, start: int) -> tuple[int, str]:
+def _quoted_value_bounds(value: str, start: int) -> tuple[int, str, str] | None:
+    index = start
+    while index < len(value) and value[index] == "\\":
+        index += 1
+    if index >= len(value) or value[index] not in {'"', "'"}:
+        return None
+    quote = value[index]
+    escape_depth = index - start
+    content_start = index + 1
+    cursor = content_start
+    while cursor < len(value):
+        if value[cursor] == quote:
+            run = 0
+            preceding = cursor - 1
+            while preceding >= content_start and value[preceding] == "\\":
+                run += 1
+                preceding -= 1
+            if run == escape_depth or (escape_depth == 0 and run % 2 == 0):
+                return cursor + 1, value[start : content_start], value[cursor - run : cursor + 1]
+        cursor += 1
+    return len(value), value[start : content_start], ""
+
+
+def _value_end(value: str, start: int) -> tuple[int, str, str]:
+    quoted = _quoted_value_bounds(value, start)
+    if quoted is not None:
+        return quoted
     if value.startswith(_REDACTED, start):
-        return start + len(_REDACTED), ""
-    escaped_quote = value[start : start + 2] if value[start : start + 2] in {'\\"', "\\'"} else ""
-    if escaped_quote:
-        quote = escaped_quote[1]
-        index = start + 2
-        while index < len(value):
-            if value[index : index + 2] == f"\\{quote}":
-                return index + 2, escaped_quote
-            if value[index] == "\\":
-                index += 2
-                continue
-            if value[index] == quote:
-                return index + 1, escaped_quote
-            index += 1
-        return len(value), escaped_quote
-    if value[start : start + 1] in {'"', "'"}:
-        quote = value[start]
-        index = start + 1
-        while index < len(value):
-            if value[index] == "\\":
-                index += 2
-                continue
-            if value[index] == quote:
-                return index + 1, quote
-            index += 1
-        return len(value), quote
+        return start + len(_REDACTED), "", ""
     index = start
     while index < len(value) and value[index] not in "\r\n,;}]":
         index += 1
-    return index, ""
+    return index, "", ""
 
 
 def _redact_assignments(value: str) -> str:
     output: list[str] = []
     cursor = 0
     for match in _ASSIGNMENT_PREFIX_PATTERN.finditer(value):
+        if match.start() < cursor:
+            continue
         output.append(value[cursor : match.start()])
         if not _is_sensitive_key(match.group("key")):
             output.append(match.group(0))
             cursor = match.end()
             continue
-        end, quote = _value_end(value, match.end())
-        if quote:
-            replacement = (
-                f"{match.group('prefix')}{match.group('spacing')}"
-                f"{quote}{_REDACTED}{quote}"
-            )
+        end, quote_prefix, quote_suffix = _value_end(value, match.end())
+        prefix = f"{match.group('prefix')}{match.group('spacing')}"
+        if quote_prefix:
+            replacement = f"{prefix}{quote_prefix}{_REDACTED}{quote_suffix}"
         else:
-            replacement = f"{match.group('prefix')}{match.group('spacing')}{_REDACTED}"
+            replacement = f"{prefix}{_REDACTED}"
         output.append(replacement)
         cursor = end
     output.append(value[cursor:])
