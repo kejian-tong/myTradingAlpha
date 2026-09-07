@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
+- `roadmap_status`: `sig_02_repair_in_progress`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -89,8 +89,8 @@ SIG-02 — Evidence tools and ResearchNote
   suite `2313 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
-- CI: latest xhigh-review candidate `92d226d11fdc81a760bc6b09302cf84f4f7f1278` passed CI
-  `34073904309`, CodeQL `34073904280` and Dependency Review `34073904298`; fresh exact-head checks
+- CI: latest xhigh-review candidate `8e7a17cffc9b3e87b178fd9847cf495bf7804dae` passed CI
+  `34075932197`, CodeQL `34075932199` and Dependency Review `34075932195`; fresh exact-head checks
   required after repair
 - review: `REQUEST CHANGES` at `55e7d7b04190cd196ecfb50bdfe1239fa1078763`;
   controlling/specialist review found unresolved HIGH immutability, hostile-object execution,
@@ -120,7 +120,9 @@ SIG-02 — Evidence tools and ResearchNote
   prefixed sensitive-key redaction plus hostile-timezone direct-wire validation; durable artifact:
   PR #45 comment `5563936753`. The suffix-aware arbitrary-escape artifact scanner, public wire-time
   prevalidation and explicit historical/all-egress-false binding close those surfaces locally; fresh
-  exact-head CI and xhigh review are pending.
+  exact-head CI/xhigh review found one remaining artifact key-table HIGH: missing broker/account/id and
+  inconsistent compact access-token spelling; durable artifact: PR #45 comment `5564252940`. Focused
+  repair RED/GREEN and fresh exact-head xhigh review are required.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
