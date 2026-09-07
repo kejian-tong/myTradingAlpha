@@ -52,6 +52,7 @@ _SENSITIVE_COMPACT_KEYS = frozenset(
 _PLAIN_DATA_MAX_DEPTH = 64
 _JSON_MAX_UNESCAPE_ATTEMPTS = 5
 _PERCENT_MAX_UNESCAPE_ATTEMPTS = 5
+_ANALYSIS_MAX_ITERATIONS = max(_JSON_MAX_UNESCAPE_ATTEMPTS, _PERCENT_MAX_UNESCAPE_ATTEMPTS)
 _PERCENT_MAX_WORK = 1_000_000
 _JSON_MAX_FRAGMENT_BYTES = 1_048_576
 _JSON_MAX_FRAGMENTS = 32
@@ -61,10 +62,15 @@ _MAX_ASSIGNMENT_WORK = 1_000_000
 _ASSIGNMENT_KEY_SEPARATORS = frozenset("_./:-\\\"'")
 
 
-def _decode_unicode_escapes(value: str) -> tuple[str, bool]:
+def _decode_unicode_escapes(
+    value: str,
+    *,
+    attempts: int = _JSON_MAX_UNESCAPE_ATTEMPTS,
+    report_unresolved: bool = True,
+) -> tuple[str, bool]:
     candidate = value
     invalid = any(0xD800 <= ord(character) <= 0xDFFF for character in candidate)
-    for _ in range(_JSON_MAX_UNESCAPE_ATTEMPTS):
+    for _ in range(attempts):
         if re.search(r"\\u(?![0-9a-fA-F]{4})", candidate, re.IGNORECASE):
             invalid = True
         updated = re.sub(
@@ -78,7 +84,7 @@ def _decode_unicode_escapes(value: str) -> tuple[str, bool]:
         candidate = updated
         if any(0xD800 <= ord(character) <= 0xDFFF for character in candidate):
             invalid = True
-    if re.search(r"\\u[0-9a-fA-F]{4}", candidate):
+    if report_unresolved and re.search(r"\\u[0-9a-fA-F]{4}", candidate):
         invalid = True
     return candidate, invalid
 
@@ -98,10 +104,15 @@ def _percent_sensitive_prefix(value: str, index: int) -> bool:
     return _is_sensitive_key(value[start + 1 : index])
 
 
-def _decode_percent_escapes(value: str) -> tuple[str, bool]:
+def _decode_percent_escapes(
+    value: str,
+    *,
+    attempts: int = _PERCENT_MAX_UNESCAPE_ATTEMPTS,
+    report_unresolved: bool = True,
+) -> tuple[str, bool]:
     candidate = value
     unresolved = False
-    for _ in range(_PERCENT_MAX_UNESCAPE_ATTEMPTS):
+    for _ in range(attempts):
         if len(candidate) > _PERCENT_MAX_WORK:
             return candidate, True
         try:
@@ -111,17 +122,56 @@ def _decode_percent_escapes(value: str) -> tuple[str, bool]:
         if updated == candidate:
             break
         candidate = updated
-    if re.search(r"%[0-9a-fA-F]{2}", candidate):
+    if report_unresolved and re.search(r"%[0-9a-fA-F]{2}", candidate):
         unresolved = True
     index = 0
     while index < len(candidate):
         if candidate[index] == "%":
-            if _percent_sensitive_prefix(candidate, index):
+            valid_escape = (
+                index + 2 < len(candidate)
+                and all(
+                    character in "0123456789abcdefABCDEF"
+                    for character in candidate[index + 1 : index + 3]
+                )
+            )
+            if (not valid_escape or report_unresolved) and _percent_sensitive_prefix(candidate, index):
                 unresolved = True
             index += 1
             continue
         index += 1
     return candidate, unresolved
+
+
+def _normalize_encoded_analysis(value: str) -> tuple[str, bool]:
+    """Alternate bounded Unicode and percent decoding to one fixed point."""
+
+    candidate = value
+    for _ in range(_ANALYSIS_MAX_ITERATIONS):
+        unicode_candidate, unicode_bad = _decode_unicode_escapes(
+            candidate, attempts=1, report_unresolved=False
+        )
+        if unicode_bad:
+            return candidate, True
+        percent_candidate, percent_bad = _decode_percent_escapes(
+            unicode_candidate, attempts=1, report_unresolved=False
+        )
+        if percent_bad:
+            return candidate, True
+        if percent_candidate == candidate:
+            return candidate, False
+        candidate = percent_candidate
+
+    probe_unicode, unicode_bad = _decode_unicode_escapes(
+        candidate, attempts=1, report_unresolved=False
+    )
+    if unicode_bad or probe_unicode != candidate:
+        return candidate, True
+    probe_percent, percent_bad = _decode_percent_escapes(
+        candidate, attempts=1, report_unresolved=False
+    )
+    if percent_bad or probe_percent != candidate:
+        return candidate, True
+    return candidate, False
 
 
 def _key_parts(value: str) -> tuple[str, ...]:
@@ -443,11 +493,8 @@ def redact_artifact_text(value: str) -> str:
 
     if type(value) is not str:
         raise TypeError("artifact redaction requires an exact string")
-    analysis, malformed_unicode = _decode_unicode_escapes(value)
-    analysis, malformed_percent = _decode_percent_escapes(analysis)
-    analysis, malformed_unicode_again = _decode_unicode_escapes(analysis)
-    analysis, malformed_percent_again = _decode_percent_escapes(analysis)
-    if malformed_unicode or malformed_percent or malformed_unicode_again or malformed_percent_again:
+    analysis, malformed = _normalize_encoded_analysis(value)
+    if malformed:
         return _REDACTED
     analysis = unicodedata.normalize("NFKC", analysis)
     redacted = _redact_analysis_text(analysis)
