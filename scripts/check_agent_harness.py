@@ -53,6 +53,7 @@ _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers"}
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
+_TELEMETRY_CLEANUP_HOOK = "SessionEnd"
 _PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
@@ -96,9 +97,9 @@ def _hook_errors(root: Path) -> list[str]:
         errors.append("missing Codex PreToolUse destructive-command guard")
     hooks = json.loads(hook_path.read_text(encoding="utf-8"))
     event_map = hooks.get("hooks") if isinstance(hooks, dict) else None
-    expected_events = set(_GUARD_HOOKS) | _TELEMETRY_HOOKS | {_PRETOOL_HOOK}
+    expected_events = set(_GUARD_HOOKS) | _TELEMETRY_HOOKS | {_TELEMETRY_CLEANUP_HOOK, _PRETOOL_HOOK}
     if not isinstance(event_map, dict) or set(event_map) != expected_events:
-        return [*errors, "project hooks differ from reviewed v3 event set"]
+        return [*errors, "project hooks differ from reviewed telemetry-v3 event set"]
 
     for event, mode in _GUARD_HOOKS.items():
         found = _single_hook_handler(event_map, event, errors)
@@ -155,6 +156,22 @@ def _hook_errors(root: Path) -> list[str]:
             errors.append(f"{event} Unix telemetry command differs from reviewed policy")
         if not isinstance(command_windows, str) or "codex_telemetry_hook.py" not in command_windows:
             errors.append(f"{event} Windows telemetry command differs from reviewed policy")
+
+    cleanup = _single_hook_handler(event_map, _TELEMETRY_CLEANUP_HOOK, errors)
+    if cleanup is not None:
+        entry, handler = cleanup
+        command = handler.get("command")
+        command_windows = handler.get("commandWindows")
+        if "matcher" in entry:
+            errors.append("SessionEnd telemetry cleanup must not narrow its matcher")
+        if handler.get("type") != "command" or handler.get("async") is not False:
+            errors.append("SessionEnd telemetry cleanup must be synchronous")
+        if handler.get("timeout") != 3:
+            errors.append("SessionEnd telemetry cleanup timeout differs from reviewed policy")
+        if not isinstance(command, str) or "codex_telemetry_hook.py" not in command:
+            errors.append("SessionEnd Unix telemetry command differs from reviewed policy")
+        if not isinstance(command_windows, str) or "codex_telemetry_hook.py" not in command_windows:
+            errors.append("SessionEnd Windows telemetry command differs from reviewed policy")
 
     legacy_keys = {"timeout_sec", "command_windows", "status_message"}
     for event in expected_events:
