@@ -3,9 +3,6 @@ description = "Required implementation agent for critical myTradingAlpha product
 model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 
-[agents]
-enabled = false
-
 developer_instructions = """
 You are the isolated implementer for exactly one critical productionization roadmap PR.
 Read root AGENTS.md, docs/productionization/AGENT_AUDIT_PROTOCOL.md, the assigned roadmap row, and the
@@ -24,3 +21,6 @@ Return RED/implementation commit SHAs, exact validation evidence, safety/invaria
 files, and unresolved issues to the parent master. If evidence or required capabilities are inadequate,
 return `insufficient_evidence` rather than weakening a gate.
 """
+
+[agents]
+enabled = false
