@@ -36,10 +36,12 @@ def test_create_and_remove_exact_detached_worktree(tmp_path: Path) -> None:
     helper = _helper()
     helper.create(repo, sha, review)
     assert _git(review, "rev-parse", "HEAD") == sha
-    assert _git(review, "symbolic-ref", "-q", "HEAD") == "" if False else True
-    assert "detached" in subprocess.check_output(
-        ["git", "-C", str(review), "status", "--short", "--branch"], text=True
-    ).lower()
+    symbolic = subprocess.run(
+        ["git", "-C", str(review), "symbolic-ref", "-q", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    assert symbolic.returncode != 0
     helper.remove(repo, review)
     assert not review.exists()
 
