@@ -58,7 +58,7 @@ _MAX_ASSIGNMENT_WORK = 1_000_000
 _ASSIGNMENT_KEY_SEPARATORS = frozenset("_./:-\\\"'")
 
 
-def _decode_key_escapes(value: str) -> tuple[str, bool]:
+def _decode_unicode_escapes(value: str) -> tuple[str, bool]:
     candidate = value
     invalid = False
     for _ in range(_JSON_MAX_UNESCAPE_ATTEMPTS):
@@ -74,6 +74,10 @@ def _decode_key_escapes(value: str) -> tuple[str, bool]:
             break
         candidate = updated
     return candidate, invalid
+
+
+def _decode_key_escapes(value: str) -> tuple[str, bool]:
+    return _decode_unicode_escapes(value)
 
 
 def _key_parts(value: str) -> tuple[str, ...]:
@@ -163,49 +167,56 @@ def _json_fragment_spans_bounded(
 ) -> tuple[tuple[tuple[int, int], ...], bool]:
     spans: list[tuple[int, int]] = []
     index = 0
+    stack: list[str] = []
+    start: int | None = None
+    quoted = False
+    escaped = False
     while index < len(value):
-        if value.startswith(_REDACTED, index):
+        if not stack and value.startswith(_REDACTED, index):
             index += len(_REDACTED)
             continue
-        if len(spans) >= _JSON_MAX_FRAGMENTS:
-            return tuple(spans), any(character in "[{" for character in value[index:])
-        if value[index] not in "[{":
+        character = value[index]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
             index += 1
             continue
-        start = index
-        stack = ["]" if value[index] == "[" else "}"]
-        quoted = False
-        escaped = False
-        index += 1
-        while index < len(value) and stack:
-            character = value[index]
-            if quoted:
-                if escaped:
-                    escaped = False
-                elif character == "\\":
-                    escaped = True
-                elif character == '"':
-                    quoted = False
-            elif character == '"':
-                quoted = True
-            elif character in "[{":
-                stack.append("]" if character == "[" else "}")
-            elif character in "]}":
-                if character != stack[-1]:
-                    stack.clear()
-                    break
-                stack.pop()
+        if character == '"' and stack:
+            quoted = True
             index += 1
-        if not stack:
-            spans.append((start, index))
-        else:
-            index = start + 1
+            continue
+        if character in "[{":
+            if not stack:
+                start = index
+            stack.append("]" if character == "[" else "}")
+            index += 1
+            continue
+        if character in "]}":
+            if not stack or character != stack[-1] or start is None:
+                return tuple(spans), True
+            stack.pop()
+            index += 1
+            if not stack:
+                spans.append((start, index))
+                start = None
+                if len(spans) > _JSON_MAX_FRAGMENTS:
+                    return tuple(spans[:_JSON_MAX_FRAGMENTS]), True
+            continue
+        index += 1
+    if stack or quoted:
+        return tuple(spans), True
     return tuple(spans), False
 
 
 def _redact_structural_json(value: str) -> str:
-    if len(value.encode("utf-8")) > _JSON_MAX_FRAGMENT_BYTES:
-        return _REDACTED if _sensitive_structural_hint(value) else value
+    if len(value.encode("utf-8")) > _JSON_MAX_FRAGMENT_BYTES and (
+        "{" in value or "[" in value
+    ):
+        return _REDACTED
     full = _parse_and_redact_json(value)
     if full is not None:
         return value if full == "" else full
@@ -275,7 +286,16 @@ def _value_end(value: str, start: int) -> tuple[int, str, str]:
     if value.startswith(_REDACTED, start):
         return start + len(_REDACTED), "", ""
     index = start
-    while index < len(value) and value[index] not in "\r\n,;}]":
+    while index < len(value):
+        if value.startswith(_REDACTED, index):
+            index += len(_REDACTED)
+            continue
+        if value[index] in "[{":
+            spans, malformed = _json_fragment_spans_bounded(value[index:])
+            if spans and not malformed and spans[0][0] == 0:
+                return index + spans[0][1], "", ""
+        if value[index] in "\r\n,;}]":
+            break
         index += 1
     return index, "", ""
 
@@ -361,11 +381,7 @@ def _redact_assignments(value: str) -> str:
     return "".join(output)
 
 
-def redact_artifact_text(value: str) -> str:
-    """Redact sensitive artifact text with deterministic, idempotent rules."""
-
-    if type(value) is not str:
-        raise TypeError("artifact redaction requires an exact string")
+def _redact_analysis_text(value: str) -> str:
     redacted = _redact_structural_json(value)
     redacted = _PRIVATE_KEY_PATTERN.sub(_REDACTED, redacted)
     for _ in range(3):
@@ -376,6 +392,19 @@ def redact_artifact_text(value: str) -> str:
             break
         redacted = updated
     return redacted
+
+
+def redact_artifact_text(value: str) -> str:
+    """Redact sensitive artifact text with deterministic, idempotent rules."""
+
+    if type(value) is not str:
+        raise TypeError("artifact redaction requires an exact string")
+    analysis, malformed = _decode_unicode_escapes(value)
+    if malformed:
+        return _REDACTED
+    analysis = unicodedata.normalize("NFKC", analysis)
+    redacted = _redact_analysis_text(analysis)
+    return value if redacted == analysis else redacted
 
 
 def validate_artifact_text(value: str) -> str:
