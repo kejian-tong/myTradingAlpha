@@ -1539,3 +1539,281 @@ def test_broker_and_access_suffixes_are_redacted_by_renderer_builder_and_wire() 
     payload["note_id"] = contracts.derive_research_note_id(note)
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
+
+
+def test_prefixed_compact_suffixes_redact_across_public_artifact_surfaces() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    redaction = importlib.import_module("mytradingalpha.contracts.redaction")
+    paths = (
+        ("aws", "secret", "access", "key"),
+        ("aws", "access", "key", "id"),
+        ("broker", "account", "id"),
+        ("consumer", "secret"),
+        ("client", "secret"),
+        ("session", "token"),
+        ("refresh", "token"),
+        ("access", "token"),
+        ("bearer", "token"),
+        ("auth", "token"),
+        ("api", "secret"),
+        ("api", "key"),
+        ("private", "key"),
+        ("account", "number"),
+        ("account", "id"),
+    )
+    fields = tuple("prod" + "".join(path) for path in paths)
+    canaries = tuple(f"SIG02_COMPACT_{index}_CANARY" for index in range(len(fields)))
+    raw = "; ".join(
+        f"{field}={canary}" for field, canary in zip(fields, canaries, strict=True)
+    )
+    redacted = redaction.redact_artifact_text(raw)
+    assert all(canary not in redacted for canary in canaries)
+    assert redaction.redact_artifact_text(redacted) == redacted
+
+    plain = redaction.redact_plain_data(dict(zip(fields, canaries, strict=True)))
+    assert all(value == "[REDACTED]" for value in plain.values())
+
+    bundle, context, _, _ = _bundle_response()
+    event = bundle.events[0].model_copy(update={"body": raw})
+    rendered_bundle = build_fixture_bundle(event_candidates=(event, *bundle.events[1:]))
+    reference = _reference(contracts, rendered_bundle, "events", event.event_id)
+    rendered = evidence_tools.EvidenceToolset(rendered_bundle).render(reference)
+    assert all(canary not in rendered for canary in canaries)
+
+
+def test_prefixed_compact_suffixes_are_redacted_by_builder_and_direct_wire() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, _, _ = _bundle_response()
+    output = make_output()
+    output["market_report"] = "prodaccesstoken=SIG02_COMPACT_BUILDER_CANARY"
+    output["news_report"] = "prodaccountnumber=SIG02_COMPACT_RISK_CANARY"
+    response = parse_cached_graph_response(
+        build_cached_graph_response(
+            **make_response_kwargs(
+                bundle=bundle,
+                context=context,
+                output=output,
+                capture_manifest=make_capture_manifest(output),
+            )
+        )
+    )
+    note = _note(bundle, context, response)
+    canonical = note.canonical_bytes().decode("utf-8")
+    assert "SIG02_COMPACT_BUILDER_CANARY" not in canonical
+    assert "SIG02_COMPACT_RISK_CANARY" not in canonical
+
+    object.__setattr__(note, "thesis", "prodaccountnumber=SIG02_COMPACT_DIRECT_CANARY")
+    payload = note.model_dump(mode="python")
+    payload["note_id"] = contracts.derive_research_note_id(note)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+
+
+def test_research_modules_do_not_depend_on_ops_redaction_implementation() -> None:
+    research_root = Path(__file__).resolve().parents[3] / "mytradingalpha/research"
+    for path in research_root.rglob("*.py"):
+        assert "mytradingalpha.ops" not in path.read_text(encoding="utf-8")
+
+
+def test_research_contract_models_reject_hostile_nested_storage_before_hooks() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    citation = note.citations[0].model_dump(mode="python")
+
+    class HostileDict(dict[str, object]):
+        def __init__(self, calls: list[str]) -> None:
+            super().__init__()
+            self.calls = calls
+
+        def keys(self):
+            self.calls.append("keys")
+            raise AssertionError("hostile mapping keys callback")
+
+        def items(self):
+            self.calls.append("items")
+            raise AssertionError("hostile mapping items callback")
+
+        def __iter__(self):
+            self.calls.append("iter")
+            raise AssertionError("hostile mapping iteration callback")
+
+        def __getitem__(self, key: object):
+            del key
+            self.calls.append("getitem")
+            raise AssertionError("hostile mapping getitem callback")
+
+    for model, payload, field in (
+        (contracts.ResearchNote, note.model_dump(mode="python"), "capture_manifest"),
+        (contracts.ResearchNote, note.model_dump(mode="python"), "source_fields"),
+        (contracts.ResearchNote, note.model_dump(mode="python"), "citations"),
+        (contracts.EvidenceCitation, citation, "reference"),
+        (contracts.EvidenceCitation, citation, "provenance"),
+    ):
+        calls: list[str] = []
+        candidate = dict(payload)
+        candidate[field] = HostileDict(calls)
+        with pytest.raises(ValidationError):
+            model.model_validate(candidate)
+        assert calls == []
+
+
+def test_research_contract_models_reject_hostile_raw_model_storage() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    calls: list[str] = []
+
+    class ArmedKey(str):
+        def __new__(cls, value: str, callbacks: list[str]):
+            instance = str.__new__(cls, value)
+            instance.callbacks = callbacks
+            instance.armed = False
+            return instance
+
+        def __hash__(self) -> int:
+            if not self.armed:
+                return super().__hash__()
+            self.callbacks.append("hash")
+            return super().__hash__()
+
+        def __eq__(self, other: object) -> bool:
+            if not self.armed:
+                return super().__eq__(other)
+            self.callbacks.append("eq")
+            return super().__eq__(other)
+
+        def __repr__(self) -> str:
+            if not self.armed:
+                return super().__repr__()
+            self.callbacks.append("repr")
+            return super().__repr__()
+
+    source_fields = note.source_fields
+    storage = object.__getattribute__(source_fields, "__dict__")
+    original = tuple(storage.items())
+    storage.clear()
+    armed_keys: list[ArmedKey] = []
+    for key, value in original:
+        armed_key = ArmedKey(key, calls)
+        armed_keys.append(armed_key)
+        dict.__setitem__(storage, armed_key, value)
+    for armed_key in armed_keys:
+        armed_key.armed = True
+    with pytest.raises(ValidationError):
+        contracts.ResearchSourceFields.model_validate(source_fields)
+    assert calls == []
+
+
+def test_research_wire_models_reject_hostile_scalar_subclasses_without_callbacks() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    provenance = note.capture_manifest.model_dump(mode="python")
+    reference = note.citations[0].reference.model_dump(mode="python")
+    citation = note.citations[0].model_dump(mode="python")
+
+    class ArmedStr(str):
+        def __new__(cls, value: str, callbacks: list[str]):
+            instance = str.__new__(cls, value)
+            instance.callbacks = callbacks
+            return instance
+
+        def __hash__(self) -> int:
+            self.callbacks.append("hash")
+            return super().__hash__()
+
+        def __eq__(self, other: object) -> bool:
+            self.callbacks.append("eq")
+            return super().__eq__(other)
+
+        def __repr__(self) -> str:
+            self.callbacks.append("repr")
+            return super().__repr__()
+
+    def rejects(model: Any, payload: dict[str, object], field: str, value: str) -> None:
+        callbacks: list[str] = []
+        candidate = dict(payload)
+        candidate[field] = ArmedStr(value, callbacks)
+        with pytest.raises(ValidationError):
+            model.model_validate(candidate)
+        assert callbacks == []
+
+    for field in (
+        "schema_version",
+        "manifest_id",
+        "source",
+        "source_locator",
+        "checksum",
+        "terms",
+        "manifest_hash",
+    ):
+        value = "v1" if field == "schema_version" else provenance[field]
+        rejects(contracts.ResearchProvenance, provenance, field, value)
+    for field in ("schema_version", "bundle_id", "domain", "record_id"):
+        rejects(contracts.EvidenceReference, reference, field, reference[field])
+    for field, value in (("claim", "thesis"), ("semantic_support", "unassessed")):
+        rejects(contracts.EvidenceCitation, citation, field, value)
+
+    note_payload = note.model_dump(mode="python")
+    scalar_values = {
+        "schema_version": "v1",
+        "note_id": note.note_id,
+        "run_id": note.run_id,
+        "variant_id": note.variant_id,
+        "instrument_id": note.instrument_id,
+        "bundle_id": note.bundle_id,
+        "bundle_hash": note.bundle_hash,
+        "calendar_id": note.calendar_id,
+        "replay_policy": note.replay_policy,
+        "response_id": note.response_id,
+        "response_hash": note.response_hash,
+        "output_hash": note.output_hash,
+        "graph_artifact_id": note.graph_artifact_id,
+        "graph_artifact_hash": note.graph_artifact_hash,
+        "model_artifact_id": note.model_artifact_id,
+        "model_artifact_hash": note.model_artifact_hash,
+        "runtime_manifest_id": note.runtime_manifest_id,
+        "runtime_manifest_hash": note.runtime_manifest_hash,
+        "source_agent": note.source_agent,
+        "thesis": note.thesis,
+    }
+    for field, value in scalar_values.items():
+        rejects(contracts.ResearchNote, note_payload, field, value)
+    callbacks = []
+    risks_payload = dict(note_payload)
+    risks_payload["risks"] = (ArmedStr(note.risks[0], callbacks),)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(risks_payload)
+    assert callbacks == []
+
+
+def test_research_provenance_rejects_hostile_revision_without_callbacks() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    payload = note.capture_manifest.model_dump(mode="python")
+    callbacks: list[str] = []
+
+    class ArmedInt(int):
+        def __new__(cls, value: int, calls: list[str]):
+            instance = int.__new__(cls, value)
+            instance.calls = calls
+            return instance
+
+        def __hash__(self) -> int:
+            self.calls.append("hash")
+            return super().__hash__()
+
+        def __eq__(self, other: object) -> bool:
+            self.calls.append("eq")
+            return super().__eq__(other)
+
+        def __repr__(self) -> str:
+            self.calls.append("repr")
+            return super().__repr__()
+
+    payload["revision"] = ArmedInt(0, callbacks)
+    with pytest.raises(ValidationError):
+        contracts.ResearchProvenance.model_validate(payload)
+    assert callbacks == []
