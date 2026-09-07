@@ -690,6 +690,154 @@ def test_direct_provenance_and_note_payloads_require_redacted_projection_fields(
             contracts.ResearchNote.model_validate(payload)
 
 
+class _Tripwire:
+    def __init__(self, calls: list[str]) -> None:
+        object.__setattr__(self, "_calls", calls)
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "_calls":
+            return object.__getattribute__(self, name)
+        object.__getattribute__(self, "_calls").append(f"getattribute:{name}")
+        raise AssertionError("tripwire attribute access")
+
+    def __getattr__(self, name: str) -> object:
+        object.__getattribute__(self, "_calls").append(f"getattr:{name}")
+        raise AssertionError("tripwire getattr access")
+
+    def __iter__(self):
+        object.__getattribute__(self, "_calls").append("iter")
+        raise AssertionError("tripwire iteration")
+
+    def __repr__(self) -> str:
+        object.__getattribute__(self, "_calls").append("repr")
+        return "<tripwire>"
+
+    def __eq__(self, other: object) -> bool:
+        del other
+        object.__getattribute__(self, "_calls").append("eq")
+        raise AssertionError("tripwire comparison")
+
+
+def test_caller_owned_reference_hooks_never_execute() -> None:
+    contracts, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+
+    reference_calls: list[str] = []
+    reference = _reference(contracts, bundle, "events", "news-aapl-earnings")
+    object.__setattr__(reference, "record_id", _Tripwire(reference_calls))
+    with pytest.raises(evidence_tools.MalformedEvidenceReferenceError):
+        evidence_tools.EvidenceToolset(bundle).get(reference)
+    assert reference_calls == []
+
+
+def test_caller_owned_bundle_hooks_never_execute() -> None:
+    _, evidence_tools, _ = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    bundle_calls: list[str] = []
+    event = bundle.events[0].model_copy(update={"body": _Tripwire(bundle_calls)})
+    object.__setattr__(bundle, "events", (event, *bundle.events[1:]))
+    with pytest.raises(evidence_tools.EvidenceToolError):
+        evidence_tools.EvidenceToolset(bundle)
+    assert bundle_calls == []
+
+
+def test_caller_owned_context_hooks_never_execute() -> None:
+    _, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    context_calls: list[str] = []
+    object.__setattr__(context, "run_id", _Tripwire(context_calls))
+    with pytest.raises(notes.ResearchNoteBindingError):
+        notes.ResearchNoteBuilder(
+            bundle=build_fixture_bundle(),
+            context=context,
+            response=response,
+        )
+    assert context_calls == []
+
+
+def test_caller_owned_response_hooks_never_execute() -> None:
+    _, _, notes = _load_sig02()
+    response_calls: list[str] = []
+    _, clean_context, clean_response, _ = _bundle_response()
+    object.__setattr__(clean_response, "output", _Tripwire(response_calls))
+    with pytest.raises(notes.ResearchNoteBindingError):
+        notes.ResearchNoteBuilder(
+            bundle=build_fixture_bundle(),
+            context=clean_context,
+            response=clean_response,
+        )
+    assert response_calls == []
+
+
+def test_caller_owned_storage_extras_and_nested_containers_fail_closed() -> None:
+    _, evidence_tools, notes = _load_sig02()
+    bundle, _, _, _ = _bundle_response()
+    calls: list[str] = []
+    storage = object.__getattribute__(bundle, "__dict__")
+    storage["unexpected"] = _Tripwire(calls)
+    with pytest.raises(evidence_tools.EvidenceToolError):
+        evidence_tools.EvidenceToolset(bundle)
+    assert calls == []
+
+    _, clean_context, clean_response, _ = _bundle_response()
+    context_storage = object.__getattribute__(clean_context, "__dict__")
+    context_storage["unexpected"] = _Tripwire(calls)
+    with pytest.raises(notes.ResearchNoteInputError):
+        notes.ResearchNoteBuilder(
+            bundle=build_fixture_bundle(),
+            context=clean_context,
+            response=clean_response,
+        )
+    assert calls == []
+
+
+def test_research_provenance_enforces_manifest_chronology_and_note_cutoff_receipts() -> None:
+    contracts, _, _ = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+    note = _note(bundle, context, response)
+    baseline = note.model_dump(mode="json")
+
+    for updates in (
+        {"published_at": "2024-07-01T00:00:00Z"},
+        {"available_at": "2024-07-01T00:00:00Z", "fetched_at": "2024-07-01T00:00:01Z"},
+        {"fetched_at": "2024-07-01T00:00:01Z", "ingested_at": "2024-06-30T23:59:59Z"},
+    ):
+        provenance = dict(baseline["capture_manifest"])
+        provenance.update(updates)
+        with pytest.raises(ValidationError):
+            contracts.ResearchProvenance.model_validate(provenance)
+
+    invalid_receipt = dict(baseline)
+    invalid_receipt["capture_manifest"] = {
+        **baseline["capture_manifest"],
+        "checksum": f"sha256:{'0' * 64}",
+    }
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(invalid_receipt)
+
+    for field_updates in (
+        {"available_at": "2024-07-01T00:00:00Z", "fetched_at": "2024-07-01T00:00:01Z", "ingested_at": "2024-07-01T00:00:02Z"},
+        {"ingested_at": "2024-07-01T00:00:01Z"},
+    ):
+        invalid_cutoff = dict(baseline)
+        invalid_cutoff["capture_manifest"] = {
+            **baseline["capture_manifest"],
+            **field_updates,
+        }
+        with pytest.raises(ValidationError):
+            contracts.ResearchNote.model_validate(invalid_cutoff)
+
+        invalid_citation = dict(baseline)
+        citations = [dict(item) for item in baseline["citations"]]
+        citations[0]["provenance"] = {
+            **citations[0]["provenance"],
+            **field_updates,
+        }
+        invalid_citation["citations"] = citations
+        with pytest.raises(ValidationError):
+            contracts.ResearchNote.model_validate(invalid_citation)
+
+
 def test_clean_install_smoke_lists_sig02_public_submodules() -> None:
     script = Path(__file__).resolve().parents[3] / "scripts/smoke_installed.py"
     source = script.read_text(encoding="utf-8")
