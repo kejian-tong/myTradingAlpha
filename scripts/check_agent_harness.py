@@ -67,6 +67,8 @@ def configuration_errors(root: Path) -> list[str]:
             role = _toml(root / ".codex/agents" / (name.replace("_", "-") + ".toml"))
             if (role.get("name"), role.get("model"), role.get("model_reasoning_effort")) != (name, model, effort):
                 errors.append(f"invalid name/model/effort for {name}")
+            if role.get("agents") != {"enabled": False}:
+                errors.append(f"{name} must disable nested delegation")
             if readonly and role.get("sandbox_mode") != "read-only":
                 errors.append(f"{name} must request read-only mode")
             if name == "normal_implementer" and "normal/high/critical" not in role.get("developer_instructions", ""):
