@@ -8,7 +8,7 @@ contracts before any newly authorized roadmap work.
 
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
-- `roadmap_status`: `sig_02_repair_in_progress`
+- `roadmap_status`: `sig_02_candidate_pending_xhigh_rereview`
 - `current_pr_id`: `SIG-02` / PR #45
 - `next_pr_id`: `SIG-03` (blocked until SIG-02 is merged and post-merge checks pass)
 - `current_phase`: `02-evidence-agent-boundary`
@@ -41,8 +41,8 @@ SIG-02 — Evidence tools and ResearchNote
 - base: `24dfcd60cda656d9b7b9ce0f6b581764b13dd8a4`
 - PR: #45
 - final repaired implementation head before Master bookkeeping:
-  `404c907982cfc2ff6e1fd12fdbb6f5a7cde22084`
-  (tree `36ef89ac99af7984b9c50d1830c853567eaf3ba2`); the final state-bearing head is
+  `a36cbabe2d4996b1561688201abfe825119319c1`
+  (tree `52a80f5e48231ee0ec57137a7b077849ab890605`); the final state-bearing head is
   authoritative in the PR ref/conversation because a commit cannot embed its own SHA
 - merge: pending
 - complexity: high; canonical citation identity/provenance, hostile-data rendering and deterministic
@@ -76,8 +76,12 @@ SIG-02 — Evidence tools and ResearchNote
   `10 failed / 90 passed`; repair GREEN: `2e948c479facc0a7eaf9bb37c907b14bc3564b7e`
 - artifact-redaction repair RED: `d2931a5e2af8ab9f7f91845761c19f98779e1ff5`, expected
   `3 failed / 100 passed`; repair GREEN: `404c907982cfc2ff6e1fd12fdbb6f5a7cde22084`
-- local tests: PASS after final repair; focused `103 passed`, required regressions `823 passed`, full
-  suite `2298 passed / 3 skipped / 18 warnings / 69 subtests`
+- shared artifact-policy repair RED: `47b179da1599926d5eef7ceba85db6747b491afd`, expected
+  `5 failed / 103 passed`; repair GREEN: `95ba4e8b2607a6f53c9fa61764ec234c7624940b`
+- exact source-agent repair RED: `8b1caaaefcfe013df2710af59d81e059b36f4da7`, expected
+  `1 failed / 108 passed`; repair GREEN: `a36cbabe2d4996b1561688201abfe825119319c1`
+- local tests: PASS after final repair; focused `109 passed`, required regressions `829 passed`, full
+  suite `2304 passed / 3 skipped / 18 warnings / 69 subtests`
 - local validation: Ruff, dependency direction, offline harness, lock consistency, Markdown,
   diff check and clean installed-package/public-submodule smoke PASS
 - CI: latest xhigh-review candidate `7dbfc166b91c059855997b14a53afc87d4668e0f` passed CI
@@ -105,7 +109,8 @@ SIG-02 — Evidence tools and ResearchNote
   `459c7514315c6ecdd4eb69cd9af2a73c2f81e4c9` again returned REQUEST CHANGES: escaped/multiword
   artifact text, credential-shaped source-agent identifiers, hostile mapping keys and direct-wire
   unredacted note text remain unsafe; controlling artifact `5563727608`, boundary addendum
-  `5563709052`. Focused repair RED/GREEN and fresh exact-head xhigh review are required.
+  `5563709052`. The shared artifact policy, closed source-agent role set and exact caller-key/type
+  repairs close those surfaces locally; fresh exact-head CI and xhigh review are pending.
 - scope leak: none observed; SIG-03/SIG-04/SIG-05/BT-01 and later production files remain absent
 - next: SIG-03 only after exact-head review, CI, Master gate, protected merge and post-merge checks
 
