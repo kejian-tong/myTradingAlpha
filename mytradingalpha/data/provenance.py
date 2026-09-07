@@ -2,40 +2,18 @@
 
 from __future__ import annotations
 
-import re
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BeforeValidator, Field, StrictInt, StrictStr, WithJsonSchema, model_validator
+from pydantic import Field, StrictInt, model_validator
 
-from mytradingalpha.contracts.common import StableId, UtcDateTime
+from mytradingalpha.contracts.common import (
+    CanonicalChecksum,
+    RequiredReference,
+    StableId,
+    UtcDateTime,
+)
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
-
-_CHECKSUM_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
-
-
-def _validate_required_reference(value: object) -> object:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError("invalid_reference: expected a non-empty trimmed string")
-    return value
-
-
-def _validate_checksum(value: object) -> object:
-    if not isinstance(value, str) or _CHECKSUM_PATTERN.fullmatch(value) is None:
-        raise ValueError("invalid_checksum: expected canonical SHA-256")
-    return value
-
-
-RequiredReference = Annotated[
-    StrictStr,
-    BeforeValidator(_validate_required_reference),
-]
-
-CanonicalChecksum = Annotated[
-    StrictStr,
-    BeforeValidator(_validate_checksum),
-    WithJsonSchema({"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}),
-]
 
 
 class SourceManifest(ContractModel):
@@ -65,4 +43,4 @@ class SourceManifest(ContractModel):
         return self
 
 
-__all__ = ["SourceManifest"]
+__all__ = ["CanonicalChecksum", "RequiredReference", "SourceManifest"]
