@@ -2095,7 +2095,23 @@ def test_plain_data_redacts_sensitive_ancestor_paths_before_value_dispatch() -> 
             cursor[path[-1]] = value
             redacted = redaction.redact_plain_data(payload)
             leaf: object = redacted
-            for component in path:
+            sensitive_prefix_length = next(
+                index
+                for index in range(1, len(path) + 1)
+                if any(
+                    len(candidate) <= index and path[:index][-len(candidate) :] == candidate
+                    for candidate in (
+                        *paths,
+                        ("authorization",),
+                        ("bearer",),
+                        ("password",),
+                        ("secret",),
+                        ("terms",),
+                        ("token",),
+                    )
+                )
+            )
+            for component in path[:sensitive_prefix_length]:
                 assert type(leaf) is dict
                 leaf = leaf[component]
             assert leaf == "[REDACTED]"
