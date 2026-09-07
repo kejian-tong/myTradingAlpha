@@ -19,8 +19,7 @@ def _run(event: dict) -> subprocess.CompletedProcess[str]:
         [sys.executable, str(HOOK)],
         input=json.dumps(event),
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 
