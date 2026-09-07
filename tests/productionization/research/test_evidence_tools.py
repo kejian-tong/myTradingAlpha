@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.data.bundle import EvidenceDomain
@@ -1199,6 +1199,12 @@ def test_source_agent_rejects_str_subclasses_without_comparison_hooks() -> None:
     with pytest.raises(ValidationError):
         contracts.ResearchNote.model_validate(payload)
     assert direct_calls == []
+
+    adapter_calls: list[str] = []
+    adapter_evil = EvilStr("sentiment_analyst", adapter_calls)
+    with pytest.raises(ValidationError):
+        TypeAdapter(contracts.ResearchSourceAgent).validate_python(adapter_evil)
+    assert adapter_calls == []
 
 
 def test_source_fields_and_claim_citations_reject_str_subclass_keys_without_callbacks() -> None:
