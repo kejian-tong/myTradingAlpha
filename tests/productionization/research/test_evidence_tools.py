@@ -1164,6 +1164,43 @@ def test_source_agent_is_a_closed_research_role_contract() -> None:
             _note(bundle, context, response, source_agent=invalid)
 
 
+def test_source_agent_rejects_str_subclasses_without_comparison_hooks() -> None:
+    contracts, _, notes = _load_sig02()
+    bundle, context, response, _ = _bundle_response()
+
+    class EvilStr(str):
+        def __new__(cls, value: str, calls: list[str]):
+            instance = str.__new__(cls, value)
+            instance.calls = calls
+            return instance
+
+        def __eq__(self, other: object) -> bool:
+            self.calls.append("eq")
+            raise AssertionError("evil source-agent equality callback")
+
+        def __hash__(self) -> int:
+            self.calls.append("hash")
+            raise AssertionError("evil source-agent hash callback")
+
+        def __repr__(self) -> str:
+            self.calls.append("repr")
+            return "<evil-source-agent>"
+
+    builder_calls: list[str] = []
+    evil = EvilStr("sentiment_analyst", builder_calls)
+    with pytest.raises(notes.ResearchNoteInputError):
+        _note(bundle, context, response, source_agent=evil)
+    assert builder_calls == []
+
+    note = _note(bundle, context, response)
+    payload = note.model_dump(mode="python")
+    direct_calls: list[str] = []
+    payload["source_agent"] = EvilStr("sentiment_analyst", direct_calls)
+    with pytest.raises(ValidationError):
+        contracts.ResearchNote.model_validate(payload)
+    assert direct_calls == []
+
+
 def test_source_fields_and_claim_citations_reject_str_subclass_keys_without_callbacks() -> None:
     _, _, notes = _load_sig02()
     bundle, context, response, _ = _bundle_response()
