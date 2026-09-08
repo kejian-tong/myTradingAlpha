@@ -72,7 +72,7 @@ a reason to weaken review.
 
 ## Prospective harness policy
 
-`HARNESS-V2-COLLAB-COMPAT` / draft PR #64 is the bounded execution-harness maintenance change based on
+`HARNESS-V2-COLLAB-COMPAT` / PR #64 candidate is the bounded execution-harness maintenance change based on
 reconciled main `6ed694fd6c31af3adc5be6d2ee85d85f54aa408f` and tree
 `070179c0e8350e46bad899c0eb3291f9f07fb0cc`. It does not start SIG-03 or any later roadmap slice.
 
