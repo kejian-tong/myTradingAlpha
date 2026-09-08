@@ -3,6 +3,24 @@
 Status: execution-harness observability policy. Telemetry is advisory evidence for tuning the harness;
 it does not authorize implementation, review, merge, or paper/live promotion.
 
+## Runtime capability receipts
+
+Lifecycle telemetry and runtime capability receipts answer different questions. The lifecycle bridge
+records best-effort observations exposed by Codex hooks; `scripts/runtime_capability_receipt.py` verifies a
+bounded, exact-schema receipt supplied by a caller. The receipt verifier is deliberately offline and
+structural-only: it checks duplicate-free JSON, repository commit/tree binding, role TOML intent, and
+declared effective capabilities, but it cannot authenticate the host runtime, validate digest provenance,
+or parse Codex transcripts. A passing receipt therefore never upgrades an unobserved hook event or a
+claimed model/sandbox/tool route into authenticated evidence.
+
+Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
+references, exact PR/role/config identity, model/effort, sandbox/profile/approval values, and a complete
+sorted unique bounded tool inventory. The verifier rejects unknown or duplicate fields, oversized input,
+config paths outside `.codex/agents/`, role/model/effort drift from TOML, a non-read-only effective
+capability for a configured read-only role, and explicit mutation tools. It performs no network or write
+operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
+evidence, with independent runtime observation and the normal review/CI/merge gates still required.
+
 ## Storage and exact-head safety
 
 Use `scripts/harness_telemetry.py`. Durable records are written beneath the repository Git common

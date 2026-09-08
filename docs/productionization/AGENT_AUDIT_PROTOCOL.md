@@ -29,6 +29,38 @@ custom-agent configuration into `unknown`.
 
 Do not infer configured actual routing when a generic/default agent was used.
 
+### 1.1 Host-runtime capability receipt
+
+When a fresh implementation, reviewer, or specialist context exposes a host-runtime capability receipt,
+the Master may run the bounded offline verifier at `scripts/runtime_capability_receipt.py`. The verifier
+is an admission contract, not an authentication service. A successful result says only that the supplied
+receipt is structurally valid, matches the named role's checked-in TOML intent, and is bound to the
+checked-out commit/tree; it does not prove that the runtime emitted the receipt, that a digest identifies
+the claimed source, or that a transcript was inspected.
+
+The JSON receipt is strict and contains exactly the schema-versioned fields `schema_version=1`,
+`evidence_source=host_runtime`, four lowercase SHA-256 digest references, PR/role/config identity,
+runtime and Multi-Agent version, model/effort, base/head/tree SHAs, effective sandbox/profile/approval,
+complete sorted unique bounded `tool_names`, and non-negative `observed_at_ms`. Raw JSON is bounded at
+64 KiB and duplicate keys are rejected before structural validation. The verifier reads only the named
+`.codex/agents/<role>.toml`, requires a safe repository-relative path, derives model/effort and nested
+delegation intent from that file, resolves the base commit, and requires head/tree to match the checked-
+out repository. A configured read-only role must report a read-only sandbox and profile, and any explicit
+checkout, collaboration, GitHub, messaging, calendar, or deployment mutation tool is rejected.
+
+For example:
+
+```bash
+python scripts/runtime_capability_receipt.py \
+  --verify /path/to/receipt.json \
+  --repo-root /path/to/checkout
+```
+
+The verifier performs no network, file-write, transcript, or runtime-control operation. Its `PASS` output
+must remain supplemental evidence and cannot replace complete runtime observation, independent review,
+required CI, or the Master merge gate. A missing or contradictory receipt remains `insufficient_evidence`
+at any gate that requires authenticated runtime evidence; no caller may upgrade this structural result.
+
 ## 2. Required named roles
 
 | Complexity | Implementer | Independent reviewer | Configured route |
