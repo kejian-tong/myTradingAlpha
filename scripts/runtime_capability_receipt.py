@@ -104,17 +104,27 @@ _MUTATION_TOOLS = frozenset(
     }
 )
 _MUTATION_MARKERS = (
+    "_archive_",
     "_create_",
     "_delete_",
     "_deploy",
     "_fork_",
     "_handoff_",
     "_merge_",
+    "_move_",
+    "_patch_",
+    "_post_",
+    "_put_",
+    "_remove_",
+    "_rename_",
+    "_reorder_",
     "_send_",
     "_set_",
+    "_share_",
     "_update_",
     "apply_patch",
     "exec_command",
+    "_write_",
     "write_stdin",
 )
 
@@ -204,7 +214,10 @@ def _mutation_tool(name: str) -> bool:
 def _decode_receipt(value: object) -> tuple[object, list[str]]:
     if not isinstance(value, (bytes, str)):
         return value, []
-    raw = value if isinstance(value, bytes) else value.encode("utf-8")
+    try:
+        raw = value if isinstance(value, bytes) else value.encode("utf-8")
+    except UnicodeError as exc:
+        return None, [f"invalid receipt JSON: {exc}"]
     if len(raw) > MAX_RECEIPT_BYTES:
         return None, ["receipt exceeds 64 KiB"]
     try:
