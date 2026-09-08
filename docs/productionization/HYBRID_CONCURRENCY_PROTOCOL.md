@@ -33,6 +33,14 @@ Do not parallelize two production writers against the same PR merely to increase
 future task is truly decomposable into isolated worktrees and disjoint write ownership, that requires an
 explicit JIT decision by the master; it is not the default roadmap workflow.
 
+Codex Multi-Agent V2 may expose collaboration controls to a correctly loaded non-master role despite its
+`[agents] enabled = false` configuration intent. Collaboration-control visibility alone is non-blocking.
+The Master remains the only role authorized to invoke collaboration controls or delegate work; non-master
+roles must not invoke those controls or delegate nested work. Any attempted or completed nested delegation,
+including a runtime-denied or no-op attempt, is a blocking violation. Complete observation is required to
+accept that no invocation occurred, and `telemetry_conflict` remains a separate blocking signal for actual
+route/loading contradictions.
+
 ## 3. Concurrency budget
 
 Project config currently uses:

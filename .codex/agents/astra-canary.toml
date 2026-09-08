@@ -25,6 +25,10 @@ result.
 Return a compact benchmark artifact suitable for `scripts/model_routing_benchmark.py`. Canary evidence is
 advisory only: production promotion requires a separate reviewed harness change after representative
 repo-specific evidence.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]

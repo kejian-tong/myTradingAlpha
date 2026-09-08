@@ -17,6 +17,10 @@ tests, and record the expected failing command/result. Only then add the minimum
 
 Do not act as the independent reviewer. Return the RED commit SHA, implementation commit SHA(s), exact
 validation evidence, changed files, and unresolved issues to the parent master.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]

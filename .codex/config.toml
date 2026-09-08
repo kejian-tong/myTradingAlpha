@@ -57,8 +57,12 @@ Use hybrid concurrency rather than concurrent production writers:
   follow-up is expected.
 
 The master/root thread is the only orchestration role allowed to spawn subagents. Every project-scoped
-non-master role must load `[agents] enabled = false`; if a child role exposes multi-agent tools despite
-that configuration, treat its runtime loading evidence as conflicting and stop before relying on it.
+non-master role must load `[agents] enabled = false`; a GPT-5.6 Sol Multi-Agent V2 child may nevertheless
+expose collaboration controls. Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
+Record complete runtime observation and stop on an actual non-master invocation attempt; retain
+`telemetry_conflict` for separate route/loading contradictions.
 
 The controlling reviewer required by AGENT_AUDIT_PROTOCOL.md remains mandatory. Specialist lanes are
 additional evidence and never self-approve merge. Any unresolved BLOCKER/HIGH from any review lane

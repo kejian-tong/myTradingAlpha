@@ -21,6 +21,10 @@ production architecture decisions, change model routing, or widen roadmap scope.
 account, credential, order-entry, or write-capable financial MCPs. Return a compact evidence report to
 the master with source freshness, contradictions, unresolved gaps, and whether the result is strong
 enough to use in a JIT/review decision.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]

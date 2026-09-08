@@ -18,6 +18,10 @@ Classify findings BLOCKER/HIGH/MEDIUM/LOW/NIT. BLOCKER or HIGH prevents approval
 review artifact containing PR ID, exact reviewed head SHA, this role name/config path, configured model
 and effort, RED-evidence verdict, findings, acceptance matrix, scope-leak verdict, and final verdict
 APPROVE or REQUEST CHANGES. Do not edit implementation files and do not start the next roadmap PR.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]
