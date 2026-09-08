@@ -7,8 +7,8 @@ removed from this snapshot remains immutable in Git commits, workflow runs and P
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `376c9c044722ee37f3fa36691b576420e3b6253d`
-- `last_reconciled_main_tree`: `ef87b5e4c5b9778bbbcdde74d6db5b53b802865c`
+- `last_reconciled_main_sha`: `6ed694fd6c31af3adc5be6d2ee85d85f54aa408f`
+- `last_reconciled_main_tree`: `070179c0e8350e46bad899c0eb3291f9f07fb0cc`
 - `roadmap_status`: `sig_02_merged_stopped`
 - `current_pr_id`: none
 - `current_phase`: none active
@@ -69,6 +69,20 @@ The durable review history in PR #45 shows repeated late discovery of hostile-in
 redaction, canonicalization and bounded-work defects. Future high/critical work should use that evidence
 to shift adversarial boundary analysis earlier during preflight/JIT rather than treating those findings as
 a reason to weaken review.
+
+## Prospective harness policy
+
+`HARNESS-V2-COLLAB-COMPAT` / draft PR #64 is the bounded execution-harness maintenance change based on
+reconciled main `6ed694fd6c31af3adc5be6d2ee85d85f54aa408f` and tree
+`070179c0e8350e46bad899c0eb3291f9f07fb0cc`. It does not start SIG-03 or any later roadmap slice.
+
+After this policy is merged and a fresh session loads the checkout, collaboration-control visibility in a
+non-master V2 child is informational only. The Master remains the only role permitted to invoke controls or
+delegate work; any attempted or completed nested delegation, including a runtime-denied/no-op attempt,
+blocks progression. All ten non-master roles retain `[agents] enabled = false` and the uniform
+no-invocation instruction contract. The offline gate requires complete strict boolean evidence and retains
+`telemetry_conflict` as separate blocking evidence. This prospective policy does not rewrite the expired
+SIG-02-only exception recorded above or relabel its historical evidence.
 
 ## State and recovery policy
 

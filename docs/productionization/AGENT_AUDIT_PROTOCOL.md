@@ -71,6 +71,28 @@ Model and configuration references:
 If a required named role cannot be spawned with its project configuration, do not silently substitute a
 generic worker and then claim the intended route. Record `insufficient_evidence` and stop before merge.
 
+### 2.1 Multi-Agent V2 collaboration-control compatibility
+
+GPT-5.6 Sol Multi-Agent V2 may expose collaboration controls in a correctly loaded non-master custom
+agent even when its checked-in configuration retains `[agents] enabled = false`. Treat that visibility as
+informational runtime evidence, not as a delegation event or a stop condition. The configured
+`[agents] enabled = false` value remains mandatory and is still validated for every non-master role.
+
+Every non-master role carries this uniform behavioral contract:
+
+- Collaboration-control visibility alone is non-blocking.
+- Do not invoke collaboration controls or delegate nested work.
+- Any attempted or completed nested delegation is a blocking violation.
+
+The offline gate record therefore requires strict booleans for
+`collaboration_controls_visible` (either value is informational),
+`collaboration_observation_complete` (exact `True`), and
+`non_master_collaboration_invoked` (exact `False`). An attempted call remains blocking even when the
+runtime denies it or the call is a no-op. Missing, unknown, incomplete, or non-boolean evidence fails
+closed. `telemetry_conflict` remains separate blocking evidence for route/loading contradictions; tool
+visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
+events, spawn agents, contact GitHub, write files, or merge a PR.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**

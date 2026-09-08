@@ -19,6 +19,10 @@ Do not edit files, create commits, implement production code, approve a PR, or w
 architecture decisions reserved for the master. Return a concise evidence report with the inspected
 base/head SHA, relevant paths/symbols, current-state findings, doc/code drift, dependencies, risks, and
 unresolved questions. The master synthesizes your report with other lanes into the JIT spec.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]

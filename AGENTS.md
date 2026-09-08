@@ -89,9 +89,13 @@ regardless of model strength, review count, automation mode, or passing tests.
 The master/orchestrator owns scope, dependency order, model routing, JIT synthesis, triage, and the final
 merge decision. The master/root context is the only project role allowed to spawn subagents.
 
-Every project-scoped non-master named role must load `[agents] enabled = false`. Do not rely on a child
-that unexpectedly exposes nested multi-agent tools; record conflicting runtime evidence and stop before
-using that result as required evidence.
+Every project-scoped non-master named role must load `[agents] enabled = false`. A GPT-5.6 Sol
+Multi-Agent V2 child may nevertheless expose collaboration controls; collaboration-control visibility alone
+is not a stop condition. The Master remains the only role authorized to invoke collaboration controls or
+delegate work. Do not invoke collaboration controls or delegate nested work from a non-master role. Any
+attempted or completed nested delegation is a blocking violation. Record complete runtime observation and
+stop on an actual non-master invocation attempt, while retaining `telemetry_conflict` for separate route or
+loading contradictions.
 
 Use hybrid concurrency:
 

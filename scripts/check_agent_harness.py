@@ -30,6 +30,11 @@ _SCOPED_AGENT_PATHS = (
     "tradingagents/AGENTS.md",
     "tests/productionization/AGENTS.md",
 )
+_COLLABORATION_INSTRUCTION_CONTRACT = (
+    "Collaboration-control visibility alone is non-blocking.",
+    "Do not invoke collaboration controls or delegate nested work.",
+    "Any attempted or completed nested delegation is a blocking violation.",
+)
 _SKILL_NAMES = (
     "productionization-preflight",
     "jit-scope-contract",
@@ -50,7 +55,8 @@ _FALSE_FIELDS = ("telemetry_conflict", "blocking_findings")
 _TEXT_FIELDS = ("operation", "session_id", "authorized_session_id", "pr_id", "stop_after",
                 "implementer_context", "reviewer_context")
 _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
-                "authorized_operations", "active_writers"}
+                "authorized_operations", "active_writers", "collaboration_controls_visible",
+                "collaboration_observation_complete", "non_master_collaboration_invoked"}
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _TELEMETRY_CLEANUP_HOOK = "SessionEnd"
@@ -267,9 +273,18 @@ def configuration_errors(root: Path) -> list[str]:
             elif mcp_servers:
                 errors.append(f"{name} must not receive external MCP servers")
             instructions = role.get("developer_instructions", "")
-            if name == "normal_implementer" and "normal/high/critical" not in instructions:
+            if type(instructions) is not str or any(
+                clause not in instructions for clause in _COLLABORATION_INSTRUCTION_CONTRACT
+            ):
+                errors.append(f"{name} collaboration instruction contract is missing")
+            if name == "normal_implementer" and (
+                type(instructions) is not str or "normal/high/critical" not in instructions
+            ):
                 errors.append("initial implementer must inherit normal/high/critical safety class")
-            if name == "astra_canary" and not all(term in instructions for term in ("shadow-only", "historical", "active candidate")):
+            if name == "astra_canary" and (
+                type(instructions) is not str
+                or not all(term in instructions for term in ("shadow-only", "historical", "active candidate"))
+            ):
                 errors.append("astra_canary instructions must remain shadow-only historical evaluation")
         errors.extend(_hook_errors(root))
         errors.extend(_instruction_and_skill_errors(root))
@@ -295,6 +310,16 @@ def gate_errors(record: object) -> list[str]:
     if any(type(record[key]) is not str or re.fullmatch(r"[0-9a-f]{40}", record[key]) is None
            for key in _HASH_FIELDS):
         errors.append("invalid full commit/tree SHA")
+    if type(record["collaboration_controls_visible"]) is not bool:
+        errors.append("collaboration_controls_visible must be an exact boolean")
+    if type(record["collaboration_observation_complete"]) is not bool:
+        errors.append("collaboration_observation_complete must be an exact boolean")
+    elif record["collaboration_observation_complete"] is not True:
+        errors.append("collaboration observation is incomplete or untrusted")
+    if type(record["non_master_collaboration_invoked"]) is not bool:
+        errors.append("non_master_collaboration_invoked must be an exact boolean")
+    elif record["non_master_collaboration_invoked"] is not False:
+        errors.append("non-master collaboration-control invocation is a blocking violation")
     if any(record[key] is not True for key in _TRUE_FIELDS):
         errors.append("required evidence is not verified")
     if any(record[key] is not False for key in _FALSE_FIELDS):

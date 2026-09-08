@@ -20,6 +20,10 @@ independent reviewer.
 Return RED/implementation commit SHAs, exact validation evidence, safety/invariant coverage, changed
 files, and unresolved issues to the parent master. If evidence or required capabilities are inadequate,
 return `insufficient_evidence` rather than weakening a gate.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]

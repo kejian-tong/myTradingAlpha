@@ -19,6 +19,10 @@ Do not edit files, create commits, implement fixes, or issue the controlling APP
 verdict. Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDIUM/LOW/NIT where
 applicable, plus the exact SHA reviewed and the smallest test/evidence needed to close each material
 finding. Any BLOCKER/HIGH must be surfaced to the master and controlling reviewer.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]

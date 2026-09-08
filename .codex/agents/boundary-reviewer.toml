@@ -32,6 +32,10 @@ Do not edit files, create commits, implement fixes, or issue the controlling fin
 Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDIUM/LOW/NIT, exact affected
 paths/invariants, the exact SHA inspected, and the smallest safe closure evidence. Any BLOCKER/HIGH
 blocks progression until repaired and re-reviewed at the appropriate gate.
+
+Collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work.
+Any attempted or completed nested delegation is a blocking violation.
 """
 
 [agents]
