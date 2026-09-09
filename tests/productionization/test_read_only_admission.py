@@ -257,6 +257,14 @@ def test_policy_defers_supporting_tool_identity_and_launcher_decomposition() -> 
     assert "deferred" in policy
 
 
+def test_policy_does_not_overclaim_nested_codex_prevention() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    assert "nested_codex_denied" not in policy
+    assert "not preventive host enforcement" in policy
+    assert "obfuscated shell execution" in policy
+    assert "master-only enforcement" in policy
+
+
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:
     for role in _READ_ONLY_ROLES:
         instructions = str(_role_config(role).get("developer_instructions", "")).lower()

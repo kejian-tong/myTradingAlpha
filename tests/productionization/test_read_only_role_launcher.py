@@ -55,7 +55,7 @@ _PROBE_ORDER = (
     "target_secret_denied",
     "target_write_denied",
     "credential_read_denied",
-    "nested_codex_denied",
+    "isolated_home",
     "scratch_write",
     "secret_env_absent",
     "network_denied",
@@ -1021,18 +1021,26 @@ def test_plan_closes_capabilities_and_uses_strict_current_runtime_flags(
     assert plan["cwd_is_private_empty"] is True
 
 
-def test_model_profile_denies_exact_codex_binary_and_probes_nested_start(
+def test_model_profile_uses_isolated_home_without_claiming_executable_deny(
     scenario: Scenario,
 ) -> None:
     plan = _plan(scenario)
     filesystem = plan["permission_profile"]["permissions"][
         plan["permission_profile_name"]
     ]["filesystem"]
-    assert filesystem[plan["binary_realpath"]] == "deny"
-    assert plan["probe_paths"]["nested_codex_denied"] == plan["binary_realpath"]
-    spec = _function("build_sandbox_probe_argv")(plan, "nested_codex_denied")
+    assert filesystem.get(plan["binary_realpath"]) != "deny"
+    shell_set = plan["permission_profile"]["shell_environment"]["set"]
+    assert shell_set["HOME"] == plan["cwd"]
+    assert shell_set["CODEX_HOME"] == plan["cwd"]
+    assert plan["probe_paths"]["isolated_home"] == plan["cwd"]
+    spec = _function("build_sandbox_probe_argv")(plan, "isolated_home")
     command = spec["argv"][spec["argv"].index("--") + 1 :]
-    assert command == [plan["binary_realpath"], "--version"]
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert plan["binary_realpath"] not in command
+    assert command[-1] == plan["cwd"]
+    closure = plan["capability_closure"]
+    assert closure["nested_delegation_prevention"] is False
+    assert closure["direct_codex_attempt_detection"] is True
 
 
 def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
@@ -1046,7 +1054,7 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
         "target_secret_denied": {"denied": True, "marker_absent": True},
         "target_write_denied": {"denied": True, "marker_absent": True},
         "credential_read_denied": {"denied": True, "stdout": "", "marker_absent": True},
-        "nested_codex_denied": {"denied": True, "stdout": "", "marker_absent": True},
+        "isolated_home": {"isolated": True},
         "scratch_write": {"allowed": True},
         "secret_env_absent": {"absent": True},
         "network_denied": {"denied": True, "marker_absent": True},
@@ -1150,11 +1158,7 @@ def test_missing_preflight_probe_is_insufficient_evidence_and_no_exec(
                 "stdout": "",
                 "marker_absent": True,
             },
-            "nested_codex_denied": {
-                "denied": True,
-                "stdout": "",
-                "marker_absent": True,
-            },
+            "isolated_home": {"isolated": True},
             "scratch_write": {"allowed": True},
             "secret_env_absent": {"absent": True},
         }
@@ -1423,11 +1427,11 @@ def _valid_sandbox_results() -> dict[str, dict[str, object]]:
             "returncode": 1,
             "stderr": "",
         },
-        "nested_codex_denied": {
-            "denied": True,
+        "isolated_home": {
+            "isolated": True,
             "stdout": "",
             "marker_absent": True,
-            "returncode": 1,
+            "returncode": 0,
             "stderr": "",
         },
         "scratch_write": {"allowed": True, "returncode": 0, "stdout": "", "stderr": ""},
@@ -2075,8 +2079,9 @@ def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
     elif probe_name in {"target_write_denied", "scratch_write"}:
         assert command[:2] == ["/usr/bin/touch", "--"]
         assert command[2] == paths[probe_name]
-    elif probe_name == "nested_codex_denied":
-        assert command == [plan["binary_realpath"], "--version"]
+    elif probe_name == "isolated_home":
+        assert command[:2] == ["/bin/sh", "-c"]
+        assert command[-1] == plan["cwd"]
     elif probe_name == "secret_env_absent":
         assert command[:2] == ["/bin/sh", "-c"]
         assert "SECRET" in command[2]
@@ -2120,9 +2125,14 @@ def test_host_and_exec_env_retain_auth_context_while_model_shell_filters_secret(
     shell_policy = plan["permission_profile"]["shell_environment"]
     assert shell_policy["inherit"] is False
     assert shell_policy["ignore_default_excludes"] is False
+    assert shell_policy["set"]["HOME"] == plan["cwd"]
+    assert shell_policy["set"]["CODEX_HOME"] == plan["cwd"]
+    assert not (Path(plan["cwd"]) / "auth.json").exists()
+    assert not (Path(plan["cwd"]) / ".codex/auth.json").exists()
     assert "LAUNCHER_SECRET_SENTINEL" not in shell_policy["set"]
     assert all("LAUNCHER_SECRET_SENTINEL" not in value for value in plan["config_values"])
     assert "secret_env_absent" in sandbox_probe_names
+    assert "isolated_home" in sandbox_probe_names
     serialized = json.dumps(result["manifest"])
     assert "LAUNCHER_SECRET_SENTINEL" not in serialized
 
@@ -3144,7 +3154,7 @@ def test_target_read_probe_uses_committed_agents_policy_file(scenario: Scenario)
         ("target_secret_denied", 1, "", {"denied": True}),
         ("target_write_denied", 1, "", {"denied": True}),
         ("credential_read_denied", 1, "", {"denied": True}),
-        ("nested_codex_denied", 1, "", {"denied": True}),
+        ("isolated_home", 0, "", {"isolated": True}),
         ("scratch_write", 0, "", {"allowed": True}),
         ("secret_env_absent", 0, "", {"absent": True}),
         ("network_denied", 0, "", {"denied": True}),
@@ -3268,7 +3278,7 @@ def test_default_run_path_uses_low_level_subprocess_for_all_ten_probes(
         "/usr/bin/head",
         "/usr/bin/touch",
         "/usr/bin/head",
-        plan["binary_realpath"],
+        "/bin/sh",
         "/usr/bin/touch",
         "/bin/sh",
         "/bin/sh",
