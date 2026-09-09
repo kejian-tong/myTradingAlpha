@@ -1612,6 +1612,26 @@ def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
     assert seen == ["/usr/bin/head", "/usr/bin/head", "/usr/bin/touch", "/usr/bin/head", "/usr/bin/touch", "/bin/sh", "/usr/bin/curl"]
 
 
+def test_successful_run_cleans_exact_launcher_runtime_and_cwd(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": "",
+        },
+    )
+    assert result["status"] == "completed", result
+    assert not Path(plan["cwd"]).exists()
+    assert not Path(plan["runtime_root"]).exists()
+    assert not Path(plan["runtime_token"]).exists()
+
+
 def test_real_system_temp_policy_or_target_worktree_is_rejected_without_test_provider_patch(
     scenario: Scenario,
 ) -> None:
