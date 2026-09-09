@@ -623,6 +623,49 @@ def test_repository_benign_local_git_metadata_allowlist_remains_admissible(
     assert _plan(scenario)["target_head_sha"] == scenario.target.head
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("https://user:token@github.com/repo.git", id="https-credentials"),
+        pytest.param("https://user%40name@github.com/repo.git", id="encoded-userinfo"),
+        pytest.param("https://github.com@evil.example/repo.git", id="ambiguous-userinfo"),
+        pytest.param("http://github.com/repo.git", id="plaintext-http"),
+        pytest.param("ssh://alice@github.com/org/repo.git", id="arbitrary-ssh-user"),
+        pytest.param("ssh://git:secret@github.com/org/repo.git", id="ssh-password"),
+        pytest.param("file:///private/repo.git", id="file-url"),
+        pytest.param("/private/repo.git", id="local-path"),
+        pytest.param("../relative/repo.git", id="relative-path"),
+        pytest.param("ext::sh -c id", id="ext-helper"),
+        pytest.param("https://github.com/org/repo.git?token=secret", id="query"),
+        pytest.param("https://github.com/org/repo.git#secret", id="fragment"),
+        pytest.param("https://github.com/org/repo.git\ncredential", id="control"),
+        pytest.param("https://github.com/" + "a" * 4096 + ".git", id="oversized"),
+    ],
+)
+def test_remote_url_credentials_ambiguity_and_unsafe_transports_are_rejected_without_echo(
+    scenario: Scenario, url: str
+) -> None:
+    _run_git(scenario.target.root, "config", "remote.origin.url", url)
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)) as excinfo:
+        _call_plan(scenario, _plan_kwargs(scenario))
+    assert url not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/TauricResearch/TradingAgents.git",
+        "git@github.com:kejian-tong/myTradingAlpha.git",
+        "ssh://git@github.com/kejian-tong/myTradingAlpha.git",
+    ],
+)
+def test_remote_url_reviewed_https_and_exact_git_ssh_shapes_remain_admissible(
+    scenario: Scenario, url: str
+) -> None:
+    _run_git(scenario.target.root, "config", "remote.origin.url", url)
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
 @pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"])
 def test_ambient_git_redirects_are_rejected(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch, variable: str
