@@ -82,7 +82,7 @@ def _receipt(**overrides: object) -> dict[str, object]:
         "permission_profile": "disabled",
         "approval_policy": "never",
         "tool_inventory_complete": True,
-        "tool_names": ["mcp__codex_app__read_thread", "view_image"],
+        "tool_names": ["view_image"],
         "observed_at_ms": 0,
     }
     receipt.update(overrides)
@@ -616,6 +616,75 @@ def test_read_only_permission_profile_can_govern_independently_of_legacy_sandbox
 
 def test_incomplete_tool_inventory_fails_closed() -> None:
     assert _errors(_receipt(tool_inventory_complete=False))
+
+
+def _external_spec_receipt(**overrides: object) -> dict[str, object]:
+    receipt = _receipt(
+        role="external_spec_researcher",
+        config_path=".codex/agents/external-spec-researcher.toml",
+        model="gpt-5.6-luna",
+        reasoning_effort="max",
+        tool_names=[
+            "mcp__openaiDeveloperDocs__fetch_openai_doc",
+            "mcp__openaiDeveloperDocs__search_openai_docs",
+        ],
+    )
+    receipt.update(overrides)
+    return receipt
+
+
+def test_external_spec_researcher_allows_only_exact_openai_docs_mcp_tools() -> None:
+    assert _errors(_external_spec_receipt()) == []
+
+
+@pytest.mark.parametrize(
+    ("role", "model", "effort", "config_path"),
+    [
+        (
+            "reviewer_high",
+            "gpt-5.6-sol",
+            "high",
+            ".codex/agents/reviewer-high.toml",
+        ),
+        (
+            "code_explorer",
+            "gpt-5.6-luna",
+            "max",
+            ".codex/agents/code-explorer.toml",
+        ),
+    ],
+)
+def test_default_read_only_roles_reject_external_mcp_tools(
+    role: str, model: str, effort: str, config_path: str
+) -> None:
+    valid = _receipt(
+        role=role,
+        model=model,
+        reasoning_effort=effort,
+        config_path=config_path,
+        tool_names=["view_image"],
+    )
+    assert _errors(valid) == []
+    assert _errors(
+        {**valid, "tool_names": ["mcp__openaiDeveloperDocs__search_openai_docs"]}
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "mcp__openaiDeveloperDocs__fetch_openai_docs",
+        "mcp__openaiDeveloperDocs__unknown",
+        "mcp__codex_app__read_thread",
+        "mcp__github__list_pull_requests",
+        "mcp__gmail__send_email",
+        "mcp__sites__publish",
+    ],
+)
+def test_external_spec_researcher_rejects_wrong_or_unrelated_mcp_tools(
+    tool_name: str,
+) -> None:
+    assert _errors(_external_spec_receipt(tool_names=[tool_name]))
 
 
 def test_duplicate_tool_names_fail_closed() -> None:

@@ -5,6 +5,8 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_OPENAI_DOCS_MCP = "https://developers.openai.com/mcp"
+_OPENAI_DOCS_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 
 
 def _checker():
@@ -15,9 +17,74 @@ def _checker():
     return module
 
 
-def test_external_spec_researcher_is_capability_isolated() -> None:
+def _copy_harness_fixture(tmp_path: Path) -> Path:
+    shutil.copytree(ROOT / ".codex", tmp_path / ".codex")
+    shutil.copytree(ROOT / "docs/productionization", tmp_path / "docs/productionization")
+    shutil.copytree(ROOT / ".agents", tmp_path / ".agents")
+    for relative in (
+        "AGENTS.md",
+        "mytradingalpha/AGENTS.md",
+        "tradingagents/AGENTS.md",
+        "tests/productionization/AGENTS.md",
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    (tmp_path / "scripts").mkdir()
+    for name in ("codex_hook_guard.py", "codex_telemetry_hook.py", "codex_pretool_guard.py"):
+        shutil.copyfile(ROOT / "scripts" / name, tmp_path / "scripts" / name)
+    return tmp_path
+
+
+def test_external_spec_researcher_mcp_configuration_intent_is_exact() -> None:
+    """Static TOML intent is checked here; it is not runtime capability proof."""
     checker = _checker()
-    assert checker.configuration_errors(ROOT) == []
+    role = checker._toml(ROOT / ".codex/agents/external-spec-researcher.toml")
+    assert role.get("mcp_servers") == {
+        "openaiDeveloperDocs": {
+            "url": _OPENAI_DOCS_MCP,
+            "enabled_tools": _OPENAI_DOCS_TOOLS,
+        }
+    }
+
+
+def test_external_spec_researcher_mcp_tool_allowlist_drift_is_rejected(tmp_path: Path) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / ".codex/agents/external-spec-researcher.toml"
+    text = path.read_text()
+    text = text.replace(
+        f'url = "{_OPENAI_DOCS_MCP}"',
+        f'url = "{_OPENAI_DOCS_MCP}"\nenabled_tools = ["fetch_openai_doc", "search_openai_docs", "unexpected"]',
+    )
+    path.write_text(text)
+    errors = checker.configuration_errors(fixture)
+    assert any("OpenAI docs MCP" in error for error in errors), errors
+
+
+def test_external_spec_researcher_extra_mcp_server_is_rejected(tmp_path: Path) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / ".codex/agents/external-spec-researcher.toml"
+    path.write_text(
+        path.read_text() + '\n[mcp_servers.unapproved]\nurl = "https://example.com/mcp"\n'
+    )
+    errors = checker.configuration_errors(fixture)
+    assert any("OpenAI docs MCP" in error for error in errors), errors
+
+
+def test_role_cannot_override_project_apps_disablement(tmp_path: Path) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    for path in sorted((fixture / ".codex/agents").glob("*.toml")):
+        original = path.read_text()
+        path.write_text(original + "\n[features]\napps = true\n")
+        errors = checker.configuration_errors(fixture)
+        assert any("role" in error.lower() and "apps" in error.lower() for error in errors), (
+            path.name,
+            errors,
+        )
+        path.write_text(original)
 
 
 def test_mcp_endpoint_drift_is_rejected(tmp_path: Path) -> None:
