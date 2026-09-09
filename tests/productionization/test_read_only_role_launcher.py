@@ -55,6 +55,7 @@ _PROBE_ORDER = (
     "target_secret_denied",
     "target_write_denied",
     "credential_read_denied",
+    "nested_codex_denied",
     "scratch_write",
     "secret_env_absent",
     "network_denied",
@@ -177,7 +178,11 @@ def _init_git(root: Path) -> None:
 
 def _copy_policy_fixture(root: Path) -> GitFixture:
     root.mkdir(parents=True)
-    shutil.copytree(ROOT / ".codex", root / ".codex")
+    shutil.copytree(
+        ROOT / ".codex",
+        root / ".codex",
+        ignore=shutil.ignore_patterns("read-only-probe.secret"),
+    )
     shutil.copytree(ROOT / ".agents/skills", root / ".agents/skills")
     shutil.copytree(ROOT / "docs/productionization", root / "docs/productionization")
     for relative in (
@@ -641,18 +646,14 @@ def test_binary_requires_absolute_regular_non_symlink_path(scenario: Scenario) -
     assert _binary_errors(scenario, path=symlink)
 
 
-@pytest.mark.skipif(
-    not Path("/usr/bin/git").is_file() or Path("/usr/bin/git").is_symlink(),
-    reason="hosted Linux system Git fixture is unavailable",
-)
 def test_git_validation_accepts_root_owned_system_binary_but_rejects_unrelated_owner(
-    monkeypatch: pytest.MonkeyPatch,
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _launcher_module()
-    git_path = Path("/usr/bin/git").resolve()
-    descriptor = module._default_git_probe(git_path)
-    if descriptor["owner_uid"] != 0:
-        pytest.skip("system Git fixture is not root-owned on this host")
+    git = scenario.git
+    assert git is not None
+    git_path = git.path
+    descriptor = {**git.descriptor, "owner_uid": 0, "functional": True}
     fake_uid = 4242
     monkeypatch.setattr(module.os, "getuid", lambda: fake_uid)
 
@@ -798,6 +799,124 @@ def test_git_repository_operations_do_not_spawn_bare_ambient_git() -> None:
     assert '["git", "-C"' not in source
 
 
+def test_git_helpers_reject_any_stderr_and_only_quiet_expected_failure_is_empty(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout="", stderr="warning: denied canary"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._git(git.path, scenario.target.root, "status", "--porcelain=v1")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout=b"", stderr=b"warning: object read incomplete"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._git_bytes(git.path, scenario.target.root, "show", "HEAD:AGENTS.md")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout="", stderr=""
+        ),
+    )
+    assert module._git(
+        git.path,
+        scenario.target.root,
+        "config",
+        "--get",
+        "extensions.partialClone",
+        allow_failure=True,
+    ) == ""
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout="", stderr="warning: unexpected failure"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._git(
+            git.path,
+            scenario.target.root,
+            "config",
+            "--get",
+            "extensions.partialClone",
+            allow_failure=True,
+        )
+
+
+def test_git_stderr_cannot_authenticate_clean_repo_or_post_run_state(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    real_run = module.subprocess.run
+
+    def warning_status(*args: object, **kwargs: object):
+        argv = list(args[0])
+        if "status" in argv:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="", stderr="warning: denied path was not inspected"
+            )
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", warning_status)
+    with pytest.raises((ValueError, RuntimeError)):
+        module._repo_state(
+            scenario.target.root,
+            git_binary=git.path,
+            expected_sha=scenario.target.head,
+            expected_tree_sha=scenario.target.tree,
+            detached=True,
+        )
+
+    monkeypatch.undo()
+    plan = _plan(scenario)
+    real_git = module._git
+
+    def post_run_warning(
+        git_binary: Path,
+        root: Path,
+        *arguments: str,
+        allow_failure: bool = False,
+    ) -> str:
+        if arguments[:2] == ("status", "--porcelain=v1"):
+            raise module.LauncherError("Git lookup emitted stderr")
+        return real_git(
+            git_binary, root, *arguments, allow_failure=allow_failure
+        )
+
+    monkeypatch.setattr(module, "_git", post_run_warning)
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": "",
+        },
+    )
+    assert result["status"] == "insufficient_evidence"
+
+
 def test_cli_requires_explicit_git_identity(scenario: Scenario) -> None:
     module = _launcher_module()
     without_git = _cli_identity_args(scenario)
@@ -897,8 +1016,23 @@ def test_plan_closes_capabilities_and_uses_strict_current_runtime_flags(
     closure = plan["capability_closure"]
     assert {key: closure[key] for key in _CAPABILITY_KEYS} == dict.fromkeys(_CAPABILITY_KEYS, False)
     assert closure["local_command_host"]["enabled"] is True
+    assert "allowed_commands" not in closure["local_command_host"]
     assert closure["function_gateway"] is False
     assert plan["cwd_is_private_empty"] is True
+
+
+def test_model_profile_denies_exact_codex_binary_and_probes_nested_start(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    filesystem = plan["permission_profile"]["permissions"][
+        plan["permission_profile_name"]
+    ]["filesystem"]
+    assert filesystem[plan["binary_realpath"]] == "deny"
+    assert plan["probe_paths"]["nested_codex_denied"] == plan["binary_realpath"]
+    spec = _function("build_sandbox_probe_argv")(plan, "nested_codex_denied")
+    command = spec["argv"][spec["argv"].index("--") + 1 :]
+    assert command == [plan["binary_realpath"], "--version"]
 
 
 def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
@@ -912,6 +1046,7 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
         "target_secret_denied": {"denied": True, "marker_absent": True},
         "target_write_denied": {"denied": True, "marker_absent": True},
         "credential_read_denied": {"denied": True, "stdout": "", "marker_absent": True},
+        "nested_codex_denied": {"denied": True, "stdout": "", "marker_absent": True},
         "scratch_write": {"allowed": True},
         "secret_env_absent": {"absent": True},
         "network_denied": {"denied": True, "marker_absent": True},
@@ -1011,6 +1146,11 @@ def test_missing_preflight_probe_is_insufficient_evidence_and_no_exec(
             "target_secret_denied": {"denied": True, "marker_absent": True},
             "target_write_denied": {"denied": True, "marker_absent": True},
             "credential_read_denied": {
+                "denied": True,
+                "stdout": "",
+                "marker_absent": True,
+            },
+            "nested_codex_denied": {
                 "denied": True,
                 "stdout": "",
                 "marker_absent": True,
@@ -1277,6 +1417,13 @@ def _valid_sandbox_results() -> dict[str, dict[str, object]]:
             "stderr": "",
         },
         "credential_read_denied": {
+            "denied": True,
+            "stdout": "",
+            "marker_absent": True,
+            "returncode": 1,
+            "stderr": "",
+        },
+        "nested_codex_denied": {
             "denied": True,
             "stdout": "",
             "marker_absent": True,
@@ -1626,10 +1773,101 @@ def test_parser_accepts_observed_lifecycle_command_and_error_items() -> None:
     )
     raw = "".join(json.dumps(event) + "\n" for event in events)
     parsed = _function("parse_codex_jsonl")(raw)
+    assert parsed["status"] == "failed"
     assert parsed["final_agent_message"] == "final"
-    assert parsed["error_event_count"] == 1
-    assert parsed["warning_event_count"] == 1
+    assert parsed["error_event_count"] == 2
+    assert parsed["warning_event_count"] == 0
     assert len(parsed["error_digest"]) == 64
+
+
+def _command_jsonl(command: object) -> str:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "command-1",
+                "type": "command_execution",
+                "command": command,
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "command-1",
+                "type": "command_execution",
+                "command": command,
+                "aggregated_output": "",
+                "exit_code": 0,
+                "status": "completed",
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "codex exec --json nested",
+        "/usr/bin/env SAFE=1 codex exec nested",
+        "/bin/sh -c 'codex exec --json nested'",
+        ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
+    ],
+)
+def test_parser_rejects_direct_nested_codex_invocation_attempts(
+    scenario: Scenario, command: object
+) -> None:
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
+        )
+
+
+def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
+    scenario: Scenario,
+) -> None:
+    parser = _function("parse_codex_jsonl")
+    with pytest.raises((ValueError, RuntimeError)):
+        parser(
+            _command_jsonl(f"{scenario.binary.path} --version"),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
+        )
+    for command in (
+        "rg -n 'codex exec' docs tests",
+        ["rg", "-n", "codex exec", "docs", "tests"],
+    ):
+        parsed = parser(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
+        )
+        assert parsed["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _command_jsonl("pwd").replace('"id": "command-1"', '"id": "command-2"', 1),
+        _command_jsonl("pwd").replace('"status": "in_progress"', '"status": "completed"', 1),
+        _command_jsonl("pwd").replace('"command": "pwd"', '"command": "other"', 1),
+        _command_jsonl("x" * 20_000),
+    ],
+)
+def test_command_lifecycle_identity_and_bounds_fail_closed(raw: str) -> None:
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            raw,
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
 
 
 def test_actual_run_recomputes_target_snapshot_before_claiming_completion(
@@ -1811,6 +2049,8 @@ def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
     elif probe_name in {"target_write_denied", "scratch_write"}:
         assert command[:2] == ["/usr/bin/touch", "--"]
         assert command[2] == paths[probe_name]
+    elif probe_name == "nested_codex_denied":
+        assert command == [plan["binary_realpath"], "--version"]
     elif probe_name == "secret_env_absent":
         assert command[:2] == ["/bin/sh", "-c"]
         assert "SECRET" in command[2]
@@ -2074,7 +2314,7 @@ def test_material_item_error_cannot_be_completed_lane_outcome() -> None:
     assert parsed["status"] == "failed"
 
 
-def test_known_disabled_agent_role_warning_is_narrowly_nonblocking(
+def test_unprefixed_agent_role_warning_is_not_a_pinned_host_envelope(
     scenario: Scenario,
 ) -> None:
     plan = _plan(scenario)
@@ -2093,7 +2333,7 @@ def test_known_disabled_agent_role_warning_is_narrowly_nonblocking(
             "stderr": stderr,
         },
     )
-    assert result["status"] == "completed", result
+    assert result["status"] == "insufficient_evidence", result
 
 
 _PINNED_HOST_WARNING_STDERR = """\
@@ -2124,6 +2364,10 @@ def test_pinned_runtime_warning_envelope_is_narrowly_admitted_only_with_agents_d
     assert not module._stderr_is_admissible(
         _PINNED_HOST_WARNING_STDERR, agents_disabled=False
     )
+    assert module._stderr_is_admissible(
+        _PINNED_HOST_WARNING_STDERR.replace("\n\n2026-", "\n2026-"),
+        agents_disabled=True,
+    )
 
     plan = _plan(scenario)
     result = module.run_isolated_role(
@@ -2143,12 +2387,38 @@ def test_pinned_runtime_warning_envelope_is_narrowly_admitted_only_with_agents_d
 @pytest.mark.parametrize(
     "stderr",
     [
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "\n  |\n", "\nCRITICAL unrelated corruption\n  |\n", 1
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "\n  |\n",
+            "\n2026-09-09T10:11:12.200000Z ERROR codex_broker::state: corruption\n  |\n",
+            1,
+        ),
         _PINNED_HOST_WARNING_STDERR.replace(" WARN ", " ERROR ", 1),
         _PINNED_HOST_WARNING_STDERR.replace(
             "codex_agent_roles::loader", "codex_mcp_client::startup", 1
         ),
         _PINNED_HOST_WARNING_STDERR + "arbitrary trailing stderr\n",
         _PINNED_HOST_WARNING_STDERR.replace("Ignoring malformed", "MCP startup failed"),
+        _PINNED_HOST_WARNING_STDERR.replace("  |\n3 |", "  |\n  |\n3 |", 1),
+        _PINNED_HOST_WARNING_STDERR.replace("3 | role = [\n", "", 1),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "3 | role = [\n  |     ^\n",
+            "  |     ^\n3 | role = [\n",
+            1,
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace("invalid array", "invalid array 💥"),
+        _PINNED_HOST_WARNING_STDERR.replace("invalid array", "invalid\x01array"),
+        _PINNED_HOST_WARNING_STDERR.replace("invalid array", "X" * 513),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "codex_rollout::list", "codex_unknown::list", 1
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "state db discrepancy during find_thread_path_by_id_str_in_subdir: falling_back",
+            "state db discrepancy while deleting evidence",
+            1,
+        ),
     ],
 )
 def test_pinned_runtime_warning_parser_rejects_near_miss_envelopes(
@@ -2182,6 +2452,27 @@ def test_item_level_disabled_agent_loader_warning_is_consistent_with_stderr() ->
     assert parsed["status"] == "completed"
     assert parsed["warning_event_count"] == 2
     assert parsed["error_event_count"] == 0
+
+
+def test_every_item_level_warning_is_material_and_fails_lane() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "warning",
+                "message": "MCP startup failed and permissions were bypassed",
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw, role="reviewer_high")
+    assert parsed["status"] == "failed"
+    assert parsed["warning_event_count"] == 0
+    assert parsed["error_event_count"] == 1
 
 
 @pytest.mark.parametrize(
@@ -2827,6 +3118,7 @@ def test_target_read_probe_uses_committed_agents_policy_file(scenario: Scenario)
         ("target_secret_denied", 1, "", {"denied": True}),
         ("target_write_denied", 1, "", {"denied": True}),
         ("credential_read_denied", 1, "", {"denied": True}),
+        ("nested_codex_denied", 1, "", {"denied": True}),
         ("scratch_write", 0, "", {"allowed": True}),
         ("secret_env_absent", 0, "", {"absent": True}),
         ("network_denied", 0, "", {"denied": True}),
@@ -2897,7 +3189,7 @@ def test_missing_credential_file_is_insufficient_not_a_sandbox_denial(
     assert result.get("denied") is not True
 
 
-def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
+def test_default_run_path_uses_low_level_subprocess_for_all_ten_probes(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = _launcher_module()
@@ -2950,6 +3242,7 @@ def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
         "/usr/bin/head",
         "/usr/bin/touch",
         "/usr/bin/head",
+        plan["binary_realpath"],
         "/usr/bin/touch",
         "/bin/sh",
         "/bin/sh",

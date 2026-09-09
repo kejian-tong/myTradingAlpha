@@ -81,12 +81,36 @@ def _git(root: Path, *arguments: str) -> str:
     ).strip()
 
 
-def _v1_receipt(**overrides: object) -> dict[str, object]:
+def _minimal_receipt_repo(root: Path) -> Path:
+    role = root / ROLE_CONFIG
+    role.parent.mkdir(parents=True)
+    role.write_text((ROOT / ROLE_CONFIG).read_text(encoding="utf-8"), encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", ROLE_CONFIG], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Receipt Test",
+            "-c",
+            "user.email=receipt@example.invalid",
+            "commit",
+            "-qm",
+            "receipt fixture",
+        ],
+        check=True,
+    )
+    return root
+
+
+def _v1_receipt(*, repo_root: Path = ROOT, **overrides: object) -> dict[str, object]:
     head = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.STDOUT
+        ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True, stderr=subprocess.STDOUT
     ).strip()
     tree = subprocess.check_output(
-        ["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True, stderr=subprocess.STDOUT
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=repo_root, text=True, stderr=subprocess.STDOUT
     ).strip()
     receipt: dict[str, object] = {
         "schema_version": 1,
@@ -117,12 +141,13 @@ def _v1_receipt(**overrides: object) -> dict[str, object]:
     return receipt
 
 
-def test_schema_v1_remains_valid_for_generic_verification_only() -> None:
+def test_schema_v1_remains_valid_for_generic_verification_only(tmp_path: Path) -> None:
     module = _receipt_module()
-    receipt = _v1_receipt()
+    repo = _minimal_receipt_repo(tmp_path / "receipt-repo")
+    receipt = _v1_receipt(repo_root=repo)
     assert module.verify_receipt(
         receipt,
-        repo_root=ROOT,
+        repo_root=repo,
         expected_pr_id="HARNESS-AUD-03",
         expected_base_sha=receipt["base_sha"],
         expected_head_sha=receipt["head_sha"],
@@ -178,16 +203,58 @@ def test_policy_documents_runtime_hardening_boundaries() -> None:
         assert marker in policy, marker
 
 
-def test_durable_policy_records_repair_red_before_final_launcher_green() -> None:
+def test_durable_policy_records_only_controlling_red_green_pairs() -> None:
     policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
     for marker in (
-        "repair red",
-        "1025090",
-        "runtime-path repair red",
+        "2520757",
+        "617a798",
+        "09eb421",
+        "31fcabd",
+        "bc70174",
+        "f9589e0",
+        "df5abf9",
+        "e7c79e8",
         "abandoned v2",
-        "not the final contract",
+        "non-controlling",
+        "inaccurate",
+        "combined",
     ):
         assert marker in policy, marker
+    assert "subsequent runtime-path repair red commits must precede each repair green" not in policy
+
+
+def test_policy_states_git_objects_are_review_evidence_not_secret_isolation() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    for marker in (
+        "not a confidentiality boundary",
+        "committed",
+        "history",
+        "ignored/untracked",
+        "sanitized",
+        "human review",
+        "direct-path denial only",
+    ):
+        assert marker in policy, marker
+
+
+def test_policy_documents_pr67_external_profile_bootstrap_boundary() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    for marker in (
+        "8092018",
+        "master-constructed external permission profile",
+        "prospective",
+        "operability evidence",
+        "self-authorization",
+    ):
+        assert marker in policy, marker
+
+
+def test_policy_defers_supporting_tool_identity_and_launcher_decomposition() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    assert "supporting-tool exact identity" in policy
+    assert "launcher decomposition" in policy
+    assert "residual risk" in policy
+    assert "deferred" in policy
 
 
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:
