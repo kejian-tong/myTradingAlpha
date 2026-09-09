@@ -2060,6 +2060,13 @@ invalid array
 
 2026-09-09T10:11:12.234567Z WARN codex_rollout::list: state db discrepancy during find_thread_path_by_id_str_in_subdir: falling_back
 """
+_PINNED_LOADER_ITEM_MESSAGE = """\
+Ignoring malformed agent role definition: failed to parse agent role file at /protected/.codex/agents/engineering-ai-engineer.toml: TOML parse error at line 3, column 5
+  |
+3 | and integration into production systems. Focused on building intelligent features, data pipelines,
+  |     ^
+key with no value, expected `=`
+"""
 
 
 def test_pinned_runtime_warning_envelope_is_narrowly_admitted_only_with_agents_disabled(
@@ -2115,12 +2122,12 @@ def test_item_level_disabled_agent_loader_warning_is_consistent_with_stderr() ->
             "type": "item.completed",
             "item": {
                 "type": "error",
-                "message": (
-                    "Ignoring malformed agent role definition: failed to parse "
-                    "agent role file at /protected/.codex/agents/legacy.toml: "
-                    "TOML parse error at line 3, column 5"
-                ),
+                "message": _PINNED_LOADER_ITEM_MESSAGE,
             },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "error", "message": _PINNED_LOADER_ITEM_MESSAGE},
         },
         {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
         {"type": "turn.completed"},
@@ -2128,7 +2135,7 @@ def test_item_level_disabled_agent_loader_warning_is_consistent_with_stderr() ->
     raw = "".join(json.dumps(event) + "\n" for event in events)
     parsed = _function("parse_codex_jsonl")(raw, role="reviewer_high")
     assert parsed["status"] == "completed"
-    assert parsed["warning_event_count"] == 1
+    assert parsed["warning_event_count"] == 2
     assert parsed["error_event_count"] == 0
 
 
@@ -2967,8 +2974,6 @@ def test_service_discovery_is_closed_while_sandboxed_local_host_remains_open(
     assert config["skills"]["config"] == []
     disabled_features = {
         "standalone_web_search",
-        "web_search_cached",
-        "web_search_request",
         "skill_search",
         "tool_suggest",
         "recommended_plugins",
@@ -2977,7 +2982,10 @@ def test_service_discovery_is_closed_while_sandboxed_local_host_remains_open(
         "chronicle",
     }
     assert all(features[name] is False for name in disabled_features)
+    assert "web_search_cached" not in features
+    assert "web_search_request" not in features
     assert features["skip_host_skill_discovery"] is True
+    assert config["suppress_unstable_features_warning"] is True
     assert "web" not in features
     assert "search" not in features
     for capability in (
