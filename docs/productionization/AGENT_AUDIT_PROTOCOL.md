@@ -52,7 +52,8 @@ Git tree, never from receipt-selected identity or mutable working-tree bytes, an
 nested-delegation, and role-scoped MCP intent from it without a duplicated model allowlist. A repository
 configured as a partial clone or with a promisor remote is rejected before object lookup; verification
 must never trigger a lazy fetch. Git subprocesses discard all inherited `GIT_*` variables and restore only
-the verifier's reviewed no-lazy-fetch, no-prompt, and no-optional-lock settings, so ambient repository,
+the verifier's reviewed settings — `GIT_NO_LAZY_FETCH=1`, `GIT_NO_REPLACE_OBJECTS=1`,
+`GIT_OPTIONAL_LOCKS=0`, and `GIT_TERMINAL_PROMPT=0` — so replacement objects and ambient repository,
 object, work-tree, or configuration redirects cannot override the supplied repository root.
 
 `permission_system=legacy_sandbox` requires an active legacy sandbox and
