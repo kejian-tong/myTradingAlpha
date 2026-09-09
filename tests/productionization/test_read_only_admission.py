@@ -178,6 +178,18 @@ def test_policy_documents_runtime_hardening_boundaries() -> None:
         assert marker in policy, marker
 
 
+def test_durable_policy_records_repair_red_before_final_launcher_green() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    for marker in (
+        "repair red",
+        "1025090",
+        "runtime-path repair red",
+        "abandoned v2",
+        "not the final contract",
+    ):
+        assert marker in policy, marker
+
+
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:
     for role in _READ_ONLY_ROLES:
         instructions = str(_role_config(role).get("developer_instructions", "")).lower()

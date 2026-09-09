@@ -12,10 +12,12 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import sysconfig
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,6 +96,7 @@ class Scenario:
     target: GitFixture
     binary: BinaryFixture
     credential_probe: Path
+    git: BinaryFixture | None = None
 
 
 def _launcher_module():
@@ -216,6 +219,38 @@ def _binary_fixture(root: Path) -> BinaryFixture:
     return BinaryFixture(path=path, sha256=digest, descriptor=descriptor)
 
 
+def _git_binary_fixture() -> BinaryFixture:
+    candidate = shutil.which("git")
+    if not candidate:
+        for fallback in (Path("/usr/bin/git"), Path("/opt/homebrew/bin/git")):
+            if fallback.is_file():
+                candidate = str(fallback)
+                break
+    if not candidate:
+        pytest.fail("CI Git executable is unavailable")
+    path = Path(candidate).resolve()
+    if not path.is_file() or path.is_symlink():
+        pytest.fail("CI Git executable must resolve to a regular file")
+    version_result = subprocess.run(
+        [str(path), "--version"], check=True, capture_output=True, text=True
+    )
+    match = re.search(r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout)
+    if match is None:
+        pytest.fail("CI Git version output is not parseable")
+    contents = path.read_bytes()
+    digest = hashlib.sha256(contents).hexdigest()
+    descriptor = {
+        "realpath": str(path),
+        "is_regular": True,
+        "is_symlink": False,
+        "owner_uid": path.stat().st_uid,
+        "mode": path.stat().st_mode & 0o7777,
+        "version": match.group(1),
+        "sha256": digest,
+    }
+    return BinaryFixture(path=path, sha256=digest, descriptor=descriptor)
+
+
 @pytest.fixture
 def scenario(tmp_path: Path) -> Scenario:
     policy = _copy_policy_fixture(tmp_path / "policy")
@@ -225,7 +260,13 @@ def scenario(tmp_path: Path) -> Scenario:
     credential.parent.mkdir()
     credential.write_text("bootstrap credential fixture\n", encoding="utf-8")
     credential.chmod(0o600)
-    return Scenario(policy=policy, target=target, binary=binary, credential_probe=credential)
+    return Scenario(
+        policy=policy,
+        target=target,
+        binary=binary,
+        credential_probe=credential,
+        git=_git_binary_fixture(),
+    )
 
 
 def _binary_probe(descriptor: dict[str, object]):
@@ -241,6 +282,7 @@ def _plan_kwargs(
     role: str = "reviewer_high",
     **overrides: object,
 ) -> dict[str, object]:
+    git = scenario.git or _git_binary_fixture()
     values: dict[str, object] = {
         "policy_root": scenario.policy.root,
         "target_root": scenario.target.root,
@@ -256,6 +298,10 @@ def _plan_kwargs(
         "supported_binary_versions": (CODEX_VERSION,),
         "binary_probe": _binary_probe(scenario.binary.descriptor),
         "credential_probe_path": scenario.credential_probe,
+        "git_binary": git.path,
+        "expected_git_version": git.descriptor["version"],
+        "expected_git_sha256": git.sha256,
+        "git_probe": _binary_probe(git.descriptor),
     }
     values.update(overrides)
     return values
@@ -557,6 +603,71 @@ def test_binary_requires_absolute_regular_non_symlink_path(scenario: Scenario) -
     symlink = scenario.binary.path.parent / "codex-link"
     symlink.symlink_to(scenario.binary.path)
     assert _binary_errors(scenario, path=symlink)
+
+
+def test_plan_and_manifest_bind_explicit_git_identity(scenario: Scenario) -> None:
+    git = scenario.git
+    assert git is not None
+    plan = _plan(scenario)
+    assert plan["git_realpath"] == str(git.path)
+    assert plan["git_version"] == git.descriptor["version"]
+    assert plan["git_sha256"] == git.sha256
+
+    manifest = _function("build_redacted_manifest")(
+        plan,
+        config_bytes=b"config",
+        prompt="prompt",
+        event_output=_valid_jsonl(),
+        stderr="stderr",
+        final_output="output",
+        probe_results={"git": "bound"},
+        observed_at_ms=1,
+        cleanup={"status": "clean"},
+    )
+    assert manifest["git_realpath"] == str(git.path)
+    assert manifest["git_version"] == git.descriptor["version"]
+    assert manifest["git_sha256"] == git.sha256
+
+
+def test_explicit_git_binary_ignores_malicious_earlier_path(
+    scenario: Scenario, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = scenario.git
+    assert git is not None
+    malicious_dir = tmp_path / "malicious-bin"
+    malicious_dir.mkdir()
+    marker = tmp_path / "malicious-git-used"
+    malicious = malicious_dir / "git"
+    malicious.write_text(
+        f"#!/bin/sh\nprintf used > {marker}\nexit 97\n", encoding="utf-8"
+    )
+    malicious.chmod(0o755)
+    monkeypatch.setenv("PATH", str(malicious_dir))
+
+    plan = _plan(scenario)
+
+    assert plan["git_realpath"] == str(git.path)
+    assert not marker.exists()
+
+
+def test_git_repository_operations_do_not_spawn_bare_ambient_git() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert '["git", "-C"' not in source
+
+
+def test_cli_requires_explicit_git_identity(scenario: Scenario) -> None:
+    module = _launcher_module()
+    without_git = _cli_identity_args(scenario)
+    for option in (
+        "--git-binary",
+        "--expected-git-version",
+        "--expected-git-sha256",
+    ):
+        index = without_git.index(option)
+        del without_git[index : index + 2]
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(without_git)
+    assert excinfo.value.code == 2
 
 
 def test_permission_profile_is_per_run_launcher_pilot_not_global_sandbox(
@@ -939,6 +1050,43 @@ def test_cleanup_is_non_force_and_preserves_dirty_or_unowned_paths(tmp_path: Pat
     assert dirty.exists()
 
 
+def test_cleanup_reports_owned_nonempty_directories_and_retains_sensitive_artifact(
+    tmp_path: Path,
+) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    artifact = private / "sensitive-output.txt"
+    artifact.write_text("model-created secret-like artifact\n", encoding="utf-8")
+
+    result = _function("cleanup_private_dirs")((private,), force=False)
+
+    assert result
+    assert private.exists()
+    assert artifact.read_text(encoding="utf-8") == "model-created secret-like artifact\n"
+
+
+def test_successful_run_cannot_claim_clean_cleanup_with_owned_runtime_artifact(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    artifact = Path(plan["runtime_root"]) / "sensitive-output.txt"
+
+    def process_runner(**kwargs: object) -> dict[str, object]:
+        artifact.write_text("model-created secret-like artifact\n", encoding="utf-8")
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=process_runner,
+    )
+
+    assert result["status"] == "insufficient_evidence"
+    assert artifact.exists()
+    assert result.get("manifest", {}).get("cleanup", {}).get("status") != "clean"
+
+
 def _common_git_root(scenario: Scenario) -> Path:
     return (
         scenario.target.root
@@ -986,6 +1134,7 @@ def _sandbox_runner_for(results: dict[str, dict[str, object]], calls: list[dict[
 
 
 def _cli_identity_args(scenario: Scenario) -> list[str]:
+    git = scenario.git or _git_binary_fixture()
     return [
         "--policy-root",
         str(scenario.policy.root),
@@ -1005,6 +1154,12 @@ def _cli_identity_args(scenario: Scenario) -> list[str]:
         str(scenario.binary.path),
         "--expected-binary-sha256",
         scenario.binary.sha256,
+        "--git-binary",
+        str(git.path),
+        "--expected-git-version",
+        str(git.descriptor["version"]),
+        "--expected-git-sha256",
+        git.sha256,
         "--credential-probe-path",
         str(scenario.credential_probe),
     ]
@@ -1516,6 +1671,98 @@ def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
     assert "pytest" in " ".join(commands["pytest_collection"])
 
 
+def _reviewed_tool_path(name: str, scenario: Scenario) -> Path:
+    if name == "python":
+        return Path(sys.executable).resolve()
+    if name == "git":
+        assert scenario.git is not None
+        return scenario.git.path
+    candidates = [
+        shutil.which(name),
+        str(Path(sys.prefix) / "bin" / name),
+        str(Path(sys.base_prefix) / "bin" / name),
+        f"/usr/bin/{name}",
+        f"/bin/{name}",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate).resolve()
+    pytest.fail(f"reviewed {name} executable is unavailable")
+
+
+def test_toolchain_path_order_is_deterministic_and_all_required_tools_are_bound(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    entries = plan["exec_env"]["PATH"].split(os.pathsep)
+    expected = []
+    for entry in (
+        str(Path(sys.prefix) / "bin"),
+        str(_reviewed_tool_path("python", scenario).parent),
+        str(_reviewed_tool_path("git", scenario).parent),
+        str(_reviewed_tool_path("rg", scenario).parent),
+        str(_reviewed_tool_path("ruff", scenario).parent),
+        "/usr/bin",
+        "/bin",
+    ):
+        resolved = str(Path(entry).resolve())
+        if resolved not in expected:
+            expected.append(resolved)
+    assert entries == expected
+    assert entries == list(dict.fromkeys(entries))
+
+    executables = plan["toolchain"]["executables"]
+    filesystem = plan["permission_profile"]["permissions"][
+        plan["permission_profile_name"]
+    ]["filesystem"]
+    for name in ("python", "git", "rg", "ruff"):
+        executable = executables[name]
+        assert Path(executable["realpath"]).is_file()
+        assert executable["parent"] in entries
+        assert filesystem[executable["parent"]] == "read"
+        assert filesystem[executable["realpath"]] == "read"
+
+
+def test_toolchain_smoke_commands_cover_python_pytest_git_rg_and_ruff(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    commands = plan["toolchain"]["smoke_commands"]
+    assert set(commands) == {
+        "python_encodings",
+        "pytest_collection",
+        "git_resolve",
+        "rg_version",
+        "ruff_version",
+    }
+    assert commands["git_resolve"][0] == plan["git_realpath"]
+    assert scenario.target.head in commands["git_resolve"]
+    for command_name, executable_name in (("rg_version", "rg"), ("ruff_version", "ruff")):
+        assert commands[command_name][0] == plan["toolchain"]["executables"][executable_name]["realpath"]
+
+    calls: list[list[str]] = []
+
+    def deterministic_runner(command: list[str]) -> dict[str, object]:
+        calls.append(command)
+        return {"returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+    results = {
+        name: deterministic_runner(command)
+        for name, command in commands.items()
+    }
+    assert len(calls) == 5
+    assert all(result["returncode"] == 0 for result in results.values())
+
+
+def test_missing_required_toolchain_executable_is_insufficient_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)):
+        module._toolchain()
+
+
 def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1604,6 +1851,201 @@ def test_process_runner_timeout_terminates_escalates_and_reaps_term_ignoring_chi
     )
     assert result["timed_out"] is True
     assert child.term_count >= 1 and child.kill_count >= 1 and child.reaped
+
+
+def test_process_runner_supervises_nonreading_stdin_and_joins_writer_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    main_thread = threading.current_thread()
+
+    class BlockingStdin:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.closed = False
+
+        def write(self, value: bytes) -> int:
+            if threading.current_thread() is main_thread:
+                raise AssertionError("stdin must not be written synchronously")
+            self.release.wait(timeout=1)
+            raise BrokenPipeError("child never read stdin")
+
+        def close(self) -> None:
+            self.closed = True
+            self.release.set()
+
+    class NonreadingChild:
+        def __init__(self) -> None:
+            self.stdin = BlockingStdin()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            self.returncode = None
+            self.term_count = 0
+            self.kill_count = 0
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.term_count += 1
+
+        def kill(self) -> None:
+            self.kill_count += 1
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.kill_count == 0:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            self.reaped = True
+            return self.returncode
+
+    child = NonreadingChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="bounded prompt",
+        timeout=0.01,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert result["timed_out"] is True
+    assert result["reaped"] is True
+    assert result["stdin_writer_joined"] is True
+    assert child.term_count >= 1 and child.kill_count >= 1 and child.reaped
+    assert child.stdin.closed
+
+
+def test_process_runner_reports_broken_pipe_after_supervised_stdin_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    main_thread = threading.current_thread()
+
+    class BrokenPipeStdin:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.closed = False
+
+        def write(self, value: bytes) -> int:
+            if threading.current_thread() is main_thread:
+                raise AssertionError("stdin must not be written synchronously")
+            self.started.set()
+            raise BrokenPipeError("closed stdin")
+
+        def close(self) -> None:
+            self.closed = True
+
+    class RunningChild:
+        def __init__(self) -> None:
+            self.stdin = BrokenPipeStdin()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            self.returncode = None
+            self.terminated = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            self.reaped = True
+            return self.returncode
+
+    child = RunningChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="bounded prompt",
+        timeout=10,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert result["stdin_write_error"] is True
+    assert result["stdin_writer_joined"] is True
+    assert result["reaped"] is True
+    assert child.terminated and child.reaped and child.stdin.closed
+
+
+def test_process_runner_output_overflow_also_closes_and_joins_stdin_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    main_thread = threading.current_thread()
+
+    class BlockingStdin:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.closed = False
+
+        def write(self, value: bytes) -> int:
+            if threading.current_thread() is main_thread:
+                raise AssertionError("stdin must not be written synchronously")
+            self.release.wait(timeout=1)
+            raise BrokenPipeError("closed after output overflow")
+
+        def close(self) -> None:
+            self.closed = True
+            self.release.set()
+
+    class OverflowingChild:
+        def __init__(self) -> None:
+            self.stdin = BlockingStdin()
+            self.stdout = io.BytesIO(b"x" * 100_000)
+            self.stderr = io.BytesIO(b"e" * 100_000)
+            self.returncode = None
+            self.terminated = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            self.reaped = True
+            return self.returncode
+
+    child = OverflowingChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="bounded prompt",
+        timeout=10,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert result["output_limited"] is True
+    assert result["stdin_writer_joined"] is True
+    assert result["reaped"] is True
+    assert child.terminated and child.reaped and child.stdin.closed
 
 
 @pytest.mark.parametrize("value", [0, -1, 1801, True, "1800"])
