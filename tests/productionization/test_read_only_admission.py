@@ -166,6 +166,18 @@ def test_policy_requires_non_temp_review_worktrees_for_launcher_inputs() -> None
     assert "worktree" in policy
 
 
+def test_policy_documents_runtime_hardening_boundaries() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    for marker in (
+        "bounded streaming",
+        "timeout escalation",
+        "toolchain roots",
+        "codex_sandbox_network_disabled",
+        "codesign --verify",
+    ):
+        assert marker in policy, marker
+
+
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:
     for role in _READ_ONLY_ROLES:
         instructions = str(_role_config(role).get("developer_instructions", "")).lower()

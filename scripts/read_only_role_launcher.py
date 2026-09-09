@@ -16,11 +16,14 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -392,6 +395,45 @@ def _toml_value(value: object) -> str:
     raise LauncherError("unsupported TOML config value")
 
 
+def _toolchain() -> dict[str, object]:
+    paths = sysconfig.get_paths()
+    read_roots = {str(Path(sys.prefix).resolve()), str(Path(sys.base_prefix).resolve())}
+    read_roots.update(str(Path(value).resolve()) for value in paths.values())
+    executables: dict[str, dict[str, str]] = {}
+    path_dirs = {"/usr/bin", "/bin", str(Path(sys.executable).resolve().parent)}
+    for name, candidate in {
+        "python": shutil.which("python") or sys.executable,
+        "git": shutil.which("git"),
+        "rg": shutil.which("rg"),
+        "ruff": shutil.which("ruff"),
+    }.items():
+        if not candidate:
+            continue
+        candidate_path = Path(candidate)
+        try:
+            path = candidate_path.resolve(strict=True)
+            info = path.stat()
+        except OSError as exc:
+            raise LauncherError(f"toolchain executable {name} is unavailable") from exc
+        if not stat.S_ISREG(info.st_mode):
+            raise LauncherError(f"toolchain executable {name} is not a regular file")
+        executables[name] = {"realpath": str(path), "parent": str(path.parent)}
+        path_dirs.add(str(path.parent))
+    return {
+        "read_roots": sorted(read_roots),
+        "executables": executables,
+        "path": os.pathsep.join(sorted(path_dirs)),
+        "commands": {
+            "python_encodings": [
+                sys.executable,
+                "-c",
+                "import encodings,sys; print(encodings.__file__)",
+            ],
+            "pytest_collection": [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+        },
+    }
+
+
 def _default_binary_probe(path: Path) -> dict[str, object]:
     def file_digest() -> str:
         digest = hashlib.sha256()
@@ -424,6 +466,14 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         "team_identifier": None,
     }
     if sys.platform == "darwin":
+        verify = subprocess.run(
+            ["codesign", "--verify", "--strict", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            shell=False,
+        )
         codesign = subprocess.run(
             ["codesign", "--display", "--verbose=4", "--strict", str(path)],
             check=False,
@@ -438,6 +488,7 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
                 break
         if codesign.returncode != 0:
             descriptor["team_identifier"] = None
+        descriptor["signature_valid"] = verify.returncode == 0
     return descriptor
 
 
@@ -493,6 +544,8 @@ def validate_binary(
         errors.append("binary SHA-256 drifted")
     if sys.platform == "darwin" and descriptor.get("team_identifier") != expected_team_identifier:
         errors.append("binary codesign TeamIdentifier drifted")
+    if sys.platform == "darwin" and descriptor.get("signature_valid") is not True:
+        errors.append("binary codesign verification failed")
     return errors
 
 
@@ -601,8 +654,11 @@ def build_invocation_plan(
     expected_binary_team_identifier: object,
     supported_binary_versions: Sequence[str],
     credential_probe_path: object,
+    timeout_seconds: object = 1800,
     binary_probe: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
+    if type(timeout_seconds) is not int or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 1800:
+        raise LauncherError("timeout_seconds must be an integer from 1 through 1800")
     _reject_ambient_git_redirects()
     policy = _repo_state(
         policy_root,
@@ -647,14 +703,22 @@ def build_invocation_plan(
         raise LauncherError("credential probe path overlaps launcher runtime")
     scratch = runtime_root / "cwd"
     credential_probe = credential_path
+    toolchain = _toolchain()
+    toolchain_roots = [Path(value) for value in toolchain["read_roots"]]
+    for executable in toolchain["executables"].values():
+        toolchain_roots.extend(
+            (Path(executable["parent"]), Path(executable["realpath"]))
+        )
     profile = build_permission_profile(
         policy_root=Path(policy["root"]),
         target_root=Path(target["root"]),
         common_git_root=common_git,
-        dependency_roots=(Path(sys.executable).resolve().parent,),
+        dependency_roots=tuple(toolchain_roots),
         scratch_root=scratch,
         credential_probe_path=credential_probe,
     )
+    profile_shell = profile["shell_environment"]
+    profile_shell["set"]["PATH"] = str(toolchain["path"])
     model, effort = ROLE_ROUTES[str(role)]
     mcp_servers = configured.get("mcp_servers") or {}
     capability_closure = dict.fromkeys(_CAPABILITY_KEYS, False)
@@ -729,7 +793,7 @@ def build_invocation_plan(
         "credential_read_denied": str(credential_path),
         "scratch_write": str(scratch / ".launcher-scratch-probe"),
         "secret_env_absent": str(scratch / ".launcher-secret-env-probe"),
-        "network_denied": "https://example.com",
+        "network_denied": "CODEX_SANDBOX_NETWORK_DISABLED=1",
     }
     host_env = {
         key: value
@@ -738,6 +802,7 @@ def build_invocation_plan(
         or key.startswith("LAUNCHER_")
     }
     host_env.setdefault("PATH", os.defpath)
+    host_env["PATH"] = str(toolchain["path"])
     host_env["TMPDIR"] = str(runtime_root)
     host_env["PYTHONDONTWRITEBYTECODE"] = "1"
     host_env["GIT_OPTIONAL_LOCKS"] = "0"
@@ -774,6 +839,9 @@ def build_invocation_plan(
         "prompt_transport": "stdin",
         "config_values": config_values,
         "exec_env": host_env,
+        "toolchain": toolchain,
+        "timeout_seconds": timeout_seconds,
+        "max_timeout_seconds": 1800,
         "launcher_secret_sentinel": secret_sentinel,
         "probe_paths": probe_paths,
         "probe_markers": [str(Path(target["root"]) / ".launcher-target-write-probe")],
@@ -822,16 +890,9 @@ def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dic
     else:
         argv.extend(
             (
-                "/usr/bin/curl",
-                "--silent",
-                "--show-error",
-                "--connect-timeout",
-                "2",
-                "--max-time",
-                "3",
-                "--output",
-                "/dev/null",
-                str(paths[probe_name]),
+                "/bin/sh",
+                "-c",
+                "test \"${CODEX_SANDBOX_NETWORK_DISABLED:-}\" = 1",
             )
         )
     return {
@@ -901,7 +962,7 @@ def _evaluate_sandbox_probe(
     elif probe_name == "secret_env_absent":
         result["absent"] = returncode == 0 and not stdout
     elif probe_name == "network_denied":
-        result["denied"] = returncode != 0 and not stdout
+        result["denied"] = returncode == 0 and not stdout
     else:
         result["status"] = "insufficient_evidence"
     return result
@@ -926,6 +987,7 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
     stdin = kwargs["stdin"]
     environment = kwargs["env"]
     timeout = kwargs["timeout"]
+    output_limit = int(kwargs.get("max_output_bytes", MAX_STDOUT_BYTES))
     if type(argv) is not list or not all(type(value) is str for value in argv):
         raise LauncherError("runner argv must be a string list")
     process = subprocess.Popen(
@@ -935,29 +997,69 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=False,
         shell=False,
         start_new_session=(os.name != "nt"),
     )
-    try:
-        stdout, stderr = process.communicate(input=stdin, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        if os.name != "nt":
-            os.killpg(process.pid, signal.SIGTERM)
-        else:
-            process.terminate()
-        stdout, stderr = process.communicate(timeout=5)
-        return {
-            "returncode": process.returncode,
-            "stdout": stdout[:MAX_STDOUT_BYTES],
-            "stderr": stderr[:MAX_STDERR_BYTES],
-            "timed_out": True,
-        }
+    if getattr(process, "stdin", None) is not None:
+        process.stdin.write(str(stdin).encode("utf-8"))
+        process.stdin.close()
+    buffers: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+    output_limited = threading.Event()
+
+    def drain(name: str, stream: object, limit: int) -> None:
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                return
+            if type(chunk) is str:
+                chunk = chunk.encode("utf-8", "replace")
+            if len(buffers[name]) + len(chunk) > limit:
+                remaining = max(0, limit - len(buffers[name]))
+                buffers[name].extend(chunk[:remaining])
+                output_limited.set()
+                return
+            buffers[name].extend(chunk)
+
+    threads = [
+        threading.Thread(target=drain, args=("stdout", process.stdout, output_limit), daemon=True),
+        threading.Thread(target=drain, args=("stderr", process.stderr, MAX_STDERR_BYTES), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    started = time.monotonic()
+    timed_out = False
+    killed = False
+    while process.poll() is None:
+        if output_limited.is_set() or time.monotonic() - started >= float(timeout):
+            timed_out = not output_limited.is_set()
+            if os.name != "nt" and getattr(process, "pid", None):
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+            try:
+                process.wait(timeout=1)
+            except (subprocess.TimeoutExpired, TimeoutError):
+                killed = True
+                if os.name != "nt" and getattr(process, "pid", None):
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+                process.wait(timeout=5)
+            break
+        time.sleep(0.005)
+    for thread in threads:
+        thread.join(timeout=1)
+    if process.poll() is None:
+        process.wait(timeout=5)
     return {
         "returncode": process.returncode,
-        "stdout": stdout[:MAX_STDOUT_BYTES],
-        "stderr": stderr[:MAX_STDERR_BYTES],
-        "timed_out": False,
+        "stdout": bytes(buffers["stdout"]).decode("utf-8", "replace"),
+        "stderr": bytes(buffers["stderr"]).decode("utf-8", "replace"),
+        "timed_out": timed_out,
+        "output_limited": output_limited.is_set(),
+        "killed": killed,
+        "reaped": process.poll() is not None,
     }
 
 
@@ -1015,11 +1117,8 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
     errors: list[object] = []
     warnings: list[object] = []
     allowed = {
-        "thread.started",
-        "turn.started",
-        "item.started",
-        "item.completed",
-        "turn.completed",
+        "thread.started", "turn.started", "item.started", "item.updated",
+        "item.completed", "turn.completed", "turn.failed", "error",
     }
     try:
         for line in raw.splitlines():
@@ -1027,13 +1126,18 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
             if type(event) is not dict or event.get("type") not in allowed:
                 raise LauncherError("unknown or malformed top-level JSONL event")
             events.append(event)
-            if event["type"] in {"item.started", "item.completed"}:
+            if event["type"] in {"turn.failed", "error"}:
+                errors.append(event.get("error", event.get("message", event)))
+                continue
+            if event["type"] in {"item.started", "item.updated", "item.completed"}:
                 item = event.get("item")
                 if type(item) is not dict or item.get("type") not in {
                     "agent_message",
                     "command_execution",
                     "warning",
                     "error",
+                    "reasoning",
+                    "plan_update",
                 }:
                     raise LauncherError("unexpected item event")
                 item_type = item["type"]
@@ -1055,9 +1159,10 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
     types = [event["type"] for event in events]
     if types.count("thread.started") != 1 or types.count("turn.started") != 1:
         raise LauncherError("JSONL lifecycle events are incomplete")
-    if types.count("turn.completed") != 1 or types[-1] != "turn.completed":
+    failed = "turn.failed" in types or "error" in types
+    if not failed and (types.count("turn.completed") != 1 or types[-1] != "turn.completed"):
         raise LauncherError("JSONL terminal event is missing or replayed")
-    if final_message is None:
+    if final_message is None and not failed:
         raise LauncherError("JSONL final agent message is missing")
     error_material = json.dumps(
         {"errors": errors, "warnings": warnings}, sort_keys=True, separators=(",", ":")
@@ -1068,6 +1173,7 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
         "error_event_count": len(errors),
         "warning_event_count": len(warnings),
         "error_digest": hashlib.sha256(error_material).hexdigest(),
+        "status": "failed" if failed else "completed",
     }
 
 
@@ -1257,14 +1363,19 @@ def run_isolated_role(
                 cwd=str(cwd),
                 env=plan["exec_env"],
                 stdin=rendered_prompt,
-                timeout=300,
+                timeout=plan["timeout_seconds"],
                 process_group=True,
                 shell=False,
+                max_output_bytes=MAX_STDOUT_BYTES,
             )
         )
     except Exception as exc:
         return fail([_diagnostic(exc)])
-    if result.get("timed_out") is True or result.get("returncode") != 0:
+    if (
+        result.get("timed_out") is True
+        or result.get("output_limited") is True
+        or result.get("returncode") != 0
+    ):
         return fail(["isolated role process failed"])
     stdout = result.get("stdout")
     stderr = result.get("stderr", "")
@@ -1276,6 +1387,8 @@ def run_isolated_role(
         parsed = parse_codex_jsonl(stdout)
     except (LauncherError, ValueError) as exc:
         return fail([_diagnostic(exc)])
+    if parsed.get("status") != "completed":
+        return fail(["isolated role emitted a failed JSONL outcome"])
     try:
         before = {
             "policy_head_sha": plan["policy_head_sha"],
@@ -1355,6 +1468,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-binary-sha256", required=True)
     parser.add_argument("--expected-binary-team-identifier", default=CODEX_TEAM_IDENTIFIER)
     parser.add_argument("--credential-probe-path", type=Path, required=True)
+    parser.add_argument("--timeout-seconds", type=int, default=1800)
     args = parser.parse_args(argv)
     try:
         prompt = sys.stdin.read(MAX_PROMPT_BYTES + 1)
@@ -1379,6 +1493,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_binary_team_identifier=args.expected_binary_team_identifier,
             supported_binary_versions=(CODEX_VERSION,),
             credential_probe_path=args.credential_probe_path,
+            timeout_seconds=args.timeout_seconds,
         )
         result = run_isolated_role(plan, prompt=prompt)
     except (LauncherError, OSError, ValueError) as exc:

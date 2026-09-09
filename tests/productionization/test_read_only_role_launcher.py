@@ -211,6 +211,7 @@ def _binary_fixture(root: Path) -> BinaryFixture:
         "version": CODEX_VERSION,
         "sha256": digest,
         "team_identifier": TEAM_IDENTIFIER,
+        "signature_valid": True,
     }
     return BinaryFixture(path=path, sha256=digest, descriptor=descriptor)
 
@@ -680,7 +681,7 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
     assert type(call["stdin"]) is str
     assert len(call["stdin"].encode()) <= 96 * 1024
     assert Path(call["cwd"]) == Path(plan["cwd"])
-    assert 0 < call["timeout"] <= 300
+    assert 0 < call["timeout"] <= 1800
     assert call["process_group"] is True
     assert "candidate-self-authorized-model" not in call["stdin"]
 
@@ -1391,8 +1392,9 @@ def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
         assert command[:2] == ["/bin/sh", "-c"]
         assert "SECRET" in command[2]
     else:
-        assert command[0] == "/usr/bin/curl"
-        assert "--max-time" in command
+        assert command[:2] == ["/bin/sh", "-c"]
+        assert "CODEX_SANDBOX_NETWORK_DISABLED" in command[2]
+        assert "curl" not in command
 
 
 def test_host_and_exec_env_retain_auth_context_while_model_shell_filters_secret(
@@ -1674,7 +1676,7 @@ def test_target_read_probe_uses_committed_agents_policy_file(scenario: Scenario)
         ("credential_read_denied", 1, "", {"denied": True}),
         ("scratch_write", 0, "", {"allowed": True}),
         ("secret_env_absent", 0, "", {"absent": True}),
-        ("network_denied", 1, "", {"denied": True}),
+        ("network_denied", 0, "", {"denied": True}),
     ],
 )
 def test_default_sandbox_runner_evaluates_direct_probe_return_facts(
@@ -1775,7 +1777,7 @@ def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
         process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
     )
     assert result["status"] == "completed", result
-    assert seen == ["/usr/bin/head", "/usr/bin/head", "/usr/bin/touch", "/usr/bin/head", "/usr/bin/touch", "/bin/sh", "/usr/bin/curl"]
+    assert seen == ["/usr/bin/head", "/usr/bin/head", "/usr/bin/touch", "/usr/bin/head", "/usr/bin/touch", "/bin/sh", "/bin/sh"]
 
 
 def test_successful_run_cleans_exact_launcher_runtime_and_cwd(

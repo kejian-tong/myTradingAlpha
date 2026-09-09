@@ -22,6 +22,10 @@ first-turn handshake replaces the launcher boundary. The host client may perform
 outside the model-command profile; telemetry does not upgrade that client activity into model capability
 evidence.
 
+Runtime-path evidence includes bounded streaming, timeout escalation, validated toolchain roots,
+deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and `codesign --verify` success; telemetry does
+not replace those checks.
+
 Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
 references, exact PR/role/config identity, model/effort, an explicit legacy-sandbox or permission-profile
 system, sandbox/profile/approval values, and a complete sorted unique bounded tool inventory. The caller

@@ -172,6 +172,10 @@ is required. Global Permission Profile adoption remains Watch-only. The host Cod
 bounded authentication or cache operations outside the model-command profile; those operations are not
 treated as model capability evidence.
 
+The launcher runtime contract also requires bounded streaming, timeout escalation, validated toolchain
+roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `codesign --verify` before
+binary acceptance.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**
