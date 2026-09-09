@@ -499,6 +499,36 @@ def test_replace_refs_cannot_substitute_target_objects(scenario: Scenario) -> No
         )
 
 
+def test_local_core_worktree_cannot_redirect_supplied_target_root(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    decoy = tmp_path / "decoy-worktree"
+    shutil.copytree(
+        scenario.target.root,
+        decoy,
+        ignore=shutil.ignore_patterns(".git"),
+    )
+    _run_git(scenario.target.root, "config", "core.worktree", str(decoy))
+
+    _rejected_plan(scenario)
+
+
+def test_local_fsmonitor_is_rejected_without_execution(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    marker = tmp_path / "fsmonitor-executed"
+    monitor = tmp_path / "hostile-fsmonitor"
+    monitor.write_text(
+        f"#!/bin/sh\n/usr/bin/touch {marker}\nexit 0\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o755)
+    _run_git(scenario.target.root, "config", "core.fsmonitor", str(monitor))
+
+    _rejected_plan(scenario)
+    assert not marker.exists()
+
+
 @pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"])
 def test_ambient_git_redirects_are_rejected(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch, variable: str
@@ -729,6 +759,23 @@ def test_git_version_probe_uses_the_same_neutralized_environment(
     assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
 
 
+def test_default_git_probe_rejects_zero_return_with_stderr(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout="git version 2.39.1\n", stderr="warning\n"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._default_git_probe(git.path)
+
+
 def test_git_symlink_input_fails_with_a_canonical_path_diagnostic(
     scenario: Scenario, tmp_path: Path
 ) -> None:
@@ -797,6 +844,91 @@ def test_explicit_git_binary_ignores_malicious_earlier_path(
 def test_git_repository_operations_do_not_spawn_bare_ambient_git() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert '["git", "-C"' not in source
+
+
+def test_repository_git_calls_use_explicit_anchor_and_safe_cli_config(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def capture(*args: object, **kwargs: object):
+        calls.append((list(args[0]), dict(kwargs)))
+        return subprocess.CompletedProcess(args[0], 0, stdout="value\n", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", capture)
+    assert module._git(git.path, scenario.target.root, "rev-parse", "HEAD") == "value"
+    argv, kwargs = calls[0]
+    assert "-C" not in argv
+    assert ["--git-dir", str(scenario.target.root / ".git")] == argv[
+        argv.index("--git-dir") : argv.index("--git-dir") + 2
+    ]
+    assert ["--work-tree", str(scenario.target.root)] == argv[
+        argv.index("--work-tree") : argv.index("--work-tree") + 2
+    ]
+    controls = {
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "-c"
+    }
+    assert {
+        "core.fsmonitor=false",
+        "core.hooksPath=/dev/null",
+        "submodule.recurse=false",
+        "fetch.recurseSubmodules=false",
+        "protocol.allow=never",
+        "protocol.file.allow=never",
+        "protocol.ext.allow=never",
+    }.issubset(controls)
+    assert kwargs["cwd"] == scenario.target.root
+
+    calls.clear()
+
+    def capture_bytes(*args: object, **kwargs: object):
+        calls.append((list(args[0]), dict(kwargs)))
+        return subprocess.CompletedProcess(args[0], 0, stdout=b"object", stderr=b"")
+
+    monkeypatch.setattr(module.subprocess, "run", capture_bytes)
+    assert module._git_bytes(
+        git.path, scenario.target.root, "show", "HEAD:AGENTS.md"
+    ) == b"object"
+    bytes_argv, bytes_kwargs = calls[0]
+    assert "--git-dir" in bytes_argv and "--work-tree" in bytes_argv
+    assert bytes_kwargs["cwd"] == scenario.target.root
+
+
+def test_repo_state_requires_exact_canonical_show_toplevel(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    real_git = module._git
+    seen: list[tuple[str, ...]] = []
+
+    def mismatch(
+        git_binary: Path,
+        root: Path,
+        *arguments: str,
+        allow_failure: bool = False,
+    ) -> str:
+        seen.append(arguments)
+        if arguments == ("rev-parse", "--show-toplevel"):
+            return str(tmp_path / "decoy")
+        return real_git(git_binary, root, *arguments, allow_failure=allow_failure)
+
+    monkeypatch.setattr(module, "_git", mismatch)
+    with pytest.raises((ValueError, RuntimeError)):
+        module._repo_state(
+            scenario.target.root,
+            git_binary=git.path,
+            expected_sha=scenario.target.head,
+            expected_tree_sha=scenario.target.tree,
+            detached=True,
+        )
+    assert ("rev-parse", "--show-toplevel") in seen
 
 
 def test_git_helpers_reject_any_stderr_and_only_quiet_expected_failure_is_empty(
@@ -1846,8 +1978,11 @@ def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
     "command",
     [
         "codex exec --json nested",
+        "SAFE=1 codex exec --json nested",
+        "command codex exec --json nested",
         "/usr/bin/env SAFE=1 codex exec nested",
         "/bin/sh -c 'codex exec --json nested'",
+        "/bin/sh -c 'SAFE=1 command codex exec --json nested'",
         ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
     ],
 )
@@ -2762,6 +2897,13 @@ def test_toolchain_smokes_execute_before_preflight_and_model(
     assert events[6][0] == "preflight"
     assert events[-1][0] == "model"
     assert process_calls
+
+
+def test_toolchain_smoke_rejects_any_nonempty_stderr() -> None:
+    module = _launcher_module()
+    assert not module._toolchain_smoke_passed(
+        {"returncode": 0, "stdout": "ruff 1.0\n", "stderr": "warning\n"}
+    )
 
 
 def test_nonfunctional_git_smoke_blocks_model_before_preflight(

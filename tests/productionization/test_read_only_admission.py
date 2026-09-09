@@ -265,6 +265,31 @@ def test_policy_does_not_overclaim_nested_codex_prevention() -> None:
     assert "master-only enforcement" in policy
 
 
+def test_standalone_launcher_role_evidence_is_explicit_and_truthful() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    for marker in (
+        "standalone top-level isolated role invocation",
+        "admissible role-evidence category",
+        "named_agent_loaded=false",
+        "not a child configured-actual claim",
+        "external-profile-only",
+    ):
+        assert marker in policy, marker
+
+
+def test_protocol_does_not_call_an_old_red_the_current_final_repair() -> None:
+    policy = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    assert "current final repair" not in policy
+    for marker in (
+        "34fe529 -> b27553f",
+        "6d69222 -> 05a902b",
+        "historical controlling pairs",
+    ):
+        assert marker in policy, marker
+
+
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:
     for role in _READ_ONLY_ROLES:
         instructions = str(_role_config(role).get("developer_instructions", "")).lower()
