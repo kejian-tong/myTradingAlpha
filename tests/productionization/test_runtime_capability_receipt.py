@@ -712,7 +712,6 @@ def test_explicit_mutation_tool_exposure_fails_closed(tool_name: str) -> None:
         "apply_patch",
         "exec_command",
         "write_stdin",
-        "mcp__codex_app__get_handoff_status",
     ],
 )
 def test_sandbox_governed_local_tools_are_allowed_in_read_only_sandbox(

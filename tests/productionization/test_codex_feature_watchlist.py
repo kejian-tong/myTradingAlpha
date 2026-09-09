@@ -71,7 +71,9 @@ def test_memories_otel_and_plugins_require_separate_adoption(tmp_path: Path) -> 
 
 def test_explicitly_disabled_memories_remain_allowed(tmp_path: Path) -> None:
     checker = _checker()
-    assert checker._watch_only_feature_errors(tmp_path, {"features": {"memories": False}}) == []
+    assert checker._watch_only_feature_errors(
+        tmp_path, {"features": {"apps": False, "memories": False}}
+    ) == []
 
 
 def test_watchlist_documents_all_reviewed_decisions() -> None:

@@ -54,8 +54,8 @@ def test_external_spec_researcher_mcp_tool_allowlist_drift_is_rejected(tmp_path:
     path = fixture / ".codex/agents/external-spec-researcher.toml"
     text = path.read_text()
     text = text.replace(
-        f'url = "{_OPENAI_DOCS_MCP}"',
-        f'url = "{_OPENAI_DOCS_MCP}"\nenabled_tools = ["fetch_openai_doc", "search_openai_docs", "unexpected"]',
+        'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+        'enabled_tools = ["fetch_openai_doc", "search_openai_docs", "unexpected"]',
     )
     path.write_text(text)
     errors = checker.configuration_errors(fixture)
@@ -80,7 +80,8 @@ def test_role_cannot_override_project_apps_disablement(tmp_path: Path) -> None:
         original = path.read_text()
         path.write_text(original + "\n[features]\napps = true\n")
         errors = checker.configuration_errors(fixture)
-        assert any("role" in error.lower() and "apps" in error.lower() for error in errors), (
+        role = path.stem.replace("-", "_")
+        assert any(role in error.lower() and "apps" in error.lower() for error in errors), (
             path.name,
             errors,
         )
@@ -99,7 +100,7 @@ def test_mcp_endpoint_drift_is_rejected(tmp_path: Path) -> None:
     shutil.copyfile(ROOT / "AGENTS.md", tmp_path / "AGENTS.md")
     path = tmp_path / ".codex/agents/external-spec-researcher.toml"
     path.write_text(path.read_text().replace("https://developers.openai.com/mcp", "https://example.com/mcp"))
-    assert "external_spec_researcher OpenAI docs MCP differs from reviewed policy" in checker.configuration_errors(tmp_path)
+    assert "external_spec_researcher OpenAI docs MCP configuration intent differs from reviewed policy" in checker.configuration_errors(tmp_path)
 
 
 def test_mcp_leak_to_reviewer_is_rejected(tmp_path: Path) -> None:

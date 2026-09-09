@@ -92,18 +92,9 @@ _COLLABORATION_TOOLS = frozenset(
         "spawn_agent",
     }
 )
-_READ_ONLY_MCP_TOOLS = frozenset(
+_EXTERNAL_SPEC_RESEARCHER_MCP_TOOLS = frozenset(
     {
-        "mcp__codex_app__capture_screen_context",
-        "mcp__codex_app__get_handoff_status",
-        "mcp__codex_app__get_usage_limits",
-        "mcp__codex_app__list_archived_threads",
-        "mcp__codex_app__list_projects",
-        "mcp__codex_app__list_threads",
-        "mcp__codex_app__read_thread",
-        "mcp__codex_app__read_thread_terminal",
-        "mcp__codex_app__wait_threads",
-        "mcp__openaiDeveloperDocs__fetch_openai_docs",
+        "mcp__openaiDeveloperDocs__fetch_openai_doc",
         "mcp__openaiDeveloperDocs__search_openai_docs",
     }
 )
@@ -428,7 +419,10 @@ def _validate_values(receipt: dict[str, object]) -> list[str]:
             elif name in _SANDBOX_GOVERNED_TOOLS:
                 if not _local_enforcement_is_read_only(receipt):
                     errors.append("local mutation tool lacks read-only enforcement")
-            elif name.startswith("mcp__") and name not in _READ_ONLY_MCP_TOOLS:
+            elif name.startswith("mcp__") and (
+                receipt.get("role") != "external_spec_researcher"
+                or name not in _EXTERNAL_SPEC_RESEARCHER_MCP_TOOLS
+            ):
                 errors.append("unapproved external MCP or connector tool exposed")
         if any(type(name) is not str for name in names):
             pass

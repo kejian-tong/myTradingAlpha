@@ -59,10 +59,15 @@ object, work-tree, or configuration redirects cannot override the supplied repos
 disabled and an active built-in profile; the official built-in read-only identity is `:read-only`.
 `disabled` never means read-only. Local `exec_command`, `write_stdin`, and `apply_patch` exposure is
 admissible only when the declared effective local enforcement is read-only. Local permission enforcement
-does not govern Apps, connectors, MCP servers, browsers, or collaboration controls, so those surfaces fail
-closed unless the tool is in the verifier's narrow reviewed read-only allowlist. High-capability function
-gateways and canonical mutation/delegation collaboration-control aliases are always rejected. Read-only
-`list_agents` and `wait_agent` observation controls may remain visible.
+does not govern Apps, connectors, MCP servers, browsers, or collaboration controls. The receipt verifier
+therefore rejects every `mcp__` tool for ordinary roles and admits only the exact
+`mcp__openaiDeveloperDocs__fetch_openai_doc` and
+`mcp__openaiDeveloperDocs__search_openai_docs` names for `external_spec_researcher`. It rejects all
+Codex App, GitHub, Gmail, Sites, unknown, and mutation MCP names. High-capability function gateways and
+canonical mutation/delegation collaboration-control aliases are always rejected. Read-only `list_agents`
+and `wait_agent` observation controls may remain visible, but visibility is not runtime authentication.
+The project Apps/MCP declarations are configuration intent; they do not inspect or deny inherited/global
+Apps, installed plugins, organization-managed policy, or other runtime surfaces.
 
 For example:
 

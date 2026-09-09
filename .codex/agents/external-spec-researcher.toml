@@ -32,3 +32,4 @@ enabled = false
 
 [mcp_servers.openaiDeveloperDocs]
 url = "https://developers.openai.com/mcp"
+enabled_tools = ["fetch_openai_doc", "search_openai_docs"]
