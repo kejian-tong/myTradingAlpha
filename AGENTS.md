@@ -119,6 +119,17 @@ Specialists add evidence; they never replace the controlling independent reviewe
 The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
 immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
 
+### 5.1 Current-runtime read-only invocation
+
+Use `scripts/read_only_role_launcher.py` as the default path for every read-only lane. It creates a
+top-level isolated role invocation from protected policy Git objects, a detached clean candidate, and a
+per-run Permission Profile pilot. An in-process child under a writable or unverified parent is
+non-admissible; its model self-report, JSONL, doctor output, static TOML, hooks, or telemetry cannot be
+host attestation. The launcher performs structured preflight/post-run checks and returns
+`insufficient_evidence` on missing or contradictory facts. Schema-v1 receipts remain historical,
+structural supplemental evidence only; host attestation and global Permission Profile migration stay
+Watch-only. No mandatory first-turn handshake is a substitute for the launcher boundary.
+
 ## 6. Adaptive model routing
 
 Routing is execution policy, not production architecture. Select the least expensive adequate route from
@@ -171,8 +182,13 @@ A config file expresses configured intent; it is not proof that a named role act
 requested route, configured route, successfully loaded named-role configured actual, and any independent
 runtime telemetry. Conflicting telemetry must be resolved before claiming a route.
 
-If a required named role cannot be loaded, record `insufficient_evidence` and stop the affected merge gate.
-Do not silently substitute a generic worker or different model and claim the intended route. An unavailable
+For required read-only review lanes, a protected-policy standalone top-level isolated role invocation is
+an admissible role-evidence category. It truthfully records `named_agent_loaded=false`; it is not a child
+configured-actual claim and must bind the protected role/config/model/effort plus exact target state in its
+launcher manifest. Writer roles still require their named-agent route. If the applicable required role
+cannot be established through its admissible category, record `insufficient_evidence` and stop the affected
+merge gate rather than substituting a generic worker or different model. PR #67 remains
+external-profile-only for bootstrap review because its protected base predates the launcher. An unavailable
 optional `astra_canary` blocks only that canary comparison; it never weakens or replaces the active Sol
 production route.
 

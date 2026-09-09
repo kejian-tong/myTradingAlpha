@@ -20,6 +20,11 @@ architecture decisions reserved for the master. Return a concise evidence report
 base/head SHA, relevant paths/symbols, current-state findings, doc/code drift, dependencies, risks, and
 unresolved questions. The master synthesizes your report with other lanes into the JIT spec.
 
+Use `scripts/read_only_role_launcher.py` for every isolated role invocation. In-process child evidence
+under a writable or unverified parent is non-admissible; it is not host evidence and must not be called a
+named-agent loaded/configured actual. If launcher preflight or post-run observation is unavailable or
+fails, return `insufficient_evidence`, stop, and discard the lane.
+
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.

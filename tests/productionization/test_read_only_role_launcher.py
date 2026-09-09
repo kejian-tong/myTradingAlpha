@@ -1,0 +1,3871 @@
+"""RED contracts for isolated current-runtime read-only role invocation.
+
+The launcher must be a top-level, policy-pinned process boundary. These tests
+use temporary Git repositories and injected probes/runners; they never invoke
+Codex, authenticate, access a broker, or use the network.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import io
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import sysconfig
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts/read_only_role_launcher.py"
+DOCS_MCP_URL = "https://developers.openai.com/mcp"
+DOCS_MCP_TOOLS = ("fetch_openai_doc", "search_openai_docs")
+CODEX_VERSION = "0.153.4"
+TEAM_IDENTIFIER = "2DC432GLL2"
+_READ_ONLY_ROLES = (
+    "reviewer_high",
+    "reviewer_xhigh",
+    "code_explorer",
+    "test_auditor",
+    "boundary_reviewer",
+    "external_spec_researcher",
+    "astra_canary",
+)
+_WRITER_ROLES = (
+    "normal_implementer",
+    "high_implementer",
+    "critical_implementer",
+)
+_PROBE_ORDER = (
+    "policy_read",
+    "target_read",
+    "policy_secret_denied",
+    "target_secret_denied",
+    "target_write_denied",
+    "credential_read_denied",
+    "isolated_home",
+    "scratch_write",
+    "secret_env_absent",
+    "network_denied",
+)
+_TOOLCHAIN_SMOKE_ORDER = (
+    "python_encodings",
+    "pytest_import",
+    "git_resolve",
+    "rg_version",
+    "ruff_version",
+    "uv_version",
+)
+_MAX_JSONL_BYTES = 1 * 1024 * 1024
+_CAPABILITY_KEYS = (
+    "agents",
+    "apps",
+    "plugins",
+    "hooks",
+    "memories",
+    "browser",
+    "computer",
+    "image",
+    "workspace",
+    "remote",
+    "code_mode",
+    "web",
+    "search",
+    "skills",
+    "skill_discovery",
+    "skill_suggestions",
+    "recommended_plugins",
+    "plugin_sharing",
+    "shell_snapshot",
+    "chronicle",
+    "mcp_elicitation",
+)
+
+
+@dataclass(frozen=True)
+class GitFixture:
+    root: Path
+    head: str
+    tree: str
+
+
+@dataclass(frozen=True)
+class BinaryFixture:
+    path: Path
+    sha256: str
+    descriptor: dict[str, object]
+
+
+@dataclass(frozen=True)
+class Scenario:
+    policy: GitFixture
+    target: GitFixture
+    binary: BinaryFixture
+    credential_probe: Path
+    git: BinaryFixture | None = None
+
+
+def _launcher_module():
+    if not SCRIPT.is_file():
+        pytest.fail("missing implementation: scripts/read_only_role_launcher.py")
+    spec = importlib.util.spec_from_file_location("read_only_role_launcher", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _function(name: str):
+    function = getattr(_launcher_module(), name, None)
+    if function is None:
+        pytest.fail(f"missing launcher API: {name}")
+    return function
+
+
+def _run_git(root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return completed.stdout.strip()
+
+
+def _commit_all(root: Path, message: str) -> GitFixture:
+    _run_git(root, "add", "-A")
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Launcher Test",
+            "-c",
+            "user.email=launcher@example.invalid",
+            "commit",
+            "-qm",
+            message,
+        ],
+        check=True,
+    )
+    return _git_fixture(root)
+
+
+def _git_fixture(root: Path) -> GitFixture:
+    return GitFixture(
+        root=root,
+        head=_run_git(root, "rev-parse", "HEAD"),
+        tree=_run_git(root, "rev-parse", "HEAD^{tree}"),
+    )
+
+
+def _init_git(root: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+
+
+def _copy_policy_fixture(root: Path) -> GitFixture:
+    root.mkdir(parents=True)
+    shutil.copytree(
+        ROOT / ".codex",
+        root / ".codex",
+        ignore=shutil.ignore_patterns("read-only-probe.secret"),
+    )
+    shutil.copytree(ROOT / ".agents/skills", root / ".agents/skills")
+    shutil.copytree(ROOT / "docs/productionization", root / "docs/productionization")
+    for relative in (
+        "AGENTS.md",
+        "mytradingalpha/AGENTS.md",
+        "tradingagents/AGENTS.md",
+        "tests/productionization/AGENTS.md",
+    ):
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    canary = root / ".codex/read-only-probe.secret"
+    canary.write_text("harmless deny canary\n", encoding="utf-8")
+    _init_git(root)
+    return _commit_all(root, "policy fixture")
+
+
+def _copy_target_fixture(root: Path, *, candidate_role: bool = False) -> GitFixture:
+    root.mkdir(parents=True)
+    (root / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+    (root / "AGENTS.md").write_text("candidate target policy\n", encoding="utf-8")
+    canary = root / ".codex/read-only-probe.secret"
+    canary.parent.mkdir(parents=True)
+    canary.write_text("harmless deny canary\n", encoding="utf-8")
+    if candidate_role:
+        role_path = root / ".codex/agents/reviewer-high.toml"
+        role_path.parent.mkdir(parents=True)
+        role_path.write_text(
+            'name = "reviewer_high"\n'
+            'model = "candidate-self-authorized-model"\n'
+            'model_reasoning_effort = "none"\n'
+            'sandbox_mode = "workspace-write"\n'
+            '[agents]\n'
+            'enabled = true\n',
+            encoding="utf-8",
+        )
+    _init_git(root)
+    fixture = _commit_all(root, "candidate fixture")
+    _run_git(root, "checkout", "-q", "--detach", fixture.head)
+    return _git_fixture(root)
+
+
+def _binary_fixture(root: Path) -> BinaryFixture:
+    root.mkdir(parents=True)
+    path = root / "codex"
+    contents = b"synthetic codex executable for deterministic launcher tests\n"
+    path.write_bytes(contents)
+    path.chmod(0o755)
+    digest = hashlib.sha256(contents).hexdigest()
+    descriptor = {
+        "realpath": str(path.resolve()),
+        "is_regular": True,
+        "is_symlink": False,
+        "owner_uid": os.getuid(),
+        "mode": 0o755,
+        "version": CODEX_VERSION,
+        "sha256": digest,
+        "team_identifier": TEAM_IDENTIFIER,
+        "signature_valid": True,
+    }
+    return BinaryFixture(path=path, sha256=digest, descriptor=descriptor)
+
+
+def _git_binary_fixture() -> BinaryFixture:
+    candidate = shutil.which("git")
+    if not candidate:
+        for fallback in (Path("/usr/bin/git"), Path("/opt/homebrew/bin/git")):
+            if fallback.is_file():
+                candidate = str(fallback)
+                break
+    if not candidate:
+        pytest.fail("CI Git executable is unavailable")
+    path = Path(candidate).resolve()
+    if not path.is_file() or path.is_symlink():
+        pytest.fail("CI Git executable must resolve to a regular file")
+    version_result = subprocess.run(
+        [str(path), "--version"], check=True, capture_output=True, text=True
+    )
+    match = re.search(r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout)
+    if match is None:
+        pytest.fail("CI Git version output is not parseable")
+    contents = path.read_bytes()
+    digest = hashlib.sha256(contents).hexdigest()
+    descriptor = {
+        "realpath": str(path),
+        "is_regular": True,
+        "is_symlink": False,
+        "owner_uid": path.stat().st_uid,
+        "mode": path.stat().st_mode & 0o7777,
+        "version": match.group(1),
+        "sha256": digest,
+    }
+    return BinaryFixture(path=path, sha256=digest, descriptor=descriptor)
+
+
+@pytest.fixture
+def scenario(tmp_path: Path) -> Scenario:
+    policy = _copy_policy_fixture(tmp_path / "policy")
+    target = _copy_target_fixture(tmp_path / "target")
+    binary = _binary_fixture(tmp_path / "bin")
+    credential = tmp_path / "bootstrap-auth" / "credentials.json"
+    credential.parent.mkdir()
+    credential.write_text("bootstrap credential fixture\n", encoding="utf-8")
+    credential.chmod(0o600)
+    return Scenario(
+        policy=policy,
+        target=target,
+        binary=binary,
+        credential_probe=credential,
+        git=_git_binary_fixture(),
+    )
+
+
+def _binary_probe(descriptor: dict[str, object]):
+    def probe(_path: object) -> dict[str, object]:
+        return dict(descriptor)
+
+    return probe
+
+
+def _plan_kwargs(
+    scenario: Scenario,
+    *,
+    role: str = "reviewer_high",
+    **overrides: object,
+) -> dict[str, object]:
+    git = scenario.git or _git_binary_fixture()
+    values: dict[str, object] = {
+        "policy_root": scenario.policy.root,
+        "target_root": scenario.target.root,
+        "role": role,
+        "expected_policy_sha": scenario.policy.head,
+        "expected_policy_tree_sha": scenario.policy.tree,
+        "expected_target_sha": scenario.target.head,
+        "expected_target_tree_sha": scenario.target.tree,
+        "codex_binary": scenario.binary.path,
+        "expected_binary_version": CODEX_VERSION,
+        "expected_binary_sha256": scenario.binary.sha256,
+        "expected_binary_team_identifier": TEAM_IDENTIFIER,
+        "supported_binary_versions": (CODEX_VERSION,),
+        "binary_probe": _binary_probe(scenario.binary.descriptor),
+        "credential_probe_path": scenario.credential_probe,
+        "git_binary": git.path,
+        "expected_git_version": git.descriptor["version"],
+        "expected_git_sha256": git.sha256,
+        "git_probe": _binary_probe(git.descriptor),
+    }
+    values.update(overrides)
+    return values
+
+
+def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, object]:
+    module = _launcher_module()
+    synthetic_root = scenario.target.root.parent / ".test-runtime-root" / scenario.target.head[:16]
+    assert not synthetic_root.resolve().is_relative_to(ROOT.resolve())
+    old_tempdir = module.tempfile.gettempdir
+    old_provider = getattr(module, "temp_root_provider", None)
+    old_getter = getattr(module, "get_temp_root", None)
+    old_system_temp_roots = getattr(module, "_system_temp_roots", None)
+    old_find_required_tool = module._find_required_tool
+    synthetic_tool_root = scenario.target.root.parent / ".test-toolchain"
+    synthetic_tools: dict[str, Path] = {}
+    for name in ("rg", "ruff", "uv"):
+        tool = synthetic_tool_root / name
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        if not tool.exists():
+            tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            tool.chmod(0o755)
+        synthetic_tools[name] = tool
+    module.tempfile.gettempdir = lambda: str(synthetic_root)
+    if old_provider is not None:
+        module.temp_root_provider = lambda: synthetic_root
+    if old_getter is not None:
+        module.get_temp_root = lambda: synthetic_root
+    if old_system_temp_roots is not None:
+        module._system_temp_roots = lambda: (synthetic_root.resolve(),)
+    module._find_required_tool = lambda name: synthetic_tools[name]
+    try:
+        result = module.build_invocation_plan(**values)
+    finally:
+        module.tempfile.gettempdir = old_tempdir
+        if old_provider is not None:
+            module.temp_root_provider = old_provider
+        if old_getter is not None:
+            module.get_temp_root = old_getter
+        if old_system_temp_roots is not None:
+            module._system_temp_roots = old_system_temp_roots
+        module._find_required_tool = old_find_required_tool
+    return result
+
+
+def _plan(scenario: Scenario, *, role: str = "reviewer_high", **overrides: object) -> dict[str, object]:
+    result = _call_plan(scenario, _plan_kwargs(scenario, role=role, **overrides))
+    assert type(result) is dict, "launcher plan must be a plain mapping"
+    return result
+
+
+def _rejected_plan(scenario: Scenario, *, role: str = "reviewer_high", **overrides: object) -> None:
+    try:
+        result = _call_plan(scenario, _plan_kwargs(scenario, role=role, **overrides))
+    except (OSError, PermissionError, RuntimeError, ValueError) as exc:
+        assert str(exc), "rejected launcher plans need bounded diagnostics"
+        return
+    assert type(result) is dict
+    errors = result.get("errors")
+    assert isinstance(errors, list) and errors, result
+
+
+def test_valid_plan_is_an_isolated_top_level_invocation_and_uses_protected_policy(
+    tmp_path: Path,
+) -> None:
+    policy = _copy_policy_fixture(tmp_path / "policy")
+    target = _copy_target_fixture(tmp_path / "target", candidate_role=True)
+    binary = _binary_fixture(tmp_path / "bin")
+    credential = tmp_path / "bootstrap-auth" / "credentials.json"
+    credential.parent.mkdir()
+    credential.write_text("bootstrap credential fixture\n", encoding="utf-8")
+    credential.chmod(0o600)
+    scenario = Scenario(policy=policy, target=target, binary=binary, credential_probe=credential)
+
+    plan = _plan(scenario)
+
+    assert plan["invocation_kind"] == "isolated_role_invocation"
+    assert plan["role"] == "reviewer_high"
+    assert plan["policy_head_sha"] == policy.head
+    assert plan["policy_tree_sha"] == policy.tree
+    assert plan["target_head_sha"] == target.head
+    assert plan["target_tree_sha"] == target.tree
+    assert plan["target_detached"] is True
+    assert plan["policy_source"] == "protected_git_object"
+    assert plan["role_source"] == "protected_git_object"
+    assert plan["instructions_source"] == "protected_git_object"
+    assert plan.get("named_agent_loaded") is not True
+    assert plan.get("configured_actual") is not True
+    assert plan["model"] == "gpt-5.6-sol"
+    assert plan["reasoning_effort"] == "high"
+    assert "candidate-self-authorized-model" not in json.dumps(plan)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"expected_policy_sha": "a" * 40},
+        {"expected_policy_tree_sha": "b" * 40},
+        {"expected_target_sha": "c" * 40},
+        {"expected_target_tree_sha": "d" * 40},
+    ],
+)
+def test_policy_and_target_exact_sha_tree_bindings_are_required(
+    scenario: Scenario, override: dict[str, object]
+) -> None:
+    _rejected_plan(scenario, **override)
+
+
+def test_dirty_policy_or_target_is_rejected(scenario: Scenario) -> None:
+    (scenario.policy.root / "dirty-policy.txt").write_text("dirty\n", encoding="utf-8")
+    _rejected_plan(scenario)
+
+    (scenario.policy.root / "dirty-policy.txt").unlink()
+    (scenario.target.root / "dirty-target.txt").write_text("dirty\n", encoding="utf-8")
+    _rejected_plan(scenario)
+
+
+def test_target_must_be_detached(scenario: Scenario) -> None:
+    _run_git(scenario.target.root, "switch", "-q", "-c", "candidate-branch")
+    _rejected_plan(scenario)
+
+
+def test_policy_and_target_symlink_or_escape_paths_are_rejected(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    policy_link = tmp_path / "policy-link"
+    target_link = tmp_path / "target-link"
+    policy_link.symlink_to(scenario.policy.root, target_is_directory=True)
+    target_link.symlink_to(scenario.target.root, target_is_directory=True)
+    _rejected_plan(scenario, policy_root=policy_link)
+    _rejected_plan(scenario, target_root=target_link)
+    _rejected_plan(scenario, policy_root=scenario.policy.root / "..")
+    _rejected_plan(scenario, target_root=scenario.target.root / "..")
+
+
+@pytest.mark.parametrize("setting", ["partial", "promisor"])
+def test_partial_or_promisor_repositories_fail_closed(
+    scenario: Scenario, setting: str
+) -> None:
+    if setting == "partial":
+        _run_git(scenario.target.root, "config", "extensions.partialClone", "origin")
+    else:
+        _run_git(scenario.target.root, "config", "remote.origin.promisor", "true")
+    _rejected_plan(scenario)
+
+
+def test_replace_refs_cannot_substitute_target_objects(scenario: Scenario) -> None:
+    replacement = _run_git(
+        scenario.target.root,
+        "-c",
+        "user.name=Launcher Test",
+        "-c",
+        "user.email=launcher@example.invalid",
+        "commit-tree",
+        scenario.target.tree,
+        "-m",
+        "replacement",
+    )
+    _run_git(scenario.target.root, "replace", scenario.target.head, replacement)
+    try:
+        _rejected_plan(scenario)
+    finally:
+        subprocess.run(
+            ["git", "-C", str(scenario.target.root), "replace", "-d", scenario.target.head],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_local_core_worktree_cannot_redirect_supplied_target_root(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    decoy = tmp_path / "decoy-worktree"
+    shutil.copytree(
+        scenario.target.root,
+        decoy,
+        ignore=shutil.ignore_patterns(".git"),
+    )
+    _run_git(scenario.target.root, "config", "core.worktree", str(decoy))
+
+    _rejected_plan(scenario)
+
+
+def test_local_fsmonitor_is_rejected_without_execution(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    marker = tmp_path / "fsmonitor-executed"
+    monitor = tmp_path / "hostile-fsmonitor"
+    monitor.write_text(
+        f"#!/bin/sh\n/usr/bin/touch {marker}\nexit 0\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o755)
+    _run_git(scenario.target.root, "config", "core.fsmonitor", str(monitor))
+
+    _rejected_plan(scenario)
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("spelling", ["true", "yes", "on", "1"])
+def test_every_git_truthy_worktree_config_spelling_activates_inspection_without_fsmonitor(
+    scenario: Scenario, tmp_path: Path, spelling: str
+) -> None:
+    marker = tmp_path / f"fsmonitor-{spelling}"
+    monitor = tmp_path / f"monitor-{spelling}"
+    monitor.write_text(
+        f"#!/bin/sh\n/usr/bin/touch {marker}\nexit 0\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o755)
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", "true")
+    _run_git(
+        scenario.target.root,
+        "config",
+        "--worktree",
+        "core.fsmonitor",
+        str(monitor),
+    )
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", spelling)
+
+    _rejected_plan(scenario)
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("spelling", ["false", "no", "off", "0"])
+def test_every_git_falsy_worktree_config_spelling_keeps_worktree_scope_inactive(
+    scenario: Scenario, spelling: str
+) -> None:
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", "true")
+    _run_git(
+        scenario.target.root,
+        "config",
+        "--worktree",
+        "core.fsmonitor",
+        "/nonexistent/inactive-monitor",
+    )
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", spelling)
+
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+def test_invalid_git_worktree_config_boolean_fails_closed(scenario: Scenario) -> None:
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", "ambiguous")
+    _rejected_plan(scenario)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("diff.external", "/bin/echo"),
+        ("diff.hostile.command", "/bin/echo"),
+        ("diff.hostile.textconv", "/bin/echo"),
+        ("filter.hostile.process", "/bin/echo"),
+        ("filter.hostile.clean", "/bin/echo"),
+        ("filter.hostile.smudge", "/bin/echo"),
+        ("merge.hostile.driver", "/bin/echo"),
+        ("credential.helper", "!/bin/echo"),
+        ("core.gitProxy", "/bin/echo"),
+        ("core.askPass", "/bin/echo"),
+        ("core.editor", "/bin/echo"),
+        ("core.pager", "/bin/echo"),
+        ("interactive.diffFilter", "/bin/echo"),
+        ("pager.status", "/bin/echo"),
+        ("alias.hostile", "!/bin/echo"),
+        ("submodule.hostile.path", "../outside"),
+        ("protocol.file.allow", "always"),
+        ("include.path", "/outside/config"),
+        ("core.hooksPath", "/outside/hooks"),
+        ("core.fsmonitor", "/bin/echo"),
+        ("core.sshCommand", "/bin/echo"),
+        ("unreviewed.key", "value"),
+    ],
+)
+def test_execution_bearing_or_unknown_local_git_config_is_rejected(
+    scenario: Scenario, key: str, value: str
+) -> None:
+    _run_git(scenario.target.root, "config", key, value)
+    _rejected_plan(scenario)
+
+
+def test_repository_benign_local_git_metadata_allowlist_remains_admissible(
+    scenario: Scenario,
+) -> None:
+    _run_git(scenario.target.root, "config", "user.name", "Review Fixture")
+    _run_git(scenario.target.root, "config", "user.email", "review@example.invalid")
+    _run_git(scenario.target.root, "config", "remote.origin.url", "https://example.invalid/repo.git")
+    _run_git(scenario.target.root, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+    _run_git(scenario.target.root, "config", "branch.review.remote", "origin")
+    _run_git(scenario.target.root, "config", "branch.review.merge", "refs/heads/review")
+
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("https://user:token@github.com/repo.git", id="https-credentials"),
+        pytest.param("https://user%40name@github.com/repo.git", id="encoded-userinfo"),
+        pytest.param("https://github.com@evil.example/repo.git", id="ambiguous-userinfo"),
+        pytest.param("http://github.com/repo.git", id="plaintext-http"),
+        pytest.param("ssh://alice@github.com/org/repo.git", id="arbitrary-ssh-user"),
+        pytest.param("ssh://git:secret@github.com/org/repo.git", id="ssh-password"),
+        pytest.param("file:///private/repo.git", id="file-url"),
+        pytest.param("/private/repo.git", id="local-path"),
+        pytest.param("../relative/repo.git", id="relative-path"),
+        pytest.param("ext::sh -c id", id="ext-helper"),
+        pytest.param("https://github.com/org/repo.git?token=secret", id="query"),
+        pytest.param("https://github.com/org/repo.git#secret", id="fragment"),
+        pytest.param("https://github.com/org/repo.git\ncredential", id="control"),
+        pytest.param(
+            "https://github.com/org/one.git\nhttps://evil.example/org/two.git",
+            id="two-valid-lines-one-value",
+        ),
+        pytest.param("https://github.com:/org/repo.git", id="https-empty-port"),
+        pytest.param("ssh://git@github.com:/org/repo.git", id="ssh-empty-port"),
+        pytest.param("https://github.com/" + "a" * 4096 + ".git", id="oversized"),
+    ],
+)
+def test_remote_url_credentials_ambiguity_and_unsafe_transports_are_rejected_without_echo(
+    scenario: Scenario, url: str
+) -> None:
+    _run_git(scenario.target.root, "config", "remote.origin.url", url)
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)) as excinfo:
+        _call_plan(scenario, _plan_kwargs(scenario))
+    assert url not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/TauricResearch/TradingAgents.git",
+        "git@github.com:kejian-tong/myTradingAlpha.git",
+        "ssh://git@github.com/kejian-tong/myTradingAlpha.git",
+    ],
+)
+def test_remote_url_reviewed_https_and_exact_git_ssh_shapes_remain_admissible(
+    scenario: Scenario, url: str
+) -> None:
+    _run_git(scenario.target.root, "config", "remote.origin.url", url)
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_multiple_complete_valid_remote_url_values_remain_admissible(
+    scenario: Scenario, duplicate: bool
+) -> None:
+    first = "https://github.com/TauricResearch/TradingAgents.git"
+    second = first if duplicate else "git@github.com:kejian-tong/myTradingAlpha.git"
+    _run_git(scenario.target.root, "config", "--add", "remote.origin.url", first)
+    _run_git(scenario.target.root, "config", "--add", "remote.origin.url", second)
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"https://github.com/org/repo.git",
+        b"\0",
+        b"https://github.com/org/repo.git\0\0",
+        b"https://github.com/org/repo.git\0trailing",
+        b"\xff\0",
+    ],
+)
+def test_nul_delimited_git_config_values_require_exact_nonempty_records(raw: bytes) -> None:
+    with pytest.raises((UnicodeError, ValueError, RuntimeError)):
+        _function("_parse_nul_config_values")(raw)
+
+
+def test_nul_delimited_git_config_values_preserve_complete_value_boundaries() -> None:
+    values = _function("_parse_nul_config_values")(
+        b"https://github.com/org/one.git\nhttps://evil.example/org/two.git\0"
+        b"git@github.com:org/repo.git\0"
+    )
+    assert values == (
+        "https://github.com/org/one.git\nhttps://evil.example/org/two.git",
+        "git@github.com:org/repo.git",
+    )
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"])
+def test_ambient_git_redirects_are_rejected(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    value = {
+        "GIT_DIR": str(scenario.policy.root / ".git"),
+        "GIT_WORK_TREE": str(scenario.target.root),
+        "GIT_OBJECT_DIRECTORY": str(scenario.policy.root / ".git/objects"),
+    }[variable]
+    monkeypatch.setenv(variable, value)
+    _rejected_plan(scenario)
+
+
+def test_exact_launcher_neutral_git_controls_are_accepted_from_parent_profile(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in tuple(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name, raising=False)
+    for name, value in {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("GIT_CONFIG_GLOBAL", "/tmp/untrusted"),
+        ("GIT_CONFIG_SYSTEM", "/tmp/untrusted"),
+        ("GIT_CONFIG_NOSYSTEM", "0"),
+        ("GIT_NO_LAZY_FETCH", "0"),
+        ("GIT_NO_REPLACE_OBJECTS", "0"),
+        ("GIT_OPTIONAL_LOCKS", "1"),
+        ("GIT_TERMINAL_PROMPT", "1"),
+        ("GIT_CONFIG_COUNT", "0"),
+        ("GIT_CONFIG_KEY_0", "core.fsmonitor"),
+    ],
+)
+def test_divergent_or_injectable_ambient_git_controls_are_rejected(
+    scenario: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    for existing in tuple(os.environ):
+        if existing.startswith("GIT_"):
+            monkeypatch.delenv(existing, raising=False)
+    monkeypatch.setenv(name, value)
+    _rejected_plan(scenario)
+
+
+@pytest.mark.parametrize("role", _READ_ONLY_ROLES)
+def test_only_the_seven_read_only_roles_are_accepted(
+    scenario: Scenario, role: str
+) -> None:
+    plan = _plan(scenario, role=role)
+    assert plan["invocation_kind"] == "isolated_role_invocation"
+    assert plan["role"] == role
+    assert plan.get("named_agent_loaded") is not True
+    assert plan.get("configured_actual") is not True
+
+
+@pytest.mark.parametrize("role", _WRITER_ROLES)
+def test_writer_roles_are_rejected_from_read_only_launcher(
+    scenario: Scenario, role: str
+) -> None:
+    _rejected_plan(scenario, role=role)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "needle"),
+    [
+        ("unknown_field", "unexpected"),
+        ("wrong_model", 'model = "candidate-model"'),
+        ("wrong_effort", 'model_reasoning_effort = "none"'),
+        ("writable", 'sandbox_mode = "workspace-write"'),
+        ("delegating", "enabled = true"),
+    ],
+)
+def test_role_toml_fields_and_values_are_strict(
+    scenario: Scenario, mutation: str, needle: str
+) -> None:
+    path = scenario.policy.root / ".codex/agents/reviewer-high.toml"
+    original = path.read_text(encoding="utf-8")
+    if mutation == "unknown_field":
+        updated = original + "\nunexpected = true\n"
+    elif mutation == "wrong_model":
+        updated = original.replace('model = "gpt-5.6-sol"', needle)
+    elif mutation == "wrong_effort":
+        updated = original.replace('model_reasoning_effort = "high"', needle)
+    elif mutation == "writable":
+        updated = original.replace('sandbox_mode = "read-only"', needle)
+    else:
+        updated = original.replace("enabled = false", needle)
+    path.write_text(updated, encoding="utf-8")
+    _commit_all(scenario.policy.root, f"invalid role {mutation}")
+    updated_scenario = Scenario(
+        policy=_git_fixture(scenario.policy.root),
+        target=scenario.target,
+        binary=scenario.binary,
+        credential_probe=scenario.credential_probe,
+    )
+    _rejected_plan(updated_scenario)
+
+
+def test_ordinary_roles_have_no_mcp_and_external_researcher_has_exact_docs_mcp(
+    scenario: Scenario,
+) -> None:
+    ordinary = _plan(scenario, role="reviewer_high")
+    assert ordinary["mcp_servers"] in ({}, None)
+
+    external = _plan(scenario, role="external_spec_researcher")
+    assert external["mcp_servers"] == {
+        "openaiDeveloperDocs": {
+            "url": DOCS_MCP_URL,
+            "enabled_tools": list(DOCS_MCP_TOOLS),
+            "required": True,
+        }
+    }
+
+
+def test_external_mcp_endpoint_or_tool_allowlist_drift_is_rejected(
+    scenario: Scenario,
+) -> None:
+    path = scenario.policy.root / ".codex/agents/external-spec-researcher.toml"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(original.replace(DOCS_MCP_URL, "https://example.invalid/mcp"), encoding="utf-8")
+    _commit_all(scenario.policy.root, "invalid docs MCP endpoint")
+    updated_scenario = Scenario(
+        policy=_git_fixture(scenario.policy.root),
+        target=scenario.target,
+        binary=scenario.binary,
+        credential_probe=scenario.credential_probe,
+    )
+    _rejected_plan(updated_scenario, role="external_spec_researcher")
+
+
+def _binary_errors(scenario: Scenario, **overrides: object) -> list[str]:
+    descriptor = dict(scenario.binary.descriptor)
+    descriptor.update(overrides.pop("descriptor", {}))
+    result = _function("validate_binary")(
+        path=overrides.pop("path", scenario.binary.path),
+        expected_version=overrides.pop("expected_version", CODEX_VERSION),
+        expected_sha256=overrides.pop("expected_sha256", scenario.binary.sha256),
+        expected_team_identifier=overrides.pop(
+            "expected_team_identifier", TEAM_IDENTIFIER
+        ),
+        supported_versions=overrides.pop("supported_versions", (CODEX_VERSION,)),
+        probe=_binary_probe(descriptor),
+        **overrides,
+    )
+    assert isinstance(result, list)
+    return result
+
+
+def test_binary_identity_accepts_only_exact_injected_probe(scenario: Scenario) -> None:
+    assert _binary_errors(scenario) == []
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        {"is_regular": False},
+        {"is_symlink": True},
+        {"owner_uid": os.getuid() + 1},
+        {"mode": 0o775},
+        {"version": "0.153.3"},
+        {"version": "0.154.0"},
+        {"sha256": "0" * 64},
+        {"team_identifier": "WRONGTEAM"},
+    ],
+)
+def test_binary_path_version_hash_signature_and_ownership_drift_fail_closed(
+    scenario: Scenario, descriptor: dict[str, object]
+) -> None:
+    assert _binary_errors(scenario, descriptor=descriptor)
+
+
+def test_binary_requires_absolute_regular_non_symlink_path(scenario: Scenario) -> None:
+    assert _binary_errors(scenario, path=Path("codex"))
+    symlink = scenario.binary.path.parent / "codex-link"
+    symlink.symlink_to(scenario.binary.path)
+    assert _binary_errors(scenario, path=symlink)
+
+
+def test_git_validation_accepts_root_owned_system_binary_but_rejects_unrelated_owner(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    git_path = git.path
+    descriptor = {**git.descriptor, "owner_uid": 0, "functional": True}
+    fake_uid = 4242
+    monkeypatch.setattr(module.os, "getuid", lambda: fake_uid)
+
+    accepted, _, _ = module.validate_git_binary(
+        path=git_path,
+        expected_version=descriptor["version"],
+        expected_sha256=descriptor["sha256"],
+        probe=lambda _: dict(descriptor),
+    )
+    assert accepted == []
+
+    unrelated = {**descriptor, "owner_uid": fake_uid + 1}
+    rejected, _, _ = module.validate_git_binary(
+        path=git_path,
+        expected_version=descriptor["version"],
+        expected_sha256=descriptor["sha256"],
+        probe=lambda _: unrelated,
+    )
+    assert rejected
+
+
+def test_plan_and_manifest_bind_explicit_git_identity(scenario: Scenario) -> None:
+    git = scenario.git
+    assert git is not None
+    plan = _plan(scenario)
+    assert plan["git_realpath"] == str(git.path)
+    assert plan["git_version"] == git.descriptor["version"]
+    assert plan["git_sha256"] == git.sha256
+
+    manifest = _function("build_redacted_manifest")(
+        plan,
+        config_bytes=b"config",
+        prompt="prompt",
+        event_output=_valid_jsonl(),
+        stderr="stderr",
+        final_output="output",
+        probe_results={"git": "bound"},
+        observed_at_ms=1,
+        cleanup={"status": "clean"},
+    )
+    assert manifest["git_realpath"] == str(git.path)
+    assert manifest["git_version"] == git.descriptor["version"]
+    assert manifest["git_sha256"] == git.sha256
+
+
+def test_git_environment_neutralizes_global_and_system_config_from_probe_start() -> None:
+    module = _launcher_module()
+    environment = module._git_environment()
+    assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert environment["GIT_CONFIG_SYSTEM"] == os.devnull
+    assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert environment["GIT_NO_REPLACE_OBJECTS"] == "1"
+    assert environment["GIT_NO_LAZY_FETCH"] == "1"
+
+
+def test_git_version_probe_uses_the_same_neutralized_environment(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    captured: list[dict[str, object]] = []
+    real_run = module.subprocess.run
+
+    def capture(*args: object, **kwargs: object):
+        captured.append(dict(kwargs))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", capture)
+    module._default_git_probe(scenario.git.path)
+    assert captured
+    environment = captured[0]["env"]
+    assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert environment["GIT_CONFIG_SYSTEM"] == os.devnull
+    assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
+
+
+def test_default_git_probe_rejects_zero_return_with_stderr(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout="git version 2.39.1\n", stderr="warning\n"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._default_git_probe(git.path)
+
+
+def test_git_symlink_input_fails_with_a_canonical_path_diagnostic(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    link = tmp_path / "git-link"
+    link.symlink_to(scenario.git.path)
+    errors, _, _ = module.validate_git_binary(
+        path=link,
+        expected_version=scenario.git.descriptor["version"],
+        expected_sha256=scenario.git.sha256,
+        probe=lambda _: dict(scenario.git.descriptor),
+    )
+    assert errors
+    assert any("symlink" in error.lower() or "canonical" in error.lower() for error in errors)
+
+
+def test_plan_binds_neutral_git_environment_into_model_shell(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    expected = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    shell_set = plan["permission_profile"]["shell_environment"]["set"]
+    for name, value in expected.items():
+        assert shell_set[name] == value
+        assert plan["exec_env"][name] == value
+
+
+def test_git_cli_requires_canonical_realpath_and_documents_neutral_config() -> None:
+    protocol = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "canonical realpath" in protocol
+    assert "GIT_CONFIG_GLOBAL=/dev/null" in protocol
+    assert "GIT_CONFIG_SYSTEM=/dev/null" in protocol
+
+
+def test_explicit_git_binary_ignores_malicious_earlier_path(
+    scenario: Scenario, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = scenario.git
+    assert git is not None
+    malicious_dir = tmp_path / "malicious-bin"
+    malicious_dir.mkdir()
+    marker = tmp_path / "malicious-git-used"
+    malicious = malicious_dir / "git"
+    malicious.write_text(
+        f"#!/bin/sh\nprintf used > {marker}\nexit 97\n", encoding="utf-8"
+    )
+    malicious.chmod(0o755)
+    monkeypatch.setenv("PATH", str(malicious_dir))
+
+    plan = _plan(scenario)
+
+    assert plan["git_realpath"] == str(git.path)
+    assert not marker.exists()
+
+
+def test_git_repository_operations_do_not_spawn_bare_ambient_git() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert '["git", "-C"' not in source
+
+
+def test_repository_git_calls_use_explicit_anchor_and_safe_cli_config(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def capture(*args: object, **kwargs: object):
+        calls.append((list(args[0]), dict(kwargs)))
+        return subprocess.CompletedProcess(args[0], 0, stdout="value\n", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", capture)
+    assert module._git(git.path, scenario.target.root, "rev-parse", "HEAD") == "value"
+    argv, kwargs = calls[0]
+    assert "-C" not in argv
+    assert ["--git-dir", str(scenario.target.root / ".git")] == argv[
+        argv.index("--git-dir") : argv.index("--git-dir") + 2
+    ]
+    assert ["--work-tree", str(scenario.target.root)] == argv[
+        argv.index("--work-tree") : argv.index("--work-tree") + 2
+    ]
+    controls = {
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "-c"
+    }
+    assert {
+        "core.fsmonitor=false",
+        "core.hooksPath=/dev/null",
+        "submodule.recurse=false",
+        "fetch.recurseSubmodules=false",
+        "protocol.allow=never",
+        "protocol.file.allow=never",
+        "protocol.ext.allow=never",
+    }.issubset(controls)
+    assert kwargs["cwd"] == scenario.target.root
+
+    calls.clear()
+
+    def capture_bytes(*args: object, **kwargs: object):
+        calls.append((list(args[0]), dict(kwargs)))
+        return subprocess.CompletedProcess(args[0], 0, stdout=b"object", stderr=b"")
+
+    monkeypatch.setattr(module.subprocess, "run", capture_bytes)
+    assert module._git_bytes(
+        git.path, scenario.target.root, "show", "HEAD:AGENTS.md"
+    ) == b"object"
+    bytes_argv, bytes_kwargs = calls[0]
+    assert "--git-dir" in bytes_argv and "--work-tree" in bytes_argv
+    assert bytes_kwargs["cwd"] == scenario.target.root
+
+
+def test_repo_state_requires_exact_canonical_show_toplevel(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    real_git = module._git
+    seen: list[tuple[str, ...]] = []
+
+    def mismatch(
+        git_binary: Path,
+        root: Path,
+        *arguments: str,
+        allow_failure: bool = False,
+    ) -> str:
+        seen.append(arguments)
+        if arguments == ("rev-parse", "--show-toplevel"):
+            return str(tmp_path / "decoy")
+        return real_git(git_binary, root, *arguments, allow_failure=allow_failure)
+
+    monkeypatch.setattr(module, "_git", mismatch)
+    monkeypatch.setattr(module, "_system_temp_roots", lambda: ())
+    with pytest.raises((ValueError, RuntimeError)):
+        module._repo_state(
+            scenario.target.root,
+            git_binary=git.path,
+            expected_sha=scenario.target.head,
+            expected_tree_sha=scenario.target.tree,
+            detached=True,
+        )
+    assert ("rev-parse", "--show-toplevel") in seen
+
+
+def test_git_helpers_reject_any_stderr_and_only_quiet_expected_failure_is_empty(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout="", stderr="warning: denied canary"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._git(git.path, scenario.target.root, "status", "--porcelain=v1")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout=b"", stderr=b"warning: object read incomplete"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._git_bytes(git.path, scenario.target.root, "show", "HEAD:AGENTS.md")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout="", stderr=""
+        ),
+    )
+    assert module._git(
+        git.path,
+        scenario.target.root,
+        "config",
+        "--get",
+        "extensions.partialClone",
+        allow_failure=True,
+    ) == ""
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout="", stderr="warning: unexpected failure"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module._git(
+            git.path,
+            scenario.target.root,
+            "config",
+            "--get",
+            "extensions.partialClone",
+            allow_failure=True,
+        )
+
+
+def test_git_stderr_cannot_authenticate_clean_repo_or_post_run_state(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    git = scenario.git
+    assert git is not None
+    real_run = module.subprocess.run
+
+    def warning_status(*args: object, **kwargs: object):
+        argv = list(args[0])
+        if "status" in argv:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="", stderr="warning: denied path was not inspected"
+            )
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", warning_status)
+    with pytest.raises((ValueError, RuntimeError)):
+        module._repo_state(
+            scenario.target.root,
+            git_binary=git.path,
+            expected_sha=scenario.target.head,
+            expected_tree_sha=scenario.target.tree,
+            detached=True,
+        )
+
+    monkeypatch.undo()
+    plan = _plan(scenario)
+    real_git = module._git
+
+    def post_run_warning(
+        git_binary: Path,
+        root: Path,
+        *arguments: str,
+        allow_failure: bool = False,
+    ) -> str:
+        if arguments[:2] == ("status", "--porcelain=v1"):
+            raise module.LauncherError("Git lookup emitted stderr")
+        return real_git(
+            git_binary, root, *arguments, allow_failure=allow_failure
+        )
+
+    monkeypatch.setattr(module, "_git", post_run_warning)
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": "",
+        },
+    )
+    assert result["status"] == "insufficient_evidence"
+
+
+def test_cli_requires_explicit_git_identity(scenario: Scenario) -> None:
+    module = _launcher_module()
+    without_git = _cli_identity_args(scenario)
+    for option in (
+        "--git-binary",
+        "--expected-git-version",
+        "--expected-git-sha256",
+    ):
+        index = without_git.index(option)
+        del without_git[index : index + 2]
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(without_git)
+    assert excinfo.value.code == 2
+
+
+def test_permission_profile_is_per_run_launcher_pilot_not_global_sandbox(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir(mode=0o700)
+    common_git = (
+        scenario.target.root
+        / _run_git(scenario.target.root, "rev-parse", "--git-common-dir")
+    ).resolve()
+    dependency_root = tmp_path / "dependency"
+    dependency_root.mkdir()
+    profile = _function("build_permission_profile")(
+        policy_root=scenario.policy.root,
+        target_root=scenario.target.root,
+        common_git_root=Path(common_git),
+        dependency_roots=(dependency_root,),
+        scratch_root=scratch,
+    )
+    assert type(profile) is dict
+    permissions = profile["default_permissions"]
+    assert permissions[":root"] == "deny"
+    assert permissions[str(scenario.policy.root)] == "read"
+    assert permissions[str(scenario.target.root)] == "read"
+    assert permissions[str(common_git)] == "read"
+    assert permissions[str(dependency_root)] == "read"
+    assert permissions[str(scratch)] == "write"
+    assert profile["network"] == "disabled"
+    assert profile["scope"] == "launcher_pilot"
+    assert "sandbox_mode" not in profile
+    assert "--sandbox" not in json.dumps(profile)
+    shell = profile["shell_environment"]
+    assert shell["inherit"] is False
+    assert shell["ignore_default_excludes"] is False
+    allowed_shell_keys = {
+        "PATH",
+        "TMPDIR",
+        "HOME",
+        "CODEX_HOME",
+            "PYTHONDONTWRITEBYTECODE",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_NO_LAZY_FETCH",
+            "GIT_NO_REPLACE_OBJECTS",
+            "GIT_OPTIONAL_LOCKS",
+            "GIT_TERMINAL_PROMPT",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+    }
+    assert set(shell["set"]).issubset(allowed_shell_keys)
+    assert {
+        "PATH",
+        "TMPDIR",
+        "PYTHONDONTWRITEBYTECODE",
+        "GIT_OPTIONAL_LOCKS",
+    }.issubset(shell["set"])
+    assert shell["set"]
+    assert not {str(key).lower() for key in shell["set"]} & {
+        "token",
+        "secret",
+        "api_key",
+        "credential",
+    }
+    denied = " ".join(str(value).lower() for value in profile["deny_paths"])
+    for term in ("codex", "auth", "ssh", "cloud", "github", "keychain", "secret", "token"):
+        assert term in denied
+
+
+def test_plan_closes_capabilities_and_uses_strict_current_runtime_flags(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    argv = plan["argv"]
+    assert type(argv) is list and all(type(value) is str for value in argv)
+    for flag in ("--ignore-user-config", "--ephemeral", "--skip-git-repo-check"):
+        assert flag in argv
+    assert "--sandbox" not in argv
+    assert "--agent" not in argv
+    assert "--json" in argv
+    assert "--color" in argv and "never" in argv
+    assert plan["approval_policy"] == "never"
+    assert plan["strict_config"] is True
+    closure = plan["capability_closure"]
+    assert {key: closure[key] for key in _CAPABILITY_KEYS} == dict.fromkeys(_CAPABILITY_KEYS, False)
+    assert closure["local_command_host"]["enabled"] is True
+    assert "allowed_commands" not in closure["local_command_host"]
+    assert closure["function_gateway"] is False
+    assert plan["cwd_is_private_empty"] is True
+
+
+def test_model_profile_uses_isolated_home_without_claiming_executable_deny(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    filesystem = plan["permission_profile"]["permissions"][
+        plan["permission_profile_name"]
+    ]["filesystem"]
+    assert filesystem.get(plan["binary_realpath"]) != "deny"
+    shell_set = plan["permission_profile"]["shell_environment"]["set"]
+    assert shell_set["HOME"] == plan["cwd"]
+    assert shell_set["CODEX_HOME"] == plan["cwd"]
+    assert plan["probe_paths"]["isolated_home"] == plan["cwd"]
+    spec = _function("build_sandbox_probe_argv")(plan, "isolated_home")
+    command = spec["argv"][spec["argv"].index("--") + 1 :]
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert plan["binary_realpath"] not in command
+    assert command[-1] == plan["cwd"]
+    closure = plan["capability_closure"]
+    assert closure["nested_delegation_prevention"] is False
+    assert closure["direct_codex_attempt_detection"] is True
+
+
+def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    results = {
+        "policy_read": {"allowed": True},
+        "target_read": {"allowed": True},
+        "policy_secret_denied": {"denied": True, "marker_absent": True},
+        "target_secret_denied": {"denied": True, "marker_absent": True},
+        "target_write_denied": {"denied": True, "marker_absent": True},
+        "credential_read_denied": {"denied": True, "stdout": "", "marker_absent": True},
+        "isolated_home": {"isolated": True},
+        "scratch_write": {"allowed": True},
+        "secret_env_absent": {"absent": True},
+        "network_denied": {"denied": True, "marker_absent": True},
+    }
+    probe_calls: list[tuple[str, object]] = []
+    runner_calls: list[dict[str, object]] = []
+
+    def probe(
+        name: str | None = None,
+        observed_plan: object | None = None,
+        *args: object,
+        **kwargs: object,
+    ):
+        name = name or str(kwargs["name"])
+        observed_plan = observed_plan if observed_plan is not None else kwargs["plan"]
+        probe_calls.append((name, observed_plan))
+        return results[name]
+
+    def runner(**kwargs: object) -> dict[str, object]:
+        runner_calls.append(kwargs)
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        probe=probe,
+        toolchain_runner=_valid_toolchain_runner,
+        process_runner=runner,
+    )
+    assert result["status"] == "completed", result
+    assert result["final_agent_message"] == "untrusted final output"
+    assert "untrusted final output" not in json.dumps(result["manifest"])
+    assert [name for name, _ in probe_calls] == list(_PROBE_ORDER)
+    assert all(observed is plan for _, observed in probe_calls)
+    assert len(runner_calls) == 1
+    call = runner_calls[0]
+    assert call["shell"] is False
+    assert type(call["argv"]) is list
+    assert type(call["stdin"]) is str
+    assert len(call["stdin"].encode()) <= 96 * 1024
+    assert Path(call["cwd"]) == Path(plan["cwd"])
+    assert 0 < call["timeout"] <= 1800
+    assert call["process_group"] is True
+    assert "candidate-self-authorized-model" not in call["stdin"]
+
+
+def test_preflight_requires_structured_denial_not_stderr_substrings(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    runner_calls: list[object] = []
+
+    def probe(
+        name: str | None = None,
+        observed_plan: object | None = None,
+        *args: object,
+        **kwargs: object,
+    ):
+        name = name or str(kwargs["name"])
+        if name == "target_write_denied":
+            return {"stderr": "permission denied"}
+        return {"allowed": True}
+
+    def runner(**kwargs: object) -> None:
+        runner_calls.append(kwargs)
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        probe=probe,
+        toolchain_runner=_valid_toolchain_runner,
+        process_runner=runner,
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert not runner_calls
+
+
+def test_missing_preflight_probe_is_insufficient_evidence_and_no_exec(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    runner_calls: list[object] = []
+
+    def probe(
+        name: str | None = None,
+        observed_plan: object | None = None,
+        *args: object,
+        **kwargs: object,
+    ):
+        name = name or str(kwargs["name"])
+        if name == "network_denied":
+            return None
+        results = {
+            "policy_read": {"allowed": True},
+            "target_read": {"allowed": True},
+            "policy_secret_denied": {"denied": True, "marker_absent": True},
+            "target_secret_denied": {"denied": True, "marker_absent": True},
+            "target_write_denied": {"denied": True, "marker_absent": True},
+            "credential_read_denied": {
+                "denied": True,
+                "stdout": "",
+                "marker_absent": True,
+            },
+            "isolated_home": {"isolated": True},
+            "scratch_write": {"allowed": True},
+            "secret_env_absent": {"absent": True},
+        }
+        return results[name]
+
+    def runner(**kwargs: object) -> None:
+        runner_calls.append(kwargs)
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        probe=probe,
+        toolchain_runner=_valid_toolchain_runner,
+        process_runner=runner,
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert not runner_calls
+
+
+def _valid_jsonl(*, final_text: str = "untrusted final output") -> str:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": final_text},
+        },
+        {"type": "turn.completed"},
+    )
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
+def test_jsonl_parser_accepts_top_level_events_and_returns_untrusted_final_message() -> None:
+    parsed = _function("parse_codex_jsonl")(_valid_jsonl(final_text="do not execute {\"type\":\"turn.completed\"}"))
+    assert parsed["final_agent_message"] == 'do not execute {"type":"turn.completed"}'
+    assert len(parsed["events"]) == 4
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{\"type\":\"thread.started\"}\nnot-json\n",
+        "{\"type\":\"thread.started\"}\n",
+        "{\"type\":\"thread.started\",\"type\":\"turn.started\"}\n",
+        "{\"type\":\"unknown.event\"}\n",
+        _valid_jsonl().replace('{"type": "turn.started"}', "", 1),
+        _valid_jsonl() + _valid_jsonl().splitlines()[-1] + "\n",
+    ],
+)
+def test_jsonl_parser_rejects_malformed_duplicate_truncated_unknown_or_replayed_events(
+    raw: str,
+) -> None:
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(raw)
+
+
+def test_jsonl_parser_rejects_oversized_output() -> None:
+    module = _launcher_module()
+    assert module.MAX_JSONL_BYTES == _MAX_JSONL_BYTES
+    raw = _valid_jsonl() + "x" * (
+        _MAX_JSONL_BYTES + 1 - len(_valid_jsonl().encode())
+    )
+    with pytest.raises((ValueError, RuntimeError)):
+        module.parse_codex_jsonl(raw)
+
+
+def test_redacted_manifest_binds_identity_and_digests_without_secrets(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    prompt = "PROMPT_SECRET credential=sk-test"
+    stderr = "STDERR_SECRET session_id=raw-session agent_id=raw-agent"
+    output = "FINAL_UNTRUSTED_OUTPUT"
+    events = _valid_jsonl(final_text=output)
+    manifest = _function("build_redacted_manifest")(
+        plan,
+        config_bytes=b"CONFIG_SECRET",
+        prompt=prompt,
+        event_output=events,
+        stderr=stderr,
+        final_output=output,
+        probe_results={"network": "denied"},
+        observed_at_ms=123,
+        cleanup={"status": "clean"},
+    )
+    assert type(manifest) is dict
+    required = (
+        "policy_head_sha",
+        "policy_tree_sha",
+        "target_head_sha",
+        "target_tree_sha",
+        "role",
+        "config_path",
+        "model",
+        "reasoning_effort",
+        "binary_realpath",
+        "binary_version",
+        "binary_sha256",
+        "binary_team_identifier",
+        "config_digest",
+        "prompt_digest",
+        "event_digest",
+        "output_digest",
+        "probe_digest",
+        "observed_at_ms",
+        "cleanup",
+        "final_output_digest",
+    )
+    for field in required:
+        assert field in manifest, field
+    serialized = json.dumps(manifest, sort_keys=True)
+    for secret in (prompt, stderr, output, "raw-session", "raw-agent", "sk-test"):
+        assert secret not in serialized
+    for field in (
+        "config_digest",
+        "prompt_digest",
+        "event_digest",
+        "output_digest",
+        "probe_digest",
+        "final_output_digest",
+    ):
+        assert isinstance(manifest[field], str) and len(manifest[field]) == 64
+    assert manifest.get("merge_authorized") is not True
+
+
+def _snapshot(scenario: Scenario, *, dirty: bool = False) -> dict[str, object]:
+    return {
+        "policy_head_sha": scenario.policy.head,
+        "policy_tree_sha": scenario.policy.tree,
+        "target_head_sha": scenario.target.head,
+        "target_tree_sha": scenario.target.tree,
+        "target_status": "dirty" if dirty else "clean",
+    }
+
+
+def test_post_run_requires_unchanged_exact_heads_clean_status_and_no_markers(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(mode=0o700)
+    verify = _function("verify_post_run")
+    assert verify(
+        _plan(scenario),
+        before=_snapshot(scenario),
+        after=_snapshot(scenario),
+        marker_paths=(),
+        private_dirs=(scratch,),
+    ) == []
+    assert verify(
+        _plan(scenario),
+        before=_snapshot(scenario),
+        after={**_snapshot(scenario), "target_status": "dirty"},
+        marker_paths=(tmp_path / "unexpected-marker",),
+        private_dirs=(scratch,),
+    )
+
+
+def test_post_run_detects_head_tree_drift_and_private_path_violations(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    symlink = tmp_path / "private-link"
+    symlink.symlink_to(private, target_is_directory=True)
+    verify = _function("verify_post_run")
+    errors = verify(
+        _plan(scenario),
+        before=_snapshot(scenario),
+        after={**_snapshot(scenario), "target_head_sha": "f" * 40},
+        marker_paths=(),
+        private_dirs=(symlink,),
+    )
+    assert errors
+
+
+def test_cleanup_is_non_force_and_preserves_dirty_or_unowned_paths(tmp_path: Path) -> None:
+    clean = tmp_path / "clean"
+    clean.mkdir(mode=0o700)
+    dirty = tmp_path / "dirty"
+    dirty.mkdir(mode=0o700)
+    (dirty / "marker").write_text("keep\n", encoding="utf-8")
+    result = _function("cleanup_private_dirs")((clean,), force=False)
+    assert result == []
+    assert not clean.exists()
+    result = _function("cleanup_private_dirs")(
+        (dirty,), force=False, ownership={str(dirty): False}
+    )
+    assert result
+    assert dirty.exists()
+
+
+def test_cleanup_reports_owned_nonempty_directories_and_retains_sensitive_artifact(
+    tmp_path: Path,
+) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    artifact = private / "sensitive-output.txt"
+    artifact.write_text("model-created secret-like artifact\n", encoding="utf-8")
+
+    result = _function("cleanup_private_dirs")((private,), force=False)
+
+    assert result
+    assert private.exists()
+    assert artifact.read_text(encoding="utf-8") == "model-created secret-like artifact\n"
+
+
+def test_successful_run_cannot_claim_clean_cleanup_with_owned_runtime_artifact(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    artifact = Path(plan["runtime_root"]) / "sensitive-output.txt"
+
+    def process_runner(**kwargs: object) -> dict[str, object]:
+        artifact.write_text("model-created secret-like artifact\n", encoding="utf-8")
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=process_runner,
+    )
+
+    assert result["status"] == "insufficient_evidence"
+    assert artifact.exists()
+    assert result.get("manifest", {}).get("cleanup", {}).get("status") != "clean"
+
+
+def _common_git_root(scenario: Scenario) -> Path:
+    return (
+        scenario.target.root
+        / _run_git(scenario.target.root, "rev-parse", "--git-common-dir")
+    ).resolve()
+
+
+def _valid_sandbox_results() -> dict[str, dict[str, object]]:
+    return {
+        "policy_read": {"allowed": True, "returncode": 0, "stdout": "", "stderr": ""},
+        "target_read": {"allowed": True, "returncode": 0, "stdout": "", "stderr": ""},
+        "policy_secret_denied": {
+            "denied": True,
+            "marker_absent": True,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "",
+        },
+        "target_secret_denied": {
+            "denied": True,
+            "marker_absent": True,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "",
+        },
+        "target_write_denied": {
+            "denied": True,
+            "marker_absent": True,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "",
+        },
+        "credential_read_denied": {
+            "denied": True,
+            "stdout": "",
+            "marker_absent": True,
+            "returncode": 1,
+            "stderr": "",
+        },
+        "isolated_home": {
+            "isolated": True,
+            "stdout": "",
+            "marker_absent": True,
+            "returncode": 0,
+            "stderr": "",
+        },
+        "scratch_write": {"allowed": True, "returncode": 0, "stdout": "", "stderr": ""},
+        "secret_env_absent": {"absent": True, "returncode": 0, "stdout": "", "stderr": ""},
+        "network_denied": {
+            "denied": True,
+            "marker_absent": True,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "",
+        },
+    }
+
+
+def _sandbox_runner_for(results: dict[str, dict[str, object]], calls: list[dict[str, object]]):
+    def runner(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        name = str(kwargs.get("probe_name"))
+        return results[name]
+
+    return runner
+
+
+def _valid_toolchain_runner(**kwargs: object) -> dict[str, object]:
+    return {"returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+
+def _cli_identity_args(scenario: Scenario) -> list[str]:
+    git = scenario.git or _git_binary_fixture()
+    return [
+        "--policy-root",
+        str(scenario.policy.root),
+        "--target-root",
+        str(scenario.target.root),
+        "--role",
+        "reviewer_high",
+        "--expected-policy-sha",
+        scenario.policy.head,
+        "--expected-policy-tree-sha",
+        scenario.policy.tree,
+        "--expected-target-sha",
+        scenario.target.head,
+        "--expected-target-tree-sha",
+        scenario.target.tree,
+        "--codex-binary",
+        str(scenario.binary.path),
+        "--expected-binary-sha256",
+        scenario.binary.sha256,
+        "--git-binary",
+        str(git.path),
+        "--expected-git-version",
+        str(git.descriptor["version"]),
+        "--expected-git-sha256",
+        git.sha256,
+        "--credential-probe-path",
+        str(scenario.credential_probe),
+    ]
+
+
+def test_plan_keeps_runtime_roots_outside_policy_target_and_common_git(
+    scenario: Scenario,
+) -> None:
+    common_git = _common_git_root(scenario)
+    plan = _plan(scenario)
+    runtime_root = Path(plan["runtime_root"])
+    cwd = Path(plan["cwd"])
+    for candidate in (runtime_root, cwd):
+        assert not candidate.exists()
+        assert not candidate.is_relative_to(scenario.policy.root.resolve())
+        assert not candidate.is_relative_to(scenario.target.root.resolve())
+        assert not candidate.is_relative_to(common_git)
+
+
+def test_exec_argv_binds_strict_config_route_profile_environment_and_features(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    argv = plan["argv"]
+    assert type(argv) is list and all(type(value) is str for value in argv)
+    for flag in (
+        "--strict-config",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--json",
+    ):
+        assert flag in argv
+    assert "--color" in argv and "never" in argv
+    assert "-m" in argv and argv[argv.index("-m") + 1] == plan["model"]
+    config_values = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "-c"]
+    profile_name = str(plan["permission_profile_name"])
+    required_prefixes = (
+        "model_reasoning_effort=",
+        "developer_instructions=",
+        "approval_policy=",
+        "default_permissions=",
+        "shell_environment_policy=",
+        "agents.enabled=",
+        "features.apps=",
+        "features.plugins=",
+        "features.hooks=",
+        "features.memories=",
+        "features.multi_agent=",
+        "features.multi_agent_v2=",
+        "features.browser_use=",
+        "features.browser_use_external=",
+        "features.browser_use_full_cdp_access=",
+        "features.computer_use=",
+        "features.image_generation=",
+        "features.in_app_browser=",
+        "features.workspace_dependencies=",
+        "features.remote_plugin=",
+        "features.skill_mcp_dependency_install=",
+        "features.tool_call_mcp_elicitation=",
+        "features.auth_elicitation=",
+        "features.code_mode=",
+        "features.code_mode_host=",
+        "features.code_mode_only=",
+        "mcp_servers=",
+        f"permissions.{profile_name}.filesystem=",
+        f"permissions.{profile_name}.network=",
+    )
+    for prefix in required_prefixes:
+        assert any(value.startswith(prefix) for value in config_values), prefix
+    assert "-p" not in argv and "--profile" not in argv
+    assert any(
+        value.startswith("default_permissions=") and profile_name in value
+        for value in config_values
+    )
+    assert not any(value.startswith("sandbox_mode=") for value in config_values)
+    forbidden = {"--sandbox", "--agent", "--approve-for-me", "--yolo"}
+    assert not forbidden.intersection(argv)
+    assert "-" in argv
+    assert plan["prompt_transport"] == "stdin"
+    assert not any(
+        value in {"sh", "bash", "zsh", "eval"}
+        or (index > 0 and value == "-c" and argv[index - 1] in {"sh", "bash", "zsh"})
+        for index, value in enumerate(argv)
+    )
+
+
+@pytest.mark.parametrize("probe_name", _PROBE_ORDER)
+def test_every_preflight_probe_is_sandboxed_with_same_binary_and_profile(
+    scenario: Scenario, probe_name: str
+) -> None:
+    plan = _plan(scenario)
+    result = _function("build_sandbox_probe_argv")(plan, probe_name)
+    assert type(result) is dict
+    argv = result["argv"]
+    assert type(argv) is list and all(type(value) is str for value in argv)
+    assert argv[0] == plan["argv"][0]
+    assert "sandbox" in argv
+    assert "--include-managed-config" in argv
+    assert "-p" not in argv and "--profile" not in argv
+    config_values = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "-c"]
+    assert any(value.startswith("default_permissions=") for value in config_values)
+    assert not any(value.startswith("sandbox_mode=") for value in config_values)
+    assert result["cwd"] == plan["cwd"]
+    assert result["binary_realpath"] == plan["binary_realpath"]
+    assert result["profile_digest"] == plan["permission_profile_digest"]
+    assert result["shell"] is False
+
+
+def test_sandbox_runner_order_blocks_exec_until_all_probes_pass(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    sandbox_calls: list[dict[str, object]] = []
+    exec_calls: list[dict[str, object]] = []
+
+    def process_runner(**kwargs: object) -> dict[str, object]:
+        exec_calls.append(kwargs)
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), sandbox_calls),
+        process_runner=process_runner,
+    )
+    assert result["status"] == "completed", result
+    assert [call["probe_name"] for call in sandbox_calls] == list(_PROBE_ORDER)
+    assert len(exec_calls) == 1
+    assert all(call["argv"][0] == plan["argv"][0] for call in sandbox_calls)
+
+
+def test_probe_failure_exception_or_timeout_cleans_only_launcher_owned_dirs(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    calls: list[dict[str, object]] = []
+
+    def failing_runner(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        raise TimeoutError("probe timeout")
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=failing_runner,
+        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert not Path(plan["runtime_root"]).exists()
+    assert not Path(plan["cwd"]).exists()
+
+
+def test_default_path_cannot_claim_completed_without_real_sandbox_probe_runner(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    monkeypatch.setattr(module, "_default_sandbox_runner", lambda **kwargs: None)
+    exec_calls: list[object] = []
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        process_runner=lambda **kwargs: exec_calls.append(kwargs)
+        or {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert not exec_calls
+
+
+def test_cli_reads_bounded_prompt_from_stdin_and_never_uses_prompt_argv(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _launcher_module()
+    captured: dict[str, object] = {}
+    plan = _plan(scenario)
+    monkeypatch.setattr(module, "build_invocation_plan", lambda **kwargs: plan)
+
+    def fake_run(plan_value: dict[str, object], *, prompt: str, **kwargs: object):
+        captured["prompt"] = prompt
+        return {"status": "insufficient_evidence", "manifest": {}}
+
+    monkeypatch.setattr(module, "run_isolated_role", fake_run)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("stdin secret prompt\n"))
+    result = module.main(_cli_identity_args(scenario))
+    assert result != 0
+    assert captured["prompt"] == "stdin secret prompt\n"
+    assert "--prompt" not in _cli_identity_args(scenario)
+
+    with pytest.raises(SystemExit):
+        module.main(["--help"])
+    help_output = capsys.readouterr().out
+    assert "--prompt" not in help_output
+    assert "--credential-probe-path" in help_output
+    assert "stdin" in help_output.lower()
+
+
+def test_cli_reports_bounded_safe_errors_for_insufficient_evidence(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    monkeypatch.setattr(module, "build_invocation_plan", lambda **kwargs: plan)
+    monkeypatch.setattr(
+        module,
+        "run_isolated_role",
+        lambda *args, **kwargs: {
+            "status": "insufficient_evidence",
+            "errors": [
+                "isolated role emitted a failed JSONL outcome",
+                '{"type":"error","raw":"sk-do-not-print"}',
+            ],
+        },
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("bounded prompt\n"))
+
+    assert module.main(_cli_identity_args(scenario)) == 1
+    payload = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert payload["status"] == "insufficient_evidence"
+    assert payload["errors"][0] == "isolated role emitted a failed JSONL outcome"
+    assert payload["errors"][1] == "redacted launcher diagnostic"
+    assert "sk-do-not-print" not in json.dumps(payload)
+    assert len(json.dumps(payload).encode("utf-8")) <= 4096
+
+
+def test_protected_instruction_sources_are_complete_and_not_truncated(
+    scenario: Scenario,
+) -> None:
+    role_path = scenario.policy.root / ".codex/agents/reviewer-high.toml"
+    role_text = role_path.read_text(encoding="utf-8")
+    role_text = role_text.rsplit('"""', 1)[0] + ("\n" + "R" * 2_000 + "ROLE_END_SENTINEL\n\"\"\"" + role_text.rsplit('"""', 1)[1])
+    role_path.write_text(role_text, encoding="utf-8")
+    (scenario.policy.root / "AGENTS.md").write_text(
+        (scenario.policy.root / "AGENTS.md").read_text(encoding="utf-8")
+        + "\n"
+        + "A" * 2_000
+        + "ROOT_END_SENTINEL\n",
+        encoding="utf-8",
+    )
+    skill = scenario.policy.root / ".agents/skills/exact-head-review/SKILL.md"
+    skill.write_text(
+        skill.read_text(encoding="utf-8")
+        + "\n"
+        + "S" * 2_000
+        + "SKILL_END_SENTINEL\n",
+        encoding="utf-8",
+    )
+    _commit_all(scenario.policy.root, "complete protected instruction fixture")
+    updated = Scenario(
+        _git_fixture(scenario.policy.root),
+        scenario.target,
+        scenario.binary,
+        scenario.credential_probe,
+    )
+    plan = _plan(updated)
+    instructions = plan["developer_instructions"]
+    assert "ROLE_END_SENTINEL" in instructions
+    assert "ROOT_END_SENTINEL" in instructions
+    assert "SKILL_END_SENTINEL" in instructions
+    assert len(instructions.encode()) <= 96 * 1024
+
+
+def test_parser_accepts_observed_lifecycle_command_and_error_items() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {"type": "item.started", "item": {"type": "agent_message"}},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "command-observed",
+                "type": "command_execution",
+                "command": ["pwd"],
+                "aggregated_output": "",
+                "exit_code": None,
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "id": "command-observed",
+                "command": ["pwd"],
+                "exit_code": 0,
+                "status": "completed",
+                "aggregated_output": "{\"type\":\"fake.nested\"}",
+            },
+        },
+        {"type": "item.completed", "item": {"type": "warning", "message": "warning"}},
+        {"type": "item.completed", "item": {"type": "error", "message": "error"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw)
+    assert parsed["status"] == "failed"
+    assert parsed["final_agent_message"] == "final"
+    assert parsed["error_event_count"] == 2
+    assert parsed["warning_event_count"] == 0
+    assert len(parsed["error_digest"]) == 64
+
+
+def _command_jsonl(command: object) -> str:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "command-1",
+                "type": "command_execution",
+                "command": command,
+                "aggregated_output": "",
+                "exit_code": None,
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "command-1",
+                "type": "command_execution",
+                "command": command,
+                "aggregated_output": "",
+                "exit_code": 0,
+                "status": "completed",
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
+def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
+    started = json.loads(_command_jsonl("pwd").splitlines()[2])["item"]
+    assert set(started) == {
+        "aggregated_output",
+        "command",
+        "exit_code",
+        "id",
+        "status",
+        "type",
+    }
+    assert started["aggregated_output"] == ""
+    assert started["exit_code"] is None
+    assert started["status"] == "in_progress"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "codex exec --json nested",
+        "SAFE=1 codex exec --json nested",
+        "command codex exec --json nested",
+        "/usr/bin/env SAFE=1 codex exec nested",
+        '/usr/bin/env -S "codex exec nested"',
+        '/usr/bin/env --split-string="codex exec nested"',
+        "/usr/bin/env -S '-i' codex exec nested",
+        "/usr/bin/env -S '--unset=FOO' codex exec nested",
+        "/bin/sh -c 'codex exec --json nested'",
+        "/bin/sh -c 'SAFE=1 command codex exec --json nested'",
+        "/bin/sh -c 'command -v codex; codex exec nested'",
+        "/bin/sh -c 'printf ok; codex exec nested'",
+        "/bin/sh -c 'true && codex exec nested'",
+        "/bin/sh -c 'false || codex exec nested'",
+        "/bin/sh -c 'printf ok | codex exec nested'",
+        "/bin/sh -c 'printf ok\ncodex exec nested'",
+        "exec codex exec nested",
+        "exec -- codex exec nested",
+        "time -p codex exec nested",
+        "nohup -- codex exec nested",
+        "nice -n 5 codex exec nested",
+        "nice --adjustment=5 codex exec nested",
+        "builtin command codex exec nested",
+        "/bin/sh -c 'if codex exec nested; then printf ok; fi'",
+        "/bin/sh -c 'if false; then printf ok; else codex exec nested; fi'",
+        "/bin/sh -c 'if false; then printf ok; elif codex exec nested; then printf ok; fi'",
+        "/bin/sh -c 'while codex exec nested; do printf ok; done'",
+        "/bin/sh -c 'until codex exec nested; do printf ok; done'",
+        "/bin/sh -c 'if true; then codex exec nested; fi'",
+        "/bin/sh -c '! codex exec nested'",
+        "/bin/sh -c '( codex exec nested )'",
+        "/bin/sh -c '{ codex exec nested; }'",
+        ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
+    ],
+)
+def test_parser_rejects_direct_nested_codex_invocation_attempts(
+    scenario: Scenario, command: object
+) -> None:
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
+        )
+
+
+def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
+    scenario: Scenario,
+) -> None:
+    parser = _function("parse_codex_jsonl")
+    with pytest.raises((ValueError, RuntimeError)):
+        parser(
+            _command_jsonl(f"{scenario.binary.path} --version"),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
+        )
+    for command in (
+        "rg -n 'codex exec' docs tests",
+        ["rg", "-n", "codex exec", "docs", "tests"],
+        "command -v codex",
+        "command -V codex",
+        "/bin/sh -c \"printf '%s' 'codex exec nested'\"",
+        "/bin/sh -c \"rg -n 'codex exec' .\"",
+        "/bin/sh -c 'command -v codex'",
+        "/bin/sh -c 'command -V codex; printf ok'",
+        "exec printf codex",
+        "time -p printf codex",
+        "nohup printf codex",
+        "nice -n 5 echo codex",
+        "builtin printf codex",
+        "/bin/sh -c 'if printf codex; then echo ok; fi'",
+        "/bin/sh -c '! printf codex'",
+        "/bin/sh -c '( printf codex )'",
+        "/bin/sh -c '{ rg -n \"codex exec\" .; }'",
+    ):
+        parsed = parser(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
+        )
+        assert parsed["status"] == "completed"
+
+
+def test_direct_command_observation_recursion_is_bounded() -> None:
+    payload = "codex exec nested"
+    for _ in range(12):
+        payload = f"sh -c {shlex.quote(payload)}"
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("_command_attempts_nested_codex")(
+            payload,
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _command_jsonl("pwd").replace('"id": "command-1"', '"id": "command-2"', 1),
+        _command_jsonl("pwd").replace('"status": "in_progress"', '"status": "completed"', 1),
+        _command_jsonl("pwd").replace('"command": "pwd"', '"command": "other"', 1),
+        _command_jsonl("x" * 20_000),
+    ],
+)
+def test_command_lifecycle_identity_and_bounds_fail_closed(raw: str) -> None:
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            raw,
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+def test_actual_run_recomputes_target_snapshot_before_claiming_completion(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    results = _valid_sandbox_results()
+
+    def mutate_target(**kwargs: object) -> dict[str, object]:
+        (scenario.target.root / "runtime-mutation.txt").write_text("mutated\n", encoding="utf-8")
+        _commit_all(scenario.target.root, "runtime mutation")
+        return results[str(kwargs["probe_name"])]
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=mutate_target,
+        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+    )
+    assert result["status"] == "insufficient_evidence"
+
+
+def test_permission_profile_uses_absolute_sensitive_paths_and_explicit_credential_probe(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    credential = tmp_path / "protected" / "credentials.json"
+    credential.parent.mkdir()
+    credential.write_text("secret\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(mode=0o700)
+    profile = _function("build_permission_profile")(
+        policy_root=scenario.policy.root,
+        target_root=scenario.target.root,
+        common_git_root=_common_git_root(scenario),
+        dependency_roots=(tmp_path,),
+        scratch_root=scratch,
+        credential_probe_path=credential,
+    )
+    assert all(str(value).startswith("/") or str(value).startswith(":") for value in profile["deny_paths"])
+    assert Path(profile["credential_probe_path"]).is_absolute()
+    assert Path(profile["credential_probe_path"]).exists()
+    manifest = _function("build_redacted_manifest")(
+        _plan(scenario),
+        config_bytes=b"config",
+        prompt="prompt",
+        event_output=_valid_jsonl(),
+        stderr="stderr",
+        final_output="output",
+        probe_results={"credential": str(credential)},
+        observed_at_ms=1,
+        cleanup={"status": "clean"},
+    )
+    assert str(credential) not in json.dumps(manifest)
+
+
+def test_credential_probe_is_explicit_existing_and_outside_runtime_root(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    plan = _plan(scenario)
+    credential = Path(plan["credential_probe_path"])
+    assert credential == scenario.credential_probe.resolve()
+    assert credential.is_file() and not credential.is_symlink()
+    assert credential.stat().st_uid == os.getuid()
+    assert not credential.is_relative_to(Path(plan["runtime_root"]))
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError, TypeError)):
+        _plan(scenario, credential_probe_path=tmp_path / "missing-credential.json")
+
+
+def test_profile_filesystem_mapping_merges_all_denials_and_network_is_toml_table(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    profile = _function("build_permission_profile")(
+        policy_root=scenario.policy.root,
+        target_root=scenario.target.root,
+        common_git_root=_common_git_root(scenario),
+        dependency_roots=(tmp_path,),
+        scratch_root=tmp_path / "scratch-profile",
+        credential_probe_path=scenario.credential_probe,
+    )
+    name = profile["name"]
+    permissions = profile["permissions"][name]
+    filesystem = permissions["filesystem"]
+    for path in profile["deny_paths"]:
+        assert filesystem[path] == "deny"
+    assert filesystem[str(scenario.policy.root)] == "read"
+    assert filesystem[str(scenario.target.root)] == "read"
+    assert filesystem[str(_common_git_root(scenario))] == "read"
+    assert filesystem[str((tmp_path).resolve())] == "read"
+    assert filesystem[str((tmp_path / "scratch-profile").resolve())] == "write"
+    assert permissions["network"] == {"enabled": False}
+
+
+def test_policy_and_target_secret_roots_have_exact_denials_and_probe_canaries(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    filesystem = plan["permission_profile"]["permissions"][
+        plan["permission_profile_name"]
+    ]["filesystem"]
+    for root in (scenario.policy.root, scenario.target.root):
+        for relative in (".env", "secrets", "*secret*", "*token*"):
+            assert filesystem[str(root / relative)] == "deny"
+
+    expected_canaries = {
+        "policy_secret_denied": scenario.policy.root / ".codex/read-only-probe.secret",
+        "target_secret_denied": scenario.target.root / ".codex/read-only-probe.secret",
+    }
+    for name, expected_path in expected_canaries.items():
+        assert plan["probe_paths"][name] == str(expected_path)
+        assert filesystem[str(expected_path)] == "deny"
+        spec = _function("build_sandbox_probe_argv")(plan, name)
+        command = spec["argv"][spec["argv"].index("--") + 1 :]
+        assert command[:3] == ["/usr/bin/head", "-c", "1"]
+        assert command[3] == str(expected_path)
+
+
+def test_repository_root_names_are_not_classified_by_secret_substring(
+    tmp_path: Path,
+) -> None:
+    module = _launcher_module()
+    policy = tmp_path / "policy-token-review"
+    target = tmp_path / "target-secret-review"
+    common = tmp_path / "common-git"
+    scratch = tmp_path / "runtime"
+    for path in (policy, target, common, scratch):
+        path.mkdir()
+    profile = module.build_permission_profile(
+        policy_root=policy,
+        target_root=target,
+        common_git_root=common,
+        dependency_roots=(),
+        scratch_root=scratch,
+    )
+    filesystem = profile["permissions"][profile["name"]]["filesystem"]
+    assert filesystem[str(policy.resolve())] == "read"
+    assert filesystem[str(target.resolve())] == "read"
+
+
+def test_two_plans_for_same_target_use_distinct_random_runtime_tokens(
+    scenario: Scenario,
+) -> None:
+    first = _plan(scenario)
+    second = _plan(scenario)
+    assert first["runtime_root"] != second["runtime_root"]
+    assert len(Path(first["runtime_token"]).name) >= 32
+    assert len(Path(second["runtime_token"]).name) >= 32
+    assert not Path(first["runtime_root"]).exists()
+    assert not Path(second["runtime_root"]).exists()
+
+
+@pytest.mark.parametrize("probe_name", _PROBE_ORDER)
+def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
+    scenario: Scenario, probe_name: str
+) -> None:
+    plan = _plan(scenario)
+    result = _function("build_sandbox_probe_argv")(plan, probe_name)
+    argv = result["argv"]
+    sandbox_index = argv.index("sandbox")
+    assert sandbox_index > 0
+    assert all(value != "--strict-config" for value in argv[sandbox_index + 1 :])
+    assert all(value != "--ignore-user-config" for value in argv[sandbox_index + 1 :])
+    assert all(value != "--ignore-rules" for value in argv[sandbox_index + 1 :])
+    assert "--include-managed-config" in argv[sandbox_index + 1 :]
+    assert "-P" not in argv[sandbox_index + 1 :] or argv[argv.index("-P") + 1] == plan["permission_profile_name"]
+    assert "-C" in argv[sandbox_index + 1 :] or "--cd" in argv[sandbox_index + 1 :]
+    separator = argv.index("--", sandbox_index + 1)
+    command = argv[separator + 1 :]
+    paths = plan["probe_paths"]
+    if probe_name in {
+        "policy_read",
+        "target_read",
+        "policy_secret_denied",
+        "target_secret_denied",
+        "credential_read_denied",
+    }:
+        assert command[:3] == ["/usr/bin/head", "-c", "1"]
+        assert command[3] == paths[probe_name]
+    elif probe_name in {"target_write_denied", "scratch_write"}:
+        assert command[:2] == ["/usr/bin/touch", "--"]
+        assert command[2] == paths[probe_name]
+    elif probe_name == "isolated_home":
+        assert command[:2] == ["/bin/sh", "-c"]
+        assert command[-1] == plan["cwd"]
+    elif probe_name == "secret_env_absent":
+        assert command[:2] == ["/bin/sh", "-c"]
+        assert "SECRET" in command[2]
+    else:
+        assert command[:2] == ["/bin/sh", "-c"]
+        assert "CODEX_SANDBOX_NETWORK_DISABLED" in command[2]
+        assert "curl" not in command
+
+
+def test_host_and_exec_env_retain_auth_context_while_model_shell_filters_secret(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", "/tmp/codex-auth-context")
+    monkeypatch.setenv("LAUNCHER_SECRET_SENTINEL", "must-not-enter-sandbox")
+    plan = _plan(scenario)
+    sandbox_envs: list[dict[str, str]] = []
+    sandbox_probe_names: list[str] = []
+    exec_envs: list[dict[str, str]] = []
+
+    def sandbox_runner(**kwargs: object) -> dict[str, object]:
+        sandbox_envs.append(dict(kwargs["env"]))
+        sandbox_probe_names.append(str(kwargs["probe_name"]))
+        return _valid_sandbox_results()[str(kwargs["probe_name"])]
+
+    def process_runner(**kwargs: object) -> dict[str, object]:
+        exec_envs.append(dict(kwargs["env"]))
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=sandbox_runner,
+        process_runner=process_runner,
+    )
+    assert result["status"] == "completed", result
+    assert exec_envs and exec_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
+    assert sandbox_envs and sandbox_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
+    assert exec_envs[0].get("LAUNCHER_SECRET_SENTINEL") == plan["launcher_secret_sentinel"]
+    assert sandbox_envs[0].get("LAUNCHER_SECRET_SENTINEL") == plan["launcher_secret_sentinel"]
+    shell_policy = plan["permission_profile"]["shell_environment"]
+    assert shell_policy["inherit"] is False
+    assert shell_policy["ignore_default_excludes"] is False
+    assert shell_policy["set"]["HOME"] == plan["cwd"]
+    assert shell_policy["set"]["CODEX_HOME"] == plan["cwd"]
+    assert not (Path(plan["cwd"]) / "auth.json").exists()
+    assert not (Path(plan["cwd"]) / ".codex/auth.json").exists()
+    assert "LAUNCHER_SECRET_SENTINEL" not in shell_policy["set"]
+    assert all("LAUNCHER_SECRET_SENTINEL" not in value for value in plan["config_values"])
+    assert "secret_env_absent" in sandbox_probe_names
+    assert "isolated_home" in sandbox_probe_names
+    serialized = json.dumps(result["manifest"])
+    assert "LAUNCHER_SECRET_SENTINEL" not in serialized
+
+
+def test_default_sandbox_runner_preserves_direct_command_output_without_json_decode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="raw-probe-output", stderr="raw-probe-error"
+        ),
+    )
+    monkeypatch.setattr(module.json, "loads", lambda value: (_ for _ in ()).throw(AssertionError("JSON decode")))
+    result = module._default_sandbox_runner(
+        argv=["/absolute/codex", "sandbox"], cwd=str(tmp_path), env={}, shell=False
+    )
+    assert result["returncode"] == 0
+    assert result["stdout"] == "raw-probe-output"
+    assert result["stderr"] == "raw-probe-error"
+
+
+def test_parser_accepts_item_updated_failure_outcomes_and_rejects_unsafe_items() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {"type": "item.started", "item": {"type": "reasoning"}},
+        {"type": "item.updated", "item": {"type": "plan_update", "plan": ["pwd"]}},
+        {"type": "item.completed", "item": {"type": "reasoning", "text": "private"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.failed", "error": {"message": "failed"}},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw)
+    assert parsed["status"] == "failed"
+    assert parsed["final_agent_message"] == "final"
+    assert parsed["error_event_count"] >= 1
+
+    for item_type in ("file_change", "mcp_tool_call", "web_search", "collaboration", "unknown"):
+        unsafe = _valid_jsonl().replace(
+            '"agent_message"', json.dumps(item_type), 1
+        )
+        with pytest.raises((ValueError, RuntimeError)):
+            _function("parse_codex_jsonl")(unsafe)
+
+
+def _mcp_jsonl(
+    *,
+    server: str,
+    tool: str,
+    item_id: str = "item_1",
+    started_status: str = "in_progress",
+    completed_status: str = "completed",
+    result: object = None,
+    error: object = None,
+) -> str:
+    if result is None and completed_status == "completed":
+        result = {
+            "content": [{"type": "text", "text": "doc"}],
+            "structured_content": None,
+        }
+    started = {
+        "id": item_id,
+        "type": "mcp_tool_call",
+        "server": server,
+        "tool": tool,
+        "arguments": {"uri": "https://developers.openai.com/codex"},
+        "status": started_status,
+        "result": None,
+        "error": None,
+    }
+    completed = {
+        "id": item_id,
+        "type": "mcp_tool_call",
+        "server": server,
+        "tool": tool,
+        "arguments": {"uri": "https://developers.openai.com/codex"},
+        "status": completed_status,
+        "result": result,
+        "error": error,
+    }
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {"type": "item.started", "item": started},
+        {"type": "item.completed", "item": completed},
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "final"},
+        },
+        {"type": "turn.completed"},
+    )
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
+def test_mcp_jsonl_parser_is_role_aware_and_docs_allowlisted() -> None:
+    parser = _function("parse_codex_jsonl")
+    for tool in DOCS_MCP_TOOLS:
+        valid = _mcp_jsonl(server="openaiDeveloperDocs", tool=tool)
+        mcp_items = [
+            json.loads(line)["item"]
+            for line in valid.splitlines()
+            if json.loads(line).get("item", {}).get("type") == "mcp_tool_call"
+        ]
+        assert len(mcp_items) == 2
+        assert all(
+            set(item)
+            == {"arguments", "error", "id", "result", "server", "status", "tool", "type"}
+            for item in mcp_items
+        )
+        assert mcp_items[0]["result"] is None and mcp_items[0]["error"] is None
+        assert mcp_items[1]["error"] is None
+        parsed = parser(valid, role="external_spec_researcher")
+        assert parsed["status"] == "completed"
+
+    valid = _mcp_jsonl(server="openaiDeveloperDocs", tool="fetch_openai_doc")
+    for role in _READ_ONLY_ROLES:
+        if role == "external_spec_researcher":
+            continue
+        with pytest.raises((ValueError, RuntimeError)):
+            parser(valid, role=role)
+    for server, tool in (
+        ("unknownServer", "fetch_openai_doc"),
+        ("openaiDeveloperDocs", "delete_document"),
+        ("openaiDeveloperDocs", "web_search"),
+    ):
+        with pytest.raises((ValueError, RuntimeError)):
+            parser(_mcp_jsonl(server=server, tool=tool), role="external_spec_researcher")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+            started_status="completed",
+        ),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+            completed_status="in_progress",
+        ),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+            completed_status="failed",
+            result={},
+            error={"message": "tool failed"},
+        ).replace('"status": "failed"', '"status": "completed"', 1),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+            result={},
+        ),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+            result={"content": "not-a-list", "structured_content": None},
+        ),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+        ).replace('"item.completed"', '"item.started"', 1),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+        ).replace('"id": "item_1"', '"id": "item_2"', 1),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+        ).replace('"status": "in_progress"', '"status": "in_progress", "plugin_id": "x"', 1),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+        ).replace(', "error": null', "", 1),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+        ).replace(
+            '"uri": "https://developers.openai.com/codex"',
+            '"uri": "https://developers.openai.com/other"',
+            1,
+        ),
+    ],
+)
+def test_docs_mcp_lifecycle_status_shape_and_replay_fail_closed(raw: str) -> None:
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(raw, role="external_spec_researcher")
+
+
+def test_failed_docs_mcp_call_cannot_complete_lane() -> None:
+    raw = _mcp_jsonl(
+        server="openaiDeveloperDocs",
+        tool="search_openai_docs",
+        completed_status="failed",
+        error={"message": "MCP tool failed"},
+    )
+    parsed = _function("parse_codex_jsonl")(raw, role="external_spec_researcher")
+    assert parsed["status"] == "failed"
+
+
+def test_material_item_error_cannot_be_completed_lane_outcome() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {"type": "error", "message": "MCP startup failed"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw, role="reviewer_high")
+    assert parsed["status"] == "failed"
+
+
+def test_unprefixed_agent_role_warning_is_not_a_pinned_host_envelope(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    stderr = (
+        "Ignoring malformed agent role definition at "
+        "/protected/.codex/agents/legacy.toml: agents are disabled\n"
+    )
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": stderr,
+        },
+    )
+    assert result["status"] == "insufficient_evidence", result
+
+
+_PINNED_HOST_WARNING_STDERR = """\
+2026-09-09T10:11:12.123456Z WARN codex_agent_roles::loader: Ignoring malformed agent role definition: failed to parse agent role file at /protected/.codex/agents/engineering-ai-engineer.toml: TOML parse error at line 3, column 5
+  |
+3 | role = [
+  |     ^
+invalid array
+
+2026-09-09T10:11:12.234567Z WARN codex_rollout::list: state db discrepancy during find_thread_path_by_id_str_in_subdir: falling_back
+"""
+_PINNED_LOADER_ITEM_MESSAGE = """\
+Ignoring malformed agent role definition: failed to parse agent role file at /protected/.codex/agents/engineering-ai-engineer.toml: TOML parse error at line 3, column 5
+  |
+3 | and integration into production systems. Focused on building intelligent features, data pipelines,
+  |     ^
+key with no value, expected `=`
+"""
+
+
+def test_pinned_runtime_warning_envelope_is_narrowly_admitted_only_with_agents_disabled(
+    scenario: Scenario,
+) -> None:
+    module = _launcher_module()
+    assert module._stderr_is_admissible(
+        _PINNED_HOST_WARNING_STDERR, agents_disabled=True
+    )
+    assert not module._stderr_is_admissible(
+        _PINNED_HOST_WARNING_STDERR, agents_disabled=False
+    )
+    assert module._stderr_is_admissible(
+        _PINNED_HOST_WARNING_STDERR.replace("\n\n2026-", "\n2026-"),
+        agents_disabled=True,
+    )
+
+    plan = _plan(scenario)
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": _PINNED_HOST_WARNING_STDERR,
+        },
+    )
+    assert result["status"] == "completed", result
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "\n  |\n", "\nCRITICAL unrelated corruption\n  |\n", 1
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "\n  |\n",
+            "\n2026-09-09T10:11:12.200000Z ERROR codex_broker::state: corruption\n  |\n",
+            1,
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace(" WARN ", " ERROR ", 1),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "codex_agent_roles::loader", "codex_mcp_client::startup", 1
+        ),
+        _PINNED_HOST_WARNING_STDERR + "arbitrary trailing stderr\n",
+        _PINNED_HOST_WARNING_STDERR.replace("Ignoring malformed", "MCP startup failed"),
+        _PINNED_HOST_WARNING_STDERR.replace("  |\n3 |", "  |\n  |\n3 |", 1),
+        _PINNED_HOST_WARNING_STDERR.replace("3 | role = [\n", "", 1),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "3 | role = [\n  |     ^\n",
+            "  |     ^\n3 | role = [\n",
+            1,
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace("invalid array", "invalid array 💥"),
+        _PINNED_HOST_WARNING_STDERR.replace("invalid array", "invalid\x01array"),
+        _PINNED_HOST_WARNING_STDERR.replace("invalid array", "X" * 513),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "codex_rollout::list", "codex_unknown::list", 1
+        ),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "state db discrepancy during find_thread_path_by_id_str_in_subdir: falling_back",
+            "state db discrepancy while deleting evidence",
+            1,
+        ),
+    ],
+)
+def test_pinned_runtime_warning_parser_rejects_near_miss_envelopes(
+    stderr: str,
+) -> None:
+    assert not _launcher_module()._stderr_is_admissible(
+        stderr, agents_disabled=True
+    )
+
+
+def test_item_level_disabled_agent_loader_warning_is_consistent_with_stderr() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "error",
+                "message": _PINNED_LOADER_ITEM_MESSAGE,
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "error", "message": _PINNED_LOADER_ITEM_MESSAGE},
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw, role="reviewer_high")
+    assert parsed["status"] == "completed"
+    assert parsed["warning_event_count"] == 2
+    assert parsed["error_event_count"] == 0
+
+
+def test_every_item_level_warning_is_material_and_fails_lane() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "warning",
+                "message": "MCP startup failed and permissions were bypassed",
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw, role="reviewer_high")
+    assert parsed["status"] == "failed"
+    assert parsed["warning_event_count"] == 0
+    assert parsed["error_event_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "MCP server openaiDeveloperDocs failed to start\n",
+        "tool startup error: unavailable\n",
+        "Ignoring malformed agent role definition: agents are enabled\n",
+    ],
+)
+def test_material_or_nonexact_runtime_warning_blocks_completion(
+    scenario: Scenario, stderr: str
+) -> None:
+    plan = _plan(scenario)
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": stderr,
+        },
+    )
+    assert result["status"] == "insufficient_evidence"
+
+
+def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    toolchain = plan["toolchain"]
+    roots = {str(Path(path).resolve()) for path in toolchain["read_roots"]}
+    expected_roots = {str(Path(sys.prefix).resolve()), str(Path(sys.base_prefix).resolve())}
+    expected_roots.update(str(Path(path).resolve()) for path in sysconfig.get_paths().values())
+    assert expected_roots.issubset(roots)
+    executables = toolchain["executables"]
+    assert executables["python"]["realpath"] == str(Path(sys.executable).resolve())
+    assert executables["git"]["realpath"] == str(scenario.git.path)
+    for name in ("python", "git", "rg", "ruff", "uv"):
+        assert Path(executables[name]["realpath"]).is_file()
+        assert executables[name]["parent"] in plan["exec_env"]["PATH"].split(os.pathsep)
+    path_entries = plan["exec_env"]["PATH"].split(os.pathsep)
+    assert str(Path("/usr/bin").resolve()) in path_entries
+    assert str(Path("/bin").resolve()) in path_entries
+    commands = toolchain["commands"]
+    assert commands["python_encodings"][0] == sys.executable
+    assert commands["python_encodings"][1:2] == ["-c"]
+    assert "import encodings" in commands["python_encodings"][2]
+    assert commands["pytest_import"][0] == sys.executable
+    assert "import pytest" in " ".join(commands["pytest_import"])
+
+
+def test_toolchain_path_order_is_deterministic_and_all_required_tools_are_bound(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    entries = plan["exec_env"]["PATH"].split(os.pathsep)
+    executables = plan["toolchain"]["executables"]
+    expected = []
+    for entry in (
+        str(Path(sys.prefix) / "bin"),
+        executables["python"]["parent"],
+        executables["git"]["parent"],
+        executables["rg"]["parent"],
+        executables["ruff"]["parent"],
+        executables["uv"]["parent"],
+        "/usr/bin",
+        "/bin",
+    ):
+        resolved = str(Path(entry).resolve())
+        if resolved not in expected:
+            expected.append(resolved)
+    assert entries == expected
+    assert entries == list(dict.fromkeys(entries))
+
+    executables = plan["toolchain"]["executables"]
+    filesystem = plan["permission_profile"]["permissions"][
+        plan["permission_profile_name"]
+    ]["filesystem"]
+    for name in ("python", "git", "rg", "ruff", "uv"):
+        executable = executables[name]
+        assert Path(executable["realpath"]).is_file()
+        assert executable["parent"] in entries
+        assert filesystem[executable["parent"]] == "read"
+        assert filesystem[executable["realpath"]] == "read"
+
+
+def test_toolchain_smoke_commands_cover_python_pytest_git_rg_ruff_and_uv(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    commands = plan["toolchain"]["smoke_commands"]
+    assert tuple(commands) == _TOOLCHAIN_SMOKE_ORDER
+    assert commands["git_resolve"][0] == plan["git_realpath"]
+    assert scenario.target.head in commands["git_resolve"]
+    for command_name, executable_name in (
+        ("rg_version", "rg"),
+        ("ruff_version", "ruff"),
+        ("uv_version", "uv"),
+    ):
+        assert commands[command_name][0] == plan["toolchain"]["executables"][executable_name]["realpath"]
+
+    for name, command in commands.items():
+        spec = _function("build_toolchain_smoke_argv")(plan, name)
+        assert spec["argv"][0] == plan["binary_realpath"]
+        assert "sandbox" in spec["argv"]
+        assert spec["argv"][spec["argv"].index("--") + 1 :] == command
+        assert spec["profile_digest"] == plan["permission_profile_digest"]
+        assert spec["smoke_name"] == name
+
+
+def test_missing_required_toolchain_executable_is_insufficient_evidence(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    def missing_tool(name: str) -> Path:
+        raise module.LauncherError(f"required {name} executable is unavailable")
+
+    monkeypatch.setattr(module, "_find_required_tool", missing_tool)
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)):
+        module._toolchain(git_binary=scenario.git.path)
+
+
+def test_uv_is_a_required_deterministically_discovered_tool(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    seen: list[str] = []
+
+    def required_tool(name: str) -> Path:
+        seen.append(name)
+        if name == "uv":
+            raise module.LauncherError("required uv executable is unavailable")
+        tool = scenario.target.root.parent / f"tool-{name}"
+        tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        tool.chmod(0o755)
+        return tool
+
+    monkeypatch.setattr(module, "_find_required_tool", required_tool)
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)):
+        module._toolchain(git_binary=scenario.git.path)
+    assert seen == ["rg", "ruff", "uv"]
+
+
+def test_required_tool_discovery_never_uses_ambient_path_resolution() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "shutil.which" not in source
+
+
+def test_non_system_runtime_library_dependencies_are_added_as_exact_read_roots(
+    tmp_path: Path,
+) -> None:
+    module = _launcher_module()
+    executable = tmp_path / "bin/git"
+    library = tmp_path / "Cellar/gettext/lib/libintl.8.dylib"
+    alias_root = tmp_path / "opt/gettext"
+    executable.parent.mkdir(parents=True)
+    library.parent.mkdir(parents=True)
+    alias_root.parent.mkdir(parents=True)
+    alias_root.symlink_to(library.parent.parent, target_is_directory=True)
+    alias_library = alias_root / "lib/libintl.8.dylib"
+    executable.write_bytes(b"git")
+    library.write_bytes(b"library")
+    executable.chmod(0o755)
+    library.chmod(0o644)
+
+    roots = module._runtime_dependency_roots(
+        executable,
+        probe=lambda _: (alias_library,),
+    )
+
+    assert str(alias_library) in roots
+    assert str(alias_library.parent) in roots
+    assert str(alias_root) in roots
+    assert str(alias_root.parent) in roots
+    assert str(library.resolve()) in roots
+    assert str(library.parent.resolve()) in roots
+
+
+def test_otool_dependency_probe_rejects_zero_return_with_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        module,
+        "_validated_tool_path",
+        lambda name, path: Path("/usr/bin/otool"),
+    )
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            0,
+            stdout="/reviewed/git:\n",
+            stderr="warning: incomplete dependency data\n",
+        ),
+    )
+
+    with pytest.raises((ValueError, RuntimeError)):
+        module._default_runtime_dependency_probe(Path("/reviewed/git"))
+
+
+def test_toolchain_merges_runtime_library_roots_before_profile_construction(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    dependency = scenario.target.root.parent / "runtime-library/libintl.8.dylib"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_bytes(b"library")
+    dependency.chmod(0o644)
+    synthetic_tools = {
+        name: scenario.target.root.parent / f"tool-{name}"
+        for name in ("rg", "ruff", "uv")
+    }
+    for tool in synthetic_tools.values():
+        tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        tool.chmod(0o755)
+    monkeypatch.setattr(module, "_find_required_tool", lambda name: synthetic_tools[name])
+    monkeypatch.setattr(
+        module,
+        "_runtime_dependency_roots",
+        lambda executable: [str(dependency.parent), str(dependency)],
+    )
+
+    toolchain = module._toolchain(
+        git_binary=scenario.git.path,
+        git_root=scenario.target.root,
+        git_commit=scenario.target.head,
+    )
+
+    assert str(dependency.parent.resolve()) in toolchain["read_roots"]
+    assert str(dependency.resolve()) in toolchain["read_roots"]
+
+
+def test_toolchain_smokes_execute_before_preflight_and_model(
+    scenario: Scenario,
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    events: list[tuple[str, object]] = []
+    process_calls: list[object] = []
+
+    def toolchain_runner(**kwargs: object) -> dict[str, object]:
+        events.append(("smoke", kwargs["smoke_name"]))
+        argv = list(kwargs["argv"])
+        command = argv[argv.index("--") + 1 :]
+        assert command == plan["toolchain"]["smoke_commands"][kwargs["smoke_name"]]
+        return {"returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+    def sandbox_runner(**kwargs: object) -> dict[str, object]:
+        events.append(("preflight", kwargs["probe_name"]))
+        return _valid_sandbox_results()[str(kwargs["probe_name"])]
+
+    def process_runner(**kwargs: object) -> dict[str, object]:
+        process_calls.append(kwargs)
+        events.append(("model", kwargs["argv"]))
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=toolchain_runner,
+        sandbox_runner=sandbox_runner,
+        process_runner=process_runner,
+    )
+    assert result["status"] == "completed", result
+    assert [name for kind, name in events[:6] if kind == "smoke"] == list(
+        _TOOLCHAIN_SMOKE_ORDER
+    )
+    assert events[6][0] == "preflight"
+    assert events[-1][0] == "model"
+    assert process_calls
+
+
+def test_toolchain_smoke_rejects_any_nonempty_stderr() -> None:
+    module = _launcher_module()
+    assert not module._toolchain_smoke_passed(
+        {"returncode": 0, "stdout": "ruff 1.0\n", "stderr": "warning\n"}
+    )
+
+
+def test_nonfunctional_git_smoke_blocks_model_before_preflight(
+    scenario: Scenario,
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    process_calls: list[object] = []
+
+    def toolchain_runner(**kwargs: object) -> dict[str, object]:
+        argv = list(kwargs["argv"])
+        command = argv[argv.index("--") + 1 :]
+        return {
+            "returncode": 1 if command[0] == plan["git_realpath"] else 0,
+            "stdout": "",
+            "stderr": "git shim is nonfunctional",
+        }
+
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: process_calls.append(kwargs)
+        or {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert not process_calls
+
+
+def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+
+    class OverflowingChild:
+        def __init__(self) -> None:
+            self.stdout = io.BytesIO(b"x" * 100_000)
+            self.stderr = io.BytesIO(b"e" * 100_000)
+            self.returncode = None
+            self.terminated = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            self.reaped = True
+            return self.returncode
+
+    child = OverflowingChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="prompt",
+        timeout=10,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+    assert result["output_limited"] is True
+    assert result["timed_out"] is False
+    assert child.terminated and child.reaped
+
+
+def test_process_runner_timeout_terminates_escalates_and_reaps_term_ignoring_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+
+    class TermIgnoringChild:
+        def __init__(self) -> None:
+            self.stdout = io.BytesIO(b"")
+            self.stderr = io.BytesIO(b"")
+            self.returncode = None
+            self.term_count = 0
+            self.kill_count = 0
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.term_count += 1
+
+        def kill(self) -> None:
+            self.kill_count += 1
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.kill_count == 0:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            self.reaped = True
+            return self.returncode
+
+    child = TermIgnoringChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="prompt",
+        timeout=0.01,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+    assert result["timed_out"] is True
+    assert child.term_count >= 1 and child.kill_count >= 1 and child.reaped
+
+
+def test_process_runner_supervises_nonreading_stdin_and_joins_writer_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    main_thread = threading.current_thread()
+
+    class BlockingStdin:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.closed = False
+
+        def write(self, value: bytes) -> int:
+            if threading.current_thread() is main_thread:
+                raise AssertionError("stdin must not be written synchronously")
+            self.release.wait(timeout=1)
+            raise BrokenPipeError("child never read stdin")
+
+        def close(self) -> None:
+            self.closed = True
+            self.release.set()
+
+    class NonreadingChild:
+        def __init__(self) -> None:
+            self.stdin = BlockingStdin()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            self.returncode = None
+            self.term_count = 0
+            self.kill_count = 0
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.term_count += 1
+
+        def kill(self) -> None:
+            self.kill_count += 1
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.kill_count == 0:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            self.reaped = True
+            return self.returncode
+
+    child = NonreadingChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="bounded prompt",
+        timeout=0.01,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert result["timed_out"] is True
+    assert result["reaped"] is True
+    assert result["stdin_writer_joined"] is True
+    assert child.term_count >= 1 and child.kill_count >= 1 and child.reaped
+    assert child.stdin.closed
+
+
+def test_process_runner_reports_broken_pipe_after_supervised_stdin_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    main_thread = threading.current_thread()
+
+    class BrokenPipeStdin:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.closed = False
+
+        def write(self, value: bytes) -> int:
+            if threading.current_thread() is main_thread:
+                raise AssertionError("stdin must not be written synchronously")
+            self.started.set()
+            raise BrokenPipeError("closed stdin")
+
+        def close(self) -> None:
+            self.closed = True
+
+    class RunningChild:
+        def __init__(self) -> None:
+            self.stdin = BrokenPipeStdin()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            self.returncode = None
+            self.terminated = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            self.reaped = True
+            return self.returncode
+
+    child = RunningChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="bounded prompt",
+        timeout=10,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert result["stdin_write_error"] is True
+    assert result["stdin_writer_joined"] is True
+    assert result["reaped"] is True
+    assert child.terminated and child.reaped and child.stdin.closed
+
+
+def test_process_runner_output_overflow_also_closes_and_joins_stdin_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    main_thread = threading.current_thread()
+
+    class BlockingStdin:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.closed = False
+
+        def write(self, value: bytes) -> int:
+            if threading.current_thread() is main_thread:
+                raise AssertionError("stdin must not be written synchronously")
+            self.release.wait(timeout=1)
+            raise BrokenPipeError("closed after output overflow")
+
+        def close(self) -> None:
+            self.closed = True
+            self.release.set()
+
+    class OverflowingChild:
+        def __init__(self) -> None:
+            self.stdin = BlockingStdin()
+            self.stdout = io.BytesIO(b"x" * 100_000)
+            self.stderr = io.BytesIO(b"e" * 100_000)
+            self.returncode = None
+            self.terminated = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            self.reaped = True
+            return self.returncode
+
+    child = OverflowingChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="bounded prompt",
+        timeout=10,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert result["output_limited"] is True
+    assert result["stdin_writer_joined"] is True
+    assert result["reaped"] is True
+    assert child.terminated and child.reaped and child.stdin.closed
+
+
+@pytest.mark.parametrize("value", [0, -1, 1801, True, "1800"])
+def test_review_timeout_is_bounded_and_defaults_to_thirty_minutes(
+    scenario: Scenario, value: object
+) -> None:
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError, TypeError)):
+        _plan(scenario, timeout_seconds=value)
+    plan = _plan(scenario, timeout_seconds=1800)
+    assert plan["timeout_seconds"] == 1800
+    assert plan["max_timeout_seconds"] == 1800
+
+
+def test_network_probe_is_deterministic_sandbox_state_not_external_curl(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    result = _function("build_sandbox_probe_argv")(plan, "network_denied")
+    command = result["argv"][result["argv"].index("--") + 1 :]
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert "CODEX_SANDBOX_NETWORK_DISABLED" in command[2]
+    assert "curl" not in command and "http" not in " ".join(command)
+
+
+def test_canonical_permission_config_has_toml_network_and_exact_credential_denials(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    config = tomllib.loads("\n".join(plan["config_values"]))
+    profile_name = plan["permission_profile_name"]
+    permissions = config["permissions"][profile_name]
+    assert permissions["network"] == {"enabled": False}
+    filesystem = permissions["filesystem"]
+    assert filesystem[str(scenario.credential_probe)] == "deny"
+    assert filesystem[str(Path.home() / ".codex")] == "deny"
+    assert filesystem[str(scenario.policy.root)] == "read"
+    assert filesystem[str(scenario.target.root)] == "read"
+    shell_policy = config["shell_environment_policy"]
+    assert shell_policy["inherit"] == "none"
+    assert shell_policy["ignore_default_excludes"] is False
+    assert "LAUNCHER_SECRET_SENTINEL" not in shell_policy["set"]
+
+
+def test_plan_generates_secret_sentinel_even_without_caller_launcher_env(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LAUNCHER_SECRET_SENTINEL", raising=False)
+    plan = _plan(scenario)
+    sentinel = plan["launcher_secret_sentinel"]
+    assert isinstance(sentinel, str) and len(sentinel) >= 32
+    assert plan["exec_env"]["LAUNCHER_SECRET_SENTINEL"] == sentinel
+    assert "LAUNCHER_SECRET_SENTINEL" not in plan["permission_profile"]["shell_environment"]["set"]
+    manifest = _function("build_redacted_manifest")(
+        plan,
+        config_bytes=b"config",
+        prompt="prompt",
+        event_output=_valid_jsonl(),
+        stderr="stderr",
+        final_output="output",
+        probe_results={"secret_env_absent": True},
+        observed_at_ms=1,
+        cleanup={"status": "clean"},
+    )
+    assert sentinel not in json.dumps(manifest)
+
+
+def test_target_read_probe_uses_committed_agents_policy_file(scenario: Scenario) -> None:
+    plan = _plan(scenario)
+    assert plan["probe_paths"]["target_read"] == str(scenario.target.root / "AGENTS.md")
+    assert Path(plan["probe_paths"]["target_read"]).is_file()
+
+
+@pytest.mark.parametrize(
+    ("probe_name", "returncode", "stdout", "expected"),
+    [
+        ("policy_read", 0, "p", {"allowed": True}),
+        ("target_read", 0, "t", {"allowed": True}),
+        ("policy_secret_denied", 1, "", {"denied": True}),
+        ("target_secret_denied", 1, "", {"denied": True}),
+        ("target_write_denied", 1, "", {"denied": True}),
+        ("credential_read_denied", 1, "", {"denied": True}),
+        ("isolated_home", 0, "", {"isolated": True}),
+        ("scratch_write", 0, "", {"allowed": True}),
+        ("secret_env_absent", 0, "", {"absent": True}),
+        ("network_denied", 0, "", {"denied": True}),
+    ],
+)
+def test_default_sandbox_runner_evaluates_direct_probe_return_facts(
+    scenario: Scenario,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_name: str,
+    returncode: int,
+    stdout: str,
+    expected: dict[str, object],
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    scratch_marker = tmp_path / "scratch-marker"
+    target_marker = tmp_path / "target-marker"
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        argv = list(args[0])
+        if probe_name == "scratch_write" and returncode == 0:
+            scratch_marker.write_text("created\n", encoding="utf-8")
+        if probe_name == "target_write_denied" and returncode != 0:
+            target_marker.write_text("unexpected\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, returncode, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    result = module._default_sandbox_runner(
+        argv=["/absolute/codex", "sandbox"],
+        cwd=str(tmp_path),
+        env={},
+        shell=False,
+        probe_name=probe_name,
+        plan=plan,
+        marker_path=str(scratch_marker if probe_name == "scratch_write" else target_marker),
+        credential_path_exists=True,
+    )
+    if probe_name == "target_write_denied" and target_marker.exists():
+        assert result["status"] == "insufficient_evidence"
+        assert result.get("denied") is not True
+    else:
+        for key, value in expected.items():
+            assert result[key] == value
+    assert result["returncode"] == returncode
+    if probe_name == "scratch_write":
+        assert not scratch_marker.exists()
+    if probe_name == "target_write_denied":
+        assert target_marker.exists()
+
+
+def test_missing_credential_file_is_insufficient_not_a_sandbox_denial(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    result = module._default_sandbox_runner(
+        argv=["/absolute/codex", "sandbox"],
+        cwd=str(tmp_path),
+        env={},
+        shell=False,
+        probe_name="credential_read_denied",
+        plan=plan,
+        marker_path=str(tmp_path / "missing"),
+        credential_path_exists=False,
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert result.get("denied") is not True
+
+
+def test_default_run_path_uses_low_level_subprocess_for_all_ten_probes(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    real_run = module.subprocess.run
+    seen: list[str] = []
+
+    def fake_run(*args: object, **kwargs: object):
+        argv = list(args[0])
+        if argv and argv[0] in {"git", plan["git_realpath"]}:
+            return real_run(*args, **kwargs)
+        if "sandbox" in argv:
+            command = argv[argv.index("--") + 1 :]
+            executable = command[0]
+            seen.append(executable)
+            if executable == "/usr/bin/head":
+                denied_paths = {
+                    plan["probe_paths"]["policy_secret_denied"],
+                    plan["probe_paths"]["target_secret_denied"],
+                    str(scenario.credential_probe),
+                }
+                is_denied = command[-1] in denied_paths
+                return subprocess.CompletedProcess(
+                    argv, 1 if is_denied else 0, "" if is_denied else "x", ""
+                )
+            if executable == "/usr/bin/touch":
+                return subprocess.CompletedProcess(
+                    argv,
+                    0 if command[-1] == plan["probe_paths"]["scratch_write"] else 1,
+                    "",
+                    "",
+                )
+            if executable == "/bin/sh":
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        return subprocess.CompletedProcess(argv, 0, _valid_jsonl(), "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+    )
+    assert result["status"] == "completed", result
+    assert seen == [
+        "/usr/bin/head",
+        "/usr/bin/head",
+        "/usr/bin/head",
+        "/usr/bin/head",
+        "/usr/bin/touch",
+        "/usr/bin/head",
+        "/bin/sh",
+        "/usr/bin/touch",
+        "/bin/sh",
+        "/bin/sh",
+    ]
+
+
+def test_successful_run_cleans_exact_launcher_runtime_and_cwd(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": "",
+        },
+    )
+    assert result["status"] == "completed", result
+    assert not Path(plan["cwd"]).exists()
+    assert not Path(plan["runtime_root"]).exists()
+    assert not Path(plan["runtime_token"]).exists()
+
+
+def test_local_command_host_remains_enabled_inside_the_read_only_profile(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    config = tomllib.loads("\n".join(plan["config_values"]))
+    features = config["features"]
+    assert features["code_mode_host"] is True
+    assert features["code_mode"] is False
+    assert features["code_mode_only"] is False
+    for key in (
+        "apps",
+        "plugins",
+        "browser_use",
+        "browser_use_external",
+        "browser_use_full_cdp_access",
+        "computer_use",
+        "image_generation",
+        "multi_agent",
+        "multi_agent_v2",
+        "tool_call_mcp_elicitation",
+    ):
+        assert features[key] is False, key
+    host = plan["capability_closure"]["local_command_host"]
+    assert host["enabled"] is True
+    assert "allowed_commands" not in host
+    assert plan["capability_closure"].get("function_gateway") is not True
+    assert "functions.exec" not in json.dumps(plan)
+    profile = plan["permission_profile"]["permissions"][plan["permission_profile_name"]]
+    assert profile["filesystem"][str(scenario.target.root)] == "read"
+    assert profile["network"] == {"enabled": False}
+
+
+def test_service_discovery_is_closed_while_sandboxed_local_host_remains_open(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    config = tomllib.loads("\n".join(plan["config_values"]))
+    features = config["features"]
+    assert config["web_search"] == "disabled"
+    assert config["skills"]["config"] == []
+    disabled_features = {
+        "standalone_web_search",
+        "skill_search",
+        "tool_suggest",
+        "recommended_plugins",
+        "plugin_sharing",
+        "shell_snapshot",
+        "chronicle",
+    }
+    assert all(features[name] is False for name in disabled_features)
+    assert "web_search_cached" not in features
+    assert "web_search_request" not in features
+    assert features["skip_host_skill_discovery"] is True
+    assert config["suppress_unstable_features_warning"] is True
+    assert "web" not in features
+    assert "search" not in features
+    for capability in (
+        "skills",
+        "skill_discovery",
+        "skill_suggestions",
+        "recommended_plugins",
+        "plugin_sharing",
+        "shell_snapshot",
+        "chronicle",
+    ):
+        assert plan["capability_closure"][capability] is False
+    assert features["code_mode_host"] is True
+    assert features["apps"] is False
+    assert features["plugins"] is False
+    assert features["multi_agent"] is False
+
+
+
+def test_real_system_temp_policy_or_target_worktree_is_rejected_without_test_provider_patch(
+    scenario: Scenario,
+) -> None:
+    module = _launcher_module()
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)):
+        module.build_invocation_plan(**_plan_kwargs(scenario))
+
+
+def test_default_binary_probe_canonicalizes_codex_cli_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    binary = tmp_path / "codex"
+    binary.write_bytes(b"binary")
+    binary.chmod(0o755)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        argv = list(args[0])
+        if argv[:2] == [str(binary), "--version"]:
+            return subprocess.CompletedProcess(argv, 0, "codex-cli 0.153.4\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "TeamIdentifier=2DC432GLL2\n")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    descriptor = module._default_binary_probe(binary)
+    assert descriptor["version"] == "0.153.4"
+    assert module.validate_binary(
+        path=binary,
+        expected_version="0.153.4",
+        expected_sha256=hashlib.sha256(b"binary").hexdigest(),
+        expected_team_identifier=TEAM_IDENTIFIER,
+        supported_versions=("0.153.4",),
+        probe=lambda _: descriptor,
+    ) == ([] if sys.platform == "darwin" else [
+        "binary codesign TeamIdentifier drifted",
+        "binary codesign verification failed",
+    ])
+
+
+def test_focused_launcher_fixtures_do_not_dirty_repository_with_runtime_roots() -> None:
+    assert not (ROOT / ".test-runtime-root").exists()

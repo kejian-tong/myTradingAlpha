@@ -64,6 +64,14 @@ non-master role must load `[agents] enabled = false`; a GPT-5.6 Sol Multi-Agent 
 expose collaboration controls. Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.
+
+For every read-only lane, invoke `scripts/read_only_role_launcher.py` as an isolated top-level role
+invocation. An in-process child under a writable or unverified parent is non-admissible; model self-report,
+JSONL, doctor output, static TOML, hooks, and telemetry are not host attestation. Launcher preflight or
+post-run gaps return `insufficient_evidence`; schema-v1 receipts are historical supplemental evidence and
+the per-run Permission Profile is only a narrow pilot, not a global migration. No mandatory first-turn
+handshake is relied on.
+
 Record complete runtime observation and stop on an actual non-master invocation attempt; retain
 `telemetry_conflict` for separate route/loading contradictions.
 

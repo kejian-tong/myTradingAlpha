@@ -21,6 +21,11 @@ review artifact containing PR ID, exact reviewed head SHA, this role/config path
 effort, RED-evidence verdict, findings, acceptance matrix, scope-leak verdict, safety-gate verdict, and
 final verdict APPROVE or REQUEST CHANGES. Do not edit implementation files and do not start the next PR.
 
+Use `scripts/read_only_role_launcher.py` for every isolated role invocation. In-process child evidence
+under a writable or unverified parent is non-admissible; it is not host evidence and must not be called a
+named-agent loaded/configured actual. If launcher preflight or post-run observation is unavailable or
+fails, return `insufficient_evidence`, stop, and discard the lane.
+
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.

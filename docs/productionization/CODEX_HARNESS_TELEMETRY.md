@@ -13,6 +13,19 @@ declared effective capabilities, but it cannot authenticate the host runtime, va
 or parse Codex transcripts. A passing receipt therefore never upgrades an unobserved hook event or a
 claimed model/sandbox/tool route into authenticated evidence.
 
+Read-only lanes default to `scripts/read_only_role_launcher.py`, an isolated top-level role invocation.
+An in-process child under a writable or unverified parent is non-admissible. Launcher preflight/post-run
+gaps return `insufficient_evidence`; schema-v1 receipts remain historical structural supplemental evidence,
+and host attestation plus global Permission Profile migration remain Watch-only. Model self-report, JSONL,
+doctor output, static TOML, hooks, and telemetry cannot authenticate the current runtime, and no mandatory
+first-turn handshake replaces the launcher boundary. The host client may perform bounded auth/cache work
+outside the model-command profile; telemetry does not upgrade that client activity into model capability
+evidence.
+
+Runtime-path evidence includes bounded streaming, timeout escalation, validated toolchain roots,
+deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and `codesign --verify` success; telemetry does
+not replace those checks.
+
 Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
 references, exact PR/role/config identity, model/effort, an explicit legacy-sandbox or permission-profile
 system, sandbox/profile/approval values, and a complete sorted unique bounded tool inventory. The caller

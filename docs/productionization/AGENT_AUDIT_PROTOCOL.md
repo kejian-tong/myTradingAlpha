@@ -157,6 +157,121 @@ closed. `telemetry_conflict` remains separate blocking evidence for route/loadin
 visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
 events, spawn agents, contact GitHub, write files, or merge a PR.
 
+### 2.2 Current-runtime read-only launcher
+
+The default read-only path is `scripts/read_only_role_launcher.py`, an isolated top-level role invocation
+that loads role/instruction policy from protected exact Git objects and runs against a detached clean target.
+Review policy and candidate worktrees must be non-temp, explicitly owned paths; system temporary roots are
+reserved for launcher-private runtime scratch only.
+An in-process read-only child under a writable or unverified parent is non-admissible. The launcher uses a
+narrow per-run Permission Profile pilot, structured preflight/post-run observations, and bounded JSONL/
+manifest handling; missing facts return `insufficient_evidence`. Schema-v1 receipts remain historical,
+structural supplemental evidence. Model self-report, JSONL, `codex doctor`, static TOML, hooks, telemetry,
+or a host-attestation schema cannot authenticate the current runtime, and no mandatory first-turn handshake
+is required. Global Permission Profile adoption remains Watch-only. The host Codex client may perform
+bounded authentication or cache operations outside the model-command profile; those operations are not
+treated as model capability evidence.
+
+The launcher runtime contract also requires bounded streaming, timeout escalation, validated toolchain
+roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `codesign --verify` before
+binary acceptance. The reviewed binary registry is the signed macOS Codex 0.153.4 bundle; a non-Darwin
+default probe without equivalent TeamIdentifier/signature evidence remains `insufficient_evidence`.
+
+Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
+initial version probe through every policy/target/post-run Git query and the model shell, the launcher
+sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONFIG_NOSYSTEM=1`, removes
+caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. An outer launcher profile
+may supply only these exact neutral values plus the documented no-lazy-fetch/no-replace/optional-locks/
+terminal-prompt settings; divergent values and config-key injection fail closed. Repository calls use the
+exact supplied `.git` and work-tree paths, require canonical `rev-parse --show-toplevel` equality, and apply
+highest-priority safe CLI controls for fsmonitor, hooks, submodule recursion, and protocols. Dangerous
+local/worktree configuration is governed by a conservative allowlist limited to the repository's standard
+core metadata, reviewed remote/branch metadata, worktree-config extension flag, and user name/email. Unknown
+keys, execution helpers, includes, unsafe remote URL syntax, and active unreviewed worktree keys are
+inadmissible. Remote metadata permits bounded HTTPS without userinfo/query/fragment and reviewed SSH/scp
+forms only with the exact non-secret `git` user; HTTP, embedded credentials, ambiguous percent encoding,
+local/file/ext syntax, arbitrary SSH users, controls, and oversized values fail without diagnostic echo.
+Git config values are read as bounded NUL-delimited records with exact trailing and nonempty record
+structure, so embedded newlines cannot become separately valid visual lines.
+`extensions.worktreeConfig` is interpreted through Git's canonical boolean parser, including
+`true/yes/on/1` and `false/no/off/0`; invalid or diagnostic-producing values fail closed. This conservative
+boundary intentionally risks false positives when new benign repository config is introduced and requires a
+reviewed Harness update rather than an implicit pass. Status ignores submodules. Every Git helper, the initial
+Git/tool smokes, and runtime-library `otool` discovery reject nonempty stderr, including a zero-return-code
+lookup, so incomplete evidence cannot be classified as clean. The per-run profile denies direct reads of
+ignored/untracked `.env`, `secrets`, `*secret*`, and
+`*token*` paths under both policy and target roots, plus external credential paths. Committed current and
+history Git objects remain intentionally reviewable public-repository evidence through the admitted Git
+object database; this launcher is not a confidentiality boundary for committed or historical Git data.
+If either repository contains confidential committed/history objects, launcher use is inadmissible and
+requires a sanitized repository or human review path. The committed `.codex/read-only-probe.secret` is
+harmless fixed data and proves direct-path denial only, not Git-object secrecy.
+
+Python `encodings`, pytest importability, exact target-head Git resolution, and `rg`/Ruff/`uv` versions
+are executed through the same signed Codex binary and Permission Profile before the repository probes.
+Any unavailable tool or failed smoke blocks model start. Ordinary roles reject every MCP item. Only
+`external_spec_researcher` admits a matched start/completion lifecycle for exact server
+`openaiDeveloperDocs` and exact tools `fetch_openai_doc` or `search_openai_docs`; malformed, replayed,
+failed, unknown, or incomplete MCP activity cannot produce a completed lane. Its MCP is required at
+runtime so startup failure is fatal. Codex 0.153.4's bounded pre-turn `Ignoring malformed agent role
+definition` warning is non-blocking only while agents are disabled and the complete stderr matches the
+exact timestamped `codex_agent_roles::loader` envelope, its bounded TOML diagnostic lines, and optional
+timestamped `codex_rollout::list: state db discrepancy` warning. The same exact loader message is treated
+as a warning if surfaced as an item-level error. Other logger targets, severities, continuations,
+startup/tool stderr, and all other item errors remain inadmissible. All item-level `warning` events are
+material and fail the lane; only the exact multiline loader diagnostic emitted as item type `error` is
+classified as the known nonmaterial host condition.
+
+The isolated runtime explicitly disables web search and standalone search; deprecated web-search
+feature overrides are omitted because 0.153.4 emits them as item errors. It disables skill search and
+host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots,
+Chronicle, Apps, plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP.
+The reviewed under-development warning is suppressed after these exact flags are bound so it cannot
+create a permanent item-error false stop.
+`code_mode_host=true` remains enabled solely for sandboxed local commands under the same read-only
+profile; configuration closure is intent and the preflight/post-run evidence remains mandatory. Permission
+Profile filesystem `deny` controls reads but does not prevent the same executable from running: direct
+current-runtime evidence showed the denied Codex binary still completed `--version`. The launcher therefore
+does not claim preventive host enforcement for nested Codex. Instead, model commands receive launcher-owned
+scratch values for `HOME` and `CODEX_HOME`; an `isolated_home` preflight verifies those exact values and the
+absence of auth, config, and agent files without executing Codex. The outer host process retains its real
+authentication context.
+
+The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
+leading assignments, `env`, `env -S`/`--split-string`, `command codex`, and shell `-c` forms. Harmless
+`command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
+remain admissible. Direct shell `-c` parsing inspects every bounded simple-command segment across newline,
+sequence, conditional, and pipeline operators without claiming arbitrary shell or obfuscation completeness.
+This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
+obfuscated shell execution cannot be certified absent. Preventive delegation control remains deferred to
+the separate later Master-only enforcement remediation.
+
+PR #67 is a bootstrap exception: protected base `8092018` contains neither this launcher protocol nor its
+canary. Its controlling review therefore uses a Master-constructed external Permission Profile. The
+repository launcher activates prospectively only after merge, refreshed `main`, and a fresh invocation;
+candidate-policy smoke results are operability evidence only and never self-authorization.
+
+After this bootstrap, a protected-policy standalone top-level isolated role invocation is an admissible
+role-evidence category for required read-only lanes. Its manifest keeps `named_agent_loaded=false` truthful,
+binds the protected role/config/model/effort and exact target, and is not a child configured-actual claim.
+PR #67 itself remains external-profile-only and cannot use candidate policy to authorize its merge.
+
+Immutable history is preserved without relabeling inaccurate evidence. Historical controlling pairs from
+test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `09eb421 -> 31fcabd` and
+`bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
+`34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
+anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
+also includes remote-credential parsing `276dd72 -> cf6fd19`. The current repair starts at
+test-only RED `487190a`; its exact GREEN head is recorded
+in durable PR evidence. The abandoned v2
+proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
+non-controlling evidence, not valid standalone RED/GREEN pairs.
+
+Residual risk remains explicit and deferred: supporting-tool exact identity needs a separate bounded
+contract beyond owner/mode/path plus smoke evidence, and launcher decomposition needs a later reviewed
+refactor of the large mixed-responsibility module. Neither deferred MEDIUM issue weakens this PR's fail-
+closed admission contract or authorizes expansion here.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**
@@ -241,6 +356,11 @@ The independent reviewer must verify that:
 - when feasible, the focused RED command is rerun at the RED commit in an isolated worktree or equivalent
   non-destructive checkout;
 - the production implementation appears only after the RED commit.
+
+For the current-runtime launcher, the PR evidence must also bind the explicit `--git-binary`,
+`--expected-git-version`, and `--expected-git-sha256` values, plus the exact RED lineage. A repair RED is
+test-only and must precede its repair GREEN; a prior rejected GREEN or receipt proposal cannot substitute
+for the current launcher contract.
 
 If the claimed RED evidence cannot be independently established, mark the TDD evidence
 `insufficient_evidence` and block the merge until corrected.
