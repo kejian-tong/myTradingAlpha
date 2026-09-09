@@ -535,7 +535,7 @@ def _runtime_dependency_roots(
     system_roots = (Path("/usr/lib"), Path("/System/Library"))
     pending = [Path(executable)]
     seen: set[Path] = set()
-    roots: list[Path] = []
+    roots: list[str] = []
     while pending:
         current = pending.pop(0).resolve(strict=True)
         if current in seen:
@@ -551,10 +551,18 @@ def _runtime_dependency_roots(
             ):
                 continue
             resolved = _validated_tool_path("runtime library", dependency)
-            roots.extend((resolved.parent, resolved))
+            for root in (
+                dependency.parent,
+                dependency,
+                resolved.parent,
+                resolved,
+            ):
+                value = str(root)
+                if value not in roots:
+                    roots.append(value)
             if resolved not in seen:
                 pending.append(resolved)
-    return _ordered_unique_paths(roots)
+    return roots
 
 
 def _toolchain(
@@ -614,8 +622,10 @@ def _toolchain(
             git_prefix,
             git_prefix / "libexec",
             git_prefix / "libexec" / "git-core",
-            *(Path(value) for value in runtime_dependency_roots),
         ]
+    )
+    read_roots.extend(
+        value for value in runtime_dependency_roots if value not in read_roots
     )
     commands: dict[str, list[str]] = {
         "python_encodings": [
@@ -916,6 +926,7 @@ def build_permission_profile(
     permissions[str(Path(target_root).resolve())] = "read"
     permissions[str(Path(common_git_root).resolve())] = "read"
     for dependency in dependency_roots:
+        permissions[str(Path(dependency))] = "read"
         permissions[str(Path(dependency).resolve())] = "read"
     profile_name = "launcher_read_only"
     return {

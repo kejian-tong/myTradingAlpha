@@ -2206,8 +2206,12 @@ def test_non_system_runtime_library_dependencies_are_added_as_exact_read_roots(
     module = _launcher_module()
     executable = tmp_path / "bin/git"
     library = tmp_path / "Cellar/gettext/lib/libintl.8.dylib"
+    alias_root = tmp_path / "opt/gettext"
     executable.parent.mkdir(parents=True)
     library.parent.mkdir(parents=True)
+    alias_root.parent.mkdir(parents=True)
+    alias_root.symlink_to(library.parent.parent, target_is_directory=True)
+    alias_library = alias_root / "lib/libintl.8.dylib"
     executable.write_bytes(b"git")
     library.write_bytes(b"library")
     executable.chmod(0o755)
@@ -2215,9 +2219,11 @@ def test_non_system_runtime_library_dependencies_are_added_as_exact_read_roots(
 
     roots = module._runtime_dependency_roots(
         executable,
-        probe=lambda _: (library,),
+        probe=lambda _: (alias_library,),
     )
 
+    assert str(alias_library) in roots
+    assert str(alias_library.parent) in roots
     assert str(library.resolve()) in roots
     assert str(library.parent.resolve()) in roots
 
