@@ -113,13 +113,32 @@ def _errors(
     expected_pr_id: str = "HARNESS-AUD-01",
     expected_base_sha: str | None = None,
     expected_head_sha: str | None = None,
+    expected_role: str | None = None,
+    expected_config_path: str | None = None,
 ) -> list[str]:
+    if expected_role is None or expected_config_path is None:
+        if type(receipt) is dict:
+            candidate_role = receipt.get("role")
+            candidate_config_path = receipt.get("config_path")
+        else:
+            candidate_role = None
+            candidate_config_path = None
+        expected_role = (
+            candidate_role if type(candidate_role) is str else "reviewer_high"
+        )
+        expected_config_path = (
+            candidate_config_path
+            if type(candidate_config_path) is str
+            else ROLE_CONFIG
+        )
     result = _module().verify_receipt(
         receipt,
         repo_root=repo_root,
         expected_pr_id=expected_pr_id,
         expected_base_sha=expected_base_sha or _git("HEAD"),
         expected_head_sha=expected_head_sha or _git("HEAD"),
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
     )
     assert isinstance(result, list), "verify_receipt must return a list of admission errors"
     return result
@@ -169,6 +188,10 @@ def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
             _git("HEAD"),
             "--expected-head-sha",
             _git("HEAD"),
+            "--expected-role",
+            "reviewer_high",
+            "--expected-config-path",
+            ROLE_CONFIG,
         ],
         cwd=ROOT,
         text=True,
@@ -599,6 +622,8 @@ def test_ambient_git_redirects_cannot_override_repo_root(
         expected_pr_id="HARNESS-AUD-01",
         expected_base_sha=head,
         expected_head_sha=head,
+        expected_role="reviewer_high",
+        expected_config_path=ROLE_CONFIG,
     )
 
     assert errors == ["repository binding is unavailable"]
@@ -1143,7 +1168,13 @@ def test_cli_requires_all_trusted_expectations(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0, result.stdout
-    for option in ("--expected-pr-id", "--expected-base-sha", "--expected-head-sha"):
+    for option in (
+        "--expected-pr-id",
+        "--expected-base-sha",
+        "--expected-head-sha",
+        "--expected-role",
+        "--expected-config-path",
+    ):
         assert option in result.stdout
 
 

@@ -44,11 +44,12 @@ The JSON receipt is strict and contains exactly the schema-versioned fields `sch
 runtime and Multi-Agent version, model/effort, base/head/tree SHAs, effective sandbox/profile/approval,
 an explicit `permission_system`, complete sorted unique bounded `tool_names`, and non-negative
 `observed_at_ms`. Raw JSON is bounded at 64 KiB and duplicate keys are rejected before structural
-validation. The caller must separately supply the trusted expected PR ID, exact base SHA, and exact head
-SHA; the receipt must equal those expectations, the base must be an ancestor of the head, the expected
-head must be checked out, and the receipt tree must equal that head's tree. The verifier reads the named
-`.codex/agents/<role>.toml` from the exact head Git tree, not from mutable working-tree bytes, and derives
-model/effort and nested-delegation intent from it without a duplicated model allowlist. A repository
+validation. The caller must separately supply the trusted expected PR ID, role, config path, exact base
+SHA, and exact head SHA; the receipt must equal those identity and commit expectations, the base must be
+an ancestor of the head, the expected head must be checked out, and the receipt tree must equal that
+head's tree. The verifier resolves the caller-supplied `.codex/agents/<role>.toml` from the exact head
+Git tree, never from receipt-selected identity or mutable working-tree bytes, and derives model/effort,
+nested-delegation, and role-scoped MCP intent from it without a duplicated model allowlist. A repository
 configured as a partial clone or with a promisor remote is rejected before object lookup; verification
 must never trigger a lazy fetch. Git subprocesses discard all inherited `GIT_*` variables and restore only
 the verifier's reviewed no-lazy-fetch, no-prompt, and no-optional-lock settings, so ambient repository,
@@ -77,7 +78,9 @@ python scripts/runtime_capability_receipt.py \
   --repo-root /path/to/checkout \
   --expected-pr-id HARNESS-AUD-01 \
   --expected-base-sha <exact-base-commit> \
-  --expected-head-sha <exact-head-commit>
+  --expected-head-sha <exact-head-commit> \
+  --expected-role reviewer_high \
+  --expected-config-path .codex/agents/reviewer-high.toml
 ```
 
 The verifier performs no network, file-write, transcript, or runtime-control operation. Its `PASS` output

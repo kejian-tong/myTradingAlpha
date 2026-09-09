@@ -22,6 +22,10 @@ MAX_TEXT_LENGTH = 512
 MAX_CONFIG_PATH_LENGTH = 256
 MAX_TOOL_COUNT = 256
 MAX_TOOL_NAME_LENGTH = 256
+_EXTERNAL_SPEC_ROLE = "external_spec_researcher"
+_EXTERNAL_SPEC_MCP_SERVER = "openaiDeveloperDocs"
+_OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
+_REVIEWED_EXTERNAL_SPEC_TOOLS = ("fetch_openai_doc", "search_openai_docs")
 
 REQUIRED_FIELDS = frozenset(
     {
@@ -75,6 +79,17 @@ _MULTI_AGENT_VERSIONS = frozenset({"v1", "v2"})
 # local enforcement system. Apps, connectors, MCP servers, browsers, and Codex
 # collaboration controls are separate capability surfaces.
 _SANDBOX_GOVERNED_TOOLS = frozenset({"apply_patch", "exec_command", "write_stdin"})
+_READ_ONLY_LOCAL_TOOLS = frozenset({"view_image"})
+_READ_ONLY_OBSERVATION_TOOLS = frozenset(
+    {
+        "list_agents",
+        "wait_agent",
+        "collaboration.list_agents",
+        "collaboration.wait_agent",
+        "collaboration__list_agents",
+        "collaboration__wait_agent",
+    }
+)
 _CAPABILITY_GATEWAY_TOOLS = frozenset({"functions.exec", "functions__exec"})
 _COLLABORATION_TOOLS = frozenset(
     {
@@ -92,13 +107,6 @@ _COLLABORATION_TOOLS = frozenset(
         "spawn_agent",
     }
 )
-_EXTERNAL_SPEC_RESEARCHER_MCP_TOOLS = frozenset(
-    {
-        "mcp__openaiDeveloperDocs__fetch_openai_doc",
-        "mcp__openaiDeveloperDocs__search_openai_docs",
-    }
-)
-
 _STRING_FIELDS = (
     "evidence_source",
     "source_ref",
@@ -265,28 +273,78 @@ def _repository_is_partial_or_promisor(root: Path) -> bool:
 
 def _resolve_role_config(
     root: Path,
-    receipt: Mapping[str, object],
     *,
+    expected_role: str,
+    expected_config_path: str,
     expected_head_sha: str,
 ) -> tuple[str, dict[str, Any]]:
-    role = receipt.get("role")
-    config_value = receipt.get("config_path")
-    errors = [*_text(role, "role"), *_text(config_value, "config_path", maximum=MAX_CONFIG_PATH_LENGTH)]
+    errors = [
+        *_text(expected_role, "expected_role"),
+        *_text(expected_config_path, "expected_config_path", maximum=MAX_CONFIG_PATH_LENGTH),
+    ]
     if errors:
         raise ValueError("; ".join(errors))
-    assert isinstance(role, str)
-    assert isinstance(config_value, str)
-    if _ROLE_RE.fullmatch(role) is None:
-        raise ValueError("role has an invalid identifier")
-    if config_value != f".codex/agents/{role.replace('_', '-')}.toml":
-        raise ValueError("config_path does not match role")
-    if "\\" in config_value:
-        raise ValueError("config_path must use a safe POSIX relative path")
-    relative = Path(config_value)
+    assert isinstance(expected_role, str)
+    assert isinstance(expected_config_path, str)
+    if _ROLE_RE.fullmatch(expected_role) is None:
+        raise ValueError("expected_role has an invalid identifier")
+    if expected_config_path != f".codex/agents/{expected_role.replace('_', '-')}.toml":
+        raise ValueError("expected_config_path does not match expected_role")
+    if "\\" in expected_config_path:
+        raise ValueError("expected_config_path must use a safe POSIX relative path")
+    relative = Path(expected_config_path)
     if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError("config_path must not escape the repository")
+        raise ValueError("expected_config_path must not escape the repository")
     raw = _git_bytes(root, "show", f"{expected_head_sha}:{relative.as_posix()}")
     return relative.as_posix(), _parse_toml(raw)
+
+
+def _validate_role_mcp_intent(
+    role: str,
+    configured: dict[str, Any],
+) -> tuple[list[str], frozenset[str]]:
+    """Validate exact role MCP intent and return its canonical admitted tools."""
+    if role != _EXTERNAL_SPEC_ROLE:
+        if "mcp_servers" in configured:
+            return ["ordinary role must not declare mcp_servers"], frozenset()
+        return [], frozenset()
+
+    mcp_servers = configured.get("mcp_servers")
+    if type(mcp_servers) is not dict:
+        return ["external_spec_researcher must declare exactly one MCP server"], frozenset()
+    if set(mcp_servers) != {_EXTERNAL_SPEC_MCP_SERVER}:
+        return ["external_spec_researcher MCP server identity is not the reviewed server"], frozenset()
+    server = mcp_servers.get(_EXTERNAL_SPEC_MCP_SERVER)
+    if type(server) is not dict:
+        return ["external_spec_researcher MCP server configuration must be an object"], frozenset()
+    if set(server) != {"url", "enabled_tools"}:
+        return ["external_spec_researcher MCP server fields differ from reviewed intent"], frozenset()
+
+    errors = _text(server.get("url"), "OpenAI Docs MCP url", maximum=MAX_TEXT_LENGTH)
+    if server.get("url") != _OPENAI_DOCS_MCP_URL:
+        errors.append("OpenAI Docs MCP endpoint differs from reviewed intent")
+
+    enabled_tools = server.get("enabled_tools")
+    if type(enabled_tools) is not list:
+        errors.append("OpenAI Docs MCP enabled_tools must be a list")
+        return errors, frozenset()
+    if len(enabled_tools) > MAX_TOOL_COUNT:
+        errors.append("OpenAI Docs MCP enabled_tools exceeds the bounded count")
+        return errors, frozenset()
+    for tool in enabled_tools:
+        errors.extend(_text(tool, "OpenAI Docs MCP tool", maximum=MAX_TOOL_NAME_LENGTH))
+        if type(tool) is str and _SAFE_TOOL_RE.fullmatch(tool) is None:
+            errors.append("OpenAI Docs MCP tool contains an invalid identifier")
+    if enabled_tools != list(_REVIEWED_EXTERNAL_SPEC_TOOLS):
+        errors.append("OpenAI Docs MCP enabled_tools differ from reviewed intent")
+    if errors:
+        return errors, frozenset()
+    return (
+        [],
+        frozenset(
+            f"mcp__{_EXTERNAL_SPEC_MCP_SERVER}__{tool}" for tool in enabled_tools
+        ),
+    )
 
 
 def _decode_receipt(value: object) -> tuple[object, list[str]]:
@@ -342,7 +400,12 @@ def _validate_exact_field_types(receipt: dict[str, object]) -> list[str]:
     return []
 
 
-def _validate_values(receipt: dict[str, object]) -> list[str]:
+def _validate_values(
+    receipt: dict[str, object],
+    *,
+    trusted_role: str,
+    allowed_mcp_tools: frozenset[str],
+) -> list[str]:
     errors: list[str] = []
 
     if type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1:
@@ -419,11 +482,13 @@ def _validate_values(receipt: dict[str, object]) -> list[str]:
             elif name in _SANDBOX_GOVERNED_TOOLS:
                 if not _local_enforcement_is_read_only(receipt):
                     errors.append("local mutation tool lacks read-only enforcement")
-            elif name.startswith("mcp__") and (
-                receipt.get("role") != "external_spec_researcher"
-                or name not in _EXTERNAL_SPEC_RESEARCHER_MCP_TOOLS
+            elif name in _READ_ONLY_LOCAL_TOOLS or name in _READ_ONLY_OBSERVATION_TOOLS or (
+                trusted_role == _EXTERNAL_SPEC_ROLE
+                and name in allowed_mcp_tools
             ):
-                errors.append("unapproved external MCP or connector tool exposed")
+                pass
+            else:
+                errors.append("unapproved or unknown tool exposed")
         if any(type(name) is not str for name in names):
             pass
         elif names != sorted(names):
@@ -441,18 +506,25 @@ def _validate_role_intent(
     root: Path,
     receipt: dict[str, object],
     *,
+    expected_role: str,
+    expected_config_path: str,
     expected_head_sha: str,
-) -> list[str]:
+) -> tuple[list[str], frozenset[str]]:
     try:
         _config_path, configured = _resolve_role_config(
             root,
-            receipt,
+            expected_role=expected_role,
+            expected_config_path=expected_config_path,
             expected_head_sha=expected_head_sha,
         )
     except (OSError, UnicodeError, ValueError):
-        return ["role configuration is invalid or unavailable"]
+        return ["role configuration is invalid or unavailable"], frozenset()
 
     errors: list[str] = []
+    if receipt["role"] != expected_role:
+        errors.append("role does not match the trusted expected role")
+    if receipt["config_path"] != expected_config_path:
+        errors.append("config_path does not match the trusted expected config path")
     configured_name = configured.get("name")
     configured_model = configured.get("model")
     configured_effort = configured.get("model_reasoning_effort")
@@ -467,6 +539,8 @@ def _validate_role_intent(
     agent_config = configured.get("agents")
     if type(agent_config) is not dict or agent_config.get("enabled") is not False:
         errors.append("named role must disable nested delegation")
+    if "features" in configured:
+        errors.append("role-level features are not permitted")
 
     configured_sandbox = configured.get("sandbox_mode")
     if configured_sandbox == "read-only":
@@ -478,7 +552,9 @@ def _validate_role_intent(
         and receipt["sandbox_mode"] != configured_sandbox
     ):
         errors.append("sandbox_mode does not match configured intent")
-    return errors
+    mcp_errors, allowed_mcp_tools = _validate_role_mcp_intent(expected_role, configured)
+    errors.extend(mcp_errors)
+    return errors, allowed_mcp_tools
 
 
 def _validate_repository_binding(
@@ -531,6 +607,30 @@ def _validate_repository_binding(
     return errors
 
 
+def _validate_expected_identity(
+    expected_role: object,
+    expected_config_path: object,
+) -> list[str]:
+    errors = [
+        *_text(expected_role, "expected_role"),
+        *_text(expected_config_path, "expected_config_path", maximum=MAX_CONFIG_PATH_LENGTH),
+    ]
+    if errors:
+        return errors
+    assert isinstance(expected_role, str)
+    assert isinstance(expected_config_path, str)
+    if _ROLE_RE.fullmatch(expected_role) is None:
+        errors.append("expected_role has an invalid identifier")
+    if expected_config_path != f".codex/agents/{expected_role.replace('_', '-')}.toml":
+        errors.append("expected_config_path does not match expected_role")
+    if "\\" in expected_config_path:
+        errors.append("expected_config_path must use a safe POSIX relative path")
+    relative = Path(expected_config_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        errors.append("expected_config_path must not escape the repository")
+    return errors
+
+
 def verify_receipt(
     receipt: object,
     *,
@@ -538,6 +638,8 @@ def verify_receipt(
     expected_pr_id: str,
     expected_base_sha: str,
     expected_head_sha: str,
+    expected_role: str,
+    expected_config_path: str,
 ) -> list[str]:
     """Return strict admission errors for structural host-runtime evidence.
 
@@ -555,6 +657,7 @@ def verify_receipt(
     ):
         if type(value) is not str or _OBJECT_SHA_RE.fullmatch(value) is None:
             expectation_errors.append(f"{field} must be a lowercase commit SHA")
+    expectation_errors.extend(_validate_expected_identity(expected_role, expected_config_path))
     if expectation_errors:
         return expectation_errors
 
@@ -568,7 +671,30 @@ def verify_receipt(
     type_errors = _validate_exact_field_types(decoded)
     if type_errors:
         return type_errors
-    errors = _validate_values(decoded)
+    binding_errors = _validate_repository_binding(
+        repo_root,
+        decoded,
+        expected_pr_id=expected_pr_id,
+        expected_base_sha=expected_base_sha,
+        expected_head_sha=expected_head_sha,
+    )
+    if binding_errors:
+        return binding_errors
+    role_errors, allowed_mcp_tools = _validate_role_intent(
+        repo_root,
+        decoded,
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
+        expected_head_sha=expected_head_sha,
+    )
+    errors = [*role_errors]
+    errors.extend(
+        _validate_values(
+            decoded,
+            trusted_role=expected_role,
+            allowed_mcp_tools=allowed_mcp_tools,
+        )
+    )
     if errors:
         return errors
     try:
@@ -578,25 +704,7 @@ def verify_receipt(
         return ["receipt contains non-serializable text or values"]
     if serialized_size > MAX_RECEIPT_BYTES:
         return ["receipt exceeds 64 KiB"]
-    errors.extend(
-        _validate_repository_binding(
-            repo_root,
-            decoded,
-            expected_pr_id=expected_pr_id,
-            expected_base_sha=expected_base_sha,
-            expected_head_sha=expected_head_sha,
-        )
-    )
-    if errors:
-        return errors
-    errors.extend(
-        _validate_role_intent(
-            repo_root,
-            decoded,
-            expected_head_sha=expected_head_sha,
-        )
-    )
-    return errors
+    return []
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -606,6 +714,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-pr-id", required=True, help="trusted expected PR identifier")
     parser.add_argument("--expected-base-sha", required=True, help="trusted exact base commit SHA")
     parser.add_argument("--expected-head-sha", required=True, help="trusted exact head commit SHA")
+    parser.add_argument("--expected-role", required=True, help="trusted expected named role")
+    parser.add_argument(
+        "--expected-config-path",
+        required=True,
+        help="trusted exact role TOML path",
+    )
     args = parser.parse_args(argv)
     try:
         raw = args.verify.read_bytes()
@@ -621,6 +735,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_pr_id=args.expected_pr_id,
         expected_base_sha=args.expected_base_sha,
         expected_head_sha=args.expected_head_sha,
+        expected_role=args.expected_role,
+        expected_config_path=args.expected_config_path,
     )
     if errors:
         for error in errors:

@@ -205,7 +205,10 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
     if "plugins" in config:
         errors.append("repo-level Codex plugin configuration requires a separate reviewed adoption PR")
     if type(features) is not dict or features.get("apps") is not False:
-        errors.append("project Codex Apps must be explicitly disabled with features.apps = false")
+        errors.append(
+            "project Codex Apps configuration intent must set features.apps = false; "
+            "inherited/global/plugin/managed runtime Apps remain outside this checker"
+        )
     if "mcp_servers" in config:
         errors.append("project-level MCP servers are not permitted; configure only the reviewed role intent")
     return errors
@@ -268,9 +271,8 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append(f"invalid name/model/effort for {name}")
             if role.get("agents") != {"enabled": False}:
                 errors.append(f"{name} must disable nested delegation")
-            role_features = role.get("features")
-            if type(role_features) is dict and role_features.get("apps") is True:
-                errors.append(f"{name} must not override project Apps disablement")
+            if "features" in role:
+                errors.append(f"{name} must not declare role-level features or override project Apps")
             if readonly and role.get("sandbox_mode") != "read-only":
                 errors.append(f"{name} must request read-only mode")
             mcp_servers = role.get("mcp_servers")
