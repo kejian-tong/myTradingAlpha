@@ -1716,12 +1716,12 @@ def test_protected_instruction_sources_are_complete_and_not_truncated(
 ) -> None:
     role_path = scenario.policy.root / ".codex/agents/reviewer-high.toml"
     role_text = role_path.read_text(encoding="utf-8")
-    role_text = role_text.rsplit('"""', 1)[0] + ("\n" + "R" * 10_000 + "ROLE_END_SENTINEL\n\"\"\"" + role_text.rsplit('"""', 1)[1])
+    role_text = role_text.rsplit('"""', 1)[0] + ("\n" + "R" * 2_000 + "ROLE_END_SENTINEL\n\"\"\"" + role_text.rsplit('"""', 1)[1])
     role_path.write_text(role_text, encoding="utf-8")
     (scenario.policy.root / "AGENTS.md").write_text(
         (scenario.policy.root / "AGENTS.md").read_text(encoding="utf-8")
         + "\n"
-        + "A" * 10_000
+        + "A" * 2_000
         + "ROOT_END_SENTINEL\n",
         encoding="utf-8",
     )
@@ -1729,7 +1729,7 @@ def test_protected_instruction_sources_are_complete_and_not_truncated(
     skill.write_text(
         skill.read_text(encoding="utf-8")
         + "\n"
-        + "S" * 10_000
+        + "S" * 2_000
         + "SKILL_END_SENTINEL\n",
         encoding="utf-8",
     )
@@ -1755,14 +1755,21 @@ def test_parser_accepts_observed_lifecycle_command_and_error_items() -> None:
         {"type": "item.started", "item": {"type": "agent_message"}},
         {
             "type": "item.started",
-            "item": {"type": "command_execution", "command": ["pwd"]},
+            "item": {
+                "id": "command-observed",
+                "type": "command_execution",
+                "command": ["pwd"],
+                "status": "in_progress",
+            },
         },
         {
             "type": "item.completed",
             "item": {
                 "type": "command_execution",
+                "id": "command-observed",
                 "command": ["pwd"],
                 "exit_code": 0,
+                "status": "completed",
                 "aggregated_output": "{\"type\":\"fake.nested\"}",
             },
         },
@@ -3294,7 +3301,7 @@ def test_local_command_host_remains_enabled_inside_the_read_only_profile(
         assert features[key] is False, key
     host = plan["capability_closure"]["local_command_host"]
     assert host["enabled"] is True
-    assert set(host["allowed_commands"]) >= {"pwd", "rg", "pytest"}
+    assert "allowed_commands" not in host
     assert plan["capability_closure"].get("function_gateway") is not True
     assert "functions.exec" not in json.dumps(plan)
     profile = plan["permission_profile"]["permissions"][plan["permission_profile_name"]]

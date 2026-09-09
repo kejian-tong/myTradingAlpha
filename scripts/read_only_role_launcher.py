@@ -16,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import signal
 import stat
 import subprocess
@@ -53,10 +54,7 @@ _HOST_WARN_RE = re.compile(
 )
 _AGENT_ROLE_PARSE_WARNING_RE = re.compile(
     r"\AIgnoring malformed agent role definition: failed to parse agent role file at "
-    r"/[^\r\n]{1,320}\.toml: TOML parse error at line [1-9][0-9]*, column [1-9][0-9]*\Z"
-)
-_LEGACY_DISABLED_AGENT_WARNING_RE = re.compile(
-    r"\AIgnoring malformed agent role definition at /[^\r\n]{1,320}: agents are disabled\Z"
+    r"/[\x20-\x7e]{1,320}\.toml: TOML parse error at line [1-9][0-9]*, column [1-9][0-9]*\Z"
 )
 
 READ_ONLY_ROLES = frozenset(
@@ -96,6 +94,7 @@ _PROBE_ORDER = (
     "target_secret_denied",
     "target_write_denied",
     "credential_read_denied",
+    "nested_codex_denied",
     "scratch_write",
     "secret_env_absent",
     "network_denied",
@@ -245,8 +244,10 @@ def _git(
         text=True,
         timeout=5,
     )
+    if completed.stderr:
+        raise LauncherError("Git lookup emitted stderr")
     if completed.returncode != 0:
-        if allow_failure:
+        if allow_failure and not completed.stdout:
             return ""
         raise LauncherError("Git lookup failed")
     return completed.stdout.strip()
@@ -260,6 +261,8 @@ def _git_bytes(git_binary: Path, root: Path, *arguments: str) -> bytes:
         env=_git_environment(),
         timeout=5,
     )
+    if completed.stderr:
+        raise LauncherError("Git object lookup emitted stderr")
     if completed.returncode != 0:
         raise LauncherError("Git object lookup failed")
     return completed.stdout
@@ -892,6 +895,7 @@ def build_permission_profile(
     dependency_roots: Sequence[Path],
     scratch_root: Path,
     credential_probe_path: Path | None = None,
+    forbidden_executable_path: Path | None = None,
 ) -> dict[str, object]:
     """Build a per-run Permission Profile pilot without legacy sandbox flags."""
 
@@ -949,6 +953,12 @@ def build_permission_profile(
     for dependency in dependency_roots:
         permissions[str(Path(dependency))] = "read"
         permissions[str(Path(dependency).resolve())] = "read"
+    if forbidden_executable_path is not None:
+        forbidden_executable = _require_absolute_path(
+            forbidden_executable_path, "forbidden executable"
+        ).resolve(strict=True)
+        permissions[str(forbidden_executable)] = "deny"
+        denied.append(str(forbidden_executable))
     profile_name = "launcher_read_only"
     return {
         "scope": "launcher_pilot",
@@ -1095,6 +1105,7 @@ def build_invocation_plan(
         dependency_roots=tuple(toolchain_roots),
         scratch_root=scratch,
         credential_probe_path=credential_probe,
+        forbidden_executable_path=binary,
     )
     profile_shell = profile["shell_environment"]
     profile_shell["set"]["PATH"] = str(toolchain["path"])
@@ -1105,7 +1116,6 @@ def build_invocation_plan(
     capability_closure = dict.fromkeys(_CAPABILITY_KEYS, False)
     capability_closure["local_command_host"] = {
         "enabled": True,
-        "allowed_commands": ["pwd", "rg", "pytest"],
         "filesystem": "permission_profile",
         "network": "permission_profile",
     }
@@ -1187,6 +1197,7 @@ def build_invocation_plan(
         "target_secret_denied": str(Path(target["root"]) / DENY_CANARY_RELATIVE),
         "target_write_denied": str(Path(target["root"]) / ".launcher-target-write-probe"),
         "credential_read_denied": str(credential_path),
+        "nested_codex_denied": str(binary.resolve()),
         "scratch_write": str(scratch / ".launcher-scratch-probe"),
         "secret_env_absent": str(scratch / ".launcher-secret-env-probe"),
         "network_denied": "CODEX_SANDBOX_NETWORK_DISABLED=1",
@@ -1301,6 +1312,8 @@ def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dic
         argv.extend(("/usr/bin/head", "-c", "1", str(paths[probe_name])))
     elif probe_name in {"target_write_denied", "scratch_write"}:
         argv.extend(("/usr/bin/touch", "--", str(paths[probe_name])))
+    elif probe_name == "nested_codex_denied":
+        argv.extend((str(plan["binary_realpath"]), "--version"))
     elif probe_name == "secret_env_absent":
         argv.extend(("/bin/sh", "-c", "test -z \"${LAUNCHER_SECRET_SENTINEL:-}\""))
     else:
@@ -1359,6 +1372,7 @@ def _probe_result(name: str, value: object) -> bool:
         "policy_secret_denied",
         "target_secret_denied",
         "credential_read_denied",
+        "nested_codex_denied",
     }:
         return (
             value.get("denied") is True
@@ -1405,6 +1419,7 @@ def _evaluate_sandbox_probe(
         "credential_read_denied",
         "policy_secret_denied",
         "target_secret_denied",
+        "nested_codex_denied",
     }:
         result["denied"] = returncode != 0 and not stdout and not marker_exists
     elif probe_name == "scratch_write":
@@ -1630,18 +1645,21 @@ def _known_agent_role_warning(message: object) -> bool:
     if len(message.encode("utf-8")) > MAX_TEXT_LENGTH:
         return False
     lines = message.splitlines()
-    if len(lines) == 1 and _LEGACY_DISABLED_AGENT_WARNING_RE.fullmatch(lines[0]):
-        return True
     if not lines or _AGENT_ROLE_PARSE_WARNING_RE.fullmatch(lines[0]) is None:
         return False
     if len(lines) == 1:
         return True
+    return _toml_diagnostic_lines_are_exact(lines[1:])
+
+
+def _toml_diagnostic_lines_are_exact(lines: Sequence[str]) -> bool:
     return bool(
-        len(lines) == 5
-        and re.fullmatch(r"\s*\|\s*", lines[1])
-        and re.fullmatch(r"[1-9][0-9]*\s*\|[\x20-\x7e]*", lines[2])
-        and re.fullmatch(r"\s*\|\s*\^+\s*", lines[3])
-        and re.fullmatch(r"[\x20-\x7e]+", lines[4])
+        len(lines) == 4
+        and lines[0] == "  |"
+        and re.fullmatch(r"[1-9][0-9]* \| [\x20-\x7e]*", lines[1])
+        and re.fullmatch(r"  \| +\^+", lines[2])
+        and re.fullmatch(r"[\x20-\x7e]+", lines[3])
+        and all(len(line.encode("utf-8")) <= MAX_TEXT_LENGTH for line in lines)
     )
 
 
@@ -1655,63 +1673,106 @@ def _stderr_is_admissible(raw: str, *, agents_disabled: bool) -> bool:
     lines = raw.splitlines()
     if not lines or len(lines) > 32:
         return False
-    if all(_known_agent_role_warning(line) for line in lines):
-        return True
-    in_loader_detail = False
-    blank_loader_separator = False
-    for line in lines:
-        match = _HOST_WARN_RE.fullmatch(line)
-        if match:
-            target = match.group("target")
-            message = match.group("message")
-            if target == "codex_agent_roles::loader":
-                if not _known_agent_role_warning(message):
-                    return False
-                in_loader_detail = True
-                blank_loader_separator = False
+    index = 0
+    saw_known_warning = False
+    while index < len(lines):
+        match = _HOST_WARN_RE.fullmatch(lines[index])
+        if match is None:
+            return False
+        target = match.group("target")
+        message = match.group("message")
+        if target == "codex_agent_roles::loader":
+            if not _known_agent_role_warning(message):
+                return False
+            details = lines[index + 1 : index + 5]
+            if not _toml_diagnostic_lines_are_exact(details):
+                return False
+            index += 5
+            if index < len(lines) and lines[index] == "":
+                index += 1
+        elif message == (
+            "state db discrepancy during "
+            "find_thread_path_by_id_str_in_subdir: falling_back"
+        ):
+            index += 1
+        else:
+            return False
+        saw_known_warning = True
+    return saw_known_warning
+
+
+def _bounded_command_tokens(command: object) -> tuple[str, ...]:
+    if type(command) is str:
+        if not command or len(command.encode("utf-8")) > 16 * 1024:
+            raise LauncherError("command execution is invalid or oversized")
+        try:
+            tokens = tuple(shlex.split(command))
+        except ValueError as exc:
+            raise LauncherError("command execution shell text is malformed") from exc
+    elif type(command) is list and command and len(command) <= 256 and all(
+        type(value) is str and value for value in command
+    ):
+        if sum(len(value.encode("utf-8")) for value in command) > 16 * 1024:
+            raise LauncherError("command execution is invalid or oversized")
+        tokens = tuple(command)
+    else:
+        raise LauncherError("command execution is malformed")
+    if not tokens:
+        raise LauncherError("command execution is empty")
+    return tokens
+
+
+def _command_attempts_nested_codex(
+    command: object, *, forbidden_codex_binary: str | None
+) -> bool:
+    tokens = list(_bounded_command_tokens(command))
+    executable = Path(tokens[0]).name
+    if executable == "env":
+        index = 1
+        while index < len(tokens):
+            value = tokens[index]
+            if value in {"-u", "--unset"} and index + 1 < len(tokens):
+                index += 2
                 continue
-            if message != (
-                "state db discrepancy during "
-                "find_thread_path_by_id_str_in_subdir: falling_back"
-            ):
-                return False
-            in_loader_detail = False
-            blank_loader_separator = False
-            continue
-        if not in_loader_detail or len(line.encode("utf-8")) > MAX_TEXT_LENGTH:
+            if value.startswith("-") or ("=" in value and not value.startswith("=")):
+                index += 1
+                continue
+            break
+        tokens = tokens[index:]
+        if not tokens:
             return False
-        if line == "":
-            if blank_loader_separator:
-                return False
-            blank_loader_separator = True
-            continue
-        if blank_loader_separator:
-            return False
-        if re.search(
-            r"\b(?:MCP|tool|network|auth|credential|panic|failed)\b",
-            line,
-            re.IGNORECASE,
-        ):
-            return False
-        if not (
-            re.fullmatch(r"\s*\|.*", line)
-            or re.fullmatch(r"\s*\d+\s*\|.*", line)
-            or re.fullmatch(r"[\x20-\x7e]+", line)
-        ):
-            return False
-    return True
+        executable = Path(tokens[0]).name
+    if executable in {"sh", "bash", "dash", "zsh"}:
+        for index, value in enumerate(tokens[1:], start=1):
+            if value.startswith("-") and "c" in value[1:] and index + 1 < len(tokens):
+                return _command_attempts_nested_codex(
+                    tokens[index + 1], forbidden_codex_binary=forbidden_codex_binary
+                )
+        return False
+    candidate = tokens[0]
+    if executable == "codex":
+        return True
+    if forbidden_codex_binary is None:
+        return False
+    return candidate == forbidden_codex_binary or str(Path(candidate).resolve()) == forbidden_codex_binary
 
 
 def parse_codex_jsonl(
     raw: object,
     *,
     role: str = "reviewer_high",
+    forbidden_codex_binary: str | None = None,
     max_bytes: int = MAX_JSONL_BYTES,
 ) -> dict[str, object]:
     """Parse bounded exec JSONL with role-aware fail-closed MCP admission."""
 
     if type(role) is not str or role not in READ_ONLY_ROLES:
         raise LauncherError("JSONL role identity is invalid")
+    if forbidden_codex_binary is not None and (
+        type(forbidden_codex_binary) is not str
+        or not Path(forbidden_codex_binary).is_absolute()
+    ):
+        raise LauncherError("forbidden Codex binary identity is invalid")
     if type(raw) is str:
         encoded = raw.encode("utf-8")
     elif type(raw) is bytes:
@@ -1738,6 +1799,8 @@ def parse_codex_jsonl(
     warnings: list[object] = []
     active_mcp: dict[str, dict[str, object]] = {}
     completed_mcp: set[str] = set()
+    active_commands: dict[str, tuple[str, ...]] = {}
+    completed_commands: set[str] = set()
     mcp_call_count = 0
     allowed = {
         "thread.started", "turn.started", "item.started", "item.updated",
@@ -1838,6 +1901,64 @@ def parse_codex_jsonl(
                     else:
                         raise LauncherError("Docs MCP completion status is invalid")
                     continue
+                if item_type == "command_execution":
+                    if event["type"] == "item.updated":
+                        raise LauncherError("command execution updates are not admitted")
+                    item_id = item.get("id")
+                    if (
+                        type(item_id) is not str
+                        or not item_id
+                        or len(item_id.encode("utf-8")) > MAX_TEXT_LENGTH
+                    ):
+                        raise LauncherError("command execution identity is invalid")
+                    command = item.get("command")
+                    tokens = _bounded_command_tokens(command)
+                    if _command_attempts_nested_codex(
+                        command, forbidden_codex_binary=forbidden_codex_binary
+                    ):
+                        raise LauncherError("nested Codex invocation attempt")
+                    if event["type"] == "item.started":
+                        if (
+                            set(item) != {"id", "type", "command", "status"}
+                            or item.get("status") != "in_progress"
+                            or item_id in active_commands
+                            or item_id in completed_commands
+                        ):
+                            raise LauncherError("command start lifecycle is invalid")
+                        active_commands[item_id] = tokens
+                        continue
+                    if set(item) != {
+                        "aggregated_output",
+                        "command",
+                        "exit_code",
+                        "id",
+                        "status",
+                        "type",
+                    }:
+                        raise LauncherError("command completion shape is invalid")
+                    if (
+                        item_id not in active_commands
+                        or active_commands.pop(item_id) != tokens
+                        or item_id in completed_commands
+                    ):
+                        raise LauncherError("command completion is unmatched or replayed")
+                    completed_commands.add(item_id)
+                    output = item.get("aggregated_output")
+                    status = item.get("status")
+                    exit_code = item.get("exit_code")
+                    if (
+                        type(output) is not str
+                        or len(output.encode("utf-8")) > 64 * 1024
+                        or status not in {"completed", "failed", "declined"}
+                        or (status == "completed" and type(exit_code) is not int)
+                        or (
+                            status in {"failed", "declined"}
+                            and exit_code is not None
+                            and type(exit_code) is not int
+                        )
+                    ):
+                        raise LauncherError("command completion result is malformed")
+                    continue
                 if item_type not in {
                     "agent_message",
                     "command_execution",
@@ -1853,11 +1974,8 @@ def parse_codex_jsonl(
                         if type(text) is not str or len(text.encode("utf-8")) > MAX_TEXT_LENGTH * 128:
                             raise LauncherError("agent message is invalid or oversized")
                         final_message = text
-                elif item_type == "command_execution":
-                    if event["type"] == "item.completed" and type(item.get("exit_code")) is not int:
-                        raise LauncherError("command execution result is malformed")
                 elif item_type == "warning":
-                    warnings.append(item.get("message", ""))
+                    errors.append(item.get("message", ""))
                 elif item_type == "error":
                     message = item.get("message", "")
                     if _known_agent_role_warning(message):
@@ -1871,6 +1989,8 @@ def parse_codex_jsonl(
         raise LauncherError("JSONL lifecycle events are incomplete")
     if active_mcp:
         raise LauncherError("Docs MCP lifecycle is incomplete")
+    if active_commands:
+        raise LauncherError("command lifecycle is incomplete")
     failed = "turn.failed" in types or "error" in types or bool(errors)
     if not failed and (types.count("turn.completed") != 1 or types[-1] != "turn.completed"):
         raise LauncherError("JSONL terminal event is missing or replayed")
@@ -2139,7 +2259,11 @@ def run_isolated_role(
     if not _stderr_is_admissible(stderr, agents_disabled=agents_disabled):
         return fail(["isolated role emitted unadmitted stderr"])
     try:
-        parsed = parse_codex_jsonl(stdout, role=str(plan["role"]))
+        parsed = parse_codex_jsonl(
+            stdout,
+            role=str(plan["role"]),
+            forbidden_codex_binary=str(plan["binary_realpath"]),
+        )
     except (LauncherError, ValueError) as exc:
         return fail([_diagnostic(exc)])
     if parsed.get("status") != "completed":
