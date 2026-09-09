@@ -490,6 +490,73 @@ def _find_required_tool(name: str) -> Path:
     raise LauncherError(f"required {name} executable is unavailable")
 
 
+def _default_runtime_dependency_probe(executable: Path) -> tuple[Path, ...]:
+    if sys.platform != "darwin":
+        return ()
+    otool = _validated_tool_path("otool", Path("/usr/bin/otool"))
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("DYLD_", "LD_"))
+    }
+    completed = subprocess.run(
+        [str(otool), "-L", str(executable)],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+        shell=False,
+    )
+    if completed.returncode != 0:
+        raise LauncherError("runtime library dependency probe failed")
+    dependencies: list[Path] = []
+    for line in completed.stdout.splitlines()[1:]:
+        value = line.strip().split(" (compatibility version", 1)[0]
+        if not value:
+            continue
+        if value.startswith("@"):
+            raise LauncherError("runtime library dependency is not absolute")
+        dependency = Path(value)
+        if not dependency.is_absolute():
+            raise LauncherError("runtime library dependency is not absolute")
+        dependencies.append(dependency)
+    return tuple(dependencies)
+
+
+def _runtime_dependency_roots(
+    executable: Path,
+    *,
+    probe: Callable[[Path], Sequence[Path]] | None = None,
+) -> list[str]:
+    """Resolve exact non-system Mach-O library roots without ambient loaders."""
+
+    dependency_probe = probe or _default_runtime_dependency_probe
+    system_roots = (Path("/usr/lib"), Path("/System/Library"))
+    pending = [Path(executable)]
+    seen: set[Path] = set()
+    roots: list[Path] = []
+    while pending:
+        current = pending.pop(0).resolve(strict=True)
+        if current in seen:
+            continue
+        seen.add(current)
+        for raw_dependency in dependency_probe(current):
+            dependency = Path(raw_dependency)
+            if not dependency.is_absolute():
+                raise LauncherError("runtime library dependency is not absolute")
+            if any(
+                dependency == root or dependency.is_relative_to(root)
+                for root in system_roots
+            ):
+                continue
+            resolved = _validated_tool_path("runtime library", dependency)
+            roots.extend((resolved.parent, resolved))
+            if resolved not in seen:
+                pending.append(resolved)
+    return _ordered_unique_paths(roots)
+
+
 def _toolchain(
     *,
     git_binary: Path | None = None,
@@ -539,6 +606,7 @@ def _toolchain(
             *(Path(value["realpath"]) for value in executables.values()),
         ]
     )
+    runtime_dependency_roots = _runtime_dependency_roots(git_path)
     git_prefix = git_path.parent.parent
     read_roots = _ordered_unique_paths(
         [
@@ -546,6 +614,7 @@ def _toolchain(
             git_prefix,
             git_prefix / "libexec",
             git_prefix / "libexec" / "git-core",
+            *(Path(value) for value in runtime_dependency_roots),
         ]
     )
     commands: dict[str, list[str]] = {
