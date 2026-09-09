@@ -177,6 +177,10 @@ roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `c
 binary acceptance. The reviewed binary registry is the signed macOS Codex 0.153.4 bundle; a non-Darwin
 default probe without equivalent TeamIdentifier/signature evidence remains `insufficient_evidence`.
 
+For Harness-AUD-03, the durable parent-to-RED test-only repair is identified as `1025090`; subsequent
+runtime-path repair RED commits must precede each repair GREEN. The abandoned v2 active GREEN is not the final contract;
+the isolated launcher and its repair-RED evidence are the final current-runtime path.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**
@@ -261,6 +265,11 @@ The independent reviewer must verify that:
 - when feasible, the focused RED command is rerun at the RED commit in an isolated worktree or equivalent
   non-destructive checkout;
 - the production implementation appears only after the RED commit.
+
+For the current-runtime launcher, the PR evidence must also bind the explicit `--git-binary`,
+`--expected-git-version`, and `--expected-git-sha256` values, plus the exact RED lineage. A repair RED is
+test-only and must precede its repair GREEN; a prior rejected GREEN or receipt proposal cannot substitute
+for the current launcher contract.
 
 If the claimed RED evidence cannot be independently established, mark the TDD evidence
 `insufficient_evidence` and block the merge until corrected.

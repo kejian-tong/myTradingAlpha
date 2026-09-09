@@ -202,9 +202,11 @@ def _reject_ambient_git_redirects() -> None:
         raise LauncherError("ambient Git redirect variables are not permitted")
 
 
-def _git(root: Path, *arguments: str, allow_failure: bool = False) -> str:
+def _git(
+    git_binary: Path, root: Path, *arguments: str, allow_failure: bool = False
+) -> str:
     completed = subprocess.run(
-        ["git", "-C", str(root), *arguments],
+        [str(git_binary), "-C", str(root), *arguments],
         check=False,
         capture_output=True,
         env=_git_environment(),
@@ -218,9 +220,9 @@ def _git(root: Path, *arguments: str, allow_failure: bool = False) -> str:
     return completed.stdout.strip()
 
 
-def _git_bytes(root: Path, *arguments: str) -> bytes:
+def _git_bytes(git_binary: Path, root: Path, *arguments: str) -> bytes:
     completed = subprocess.run(
-        ["git", "-C", str(root), *arguments],
+        [str(git_binary), "-C", str(root), *arguments],
         check=False,
         capture_output=True,
         env=_git_environment(),
@@ -234,6 +236,7 @@ def _git_bytes(root: Path, *arguments: str) -> bytes:
 def _repo_state(
     root_value: object,
     *,
+    git_binary: Path,
     expected_sha: object,
     expected_tree_sha: object,
     detached: bool,
@@ -243,26 +246,50 @@ def _repo_state(
         raise LauncherError("policy/target worktrees must not live under a system temp root")
     if not root.is_dir() or not (root / ".git").exists():
         raise LauncherError("repository root is unavailable")
-    if _git(root, "config", "--local", "--get", "extensions.partialClone", allow_failure=True):
+    if _git(
+        git_binary,
+        root,
+        "config",
+        "--local",
+        "--get",
+        "extensions.partialClone",
+        allow_failure=True,
+    ):
         raise LauncherError("partial repositories are not permitted")
-    if _git(root, "config", "--local", "--get-regexp", r"^remote\..*\.promisor$", allow_failure=True):
+    if _git(
+        git_binary,
+        root,
+        "config",
+        "--local",
+        "--get-regexp",
+        r"^remote\..*\.promisor$",
+        allow_failure=True,
+    ):
         raise LauncherError("promisor repositories are not permitted")
-    if _git(root, "replace", "-l", allow_failure=True):
+    if _git(git_binary, root, "replace", "-l", allow_failure=True):
         raise LauncherError("Git replace refs are not permitted")
-    if _git(root, "status", "--porcelain=v1", "--untracked-files=all"):
+    if _git(git_binary, root, "status", "--porcelain=v1", "--untracked-files=all"):
         raise LauncherError("repository must be clean")
-    head = _git(root, "rev-parse", "--verify", "HEAD")
-    tree = _git(root, "rev-parse", "--verify", "HEAD^{tree}")
+    head = _git(git_binary, root, "rev-parse", "--verify", "HEAD")
+    tree = _git(git_binary, root, "rev-parse", "--verify", "HEAD^{tree}")
     expected_head = _require_sha(expected_sha, "expected SHA")
     expected_tree = _require_sha(expected_tree_sha, "expected tree SHA", tree=True)
     if head != expected_head or tree != expected_tree:
         raise LauncherError("repository exact SHA/tree binding failed")
-    symbolic = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", allow_failure=True)
+    symbolic = _git(
+        git_binary,
+        root,
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "HEAD",
+        allow_failure=True,
+    )
     if detached and symbolic:
         raise LauncherError("target repository must be detached")
     if not detached and not symbolic:
         raise LauncherError("policy repository must retain a symbolic HEAD")
-    common_raw = Path(_git(root, "rev-parse", "--git-common-dir"))
+    common_raw = Path(_git(git_binary, root, "rev-parse", "--git-common-dir"))
     common = (root / common_raw if not common_raw.is_absolute() else common_raw).resolve()
     return {
         "root": root,
@@ -283,13 +310,16 @@ def _parse_policy_toml(raw: bytes, label: str) -> dict[str, Any]:
     return parsed
 
 
-def _protected_file(root: Path, head_sha: str, relative: str) -> bytes:
+def _protected_file(
+    git_binary: Path, root: Path, head_sha: str, relative: str
+) -> bytes:
     if not relative or relative.startswith("/") or ".." in Path(relative).parts:
         raise LauncherError("protected policy path escapes the policy tree")
-    return _git_bytes(root, "show", f"{head_sha}:{relative}")
+    return _git_bytes(git_binary, root, "show", f"{head_sha}:{relative}")
 
 
 def _role_config(
+    git_binary: Path,
     policy_root: Path,
     policy_head: str,
     role: object,
@@ -300,7 +330,7 @@ def _role_config(
         raise LauncherError("role is not an approved read-only role")
     relative = ROLE_PATHS[role]
     configured = _parse_policy_toml(
-        _protected_file(policy_root, policy_head, relative), "role"
+        _protected_file(git_binary, policy_root, policy_head, relative), "role"
     )
     if set(configured) - _ALLOWED_ROLE_KEYS:
         raise LauncherError("role TOML contains unknown fields")
@@ -347,7 +377,9 @@ def _role_config(
     return relative, configured
 
 
-def _protected_instructions(policy_root: Path, policy_head: str, role_instructions: str) -> str:
+def _protected_instructions(
+    git_binary: Path, policy_root: Path, policy_head: str, role_instructions: str
+) -> str:
     required_paths = (
         "AGENTS.md",
         "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
@@ -358,7 +390,7 @@ def _protected_instructions(policy_root: Path, policy_head: str, role_instructio
     )
     parts = [role_instructions]
     for relative in required_paths:
-        raw = _protected_file(policy_root, policy_head, relative)
+        raw = _protected_file(git_binary, policy_root, policy_head, relative)
         if not raw or len(raw) > MAX_ROLE_INSTRUCTIONS:
             raise LauncherError("protected policy instruction is missing or oversized")
         parts.append(raw.decode("utf-8"))
@@ -395,53 +427,144 @@ def _toml_value(value: object) -> str:
     raise LauncherError("unsupported TOML config value")
 
 
-def _toolchain() -> dict[str, object]:
-    paths = sysconfig.get_paths()
-    read_roots = {str(Path(sys.prefix).resolve()), str(Path(sys.base_prefix).resolve())}
-    read_roots.update(str(Path(value).resolve()) for value in paths.values())
-    executables: dict[str, dict[str, str]] = {}
-    path_dirs = {"/usr/bin", "/bin", str(Path(sys.executable).resolve().parent)}
-    for name, candidate in {
-        "python": shutil.which("python") or sys.executable,
-        "git": shutil.which("git"),
-        "rg": shutil.which("rg"),
-        "ruff": shutil.which("ruff"),
-    }.items():
-        if not candidate:
-            continue
-        candidate_path = Path(candidate)
-        try:
-            path = candidate_path.resolve(strict=True)
-            info = path.stat()
-        except OSError as exc:
-            raise LauncherError(f"toolchain executable {name} is unavailable") from exc
-        if not stat.S_ISREG(info.st_mode):
-            raise LauncherError(f"toolchain executable {name} is not a regular file")
-        executables[name] = {"realpath": str(path), "parent": str(path.parent)}
-        path_dirs.add(str(path.parent))
-    return {
-        "read_roots": sorted(read_roots),
-        "executables": executables,
-        "path": os.pathsep.join(sorted(path_dirs)),
-        "commands": {
-            "python_encodings": [
-                sys.executable,
-                "-c",
-                "import encodings,sys; print(encodings.__file__)",
-            ],
-            "pytest_collection": [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+def _ordered_unique_paths(paths: Sequence[Path]) -> list[str]:
+    ordered: list[str] = []
+    for path in paths:
+        value = str(path.resolve())
+        if value not in ordered:
+            ordered.append(value)
+    return ordered
+
+
+def _validated_tool_path(name: str, candidate: Path) -> Path:
+    try:
+        path = candidate.resolve(strict=True)
+        info = path.stat()
+    except OSError as exc:
+        raise LauncherError(f"required {name} executable is unavailable") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise LauncherError(f"required {name} executable is not a regular file")
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise LauncherError(f"required {name} executable ownership/mode is unsafe")
+    return path
+
+
+def _find_required_tool(name: str) -> Path:
+    directories = (
+        Path(sys.prefix) / "bin",
+        Path(sys.base_prefix) / "bin",
+        Path("/usr/bin"),
+        Path("/bin"),
+        Path("/usr/local/bin"),
+        Path("/opt/homebrew/bin"),
+        Path("/Applications/ChatGPT.app/Contents/Resources"),
+    )
+    ambient = shutil.which(name)
+    allowed_directories = {directory.resolve() for directory in directories}
+    if ambient:
+        ambient_path = Path(ambient).resolve()
+        if ambient_path.parent in allowed_directories:
+            return _validated_tool_path(name, ambient_path)
+    for directory in directories:
+        candidate = directory / name
+        if candidate.exists():
+            return _validated_tool_path(name, candidate)
+    raise LauncherError(f"required {name} executable is unavailable")
+
+
+def _toolchain(
+    *,
+    git_binary: Path | None = None,
+    git_root: Path | None = None,
+    git_commit: str | None = None,
+) -> dict[str, object]:
+    if git_binary is None:
+        raise LauncherError("explicit Git identity is required for the toolchain")
+    python_path = _validated_tool_path("python", Path(sys.executable))
+    git_path = _validated_tool_path("git", git_binary)
+    rg_path = _find_required_tool("rg")
+    ruff_path = _find_required_tool("ruff")
+    executables = {
+        "python": {
+            "realpath": str(python_path),
+            "parent": str(python_path.parent),
         },
+        "git": {"realpath": str(git_path), "parent": str(git_path.parent)},
+        "rg": {"realpath": str(rg_path), "parent": str(rg_path.parent)},
+        "ruff": {"realpath": str(ruff_path), "parent": str(ruff_path.parent)},
+    }
+    path_dirs = _ordered_unique_paths(
+        [
+            Path(sys.prefix) / "bin",
+            python_path.parent,
+            git_path.parent,
+            rg_path.parent,
+            ruff_path.parent,
+            Path("/usr/bin"),
+            Path("/bin"),
+        ]
+    )
+    read_roots = _ordered_unique_paths(
+        [
+            Path(sys.prefix),
+            Path(sys.base_prefix),
+            *(Path(value) for value in sysconfig.get_paths().values()),
+            *(Path(value["parent"]) for value in executables.values()),
+            *(Path(value["realpath"]) for value in executables.values()),
+        ]
+    )
+    git_prefix = git_path.parent.parent
+    read_roots = _ordered_unique_paths(
+        [
+            *(Path(value) for value in read_roots),
+            git_prefix,
+            git_prefix / "libexec",
+            git_prefix / "libexec" / "git-core",
+        ]
+    )
+    commands: dict[str, list[str]] = {
+        "python_encodings": [
+            sys.executable,
+            "-c",
+            "import encodings,sys; print(encodings.__file__)",
+        ],
+        "pytest_collection": [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+        ],
+        "rg_version": [str(rg_path), "--version"],
+        "ruff_version": [str(ruff_path), "--version"],
+    }
+    if git_root is not None and git_commit is not None:
+        commands["git_resolve"] = [
+            str(git_path),
+            "-C",
+            str(git_root),
+            "rev-parse",
+            "--verify",
+            git_commit,
+        ]
+    return {
+        "read_roots": read_roots,
+        "executables": executables,
+        "path": os.pathsep.join(path_dirs),
+        "commands": commands,
+        "smoke_commands": dict(commands),
     }
 
 
-def _default_binary_probe(path: Path) -> dict[str, object]:
-    def file_digest() -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            while chunk := stream.read(64 * 1024):
-                digest.update(chunk)
-        return digest.hexdigest()
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(64 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
+
+def _default_binary_probe(path: Path) -> dict[str, object]:
     stat_result = path.lstat()
     output = subprocess.run(
         [str(path), "--version"],
@@ -462,7 +585,7 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         "owner_uid": stat_result.st_uid,
         "mode": stat_result.st_mode & 0o7777,
         "version": version,
-        "sha256": file_digest(),
+        "sha256": _file_sha256(path),
         "team_identifier": None,
         "signature_valid": False,
     }
@@ -493,6 +616,98 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
     return descriptor
 
 
+def _default_git_probe(path: Path) -> dict[str, object]:
+    stat_result = path.lstat()
+    output = subprocess.run(
+        [str(path), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        shell=False,
+    )
+    version_text = (output.stdout or output.stderr).encode(
+        "utf-8", "replace"
+    )[:MAX_STDERR_BYTES].decode("utf-8", "replace")
+    version_match = re.search(
+        r"(?<![0-9])([0-9]+\.[0-9]+(?:\.[0-9]+)?)(?![0-9])", version_text
+    )
+    return {
+        "realpath": str(path.resolve()),
+        "is_regular": stat.S_ISREG(stat_result.st_mode),
+        "is_symlink": stat.S_ISLNK(stat_result.st_mode),
+        "owner_uid": stat_result.st_uid,
+        "mode": stat_result.st_mode & 0o7777,
+        "version": version_match.group(1) if version_match else "",
+        "sha256": _file_sha256(path),
+        "functional": output.returncode == 0,
+    }
+
+
+def _validate_executable(
+    *,
+    path: object,
+    expected_version: object,
+    expected_sha256: object,
+    supported_versions: Sequence[str],
+    probe: Callable[[Path], Mapping[str, object]],
+    label: str,
+    expected_team_identifier: object | None = None,
+    require_signature: bool = False,
+) -> tuple[list[str], dict[str, object] | None, Path | None]:
+    errors: list[str] = []
+    try:
+        executable = _require_absolute_path(path, f"{label} binary")
+    except LauncherError as exc:
+        return [_diagnostic(exc)], None, None
+    if not executable.is_file():
+        errors.append(f"{label} binary is not a regular file")
+    if executable.is_symlink():
+        errors.append(f"{label} binary must not be a symlink")
+    if type(expected_version) is not str or expected_version not in supported_versions:
+        errors.append(f"expected {label} version is not in the supported registry")
+    try:
+        expected_digest = _require_sha256(expected_sha256, f"expected_{label}_sha256")
+    except LauncherError as exc:
+        errors.append(_diagnostic(exc))
+        expected_digest = ""
+    if expected_team_identifier is not None and (
+        type(expected_team_identifier) is not str
+        or expected_team_identifier != CODEX_TEAM_IDENTIFIER
+    ):
+        errors.append("expected TeamIdentifier differs from the reviewed binary")
+    if errors:
+        return errors, None, executable
+    try:
+        descriptor = dict(probe(executable))
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError) as exc:
+        return [_diagnostic(exc)], None, executable
+    if descriptor.get("realpath") != str(executable.resolve()):
+        errors.append(f"{label} binary realpath drifted")
+    if descriptor.get("is_regular") is not True:
+        errors.append(f"{label} binary is not regular")
+    if descriptor.get("is_symlink") is not False:
+        errors.append(f"{label} binary symlink state is unsafe")
+    if descriptor.get("owner_uid") != os.getuid():
+        errors.append(f"{label} binary is not owned by the current user")
+    mode = descriptor.get("mode")
+    if type(mode) is not int or mode & 0o022:
+        errors.append(f"{label} binary is group/world writable")
+    if descriptor.get("version") != expected_version:
+        errors.append(f"{label} binary version drifted")
+    if descriptor.get("sha256") != expected_digest:
+        errors.append(f"{label} binary SHA-256 drifted")
+    if expected_team_identifier is not None and descriptor.get(
+        "team_identifier"
+    ) != expected_team_identifier:
+        errors.append("binary codesign TeamIdentifier drifted")
+    if require_signature and descriptor.get("signature_valid") is not True:
+        errors.append("binary codesign verification failed")
+    if label == "Git" and descriptor.get("functional") is False:
+        errors.append("Git version probe failed")
+    return errors, descriptor, executable
+
+
 def validate_binary(
     *,
     path: object,
@@ -502,52 +717,38 @@ def validate_binary(
     supported_versions: Sequence[str],
     probe: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> list[str]:
-    """Validate one explicit Codex executable without PATH resolution."""
+    """Validate one explicit signed Codex executable without PATH resolution."""
 
-    errors: list[str] = []
-    try:
-        binary = _require_absolute_path(path, "codex binary")
-    except LauncherError as exc:
-        return [_diagnostic(exc)]
-    if not binary.is_file():
-        errors.append("codex binary is not a regular file")
-    if binary.is_symlink():
-        errors.append("codex binary must not be a symlink")
-    if type(expected_version) is not str or expected_version not in supported_versions:
-        errors.append("expected Codex version is not in the supported registry")
-    try:
-        expected_digest = _require_sha256(expected_sha256, "expected_binary_sha256")
-    except LauncherError as exc:
-        errors.append(_diagnostic(exc))
-        expected_digest = ""
-    if type(expected_team_identifier) is not str or expected_team_identifier != CODEX_TEAM_IDENTIFIER:
-        errors.append("expected Darwin TeamIdentifier differs from the reviewed binary")
-    if errors:
-        return errors
-    try:
-        descriptor = dict((probe or _default_binary_probe)(binary))
-    except (OSError, subprocess.SubprocessError, TypeError, ValueError) as exc:
-        return [_diagnostic(exc)]
-    if descriptor.get("realpath") != str(binary.resolve()):
-        errors.append("binary realpath drifted")
-    if descriptor.get("is_regular") is not True:
-        errors.append("binary is not regular")
-    if descriptor.get("is_symlink") is not False:
-        errors.append("binary symlink state is unsafe")
-    if descriptor.get("owner_uid") != os.getuid():
-        errors.append("binary is not owned by the current user")
-    mode = descriptor.get("mode")
-    if type(mode) is not int or mode & 0o022:
-        errors.append("binary is group/world writable")
-    if descriptor.get("version") != expected_version:
-        errors.append("binary version drifted")
-    if descriptor.get("sha256") != expected_digest:
-        errors.append("binary SHA-256 drifted")
-    if descriptor.get("team_identifier") != expected_team_identifier:
-        errors.append("binary codesign TeamIdentifier drifted")
-    if descriptor.get("signature_valid") is not True:
-        errors.append("binary codesign verification failed")
+    errors, _descriptor, _path = _validate_executable(
+        path=path,
+        expected_version=expected_version,
+        expected_sha256=expected_sha256,
+        expected_team_identifier=expected_team_identifier,
+        supported_versions=supported_versions,
+        probe=probe or _default_binary_probe,
+        label="Codex",
+        require_signature=True,
+    )
     return errors
+
+
+def validate_git_binary(
+    *,
+    path: object,
+    expected_version: object,
+    expected_sha256: object,
+    probe: Callable[[Path], Mapping[str, object]] | None = None,
+) -> tuple[list[str], dict[str, object] | None, Path | None]:
+    """Validate the explicit Git executable before any repository query."""
+
+    return _validate_executable(
+        path=path,
+        expected_version=expected_version,
+        expected_sha256=expected_sha256,
+        supported_versions=(str(expected_version),),
+        probe=probe or _default_git_probe,
+        label="Git",
+    )
 
 
 def build_permission_profile(
@@ -655,25 +856,41 @@ def build_invocation_plan(
     expected_binary_team_identifier: object,
     supported_binary_versions: Sequence[str],
     credential_probe_path: object,
+    git_binary: object,
+    expected_git_version: object,
+    expected_git_sha256: object,
+    git_probe: Callable[[Path], Mapping[str, object]] | None = None,
     timeout_seconds: object = 1800,
     binary_probe: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     if type(timeout_seconds) is not int or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 1800:
         raise LauncherError("timeout_seconds must be an integer from 1 through 1800")
     _reject_ambient_git_redirects()
+    git_errors, git_descriptor, git_path = validate_git_binary(
+        path=git_binary,
+        expected_version=expected_git_version,
+        expected_sha256=expected_git_sha256,
+        probe=git_probe,
+    )
+    if git_errors or git_descriptor is None or git_path is None:
+        raise LauncherError("; ".join(git_errors) or "Git identity is insufficient")
     policy = _repo_state(
         policy_root,
+        git_binary=git_path,
         expected_sha=expected_policy_sha,
         expected_tree_sha=expected_policy_tree_sha,
         detached=False,
     )
     target = _repo_state(
         target_root,
+        git_binary=git_path,
         expected_sha=expected_target_sha,
         expected_tree_sha=expected_target_tree_sha,
         detached=True,
     )
-    policy_path, configured = _role_config(policy["root"], policy["head_sha"], role)
+    policy_path, configured = _role_config(
+        git_path, policy["root"], policy["head_sha"], role
+    )
     binary = _require_absolute_path(codex_binary, "codex binary")
     binary_errors = validate_binary(
         path=binary,
@@ -704,7 +921,11 @@ def build_invocation_plan(
         raise LauncherError("credential probe path overlaps launcher runtime")
     scratch = runtime_root / "cwd"
     credential_probe = credential_path
-    toolchain = _toolchain()
+    toolchain = _toolchain(
+        git_binary=git_path,
+        git_root=Path(target["root"]),
+        git_commit=str(target["head_sha"]),
+    )
     toolchain_roots = [Path(value) for value in toolchain["read_roots"]]
     for executable in toolchain["executables"].values():
         toolchain_roots.extend(
@@ -731,6 +952,7 @@ def build_invocation_plan(
     }
     capability_closure["function_gateway"] = False
     instructions = _protected_instructions(
+        git_path,
         Path(policy["root"]),
         str(policy["head_sha"]),
         str(configured["developer_instructions"]),
@@ -832,6 +1054,9 @@ def build_invocation_plan(
         "binary_version": expected_binary_version,
         "binary_sha256": expected_binary_sha256,
         "binary_team_identifier": expected_binary_team_identifier,
+        "git_realpath": str(git_descriptor["realpath"]),
+        "git_version": git_descriptor["version"],
+        "git_sha256": git_descriptor["sha256"],
         "credential_probe_path": str(credential_path),
         "argv": argv,
         "cwd": str(scratch),
@@ -1002,11 +1227,11 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         shell=False,
         start_new_session=(os.name != "nt"),
     )
-    if getattr(process, "stdin", None) is not None:
-        process.stdin.write(str(stdin).encode("utf-8"))
-        process.stdin.close()
     buffers: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
     output_limited = threading.Event()
+    stdin_write_error = threading.Event()
+    input_stream = getattr(process, "stdin", None)
+    input_bytes = str(stdin).encode("utf-8")
 
     def drain(name: str, stream: object, limit: int) -> None:
         while True:
@@ -1022,33 +1247,71 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
                 return
             buffers[name].extend(chunk)
 
+    def write_stdin() -> None:
+        if input_stream is None:
+            return
+        try:
+            input_stream.write(input_bytes)
+            flush = getattr(input_stream, "flush", None)
+            if callable(flush):
+                flush()
+        except (BrokenPipeError, OSError, ValueError):
+            stdin_write_error.set()
+        finally:
+            try:
+                input_stream.close()
+            except (BrokenPipeError, OSError, ValueError):
+                stdin_write_error.set()
+
     threads = [
         threading.Thread(target=drain, args=("stdout", process.stdout, output_limit), daemon=True),
         threading.Thread(target=drain, args=("stderr", process.stderr, MAX_STDERR_BYTES), daemon=True),
     ]
+    writer: threading.Thread | None = None
+    if input_stream is not None:
+        writer = threading.Thread(target=write_stdin, daemon=True)
+        threads.append(writer)
+    started = time.monotonic()
     for thread in threads:
         thread.start()
-    started = time.monotonic()
     timed_out = False
     killed = False
-    while process.poll() is None:
-        if output_limited.is_set() or time.monotonic() - started >= float(timeout):
-            timed_out = not output_limited.is_set()
+
+    def close_input() -> None:
+        if input_stream is None:
+            return
+        try:
+            input_stream.close()
+        except (BrokenPipeError, OSError, ValueError):
+            stdin_write_error.set()
+
+    def terminate_process() -> None:
+        nonlocal killed
+        close_input()
+        if os.name != "nt" and getattr(process, "pid", None):
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+        try:
+            process.wait(timeout=1)
+        except (subprocess.TimeoutExpired, TimeoutError):
+            killed = True
             if os.name != "nt" and getattr(process, "pid", None):
-                os.killpg(process.pid, signal.SIGTERM)
+                os.killpg(process.pid, signal.SIGKILL)
             else:
-                process.terminate()
-            try:
-                process.wait(timeout=1)
-            except (subprocess.TimeoutExpired, TimeoutError):
-                killed = True
-                if os.name != "nt" and getattr(process, "pid", None):
-                    os.killpg(process.pid, signal.SIGKILL)
-                else:
-                    process.kill()
-                process.wait(timeout=5)
+                process.kill()
+            process.wait(timeout=5)
+
+    while process.poll() is None:
+        if output_limited.is_set() or stdin_write_error.is_set():
+            terminate_process()
+            break
+        if time.monotonic() - started >= float(timeout):
+            timed_out = True
+            terminate_process()
             break
         time.sleep(0.005)
+    close_input()
     for thread in threads:
         thread.join(timeout=1)
     if process.poll() is None:
@@ -1059,6 +1322,8 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         "stderr": bytes(buffers["stderr"]).decode("utf-8", "replace"),
         "timed_out": timed_out,
         "output_limited": output_limited.is_set(),
+        "stdin_write_error": stdin_write_error.is_set(),
+        "stdin_writer_joined": writer is None or not writer.is_alive(),
         "killed": killed,
         "reaped": process.poll() is not None,
     }
@@ -1216,6 +1481,9 @@ def build_redacted_manifest(
         "binary_version": plan["binary_version"],
         "binary_sha256": plan["binary_sha256"],
         "binary_team_identifier": plan["binary_team_identifier"],
+        "git_realpath": plan["git_realpath"],
+        "git_version": plan["git_version"],
+        "git_sha256": plan["git_sha256"],
         "config_digest": _digest(config_bytes),
         "prompt_digest": _digest(prompt),
         "event_digest": _digest(event_output),
@@ -1284,11 +1552,17 @@ def cleanup_private_dirs(
             errors.append("unsafe private path preserved")
             continue
         try:
-            next(path.iterdir())
-        except StopIteration:
-            path.rmdir()
+            entries = next(path.iterdir(), None)
         except OSError:
             errors.append("private path could not be inspected")
+            continue
+        if entries is not None:
+            errors.append("private path is nonempty; contents preserved")
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            errors.append("private path could not be removed")
     return errors
 
 
@@ -1375,6 +1649,8 @@ def run_isolated_role(
     if (
         result.get("timed_out") is True
         or result.get("output_limited") is True
+        or result.get("stdin_write_error") is True
+        or result.get("stdin_writer_joined") is False
         or result.get("returncode") != 0
     ):
         return fail(["isolated role process failed"])
@@ -1400,23 +1676,32 @@ def run_isolated_role(
         }
         policy_root = Path(str(plan["policy_root"]))
         target_root = Path(str(plan["target_root"]))
-        actual_policy_head = _git(policy_root, "rev-parse", "--verify", "HEAD")
-        actual_policy_tree = _git(policy_root, "rev-parse", "--verify", "HEAD^{tree}")
-        actual_target_head = _git(target_root, "rev-parse", "--verify", "HEAD")
-        actual_target_tree = _git(target_root, "rev-parse", "--verify", "HEAD^{tree}")
+        git_binary = Path(str(plan["git_realpath"]))
+        actual_policy_head = _git(
+            git_binary, policy_root, "rev-parse", "--verify", "HEAD"
+        )
+        actual_policy_tree = _git(
+            git_binary, policy_root, "rev-parse", "--verify", "HEAD^{tree}"
+        )
+        actual_target_head = _git(
+            git_binary, target_root, "rev-parse", "--verify", "HEAD"
+        )
+        actual_target_tree = _git(
+            git_binary, target_root, "rev-parse", "--verify", "HEAD^{tree}"
+        )
         after = {
             "policy_head_sha": actual_policy_head,
             "policy_tree_sha": actual_policy_tree,
             "target_head_sha": actual_target_head,
             "target_tree_sha": actual_target_tree,
             "policy_status": (
-            "clean"
-                if not _git(policy_root, "status", "--porcelain=v1")
+                "clean"
+                if not _git(git_binary, policy_root, "status", "--porcelain=v1")
                 else "dirty"
             ),
             "target_status": (
                 "clean"
-                if not _git(target_root, "status", "--porcelain=v1")
+                if not _git(git_binary, target_root, "status", "--porcelain=v1")
                 else "dirty"
             ),
         }
@@ -1468,6 +1753,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-binary-version", default=CODEX_VERSION)
     parser.add_argument("--expected-binary-sha256", required=True)
     parser.add_argument("--expected-binary-team-identifier", default=CODEX_TEAM_IDENTIFIER)
+    parser.add_argument("--git-binary", type=Path, required=True)
+    parser.add_argument("--expected-git-version", required=True)
+    parser.add_argument("--expected-git-sha256", required=True)
     parser.add_argument("--credential-probe-path", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     args = parser.parse_args(argv)
@@ -1494,6 +1782,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_binary_team_identifier=args.expected_binary_team_identifier,
             supported_binary_versions=(CODEX_VERSION,),
             credential_probe_path=args.credential_probe_path,
+            git_binary=args.git_binary,
+            expected_git_version=args.expected_git_version,
+            expected_git_sha256=args.expected_git_sha256,
             timeout_seconds=args.timeout_seconds,
         )
         result = run_isolated_role(plan, prompt=prompt)

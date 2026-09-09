@@ -1656,7 +1656,11 @@ def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
     assert expected_roots.issubset(roots)
     executables = toolchain["executables"]
     for name in ("python", "git", "rg", "ruff"):
-        resolved = shutil.which(name)
+        resolved = (
+            str(Path(sys.executable).resolve())
+            if name == "python"
+            else shutil.which(name)
+        )
         if resolved:
             assert executables[name]["realpath"] == str(Path(resolved).resolve())
             assert executables[name]["parent"] == str(Path(resolved).resolve().parent)
@@ -2205,7 +2209,7 @@ def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
 
     def fake_run(*args: object, **kwargs: object):
         argv = list(args[0])
-        if argv and argv[0] == "git":
+        if argv and argv[0] in {"git", plan["git_realpath"]}:
             return real_run(*args, **kwargs)
         if "sandbox" in argv:
             command = argv[argv.index("--") + 1 :]
