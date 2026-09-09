@@ -107,6 +107,28 @@ _READ_ONLY_MCP_TOOLS = frozenset(
     }
 )
 
+_STRING_FIELDS = (
+    "evidence_source",
+    "source_ref",
+    "session_digest",
+    "turn_digest",
+    "agent_digest",
+    "pr_id",
+    "role",
+    "config_path",
+    "runtime_version",
+    "multi_agent_version",
+    "model",
+    "reasoning_effort",
+    "base_sha",
+    "head_sha",
+    "tree_sha",
+    "sandbox_mode",
+    "permission_system",
+    "permission_profile",
+    "approval_policy",
+)
+
 
 class _DuplicateField(ValueError):
     """Raised when a JSON object repeats a field name."""
@@ -231,10 +253,10 @@ def _resolve_role_config(
 
 
 def _decode_receipt(value: object) -> tuple[object, list[str]]:
-    if not isinstance(value, (bytes, str)):
+    if type(value) not in (bytes, str):
         return value, []
     try:
-        raw = value if isinstance(value, bytes) else value.encode("utf-8")
+        raw = value if type(value) is bytes else value.encode("utf-8")
     except UnicodeError as exc:
         return None, [f"invalid receipt JSON: {exc}"]
     if len(raw) > MAX_RECEIPT_BYTES:
@@ -249,6 +271,8 @@ def _decode_receipt(value: object) -> tuple[object, list[str]]:
 def _validate_shape(receipt: object) -> list[str]:
     if type(receipt) is not dict:
         return ["receipt must be a JSON object"]
+    if any(type(key) is not str for key in receipt):
+        return ["receipt field names must be exact strings"]
     keys = set(receipt)
     errors: list[str] = []
     missing = sorted(REQUIRED_FIELDS - keys)
@@ -260,6 +284,25 @@ def _validate_shape(receipt: object) -> list[str]:
     if errors:
         return errors
     return errors
+
+
+def _validate_exact_field_types(receipt: dict[str, object]) -> list[str]:
+    if type(receipt["schema_version"]) is not int:
+        return ["schema_version must be an exact integer"]
+    for field in _STRING_FIELDS:
+        if type(receipt[field]) is not str:
+            return [f"{field} must be an exact string"]
+    if type(receipt["tool_inventory_complete"]) is not bool:
+        return ["tool_inventory_complete must be an exact boolean"]
+    tool_names = receipt["tool_names"]
+    if type(tool_names) is not list:
+        return ["tool_names must be an exact list"]
+    for name in tool_names:
+        if type(name) is not str:
+            return ["tool_names must contain exact strings"]
+    if type(receipt["observed_at_ms"]) is not int:
+        return ["observed_at_ms must be an exact integer"]
+    return []
 
 
 def _validate_values(receipt: dict[str, object]) -> list[str]:
@@ -480,6 +523,9 @@ def verify_receipt(
     if shape_errors:
         return shape_errors
     assert type(decoded) is dict
+    type_errors = _validate_exact_field_types(decoded)
+    if type_errors:
+        return type_errors
     errors = _validate_values(decoded)
     if errors:
         return errors
