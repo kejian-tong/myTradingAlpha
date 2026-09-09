@@ -1366,17 +1366,19 @@ def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
         assert "--max-time" in command
 
 
-def test_host_exec_env_keeps_runtime_auth_context_but_sandbox_env_drops_secret_sentinel(
+def test_host_and_exec_env_retain_auth_context_while_model_shell_filters_secret(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CODEX_HOME", "/tmp/codex-auth-context")
     monkeypatch.setenv("LAUNCHER_SECRET_SENTINEL", "must-not-enter-sandbox")
     plan = _plan(scenario)
     sandbox_envs: list[dict[str, str]] = []
+    sandbox_probe_names: list[str] = []
     exec_envs: list[dict[str, str]] = []
 
     def sandbox_runner(**kwargs: object) -> dict[str, object]:
         sandbox_envs.append(dict(kwargs["env"]))
+        sandbox_probe_names.append(str(kwargs["probe_name"]))
         return _valid_sandbox_results()[str(kwargs["probe_name"])]
 
     def process_runner(**kwargs: object) -> dict[str, object]:
@@ -1391,7 +1393,17 @@ def test_host_exec_env_keeps_runtime_auth_context_but_sandbox_env_drops_secret_s
     )
     assert result["status"] == "completed", result
     assert exec_envs and exec_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
-    assert all("LAUNCHER_SECRET_SENTINEL" not in env for env in sandbox_envs)
+    assert sandbox_envs and sandbox_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
+    assert exec_envs[0].get("LAUNCHER_SECRET_SENTINEL") == "must-not-enter-sandbox"
+    assert sandbox_envs[0].get("LAUNCHER_SECRET_SENTINEL") == "must-not-enter-sandbox"
+    shell_policy = plan["permission_profile"]["shell_environment"]
+    assert shell_policy["inherit"] is False
+    assert shell_policy["ignore_default_excludes"] is False
+    assert "LAUNCHER_SECRET_SENTINEL" not in shell_policy["set"]
+    assert all("LAUNCHER_SECRET_SENTINEL" not in value for value in plan["config_values"])
+    assert "secret_env_absent" in sandbox_probe_names
+    serialized = json.dumps(result["manifest"])
+    assert "LAUNCHER_SECRET_SENTINEL" not in serialized
 
 
 def test_default_sandbox_runner_preserves_direct_command_output_without_json_decode(
