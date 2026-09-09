@@ -994,6 +994,7 @@ def test_exec_argv_binds_strict_config_route_profile_environment_and_features(
         "model_reasoning_effort=",
         "developer_instructions=",
         "approval_policy=",
+        "default_permissions=",
         "shell_environment_policy=",
         "agents.enabled=",
         "features.apps=",
@@ -1022,7 +1023,9 @@ def test_exec_argv_binds_strict_config_route_profile_environment_and_features(
     )
     for prefix in required_prefixes:
         assert any(value.startswith(prefix) for value in config_values), prefix
-    assert "-p" in argv and argv[argv.index("-p") + 1] == profile_name
+    assert "-p" not in argv and "--profile" not in argv
+    assert any(value == f"default_permissions={profile_name}" for value in config_values)
+    assert not any(value.startswith("sandbox_mode=") for value in config_values)
     forbidden = {"--sandbox", "--agent", "--approve-for-me", "--yolo"}
     assert not forbidden.intersection(argv)
     assert "-" in argv
@@ -1046,6 +1049,10 @@ def test_every_preflight_probe_is_sandboxed_with_same_binary_and_profile(
     assert argv[0] == plan["argv"][0]
     assert "sandbox" in argv
     assert "--include-managed-config" in argv
+    assert "-p" not in argv and "--profile" not in argv
+    config_values = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "-c"]
+    assert any(value.startswith("default_permissions=") for value in config_values)
+    assert not any(value.startswith("sandbox_mode=") for value in config_values)
     assert result["cwd"] == plan["cwd"]
     assert result["binary_realpath"] == plan["binary_realpath"]
     assert result["profile_digest"] == plan["permission_profile_digest"]
