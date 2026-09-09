@@ -2052,12 +2052,13 @@ def test_known_disabled_agent_role_warning_is_narrowly_nonblocking(
 
 
 _PINNED_HOST_WARNING_STDERR = """\
-2026-09-09T10:11:12.123456Z WARN codex_agent_roles::loader: Ignoring malformed agent role definition at /protected/.codex/agents/legacy.toml: TOML parse error at line 1, column 1
+2026-09-09T10:11:12.123456Z WARN codex_agent_roles::loader: Ignoring malformed agent role definition: failed to parse agent role file at /protected/.codex/agents/engineering-ai-engineer.toml: TOML parse error at line 3, column 5
   |
-1 | invalid = [
-  |            ^
+3 | role = [
+  |     ^
 invalid array
-2026-09-09T10:11:12.234567Z WARN codex_rollout::list: state db discrepancy for thread 0199-example; using rollout metadata
+
+2026-09-09T10:11:12.234567Z WARN codex_rollout::list: state db discrepancy during find_thread_path_by_id_str_in_subdir: falling_back
 """
 
 
@@ -2115,8 +2116,9 @@ def test_item_level_disabled_agent_loader_warning_is_consistent_with_stderr() ->
             "item": {
                 "type": "error",
                 "message": (
-                    "Ignoring malformed agent role definition at "
-                    "/protected/.codex/agents/legacy.toml: invalid role TOML"
+                    "Ignoring malformed agent role definition: failed to parse "
+                    "agent role file at /protected/.codex/agents/legacy.toml: "
+                    "TOML parse error at line 3, column 5"
                 ),
             },
         },
