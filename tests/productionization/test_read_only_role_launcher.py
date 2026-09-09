@@ -20,6 +20,11 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/read_only_role_launcher.py"
 DOCS_MCP_URL = "https://developers.openai.com/mcp"
@@ -170,6 +175,7 @@ def _copy_policy_fixture(root: Path) -> GitFixture:
 def _copy_target_fixture(root: Path, *, candidate_role: bool = False) -> GitFixture:
     root.mkdir(parents=True)
     (root / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+    (root / "AGENTS.md").write_text("candidate target policy\n", encoding="utf-8")
     if candidate_role:
         role_path = root / ".codex/agents/reviewer-high.toml"
         role_path.parent.mkdir(parents=True)
@@ -1424,3 +1430,156 @@ def test_default_sandbox_runner_preserves_direct_command_output_without_json_dec
     assert result["returncode"] == 0
     assert result["stdout"] == "raw-probe-output"
     assert result["stderr"] == "raw-probe-error"
+
+
+def test_canonical_permission_config_has_toml_network_and_exact_credential_denials(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    config = tomllib.loads("\n".join(plan["config_values"]))
+    profile_name = plan["permission_profile_name"]
+    permissions = config["permissions"][profile_name]
+    assert permissions["network"] == {"enabled": False}
+    filesystem = permissions["filesystem"]
+    assert filesystem[str(scenario.credential_probe)] == "deny"
+    assert filesystem[str(Path.home() / ".codex")] == "deny"
+    assert filesystem[str(scenario.policy.root)] == "read"
+    assert filesystem[str(scenario.target.root)] == "read"
+
+
+def test_plan_generates_secret_sentinel_even_without_caller_launcher_env(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LAUNCHER_SECRET_SENTINEL", raising=False)
+    plan = _plan(scenario)
+    sentinel = plan["launcher_secret_sentinel"]
+    assert isinstance(sentinel, str) and len(sentinel) >= 32
+    assert plan["exec_env"]["LAUNCHER_SECRET_SENTINEL"] == sentinel
+    assert "LAUNCHER_SECRET_SENTINEL" not in plan["permission_profile"]["shell_environment"]["set"]
+    manifest = _function("build_redacted_manifest")(
+        plan,
+        config_bytes=b"config",
+        prompt="prompt",
+        event_output=_valid_jsonl(),
+        stderr="stderr",
+        final_output="output",
+        probe_results={"secret_env_absent": True},
+        observed_at_ms=1,
+        cleanup={"status": "clean"},
+    )
+    assert sentinel not in json.dumps(manifest)
+
+
+def test_target_read_probe_uses_committed_agents_policy_file(scenario: Scenario) -> None:
+    plan = _plan(scenario)
+    assert plan["probe_paths"]["target_read"] == str(scenario.target.root / "AGENTS.md")
+    assert Path(plan["probe_paths"]["target_read"]).is_file()
+
+
+@pytest.mark.parametrize(
+    ("probe_name", "returncode", "stdout", "expected"),
+    [
+        ("policy_read", 0, "p", {"allowed": True}),
+        ("target_read", 0, "t", {"allowed": True}),
+        ("target_write_denied", 1, "", {"denied": True}),
+        ("credential_read_denied", 1, "", {"denied": True}),
+        ("scratch_write", 0, "", {"allowed": True}),
+        ("secret_env_absent", 0, "", {"absent": True}),
+        ("network_denied", 1, "", {"denied": True}),
+    ],
+)
+def test_default_sandbox_runner_evaluates_direct_probe_return_facts(
+    scenario: Scenario,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_name: str,
+    returncode: int,
+    stdout: str,
+    expected: dict[str, object],
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    scratch_marker = tmp_path / "scratch-marker"
+    target_marker = tmp_path / "target-marker"
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        argv = list(args[0])
+        if probe_name == "scratch_write" and returncode == 0:
+            scratch_marker.write_text("created\n", encoding="utf-8")
+        if probe_name == "target_write_denied" and returncode != 0:
+            target_marker.write_text("unexpected\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, returncode, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    result = module._default_sandbox_runner(
+        argv=["/absolute/codex", "sandbox"],
+        cwd=str(tmp_path),
+        env={},
+        shell=False,
+        probe_name=probe_name,
+        plan=plan,
+        marker_path=str(scratch_marker if probe_name == "scratch_write" else target_marker),
+        credential_path_exists=probe_name != "credential_read_denied",
+    )
+    for key, value in expected.items():
+        assert result[key] == value
+    assert result["returncode"] == returncode
+    if probe_name == "scratch_write":
+        assert not scratch_marker.exists()
+    if probe_name == "target_write_denied":
+        assert target_marker.exists()
+
+
+def test_missing_credential_file_is_insufficient_not_a_sandbox_denial(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    result = module._default_sandbox_runner(
+        argv=["/absolute/codex", "sandbox"],
+        cwd=str(tmp_path),
+        env={},
+        shell=False,
+        probe_name="credential_read_denied",
+        plan=plan,
+        marker_path=str(tmp_path / "missing"),
+        credential_path_exists=False,
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert result.get("denied") is not True
+
+
+def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    real_run = module.subprocess.run
+    seen: list[str] = []
+
+    def fake_run(*args: object, **kwargs: object):
+        argv = list(args[0])
+        if argv and argv[0] == "git":
+            return real_run(*args, **kwargs)
+        if "sandbox" in argv:
+            command = argv[argv.index("--") + 1 :]
+            executable = command[0]
+            seen.append(executable)
+            if executable == "/usr/bin/head":
+                is_credential = command[-1] == str(scenario.credential_probe)
+                return subprocess.CompletedProcess(argv, 1 if is_credential else 0, "" if is_credential else "x", "")
+            if executable == "/usr/bin/touch":
+                return subprocess.CompletedProcess(argv, 0 if "scratch" in command[-1] else 1, "", "")
+            if executable == "/bin/sh":
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        return subprocess.CompletedProcess(argv, 0, _valid_jsonl(), "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+    )
+    assert result["status"] == "completed", result
+    assert seen == ["/usr/bin/head", "/usr/bin/head", "/usr/bin/touch", "/usr/bin/head", "/usr/bin/touch", "/bin/sh", "/usr/bin/curl"]
