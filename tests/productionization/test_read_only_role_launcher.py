@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1452,6 +1453,168 @@ def test_default_sandbox_runner_preserves_direct_command_output_without_json_dec
     assert result["returncode"] == 0
     assert result["stdout"] == "raw-probe-output"
     assert result["stderr"] == "raw-probe-error"
+
+
+def test_parser_accepts_item_updated_failure_outcomes_and_rejects_unsafe_items() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {"type": "item.started", "item": {"type": "reasoning"}},
+        {"type": "item.updated", "item": {"type": "plan_update", "plan": ["pwd"]}},
+        {"type": "item.completed", "item": {"type": "reasoning", "text": "private"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.failed", "error": {"message": "failed"}},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw)
+    assert parsed["status"] == "failed"
+    assert parsed["final_agent_message"] == "final"
+    assert parsed["error_event_count"] >= 1
+
+    for item_type in ("file_change", "mcp_tool_call", "web_search", "collaboration", "unknown"):
+        unsafe = _valid_jsonl().replace(
+            '"agent_message"', json.dumps(item_type), 1
+        )
+        with pytest.raises((ValueError, RuntimeError)):
+            _function("parse_codex_jsonl")(unsafe)
+
+
+def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    toolchain = plan["toolchain"]
+    roots = {str(Path(path).resolve()) for path in toolchain["read_roots"]}
+    expected_roots = {str(Path(sys.prefix).resolve()), str(Path(sys.base_prefix).resolve())}
+    expected_roots.update(str(Path(path).resolve()) for path in sysconfig.get_paths().values())
+    assert expected_roots.issubset(roots)
+    executables = toolchain["executables"]
+    for name in ("python", "git", "rg", "ruff"):
+        resolved = shutil.which(name)
+        if resolved:
+            assert executables[name]["realpath"] == str(Path(resolved).resolve())
+            assert executables[name]["parent"] == str(Path(resolved).resolve().parent)
+            assert executables[name]["parent"] in plan["exec_env"]["PATH"].split(os.pathsep)
+    assert "/usr/bin" in plan["exec_env"]["PATH"].split(os.pathsep)
+    assert "/bin" in plan["exec_env"]["PATH"].split(os.pathsep)
+    commands = toolchain["commands"]
+    assert commands["python_encodings"][0] == sys.executable
+    assert commands["python_encodings"][1:2] == ["-c"]
+    assert "import encodings" in commands["python_encodings"][2]
+    assert commands["pytest_collection"][0] == sys.executable
+    assert "pytest" in " ".join(commands["pytest_collection"])
+
+
+def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+
+    class OverflowingChild:
+        def __init__(self) -> None:
+            self.stdout = io.BytesIO(b"x" * 100_000)
+            self.stderr = io.BytesIO(b"e" * 100_000)
+            self.returncode = None
+            self.terminated = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            self.reaped = True
+            return self.returncode
+
+    child = OverflowingChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="prompt",
+        timeout=10,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+    assert result["output_limited"] is True
+    assert result["timed_out"] is False
+    assert child.terminated and child.reaped
+
+
+def test_process_runner_timeout_terminates_escalates_and_reaps_term_ignoring_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+
+    class TermIgnoringChild:
+        def __init__(self) -> None:
+            self.stdout = io.BytesIO(b"")
+            self.stderr = io.BytesIO(b"")
+            self.returncode = None
+            self.term_count = 0
+            self.kill_count = 0
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.term_count += 1
+
+        def kill(self) -> None:
+            self.kill_count += 1
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.kill_count == 0:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            self.reaped = True
+            return self.returncode
+
+    child = TermIgnoringChild()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    result = module._default_process_runner(
+        argv=["/absolute/codex", "exec", "-"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="prompt",
+        timeout=0.01,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+    assert result["timed_out"] is True
+    assert child.term_count >= 1 and child.kill_count >= 1 and child.reaped
+
+
+@pytest.mark.parametrize("value", [0, -1, 1801, True, "1800"])
+def test_review_timeout_is_bounded_and_defaults_to_thirty_minutes(
+    scenario: Scenario, value: object
+) -> None:
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError, TypeError)):
+        _plan(scenario, timeout_seconds=value)
+    plan = _plan(scenario, timeout_seconds=1800)
+    assert plan["timeout_seconds"] == 1800
+    assert plan["max_timeout_seconds"] == 1800
+
+
+def test_network_probe_is_deterministic_sandbox_state_not_external_curl(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    result = _function("build_sandbox_probe_argv")(plan, "network_denied")
+    command = result["argv"][result["argv"].index("--") + 1 :]
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert "CODEX_SANDBOX_NETWORK_DISABLED" in command[2]
+    assert "curl" not in command and "http" not in " ".join(command)
 
 
 def test_canonical_permission_config_has_toml_network_and_exact_credential_denials(
