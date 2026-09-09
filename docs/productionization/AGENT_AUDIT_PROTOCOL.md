@@ -161,6 +161,8 @@ events, spawn agents, contact GitHub, write files, or merge a PR.
 
 The default read-only path is `scripts/read_only_role_launcher.py`, an isolated top-level role invocation
 that loads role/instruction policy from protected exact Git objects and runs against a detached clean target.
+Review policy and candidate worktrees must be non-temp, explicitly owned paths; system temporary roots are
+reserved for launcher-private runtime scratch only.
 An in-process read-only child under a writable or unverified parent is non-admissible. The launcher uses a
 narrow per-run Permission Profile pilot, structured preflight/post-run observations, and bounded JSONL/
 manifest handling; missing facts return `insufficient_evidence`. Schema-v1 receipts remain historical,

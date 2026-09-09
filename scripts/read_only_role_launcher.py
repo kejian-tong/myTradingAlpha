@@ -128,6 +128,20 @@ class LauncherError(ValueError):
     """Bounded launcher validation error."""
 
 
+def temp_root_provider() -> Path:
+    """Return the actual system temporary root; tests may replace this privately."""
+    return Path(tempfile.gettempdir()).resolve()
+
+
+def _system_temp_roots() -> tuple[Path, ...]:
+    return tuple(
+        dict.fromkeys(
+            root.resolve()
+            for root in (temp_root_provider(), Path("/tmp"), Path("/private/tmp"))
+        )
+    )
+
+
 def _diagnostic(value: object) -> str:
     text = str(value).replace("\n", " ").replace("\r", " ")
     return text[:MAX_DIAGNOSTIC_LENGTH]
@@ -222,6 +236,8 @@ def _repo_state(
     detached: bool,
 ) -> dict[str, object]:
     root = _require_absolute_path(root_value, "repository root")
+    if any(root == temp or root.is_relative_to(temp) for temp in _system_temp_roots()):
+        raise LauncherError("policy/target worktrees must not live under a system temp root")
     if not root.is_dir() or not (root / ".git").exists():
         raise LauncherError("repository root is unavailable")
     if _git(root, "config", "--local", "--get", "extensions.partialClone", allow_failure=True):
@@ -394,8 +410,9 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         shell=False,
     )
     version_output = (output.stdout or output.stderr).encode("utf-8", "replace")[:MAX_STDERR_BYTES]
-    version_lines = version_output.decode("utf-8", "replace").strip().splitlines()
-    version = version_lines[0][:MAX_TEXT_LENGTH] if version_lines else ""
+    version_text = version_output.decode("utf-8", "replace")
+    version_match = re.search(r"(?<![0-9])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9])", version_text)
+    version = version_match.group(1) if version_match else ""
     descriptor: dict[str, object] = {
         "realpath": str(path.resolve()),
         "is_regular": stat.S_ISREG(stat_result.st_mode),
@@ -618,7 +635,7 @@ def build_invocation_plan(
     )
     runtime_token = secrets.token_hex(32)
     runtime_root = (
-        Path(tempfile.gettempdir()).resolve()
+        temp_root_provider()
         / "mytradingalpha-read-only-launcher"
         / runtime_token
     )
