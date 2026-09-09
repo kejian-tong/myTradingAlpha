@@ -199,9 +199,12 @@ timestamped `codex_rollout::list: state db discrepancy` warning. The same exact 
 as a warning if surfaced as an item-level error. Other logger targets, severities, continuations,
 startup/tool stderr, and all other item errors remain inadmissible.
 
-The isolated runtime explicitly disables web search, standalone/deprecated web-search flags, skill
-search and host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots,
+The isolated runtime explicitly disables web search and standalone search; deprecated web-search
+feature overrides are omitted because 0.153.4 emits them as item errors. It disables skill search and
+host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots,
 Chronicle, Apps, plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP.
+The reviewed under-development warning is suppressed after these exact flags are bound so it cannot
+create a permanent item-error false stop.
 `code_mode_host=true` remains enabled solely for sandboxed local commands under the same read-only
 profile; configuration closure is intent and the preflight/post-run evidence remains mandatory.
 

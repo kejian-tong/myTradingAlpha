@@ -1130,6 +1130,7 @@ def build_invocation_plan(
         "agents.enabled=false",
         'web_search="disabled"',
         "skills.config=[]",
+        "suppress_unstable_features_warning=true",
     ]
     disabled_features = (
         "apps", "plugins", "hooks", "memories", "multi_agent", "multi_agent_v2",
@@ -1137,7 +1138,7 @@ def build_invocation_plan(
         "computer_use", "image_generation", "in_app_browser", "workspace_dependencies",
         "remote_plugin", "skill_mcp_dependency_install", "tool_call_mcp_elicitation",
         "auth_elicitation", "code_mode", "code_mode_only",
-        "standalone_web_search", "web_search_cached", "web_search_request",
+        "standalone_web_search",
         "skill_search", "tool_suggest", "recommended_plugins", "plugin_sharing",
         "shell_snapshot", "shell_snapshot_v2", "chronicle",
         "external_agent_memory_import",
@@ -1626,9 +1627,21 @@ def _toolchain_smoke_passed(value: object) -> bool:
 def _known_agent_role_warning(message: object) -> bool:
     if type(message) is not str:
         return False
-    return len(message.encode("utf-8")) <= MAX_TEXT_LENGTH and bool(
-        _AGENT_ROLE_PARSE_WARNING_RE.fullmatch(message)
-        or _LEGACY_DISABLED_AGENT_WARNING_RE.fullmatch(message)
+    if len(message.encode("utf-8")) > MAX_TEXT_LENGTH:
+        return False
+    lines = message.splitlines()
+    if len(lines) == 1 and _LEGACY_DISABLED_AGENT_WARNING_RE.fullmatch(lines[0]):
+        return True
+    if not lines or _AGENT_ROLE_PARSE_WARNING_RE.fullmatch(lines[0]) is None:
+        return False
+    if len(lines) == 1:
+        return True
+    return bool(
+        len(lines) == 5
+        and re.fullmatch(r"\s*\|\s*", lines[1])
+        and re.fullmatch(r"[1-9][0-9]*\s*\|[\x20-\x7e]*", lines[2])
+        and re.fullmatch(r"\s*\|\s*\^+\s*", lines[3])
+        and re.fullmatch(r"[\x20-\x7e]+", lines[4])
     )
 
 
