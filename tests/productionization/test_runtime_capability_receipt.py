@@ -490,6 +490,76 @@ def test_promisor_repository_rejects_before_lazy_fetch_or_object_mutation(
     assert errors == ["repository binding is unavailable"]
 
 
+@pytest.mark.parametrize(
+    "ambient_overrides",
+    [
+        {},
+        {"GIT_WORK_TREE": "{source}"},
+        {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.bare",
+            "GIT_CONFIG_VALUE_0": "false",
+        },
+        {"GIT_OBJECT_DIRECTORY": "{objects}"},
+    ],
+)
+def test_ambient_git_redirects_cannot_override_repo_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ambient_overrides: dict[str, str],
+) -> None:
+    source, head, tree = _temporary_repo(tmp_path / "source")
+    wrong_root = tmp_path / "not-a-repository"
+    wrong_root.mkdir()
+    object_root = source / ".git/objects"
+
+    def object_snapshot() -> list[tuple[str, int]]:
+        return sorted(
+            (path.relative_to(object_root).as_posix(), path.stat().st_size)
+            for path in object_root.rglob("*")
+            if path.is_file()
+        )
+
+    monkeypatch.setenv("GIT_DIR", str(source / ".git"))
+    substitutions = {"source": str(source), "objects": str(object_root)}
+    for name, value in ambient_overrides.items():
+        monkeypatch.setenv(name, value.format(**substitutions))
+    receipt = _receipt(base_sha=head, head_sha=head, tree_sha=tree)
+    module = _module()
+    real_run = module.subprocess.run
+    observed_git_environments: list[dict[str, str]] = []
+
+    def recording_run(*args: object, **kwargs: object):
+        environment = kwargs.get("env")
+        assert type(environment) is dict
+        observed_git_environments.append(
+            {
+                key: value
+                for key, value in environment.items()
+                if key.startswith("GIT_")
+            }
+        )
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", recording_run)
+    before = object_snapshot()
+    errors = module.verify_receipt(
+        receipt,
+        repo_root=wrong_root,
+        expected_pr_id="HARNESS-AUD-01",
+        expected_base_sha=head,
+        expected_head_sha=head,
+    )
+
+    assert errors == ["repository binding is unavailable"]
+    assert object_snapshot() == before
+    assert observed_git_environments
+    assert all(
+        environment == {"GIT_NO_LAZY_FETCH": "1"}
+        for environment in observed_git_environments
+    )
+
+
 def test_model_is_derived_from_exact_role_toml_without_a_global_allowlist(
     tmp_path: Path,
 ) -> None:
