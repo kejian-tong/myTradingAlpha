@@ -849,8 +849,14 @@ def test_permission_profile_is_per_run_launcher_pilot_not_global_sandbox(
     allowed_shell_keys = {
         "PATH",
         "TMPDIR",
-        "PYTHONDONTWRITEBYTECODE",
-        "GIT_OPTIONAL_LOCKS",
+            "PYTHONDONTWRITEBYTECODE",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_NO_LAZY_FETCH",
+            "GIT_NO_REPLACE_OBJECTS",
+            "GIT_OPTIONAL_LOCKS",
+            "GIT_TERMINAL_PROMPT",
         "LANG",
         "LC_ALL",
         "TZ",
@@ -1706,6 +1712,7 @@ def test_policy_and_target_secret_roots_have_exact_denials_and_probe_canaries(
     }
     for name, expected_path in expected_canaries.items():
         assert plan["probe_paths"][name] == str(expected_path)
+        assert filesystem[str(expected_path)] == "deny"
         spec = _function("build_sandbox_probe_argv")(plan, name)
         command = spec["argv"][spec["argv"].index("--") + 1 :]
         assert command[:3] == ["/usr/bin/head", "-c", "1"]
@@ -1764,7 +1771,13 @@ def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
     separator = argv.index("--", sandbox_index + 1)
     command = argv[separator + 1 :]
     paths = plan["probe_paths"]
-    if probe_name in {"policy_read", "target_read", "credential_read_denied"}:
+    if probe_name in {
+        "policy_read",
+        "target_read",
+        "policy_secret_denied",
+        "target_secret_denied",
+        "credential_read_denied",
+    }:
         assert command[:3] == ["/usr/bin/head", "-c", "1"]
         assert command[3] == paths[probe_name]
     elif probe_name in {"target_write_denied", "scratch_write"}:

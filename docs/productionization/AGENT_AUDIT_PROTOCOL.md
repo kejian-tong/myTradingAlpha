@@ -177,6 +177,31 @@ roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `c
 binary acceptance. The reviewed binary registry is the signed macOS Codex 0.153.4 bundle; a non-Darwin
 default probe without equivalent TeamIdentifier/signature evidence remains `insufficient_evidence`.
 
+Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
+initial version probe through every policy/target/post-run Git query and the model shell, the launcher
+sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONFIG_NOSYSTEM=1`, removes
+caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. The per-run profile grants
+repository reads only after adding `.env`, `secrets`, `*secret*`, and `*token*` denials under both policy
+and target roots. The committed `.codex/read-only-probe.secret` is harmless fixed data; exact protected
+policy and target Git objects must contain it, and both paths must fail a real sandbox read probe before
+the model starts.
+
+Python `encodings`, pytest importability, exact target-head Git resolution, and `rg`/Ruff/`uv` versions
+are executed through the same signed Codex binary and Permission Profile before the repository probes.
+Any unavailable tool or failed smoke blocks model start. Ordinary roles reject every MCP item. Only
+`external_spec_researcher` admits a matched start/completion lifecycle for exact server
+`openaiDeveloperDocs` and exact tools `fetch_openai_doc` or `search_openai_docs`; malformed, replayed,
+failed, unknown, or incomplete MCP activity cannot produce a completed lane. Its MCP is required at
+runtime so startup failure is fatal. Codex 0.153.4's bounded pre-turn `Ignoring malformed agent role
+definition` warning is non-blocking only while agents are disabled and the complete stderr consists of
+that warning class; other startup/tool stderr remains inadmissible.
+
+The isolated runtime explicitly disables web search, standalone/deprecated web-search flags, skill
+search and host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots,
+Chronicle, Apps, plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP.
+`code_mode_host=true` remains enabled solely for sandboxed local commands under the same read-only
+profile; configuration closure is intent and the preflight/post-run evidence remains mandatory.
+
 For Harness-AUD-03, the durable parent-to-RED test-only repair is identified as `1025090`; subsequent
 runtime-path repair RED commits must precede each repair GREEN. The abandoned v2 active GREEN is not the final contract;
 the isolated launcher and its repair-RED evidence are the final current-runtime path.

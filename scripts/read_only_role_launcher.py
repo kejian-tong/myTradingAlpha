@@ -16,7 +16,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import signal
 import stat
 import subprocess
@@ -46,6 +45,8 @@ CODEX_VERSION = "0.153.4"
 CODEX_TEAM_IDENTIFIER = "2DC432GLL2"
 DOCS_MCP_URL = "https://developers.openai.com/mcp"
 DOCS_MCP_TOOLS = ("fetch_openai_doc", "search_openai_docs")
+DENY_CANARY_RELATIVE = ".codex/read-only-probe.secret"
+DENY_CANARY_BYTES = b"harmless deny canary\n"
 
 READ_ONLY_ROLES = frozenset(
     {
@@ -80,11 +81,21 @@ _PRIMITIVE_TYPES = (str, int, bool, float)
 _PROBE_ORDER = (
     "policy_read",
     "target_read",
+    "policy_secret_denied",
+    "target_secret_denied",
     "target_write_denied",
     "credential_read_denied",
     "scratch_write",
     "secret_env_absent",
     "network_denied",
+)
+_TOOLCHAIN_SMOKE_ORDER = (
+    "python_encodings",
+    "pytest_import",
+    "git_resolve",
+    "rg_version",
+    "ruff_version",
+    "uv_version",
 )
 _CAPABILITY_KEYS = (
     "agents",
@@ -100,6 +111,13 @@ _CAPABILITY_KEYS = (
     "code_mode",
     "web",
     "search",
+    "skills",
+    "skill_discovery",
+    "skill_suggestions",
+    "recommended_plugins",
+    "plugin_sharing",
+    "shell_snapshot",
+    "chronicle",
     "mcp_elicitation",
 )
 _GIT_REDIRECTS = {
@@ -184,6 +202,9 @@ def _git_environment() -> dict[str, str]:
         name: value for name, value in os.environ.items() if not name.startswith("GIT_")
     }
     environment.update(
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_SYSTEM=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
         GIT_NO_LAZY_FETCH="1",
         GIT_NO_REPLACE_OBJECTS="1",
         GIT_OPTIONAL_LOCKS="0",
@@ -450,21 +471,18 @@ def _validated_tool_path(name: str, candidate: Path) -> Path:
 
 
 def _find_required_tool(name: str) -> Path:
+    """Resolve a required tool only from reviewed deterministic roots."""
+
     directories = (
         Path(sys.prefix) / "bin",
         Path(sys.base_prefix) / "bin",
+        Path.home() / ".local/bin",
         Path("/usr/bin"),
         Path("/bin"),
         Path("/usr/local/bin"),
         Path("/opt/homebrew/bin"),
         Path("/Applications/ChatGPT.app/Contents/Resources"),
     )
-    ambient = shutil.which(name)
-    allowed_directories = {directory.resolve() for directory in directories}
-    if ambient:
-        ambient_path = Path(ambient).resolve()
-        if ambient_path.parent in allowed_directories:
-            return _validated_tool_path(name, ambient_path)
     for directory in directories:
         candidate = directory / name
         if candidate.exists():
@@ -480,26 +498,34 @@ def _toolchain(
 ) -> dict[str, object]:
     if git_binary is None:
         raise LauncherError("explicit Git identity is required for the toolchain")
-    python_path = _validated_tool_path("python", Path(sys.executable))
+    python_entrypoint = Path(sys.executable)
+    if not python_entrypoint.is_absolute():
+        raise LauncherError("required python executable is not absolute")
+    python_path = _validated_tool_path("python", python_entrypoint)
     git_path = _validated_tool_path("git", git_binary)
     rg_path = _find_required_tool("rg")
     ruff_path = _find_required_tool("ruff")
+    uv_path = _find_required_tool("uv")
     executables = {
         "python": {
+            "invocation_path": str(python_entrypoint),
             "realpath": str(python_path),
-            "parent": str(python_path.parent),
+            "parent": str(python_entrypoint.parent.resolve()),
+            "real_parent": str(python_path.parent),
         },
         "git": {"realpath": str(git_path), "parent": str(git_path.parent)},
         "rg": {"realpath": str(rg_path), "parent": str(rg_path.parent)},
         "ruff": {"realpath": str(ruff_path), "parent": str(ruff_path.parent)},
+        "uv": {"realpath": str(uv_path), "parent": str(uv_path.parent)},
     }
     path_dirs = _ordered_unique_paths(
         [
             Path(sys.prefix) / "bin",
-            python_path.parent,
+            python_entrypoint.parent,
             git_path.parent,
             rg_path.parent,
             ruff_path.parent,
+            uv_path.parent,
             Path("/usr/bin"),
             Path("/bin"),
         ]
@@ -524,19 +550,15 @@ def _toolchain(
     )
     commands: dict[str, list[str]] = {
         "python_encodings": [
-            sys.executable,
+            str(python_entrypoint),
             "-c",
             "import encodings,sys; print(encodings.__file__)",
         ],
-        "pytest_collection": [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
+        "pytest_import": [
+            str(python_entrypoint),
+            "-c",
+            "import pytest; print(pytest.__file__)",
         ],
-        "rg_version": [str(rg_path), "--version"],
-        "ruff_version": [str(ruff_path), "--version"],
     }
     if git_root is not None and git_commit is not None:
         commands["git_resolve"] = [
@@ -547,6 +569,11 @@ def _toolchain(
             "--verify",
             git_commit,
         ]
+    commands["rg_version"] = [str(rg_path), "--version"]
+    commands["ruff_version"] = [str(ruff_path), "--version"]
+    commands["uv_version"] = [str(uv_path), "--version"]
+    if tuple(commands) != _TOOLCHAIN_SMOKE_ORDER:
+        raise LauncherError("toolchain smoke order is incomplete")
     return {
         "read_roots": read_roots,
         "executables": executables,
@@ -622,6 +649,7 @@ def _default_git_probe(path: Path) -> dict[str, object]:
         [str(path), "--version"],
         check=False,
         capture_output=True,
+        env=_git_environment(),
         text=True,
         timeout=5,
         shell=False,
@@ -664,6 +692,11 @@ def _validate_executable(
         errors.append(f"{label} binary is not a regular file")
     if executable.is_symlink():
         errors.append(f"{label} binary must not be a symlink")
+    try:
+        if executable != executable.resolve(strict=True):
+            errors.append(f"{label} binary path must be its canonical realpath")
+    except OSError:
+        errors.append(f"{label} binary canonical realpath is unavailable")
     if type(expected_version) is not str or expected_version not in supported_versions:
         errors.append(f"expected {label} version is not in the supported registry")
     try:
@@ -772,7 +805,13 @@ def build_permission_profile(
         "PATH": os.defpath,
         "TMPDIR": str(scratch_root.resolve()),
         "PYTHONDONTWRITEBYTECODE": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
         "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
     }
     for key in ("LANG", "LC_ALL", "TZ"):
         if key in os.environ and not any(secret in key.lower() for secret in ("token", "secret", "key")):
@@ -789,11 +828,19 @@ def build_permission_profile(
         str(home / ".config/github"),
         str(home / "Library/Keychains"),
         str(home / ".zsh_history"),
-        str(Path(target_root).resolve() / ".env"),
-        str(Path(target_root).resolve() / "secrets"),
-        str(Path(target_root).resolve() / "*secret*"),
-        str(Path(target_root).resolve() / "*token*"),
     ]
+    for repository_root in (policy_root, target_root):
+        root = Path(repository_root).resolve()
+        denied.extend(
+            str(root / relative)
+            for relative in (
+                ".env",
+                "secrets",
+                "*secret*",
+                "*token*",
+                DENY_CANARY_RELATIVE,
+            )
+        )
     permissions.update(dict.fromkeys(denied, "deny"))
     permissions[str(scratch_root.resolve())] = "write"
     permissions[str(Path(policy_root).resolve())] = "read"
@@ -888,6 +935,15 @@ def build_invocation_plan(
         expected_tree_sha=expected_target_tree_sha,
         detached=True,
     )
+    for label, repository in (("policy", policy), ("target", target)):
+        canary = _protected_file(
+            git_path,
+            Path(repository["root"]),
+            str(repository["head_sha"]),
+            DENY_CANARY_RELATIVE,
+        )
+        if canary != DENY_CANARY_BYTES:
+            raise LauncherError(f"{label} deny canary is missing or drifted")
     policy_path, configured = _role_config(
         git_path, policy["root"], policy["head_sha"], role
     )
@@ -942,7 +998,9 @@ def build_invocation_plan(
     profile_shell = profile["shell_environment"]
     profile_shell["set"]["PATH"] = str(toolchain["path"])
     model, effort = ROLE_ROUTES[str(role)]
-    mcp_servers = configured.get("mcp_servers") or {}
+    mcp_servers = json.loads(json.dumps(configured.get("mcp_servers") or {}))
+    if role == "external_spec_researcher":
+        mcp_servers["openaiDeveloperDocs"]["required"] = True
     capability_closure = dict.fromkeys(_CAPABILITY_KEYS, False)
     capability_closure["local_command_host"] = {
         "enabled": True,
@@ -969,6 +1027,8 @@ def build_invocation_plan(
         f"permissions.{profile_name}.network={_toml_value({'enabled': False})}",
         f"shell_environment_policy={_toml_value({'inherit': 'none', 'ignore_default_excludes': False, 'set': profile['shell_environment']['set']})}",
         "agents.enabled=false",
+        'web_search="disabled"',
+        "skills.config=[]",
     ]
     disabled_features = (
         "apps", "plugins", "hooks", "memories", "multi_agent", "multi_agent_v2",
@@ -976,8 +1036,13 @@ def build_invocation_plan(
         "computer_use", "image_generation", "in_app_browser", "workspace_dependencies",
         "remote_plugin", "skill_mcp_dependency_install", "tool_call_mcp_elicitation",
         "auth_elicitation", "code_mode", "code_mode_only",
+        "standalone_web_search", "web_search_cached", "web_search_request",
+        "skill_search", "tool_suggest", "recommended_plugins", "plugin_sharing",
+        "shell_snapshot", "shell_snapshot_v2", "chronicle",
+        "external_agent_memory_import",
     )
     config_values.extend(f"features.{name}=false" for name in disabled_features)
+    config_values.append("features.skip_host_skill_discovery=true")
     config_values.append("features.code_mode_host=true")
     config_values.append(f"mcp_servers={_toml_value(mcp_servers)}")
     runtime_config = {
@@ -985,7 +1050,11 @@ def build_invocation_plan(
         "approval_policy": "never",
         "ephemeral": True,
         "config_values": config_values,
-        "features": {**dict.fromkeys(disabled_features, False), "code_mode_host": True},
+        "features": {
+            **dict.fromkeys(disabled_features, False),
+            "skip_host_skill_discovery": True,
+            "code_mode_host": True,
+        },
         "agents": {"enabled": False},
         "mcp_servers": mcp_servers,
         "permission_profile": profile,
@@ -1012,6 +1081,8 @@ def build_invocation_plan(
     probe_paths = {
         "policy_read": str(Path(policy["root"]) / "AGENTS.md"),
         "target_read": str(Path(target["root"]) / "AGENTS.md"),
+        "policy_secret_denied": str(Path(policy["root"]) / DENY_CANARY_RELATIVE),
+        "target_secret_denied": str(Path(target["root"]) / DENY_CANARY_RELATIVE),
         "target_write_denied": str(Path(target["root"]) / ".launcher-target-write-probe"),
         "credential_read_denied": str(credential_path),
         "scratch_write": str(scratch / ".launcher-scratch-probe"),
@@ -1028,7 +1099,13 @@ def build_invocation_plan(
     host_env["PATH"] = str(toolchain["path"])
     host_env["TMPDIR"] = str(runtime_root)
     host_env["PYTHONDONTWRITEBYTECODE"] = "1"
-    host_env["GIT_OPTIONAL_LOCKS"] = "0"
+    host_env.update(
+        {
+            name: value
+            for name, value in _git_environment().items()
+            if name.startswith("GIT_")
+        }
+    )
     secret_sentinel = f"launcher-{secrets.token_hex(32)}"
     host_env["LAUNCHER_SECRET_SENTINEL"] = secret_sentinel
     return {
@@ -1086,9 +1163,7 @@ def build_invocation_plan(
     }
 
 
-def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dict[str, object]:
-    if probe_name not in _PROBE_ORDER:
-        raise LauncherError("unknown sandbox probe")
+def _sandbox_argv_prefix(plan: Mapping[str, object]) -> list[str]:
     config_values = plan.get("config_values")
     if type(config_values) is not list or not all(type(value) is str for value in config_values):
         raise LauncherError("canonical launcher config is unavailable")
@@ -1106,8 +1181,21 @@ def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dic
             "--",
         )
     )
+    return argv
+
+
+def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dict[str, object]:
+    if probe_name not in _PROBE_ORDER:
+        raise LauncherError("unknown sandbox probe")
+    argv = _sandbox_argv_prefix(plan)
     paths = plan["probe_paths"]
-    if probe_name in {"policy_read", "target_read", "credential_read_denied"}:
+    if probe_name in {
+        "policy_read",
+        "target_read",
+        "policy_secret_denied",
+        "target_secret_denied",
+        "credential_read_denied",
+    }:
         argv.extend(("/usr/bin/head", "-c", "1", str(paths[probe_name])))
     elif probe_name in {"target_write_denied", "scratch_write"}:
         argv.extend(("/usr/bin/touch", "--", str(paths[probe_name])))
@@ -1131,6 +1219,33 @@ def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dic
     }
 
 
+def build_toolchain_smoke_argv(
+    plan: Mapping[str, object], smoke_name: str
+) -> dict[str, object]:
+    commands = plan.get("toolchain", {}).get("smoke_commands", {})
+    if (
+        type(commands) is not dict
+        or tuple(commands) != _TOOLCHAIN_SMOKE_ORDER
+        or smoke_name not in commands
+    ):
+        raise LauncherError("canonical toolchain smoke plan is unavailable")
+    command = commands[smoke_name]
+    if type(command) is not list or not command or not all(
+        type(value) is str for value in command
+    ):
+        raise LauncherError("toolchain smoke command is malformed")
+    argv = _sandbox_argv_prefix(plan)
+    argv.extend(command)
+    return {
+        "argv": argv,
+        "cwd": plan["cwd"],
+        "binary_realpath": plan["binary_realpath"],
+        "profile_digest": plan["permission_profile_digest"],
+        "smoke_name": smoke_name,
+        "shell": False,
+    }
+
+
 def _probe_result(name: str, value: object) -> bool:
     if type(value) is not dict:
         return False
@@ -1138,8 +1253,16 @@ def _probe_result(name: str, value: object) -> bool:
         return value.get("allowed") is True
     if name == "secret_env_absent":
         return value.get("absent") is True
-    if name == "credential_read_denied":
-        return value.get("denied") is True and value.get("stdout") == "" and value.get("marker_absent") is True
+    if name in {
+        "policy_secret_denied",
+        "target_secret_denied",
+        "credential_read_denied",
+    }:
+        return (
+            value.get("denied") is True
+            and value.get("stdout", "") == ""
+            and value.get("marker_absent") is True
+        )
     if name in {"target_write_denied", "network_denied"}:
         return value.get("denied") is True and value.get("marker_absent") is True
     return False
@@ -1176,7 +1299,11 @@ def _evaluate_sandbox_probe(
         result["denied"] = returncode != 0 and not stdout and not marker_exists
         if marker_exists:
             result["status"] = "insufficient_evidence"
-    elif probe_name == "credential_read_denied":
+    elif probe_name in {
+        "credential_read_denied",
+        "policy_secret_denied",
+        "target_secret_denied",
+    }:
         result["denied"] = returncode != 0 and not stdout and not marker_exists
     elif probe_name == "scratch_write":
         result["allowed"] = returncode == 0
@@ -1357,7 +1484,74 @@ def _default_sandbox_runner(**kwargs: object) -> dict[str, object]:
     )
 
 
-def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[str, object]:
+def _default_toolchain_runner(**kwargs: object) -> dict[str, object]:
+    argv = kwargs.get("argv")
+    if type(argv) is not list or not argv or not all(type(value) is str for value in argv):
+        raise LauncherError("toolchain smoke argv must be a non-empty string list")
+    if kwargs.get("smoke_name") not in _TOOLCHAIN_SMOKE_ORDER:
+        raise LauncherError("toolchain smoke identity is unknown")
+    completed = subprocess.run(
+        argv,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=kwargs.get("cwd"),
+        env=kwargs.get("env"),
+        timeout=kwargs.get("timeout", 30),
+        shell=False,
+    )
+    return {
+        "returncode": completed.returncode,
+        "stdout": completed.stdout[:MAX_STDOUT_BYTES],
+        "stderr": completed.stderr[:MAX_STDERR_BYTES],
+    }
+
+
+def _toolchain_smoke_passed(value: object) -> bool:
+    if type(value) is not dict:
+        return False
+    stdout = value.get("stdout")
+    stderr = value.get("stderr")
+    return (
+        value.get("returncode") == 0
+        and type(stdout) is str
+        and bool(stdout.strip())
+        and len(stdout.encode("utf-8")) <= MAX_STDOUT_BYTES
+        and type(stderr) is str
+        and len(stderr.encode("utf-8")) <= MAX_STDERR_BYTES
+    )
+
+
+def _stderr_is_admissible(raw: str, *, agents_disabled: bool) -> bool:
+    """Allow only the bounded known agent-definition warning from 0.153.4."""
+
+    if not raw:
+        return True
+    if not agents_disabled or len(raw.encode("utf-8")) > MAX_STDERR_BYTES:
+        return False
+    lines = raw.splitlines()
+    if not lines:
+        return False
+    for line in lines:
+        if (
+            not line.startswith("Ignoring malformed agent role definition")
+            or len(line.encode("utf-8")) > MAX_TEXT_LENGTH
+            or re.search(r"\b(?:enabled|failed|error|MCP|tool)\b", line, re.IGNORECASE)
+        ):
+            return False
+    return True
+
+
+def parse_codex_jsonl(
+    raw: object,
+    *,
+    role: str = "reviewer_high",
+    max_bytes: int = MAX_JSONL_BYTES,
+) -> dict[str, object]:
+    """Parse bounded exec JSONL with role-aware fail-closed MCP admission."""
+
+    if type(role) is not str or role not in READ_ONLY_ROLES:
+        raise LauncherError("JSONL role identity is invalid")
     if type(raw) is str:
         encoded = raw.encode("utf-8")
     elif type(raw) is bytes:
@@ -1382,6 +1576,9 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
     final_message: str | None = None
     errors: list[object] = []
     warnings: list[object] = []
+    active_mcp: dict[str, dict[str, object]] = {}
+    completed_mcp: set[str] = set()
+    mcp_call_count = 0
     allowed = {
         "thread.started", "turn.started", "item.started", "item.updated",
         "item.completed", "turn.completed", "turn.failed", "error",
@@ -1397,7 +1594,83 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
                 continue
             if event["type"] in {"item.started", "item.updated", "item.completed"}:
                 item = event.get("item")
-                if type(item) is not dict or item.get("type") not in {
+                if type(item) is not dict:
+                    raise LauncherError("unexpected item event")
+                item_type = item.get("type")
+                if item_type == "mcp_tool_call":
+                    if role != "external_spec_researcher":
+                        raise LauncherError("ordinary read-only role emitted MCP activity")
+                    if event["type"] == "item.updated":
+                        raise LauncherError("Docs MCP item updates are not admitted")
+                    required = {"id", "type", "server", "tool", "arguments", "status"}
+                    mcp_allowed = required | {"result", "error"}
+                    if set(item) - mcp_allowed or not required.issubset(item):
+                        raise LauncherError("Docs MCP item shape is invalid")
+                    item_id = item["id"]
+                    if (
+                        type(item_id) is not str
+                        or not item_id
+                        or len(item_id.encode("utf-8")) > MAX_TEXT_LENGTH
+                        or item.get("server") != "openaiDeveloperDocs"
+                        or item.get("tool") not in DOCS_MCP_TOOLS
+                    ):
+                        raise LauncherError("Docs MCP identity is not allowlisted")
+                    identity = {
+                        "server": item["server"],
+                        "tool": item["tool"],
+                        "arguments": item["arguments"],
+                    }
+                    if event["type"] == "item.started":
+                        if (
+                            set(item) != required
+                            or item["status"] != "in_progress"
+                            or item_id in active_mcp
+                            or item_id in completed_mcp
+                        ):
+                            raise LauncherError("Docs MCP start lifecycle is invalid")
+                        active_mcp[item_id] = identity
+                        continue
+                    if item_id not in active_mcp or active_mcp.pop(item_id) != identity:
+                        raise LauncherError("Docs MCP completion is unmatched")
+                    if item_id in completed_mcp:
+                        raise LauncherError("Docs MCP completion is replayed")
+                    completed_mcp.add(item_id)
+                    mcp_call_count += 1
+                    status = item["status"]
+                    if status == "completed":
+                        if "error" in item or "result" not in item:
+                            raise LauncherError("Docs MCP success shape is invalid")
+                        result = item["result"]
+                        if (
+                            type(result) is not dict
+                            or not {"content"}.issubset(result)
+                            or set(result) - {"content", "_meta", "structured_content"}
+                            or type(result["content"]) is not list
+                            or len(result["content"]) > 128
+                            or any(
+                                type(block) is not dict
+                                or type(block.get("type")) is not str
+                                or not block.get("type")
+                                for block in result["content"]
+                            )
+                        ):
+                            raise LauncherError("Docs MCP result is malformed")
+                    elif status == "failed":
+                        error = item.get("error")
+                        if (
+                            "result" in item
+                            or type(error) is not dict
+                            or set(error) != {"message"}
+                            or type(error.get("message")) is not str
+                            or not error["message"]
+                            or len(error["message"].encode("utf-8")) > MAX_TEXT_LENGTH
+                        ):
+                            raise LauncherError("Docs MCP failure shape is invalid")
+                        errors.append(error["message"])
+                    else:
+                        raise LauncherError("Docs MCP completion status is invalid")
+                    continue
+                if item_type not in {
                     "agent_message",
                     "command_execution",
                     "warning",
@@ -1406,7 +1679,6 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
                     "plan_update",
                 }:
                     raise LauncherError("unexpected item event")
-                item_type = item["type"]
                 if item_type == "agent_message":
                     text = item.get("text")
                     if event["type"] == "item.completed":
@@ -1425,7 +1697,9 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
     types = [event["type"] for event in events]
     if types.count("thread.started") != 1 or types.count("turn.started") != 1:
         raise LauncherError("JSONL lifecycle events are incomplete")
-    failed = "turn.failed" in types or "error" in types
+    if active_mcp:
+        raise LauncherError("Docs MCP lifecycle is incomplete")
+    failed = "turn.failed" in types or "error" in types or bool(errors)
     if not failed and (types.count("turn.completed") != 1 or types[-1] != "turn.completed"):
         raise LauncherError("JSONL terminal event is missing or replayed")
     if final_message is None and not failed:
@@ -1438,6 +1712,7 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
         "final_agent_message": final_message,
         "error_event_count": len(errors),
         "warning_event_count": len(warnings),
+        "mcp_call_count": mcp_call_count,
         "error_digest": hashlib.sha256(error_material).hexdigest(),
         "status": "failed" if failed else "completed",
     }
@@ -1571,6 +1846,7 @@ def run_isolated_role(
     *,
     prompt: str,
     probe: Callable[..., object] | None = None,
+    toolchain_runner: Callable[..., Mapping[str, object]] | None = None,
     sandbox_runner: Callable[..., Mapping[str, object]] | None = None,
     process_runner: Callable[..., Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
@@ -1606,6 +1882,31 @@ def run_isolated_role(
     except OSError as exc:
         return fail([_diagnostic(exc)])
     observations: dict[str, object] = {}
+    smoke = toolchain_runner or _default_toolchain_runner
+    for name in _TOOLCHAIN_SMOKE_ORDER:
+        try:
+            smoke_spec = build_toolchain_smoke_argv(plan, name)
+            smoke_result = dict(
+                smoke(
+                    argv=smoke_spec["argv"],
+                    cwd=smoke_spec["cwd"],
+                    env=plan["exec_env"],
+                    timeout=30,
+                    shell=False,
+                    smoke_name=name,
+                    plan=plan,
+                    profile_digest=smoke_spec["profile_digest"],
+                )
+            )
+        except Exception as exc:
+            return fail([_diagnostic(exc)])
+        observations[f"toolchain:{name}"] = {
+            "returncode": smoke_result.get("returncode"),
+            "stdout_digest": _digest(smoke_result.get("stdout", "")),
+            "stderr_digest": _digest(smoke_result.get("stderr", "")),
+        }
+        if not _toolchain_smoke_passed(smoke_result):
+            return fail([f"toolchain smoke {name} unavailable"])
     sandbox = sandbox_runner or _default_sandbox_runner
     for name in _PROBE_ORDER:
         try:
@@ -1660,8 +1961,13 @@ def run_isolated_role(
         return fail(["process output is malformed"])
     if len(stdout.encode()) > MAX_STDOUT_BYTES or len(stderr.encode()) > MAX_STDERR_BYTES:
         return fail(["process output exceeds bounds"])
+    agents_disabled = (
+        plan.get("runtime_config", {}).get("agents", {}).get("enabled") is False
+    )
+    if not _stderr_is_admissible(stderr, agents_disabled=agents_disabled):
+        return fail(["isolated role emitted unadmitted stderr"])
     try:
-        parsed = parse_codex_jsonl(stdout)
+        parsed = parse_codex_jsonl(stdout, role=str(plan["role"]))
     except (LauncherError, ValueError) as exc:
         return fail([_diagnostic(exc)])
     if parsed.get("status") != "completed":
