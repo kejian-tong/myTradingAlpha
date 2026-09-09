@@ -287,11 +287,13 @@ def test_protocol_does_not_call_an_old_red_the_current_final_repair() -> None:
         "6d69222 -> 05a902b",
         "d1065b2 -> e213507",
         "1072d1f -> 5dbb133",
+        "276dd72 -> cf6fd19",
         "historical controlling pairs",
     ):
         assert marker in policy, marker
     assert "current repair starts at test-only red `d1065b2`" not in policy
     assert "current repair starts at test-only red `1072d1f`" not in policy
+    assert "current repair starts at test-only red `276dd72`" not in policy
 
 
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:

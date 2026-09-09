@@ -639,6 +639,12 @@ def test_repository_benign_local_git_metadata_allowlist_remains_admissible(
         pytest.param("https://github.com/org/repo.git?token=secret", id="query"),
         pytest.param("https://github.com/org/repo.git#secret", id="fragment"),
         pytest.param("https://github.com/org/repo.git\ncredential", id="control"),
+        pytest.param(
+            "https://github.com/org/one.git\nhttps://evil.example/org/two.git",
+            id="two-valid-lines-one-value",
+        ),
+        pytest.param("https://github.com:/org/repo.git", id="https-empty-port"),
+        pytest.param("ssh://git@github.com:/org/repo.git", id="ssh-empty-port"),
         pytest.param("https://github.com/" + "a" * 4096 + ".git", id="oversized"),
     ],
 )
@@ -666,6 +672,43 @@ def test_remote_url_reviewed_https_and_exact_git_ssh_shapes_remain_admissible(
     assert _plan(scenario)["target_head_sha"] == scenario.target.head
 
 
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_multiple_complete_valid_remote_url_values_remain_admissible(
+    scenario: Scenario, duplicate: bool
+) -> None:
+    first = "https://github.com/TauricResearch/TradingAgents.git"
+    second = first if duplicate else "git@github.com:kejian-tong/myTradingAlpha.git"
+    _run_git(scenario.target.root, "config", "--add", "remote.origin.url", first)
+    _run_git(scenario.target.root, "config", "--add", "remote.origin.url", second)
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"https://github.com/org/repo.git",
+        b"\0",
+        b"https://github.com/org/repo.git\0\0",
+        b"https://github.com/org/repo.git\0trailing",
+        b"\xff\0",
+    ],
+)
+def test_nul_delimited_git_config_values_require_exact_nonempty_records(raw: bytes) -> None:
+    with pytest.raises((UnicodeError, ValueError, RuntimeError)):
+        _function("_parse_nul_config_values")(raw)
+
+
+def test_nul_delimited_git_config_values_preserve_complete_value_boundaries() -> None:
+    values = _function("_parse_nul_config_values")(
+        b"https://github.com/org/one.git\nhttps://evil.example/org/two.git\0"
+        b"git@github.com:org/repo.git\0"
+    )
+    assert values == (
+        "https://github.com/org/one.git\nhttps://evil.example/org/two.git",
+        "git@github.com:org/repo.git",
+    )
+
+
 @pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"])
 def test_ambient_git_redirects_are_rejected(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch, variable: str
@@ -676,6 +719,53 @@ def test_ambient_git_redirects_are_rejected(
         "GIT_OBJECT_DIRECTORY": str(scenario.policy.root / ".git/objects"),
     }[variable]
     monkeypatch.setenv(variable, value)
+    _rejected_plan(scenario)
+
+
+def test_exact_launcher_neutral_git_controls_are_accepted_from_parent_profile(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in tuple(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name, raising=False)
+    for name, value in {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("GIT_CONFIG_GLOBAL", "/tmp/untrusted"),
+        ("GIT_CONFIG_SYSTEM", "/tmp/untrusted"),
+        ("GIT_CONFIG_NOSYSTEM", "0"),
+        ("GIT_NO_LAZY_FETCH", "0"),
+        ("GIT_NO_REPLACE_OBJECTS", "0"),
+        ("GIT_OPTIONAL_LOCKS", "1"),
+        ("GIT_TERMINAL_PROMPT", "1"),
+        ("GIT_CONFIG_COUNT", "0"),
+        ("GIT_CONFIG_KEY_0", "core.fsmonitor"),
+    ],
+)
+def test_divergent_or_injectable_ambient_git_controls_are_rejected(
+    scenario: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    for existing in tuple(os.environ):
+        if existing.startswith("GIT_"):
+            monkeypatch.delenv(existing, raising=False)
+    monkeypatch.setenv(name, value)
     _rejected_plan(scenario)
 
 
@@ -2121,8 +2211,16 @@ def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
         "/usr/bin/env SAFE=1 codex exec nested",
         '/usr/bin/env -S "codex exec nested"',
         '/usr/bin/env --split-string="codex exec nested"',
+        "/usr/bin/env -S '-i' codex exec nested",
+        "/usr/bin/env -S '--unset=FOO' codex exec nested",
         "/bin/sh -c 'codex exec --json nested'",
         "/bin/sh -c 'SAFE=1 command codex exec --json nested'",
+        "/bin/sh -c 'command -v codex; codex exec nested'",
+        "/bin/sh -c 'printf ok; codex exec nested'",
+        "/bin/sh -c 'true && codex exec nested'",
+        "/bin/sh -c 'false || codex exec nested'",
+        "/bin/sh -c 'printf ok | codex exec nested'",
+        "/bin/sh -c 'printf ok\ncodex exec nested'",
         ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
     ],
 )
@@ -2152,6 +2250,10 @@ def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
         ["rg", "-n", "codex exec", "docs", "tests"],
         "command -v codex",
         "command -V codex",
+        "/bin/sh -c \"printf '%s' 'codex exec nested'\"",
+        "/bin/sh -c \"rg -n 'codex exec' .\"",
+        "/bin/sh -c 'command -v codex'",
+        "/bin/sh -c 'command -V codex; printf ok'",
     ):
         parsed = parser(
             _command_jsonl(command),
