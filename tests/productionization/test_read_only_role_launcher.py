@@ -1759,6 +1759,8 @@ def test_parser_accepts_observed_lifecycle_command_and_error_items() -> None:
                 "id": "command-observed",
                 "type": "command_execution",
                 "command": ["pwd"],
+                "aggregated_output": "",
+                "exit_code": None,
                 "status": "in_progress",
             },
         },
@@ -1797,6 +1799,8 @@ def _command_jsonl(command: object) -> str:
                 "id": "command-1",
                 "type": "command_execution",
                 "command": command,
+                "aggregated_output": "",
+                "exit_code": None,
                 "status": "in_progress",
             },
         },
@@ -1815,6 +1819,21 @@ def _command_jsonl(command: object) -> str:
         {"type": "turn.completed"},
     )
     return "".join(json.dumps(event) + "\n" for event in events)
+
+
+def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
+    started = json.loads(_command_jsonl("pwd").splitlines()[2])["item"]
+    assert set(started) == {
+        "aggregated_output",
+        "command",
+        "exit_code",
+        "id",
+        "status",
+        "type",
+    }
+    assert started["aggregated_output"] == ""
+    assert started["exit_code"] is None
+    assert started["status"] == "in_progress"
 
 
 @pytest.mark.parametrize(
