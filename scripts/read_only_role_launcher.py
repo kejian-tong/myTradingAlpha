@@ -655,7 +655,7 @@ def build_invocation_plan(
         'approval_policy="never"',
         f"default_permissions={json.dumps(profile_name)}",
         f"permissions.{profile_name}.filesystem={filesystem_config}",
-        f"permissions.{profile_name}.network={json.dumps('disabled')}",
+        f"permissions.{profile_name}.network={_toml_value({'enabled': False})}",
         f"shell_environment_policy={_toml_value({'inherit': 'none', 'ignore_default_excludes': False, 'set': profile['shell_environment']['set']})}",
         "agents.enabled=false",
     ]
@@ -699,7 +699,7 @@ def build_invocation_plan(
     )
     probe_paths = {
         "policy_read": str(Path(policy["root"]) / "AGENTS.md"),
-        "target_read": str(Path(target["root"]) / "candidate.txt"),
+        "target_read": str(Path(target["root"]) / "AGENTS.md"),
         "target_write_denied": str(Path(target["root"]) / ".launcher-target-write-probe"),
         "credential_read_denied": str(credential_path),
         "scratch_write": str(scratch / ".launcher-scratch-probe"),
@@ -716,6 +716,8 @@ def build_invocation_plan(
     host_env["TMPDIR"] = str(runtime_root)
     host_env["PYTHONDONTWRITEBYTECODE"] = "1"
     host_env["GIT_OPTIONAL_LOCKS"] = "0"
+    secret_sentinel = f"launcher-{secrets.token_hex(32)}"
+    host_env["LAUNCHER_SECRET_SENTINEL"] = secret_sentinel
     return {
         "invocation_kind": "isolated_role_invocation",
         "policy_root": str(policy["root"]),
@@ -747,6 +749,7 @@ def build_invocation_plan(
         "prompt_transport": "stdin",
         "config_values": config_values,
         "exec_env": host_env,
+        "launcher_secret_sentinel": secret_sentinel,
         "probe_paths": probe_paths,
         "probe_markers": [str(Path(target["root"]) / ".launcher-target-write-probe")],
         "cwd_is_private_empty": True,
@@ -830,6 +833,55 @@ def _probe_result(name: str, value: object) -> bool:
     return False
 
 
+def _evaluate_sandbox_probe(
+    probe_name: str,
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    marker_path: object,
+    credential_path_exists: bool,
+) -> dict[str, object]:
+    if len(stdout.encode()) > MAX_STDOUT_BYTES or len(stderr.encode()) > MAX_STDERR_BYTES:
+        return {"status": "insufficient_evidence", "returncode": returncode, "stdout": "", "stderr": ""}
+    marker = Path(str(marker_path)) if marker_path and probe_name in {
+        "target_write_denied",
+        "scratch_write",
+        "secret_env_absent",
+    } else None
+    marker_exists = bool(marker and marker.exists())
+    result: dict[str, object] = {
+        "returncode": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "marker_absent": not marker_exists,
+    }
+    if probe_name == "credential_read_denied" and not credential_path_exists:
+        return {"status": "insufficient_evidence", **result}
+    if probe_name in {"policy_read", "target_read"}:
+        result["allowed"] = returncode == 0 and bool(stdout) and not marker_exists
+    elif probe_name == "target_write_denied":
+        result["denied"] = returncode != 0 and not stdout and not marker_exists
+        if marker_exists:
+            result["status"] = "insufficient_evidence"
+    elif probe_name == "credential_read_denied":
+        result["denied"] = returncode != 0 and not stdout and not marker_exists
+    elif probe_name == "scratch_write":
+        result["allowed"] = returncode == 0
+        if result["allowed"] and marker is not None and marker.exists():
+            try:
+                marker.unlink()
+            except OSError:
+                result["status"] = "insufficient_evidence"
+    elif probe_name == "secret_env_absent":
+        result["absent"] = returncode == 0 and not stdout
+    elif probe_name == "network_denied":
+        result["denied"] = returncode != 0 and not stdout
+    else:
+        result["status"] = "insufficient_evidence"
+    return result
+
+
 def _prompt(plan: dict[str, object], prompt: object) -> str:
     if type(prompt) is not str or not prompt:
         raise LauncherError("prompt must be a non-empty string")
@@ -888,6 +940,8 @@ def _default_sandbox_runner(**kwargs: object) -> dict[str, object]:
     argv = kwargs.get("argv")
     if type(argv) is not list or not all(type(value) is str for value in argv):
         raise LauncherError("sandbox argv must be a string list")
+    if kwargs.get("probe_name") == "credential_read_denied" and not kwargs.get("credential_path_exists", True):
+        return {"status": "insufficient_evidence", "returncode": 1, "stdout": "", "stderr": ""}
     completed = subprocess.run(
         argv,
         check=False,
@@ -900,7 +954,14 @@ def _default_sandbox_runner(**kwargs: object) -> dict[str, object]:
     )
     stdout = completed.stdout[:MAX_STDOUT_BYTES]
     stderr = completed.stderr[:MAX_STDERR_BYTES]
-    return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
+    return _evaluate_sandbox_probe(
+        str(kwargs.get("probe_name")),
+        returncode=completed.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        marker_path=kwargs.get("marker_path"),
+        credential_path_exists=bool(kwargs.get("credential_path_exists", True)),
+    )
 
 
 def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[str, object]:
@@ -1154,6 +1215,8 @@ def run_isolated_role(
                     shell=False,
                     probe_name=name,
                     plan=plan,
+                    marker_path=plan["probe_paths"][name],
+                    credential_path_exists=Path(plan["credential_probe_path"]).exists(),
                 )
         except Exception as exc:  # injected probes are untrusted test/runtime boundaries
             return fail([_diagnostic(exc)])

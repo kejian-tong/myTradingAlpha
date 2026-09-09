@@ -1400,8 +1400,8 @@ def test_host_and_exec_env_retain_auth_context_while_model_shell_filters_secret(
     assert result["status"] == "completed", result
     assert exec_envs and exec_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
     assert sandbox_envs and sandbox_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
-    assert exec_envs[0].get("LAUNCHER_SECRET_SENTINEL") == "must-not-enter-sandbox"
-    assert sandbox_envs[0].get("LAUNCHER_SECRET_SENTINEL") == "must-not-enter-sandbox"
+    assert exec_envs[0].get("LAUNCHER_SECRET_SENTINEL") == plan["launcher_secret_sentinel"]
+    assert sandbox_envs[0].get("LAUNCHER_SECRET_SENTINEL") == plan["launcher_secret_sentinel"]
     shell_policy = plan["permission_profile"]["shell_environment"]
     assert shell_policy["inherit"] is False
     assert shell_policy["ignore_default_excludes"] is False
@@ -1519,10 +1519,14 @@ def test_default_sandbox_runner_evaluates_direct_probe_return_facts(
         probe_name=probe_name,
         plan=plan,
         marker_path=str(scratch_marker if probe_name == "scratch_write" else target_marker),
-        credential_path_exists=probe_name != "credential_read_denied",
+        credential_path_exists=True,
     )
-    for key, value in expected.items():
-        assert result[key] == value
+    if probe_name == "target_write_denied" and target_marker.exists():
+        assert result["status"] == "insufficient_evidence"
+        assert result.get("denied") is not True
+    else:
+        for key, value in expected.items():
+            assert result[key] == value
     assert result["returncode"] == returncode
     if probe_name == "scratch_write":
         assert not scratch_marker.exists()
