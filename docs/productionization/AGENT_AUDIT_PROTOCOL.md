@@ -56,7 +56,8 @@ disabled and an active built-in profile; the official built-in read-only identit
 `disabled` never means read-only. Local `exec_command`, `write_stdin`, and `apply_patch` exposure is
 admissible only when the declared effective local enforcement is read-only. Local permission enforcement
 does not govern Apps, connectors, MCP servers, browsers, or collaboration controls, so those surfaces fail
-closed unless the tool is in the verifier's narrow reviewed read-only allowlist.
+closed unless the tool is in the verifier's narrow reviewed read-only allowlist. High-capability function
+gateways and all canonical collaboration-control namespace aliases are always rejected.
 
 For example:
 

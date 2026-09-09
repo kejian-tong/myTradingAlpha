@@ -20,10 +20,11 @@ must supply trusted expected PR/base/head values separately. The verifier requir
 base ancestry, checked-out expected head, matching head tree, and role TOML loaded from that exact Git tree.
 It rejects unknown or duplicate fields, oversized or invalid Unicode input, role/model/effort drift,
 ambiguous or non-read-only local enforcement for a configured read-only role, collaboration controls,
-and external App/MCP/connector tools outside a narrow reviewed read-only allowlist. Diagnostic output does
-not echo untrusted receipt keys or values. The verifier performs no network or write operation and does not
-persist receipt data to telemetry. Invoke it only as supplemental admission evidence, with independent
-runtime observation and the normal review/CI/merge gates still required.
+high-capability function gateways, and external App/MCP/connector tools outside a narrow reviewed
+read-only allowlist. Canonical bare and namespaced collaboration aliases receive the same decision.
+Diagnostic output does not echo untrusted receipt keys or values. The verifier performs no network or
+write operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
+evidence, with independent runtime observation and the normal review/CI/merge gates still required.
 
 ## Storage and exact-head safety
 

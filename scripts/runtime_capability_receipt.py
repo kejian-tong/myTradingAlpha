@@ -74,8 +74,17 @@ _MULTI_AGENT_VERSIONS = frozenset({"v1", "v2"})
 # local enforcement system. Apps, connectors, MCP servers, browsers, and Codex
 # collaboration controls are separate capability surfaces.
 _SANDBOX_GOVERNED_TOOLS = frozenset({"apply_patch", "exec_command", "write_stdin"})
+_CAPABILITY_GATEWAY_TOOLS = frozenset({"functions.exec", "functions__exec"})
 _COLLABORATION_TOOLS = frozenset(
     {
+        "collaboration.followup_task",
+        "collaboration.interrupt_agent",
+        "collaboration.send_message",
+        "collaboration.spawn_agent",
+        "collaboration__followup_task",
+        "collaboration__interrupt_agent",
+        "collaboration__send_message",
+        "collaboration__spawn_agent",
         "followup_task",
         "interrupt_agent",
         "send_message",
@@ -323,7 +332,9 @@ def _validate_values(receipt: dict[str, object]) -> list[str]:
             if _SAFE_TOOL_RE.fullmatch(name) is None:
                 errors.append("tool_names contains an invalid tool identifier")
                 continue
-            if name in _COLLABORATION_TOOLS:
+            if name in _CAPABILITY_GATEWAY_TOOLS:
+                errors.append("capability gateway exposed")
+            elif name in _COLLABORATION_TOOLS:
                 errors.append("collaboration control exposed")
             elif name in _SANDBOX_GOVERNED_TOOLS:
                 if not _local_enforcement_is_read_only(receipt):
@@ -469,6 +480,9 @@ def verify_receipt(
     if shape_errors:
         return shape_errors
     assert type(decoded) is dict
+    errors = _validate_values(decoded)
+    if errors:
+        return errors
     try:
         serialized = json.dumps(decoded, ensure_ascii=False, separators=(",", ":"))
         serialized_size = len(serialized.encode("utf-8"))
@@ -476,9 +490,6 @@ def verify_receipt(
         return ["receipt contains non-serializable text or values"]
     if serialized_size > MAX_RECEIPT_BYTES:
         return ["receipt exceeds 64 KiB"]
-    errors = _validate_values(decoded)
-    if errors:
-        return errors
     errors.extend(
         _validate_repository_binding(
             repo_root,
