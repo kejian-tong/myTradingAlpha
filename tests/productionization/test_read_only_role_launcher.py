@@ -87,6 +87,7 @@ class Scenario:
     policy: GitFixture
     target: GitFixture
     binary: BinaryFixture
+    credential_probe: Path
 
 
 def _launcher_module():
@@ -212,7 +213,11 @@ def scenario(tmp_path: Path) -> Scenario:
     policy = _copy_policy_fixture(tmp_path / "policy")
     target = _copy_target_fixture(tmp_path / "target")
     binary = _binary_fixture(tmp_path / "bin")
-    return Scenario(policy=policy, target=target, binary=binary)
+    credential = tmp_path / "bootstrap-auth" / "credentials.json"
+    credential.parent.mkdir()
+    credential.write_text("bootstrap credential fixture\n", encoding="utf-8")
+    credential.chmod(0o600)
+    return Scenario(policy=policy, target=target, binary=binary, credential_probe=credential)
 
 
 def _binary_probe(descriptor: dict[str, object]):
@@ -242,6 +247,7 @@ def _plan_kwargs(
         "expected_binary_team_identifier": TEAM_IDENTIFIER,
         "supported_binary_versions": (CODEX_VERSION,),
         "binary_probe": _binary_probe(scenario.binary.descriptor),
+        "credential_probe_path": scenario.credential_probe,
     }
     values.update(overrides)
     return values
@@ -273,7 +279,11 @@ def test_valid_plan_is_an_isolated_top_level_invocation_and_uses_protected_polic
     policy = _copy_policy_fixture(tmp_path / "policy")
     target = _copy_target_fixture(tmp_path / "target", candidate_role=True)
     binary = _binary_fixture(tmp_path / "bin")
-    scenario = Scenario(policy=policy, target=target, binary=binary)
+    credential = tmp_path / "bootstrap-auth" / "credentials.json"
+    credential.parent.mkdir()
+    credential.write_text("bootstrap credential fixture\n", encoding="utf-8")
+    credential.chmod(0o600)
+    scenario = Scenario(policy=policy, target=target, binary=binary, credential_probe=credential)
 
     plan = _plan(scenario)
 
@@ -429,6 +439,7 @@ def test_role_toml_fields_and_values_are_strict(
         policy=_git_fixture(scenario.policy.root),
         target=scenario.target,
         binary=scenario.binary,
+        credential_probe=scenario.credential_probe,
     )
     _rejected_plan(updated_scenario)
 
@@ -459,6 +470,7 @@ def test_external_mcp_endpoint_or_tool_allowlist_drift_is_rejected(
         policy=_git_fixture(scenario.policy.root),
         target=scenario.target,
         binary=scenario.binary,
+        credential_probe=scenario.credential_probe,
     )
     _rejected_plan(updated_scenario, role="external_spec_researcher")
 
@@ -954,6 +966,8 @@ def _cli_identity_args(scenario: Scenario) -> list[str]:
         str(scenario.binary.path),
         "--expected-binary-sha256",
         scenario.binary.sha256,
+        "--credential-probe-path",
+        str(scenario.credential_probe),
     ]
 
 
@@ -1146,6 +1160,7 @@ def test_cli_reads_bounded_prompt_from_stdin_and_never_uses_prompt_argv(
         module.main(["--help"])
     help_output = capsys.readouterr().out
     assert "--prompt" not in help_output
+    assert "--credential-probe-path" in help_output
     assert "stdin" in help_output.lower()
 
 
@@ -1172,7 +1187,12 @@ def test_protected_instruction_sources_are_complete_and_not_truncated(
         encoding="utf-8",
     )
     _commit_all(scenario.policy.root, "complete protected instruction fixture")
-    updated = Scenario(_git_fixture(scenario.policy.root), scenario.target, scenario.binary)
+    updated = Scenario(
+        _git_fixture(scenario.policy.root),
+        scenario.target,
+        scenario.binary,
+        scenario.credential_probe,
+    )
     plan = _plan(updated)
     instructions = plan["developer_instructions"]
     assert "ROLE_END_SENTINEL" in instructions
@@ -1263,3 +1283,132 @@ def test_permission_profile_uses_absolute_sensitive_paths_and_explicit_credentia
         cleanup={"status": "clean"},
     )
     assert str(credential) not in json.dumps(manifest)
+
+
+def test_credential_probe_is_explicit_existing_and_outside_runtime_root(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    plan = _plan(scenario)
+    credential = Path(plan["credential_probe_path"])
+    assert credential == scenario.credential_probe.resolve()
+    assert credential.is_file() and not credential.is_symlink()
+    assert credential.stat().st_uid == os.getuid()
+    assert not credential.is_relative_to(Path(plan["runtime_root"]))
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError, TypeError)):
+        _plan(scenario, credential_probe_path=tmp_path / "missing-credential.json")
+
+
+def test_profile_filesystem_mapping_merges_all_denials_and_network_is_toml_table(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    profile = _function("build_permission_profile")(
+        policy_root=scenario.policy.root,
+        target_root=scenario.target.root,
+        common_git_root=_common_git_root(scenario),
+        dependency_roots=(tmp_path,),
+        scratch_root=tmp_path / "scratch-profile",
+        credential_probe_path=scenario.credential_probe,
+    )
+    name = profile["name"]
+    permissions = profile["permissions"][name]
+    filesystem = permissions["filesystem"]
+    for path in profile["deny_paths"]:
+        assert filesystem[path] == "deny"
+    assert filesystem[str(scenario.policy.root)] == "read"
+    assert filesystem[str(scenario.target.root)] == "read"
+    assert filesystem[str(_common_git_root(scenario))] == "read"
+    assert filesystem[str((tmp_path).resolve())] == "read"
+    assert filesystem[str((tmp_path / "scratch-profile").resolve())] == "write"
+    assert permissions["network"] == {"enabled": False}
+
+
+def test_two_plans_for_same_target_use_distinct_random_runtime_tokens(
+    scenario: Scenario,
+) -> None:
+    first = _plan(scenario)
+    second = _plan(scenario)
+    assert first["runtime_root"] != second["runtime_root"]
+    assert len(Path(first["runtime_token"]).name) >= 32
+    assert len(Path(second["runtime_token"]).name) >= 32
+    assert not Path(first["runtime_root"]).exists()
+    assert not Path(second["runtime_root"]).exists()
+
+
+@pytest.mark.parametrize("probe_name", _PROBE_ORDER)
+def test_sandbox_probe_argv_uses_supported_subcommand_order_and_fixed_commands(
+    scenario: Scenario, probe_name: str
+) -> None:
+    plan = _plan(scenario)
+    result = _function("build_sandbox_probe_argv")(plan, probe_name)
+    argv = result["argv"]
+    sandbox_index = argv.index("sandbox")
+    assert sandbox_index > 0
+    assert all(value != "--strict-config" for value in argv[sandbox_index + 1 :])
+    assert all(value != "--ignore-user-config" for value in argv[sandbox_index + 1 :])
+    assert all(value != "--ignore-rules" for value in argv[sandbox_index + 1 :])
+    assert "--include-managed-config" in argv[sandbox_index + 1 :]
+    assert "-P" not in argv[sandbox_index + 1 :] or argv[argv.index("-P") + 1] == plan["permission_profile_name"]
+    assert "-C" in argv[sandbox_index + 1 :] or "--cd" in argv[sandbox_index + 1 :]
+    separator = argv.index("--", sandbox_index + 1)
+    command = argv[separator + 1 :]
+    paths = plan["probe_paths"]
+    if probe_name in {"policy_read", "target_read", "credential_read_denied"}:
+        assert command[:3] == ["/usr/bin/head", "-c", "1"]
+        assert command[3] == paths[probe_name]
+    elif probe_name in {"target_write_denied", "scratch_write"}:
+        assert command[:2] == ["/usr/bin/touch", "--"]
+        assert command[2] == paths[probe_name]
+    elif probe_name == "secret_env_absent":
+        assert command[:2] == ["/bin/sh", "-c"]
+        assert "SECRET" in command[2]
+    else:
+        assert command[0] == "/usr/bin/curl"
+        assert "--max-time" in command
+
+
+def test_host_exec_env_keeps_runtime_auth_context_but_sandbox_env_drops_secret_sentinel(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", "/tmp/codex-auth-context")
+    monkeypatch.setenv("LAUNCHER_SECRET_SENTINEL", "must-not-enter-sandbox")
+    plan = _plan(scenario)
+    sandbox_envs: list[dict[str, str]] = []
+    exec_envs: list[dict[str, str]] = []
+
+    def sandbox_runner(**kwargs: object) -> dict[str, object]:
+        sandbox_envs.append(dict(kwargs["env"]))
+        return _valid_sandbox_results()[str(kwargs["probe_name"])]
+
+    def process_runner(**kwargs: object) -> dict[str, object]:
+        exec_envs.append(dict(kwargs["env"]))
+        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+
+    result = _function("run_isolated_role")(
+        plan,
+        prompt="bounded prompt",
+        sandbox_runner=sandbox_runner,
+        process_runner=process_runner,
+    )
+    assert result["status"] == "completed", result
+    assert exec_envs and exec_envs[0].get("CODEX_HOME") == "/tmp/codex-auth-context"
+    assert all("LAUNCHER_SECRET_SENTINEL" not in env for env in sandbox_envs)
+
+
+def test_default_sandbox_runner_preserves_direct_command_output_without_json_decode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="raw-probe-output", stderr="raw-probe-error"
+        ),
+    )
+    monkeypatch.setattr(module.json, "loads", lambda value: (_ for _ in ()).throw(AssertionError("JSON decode")))
+    result = module._default_sandbox_runner(
+        argv=["/absolute/codex", "sandbox"], cwd=str(tmp_path), env={}, shell=False
+    )
+    assert result["returncode"] == 0
+    assert result["stdout"] == "raw-probe-output"
+    assert result["stderr"] == "raw-probe-error"
