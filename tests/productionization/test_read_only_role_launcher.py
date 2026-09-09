@@ -13,6 +13,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2221,6 +2222,29 @@ def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
         "/bin/sh -c 'false || codex exec nested'",
         "/bin/sh -c 'printf ok | codex exec nested'",
         "/bin/sh -c 'printf ok\ncodex exec nested'",
+        "exec codex exec nested",
+        "exec -- codex exec nested",
+        "exec -a nested-review codex exec nested",
+        "exec -anested-review codex exec nested",
+        "time -p codex exec nested",
+        "time -o /tmp/read-only-role.time codex exec nested",
+        "time --output=/tmp/read-only-role.time codex exec nested",
+        "nohup -- codex exec nested",
+        "nice -n 5 codex exec nested",
+        "nice --adjustment 5 codex exec nested",
+        "nice --adjustment=5 codex exec nested",
+        "builtin command codex exec nested",
+        "/bin/sh -c 'if codex exec nested; then printf ok; fi'",
+        "/bin/sh -c 'if false; then printf ok; else codex exec nested; fi'",
+        "/bin/sh -c 'if false; then printf ok; elif codex exec nested; then printf ok; fi'",
+        "/bin/sh -c 'while codex exec nested; do printf ok; done'",
+        "/bin/sh -c 'until codex exec nested; do printf ok; done'",
+        "/bin/sh -c 'if true; then codex exec nested; fi'",
+        "/bin/sh -c '! codex exec nested'",
+        "/bin/sh -c '( codex exec nested )'",
+        "/bin/sh -c '(codex exec nested)'",
+        "/bin/sh -c '{ codex exec nested; }'",
+        "/bin/sh -c '{ codex exec nested;}'",
         ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
     ],
 )
@@ -2254,6 +2278,24 @@ def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
         "/bin/sh -c \"rg -n 'codex exec' .\"",
         "/bin/sh -c 'command -v codex'",
         "/bin/sh -c 'command -V codex; printf ok'",
+        "exec printf codex",
+        "exec -a codex printf ok",
+        "exec -anested-review printf codex",
+        "time -p printf codex",
+        "time -o codex printf ok",
+        "time --output=codex printf ok",
+        "nohup printf codex",
+        "nice -n 5 echo codex",
+        "nice -n codex printf ok",
+        "nice --adjustment codex printf ok",
+        "builtin printf codex",
+        "builtin codex",
+        "/bin/sh -c 'if printf codex; then echo ok; fi'",
+        "/bin/sh -c '! printf codex'",
+        "/bin/sh -c '( printf codex )'",
+        "/bin/sh -c '(printf codex)'",
+        "/bin/sh -c '{ rg -n \"codex exec\" .; }'",
+        "/bin/sh -c '{ printf codex;}'",
     ):
         parsed = parser(
             _command_jsonl(command),
@@ -2261,6 +2303,17 @@ def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
             forbidden_codex_binary=str(scenario.binary.path),
         )
         assert parsed["status"] == "completed"
+
+
+def test_direct_command_observation_recursion_is_bounded() -> None:
+    payload = "codex exec nested"
+    for _ in range(12):
+        payload = f"sh -c {shlex.quote(payload)}"
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("_command_attempts_nested_codex")(
+            payload,
+            forbidden_codex_binary="/absolute/codex",
+        )
 
 
 @pytest.mark.parametrize(
