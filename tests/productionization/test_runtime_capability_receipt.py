@@ -534,6 +534,56 @@ def test_direct_collaboration_and_external_mutation_tools_are_rejected(
 
 
 @pytest.mark.parametrize(
+    "tool_name",
+    [
+        "functions.exec",
+        "functions__exec",
+        "collaboration.spawn_agent",
+        "collaboration.followup_task",
+        "collaboration.interrupt_agent",
+        "collaboration.send_message",
+        "collaboration__spawn_agent",
+        "collaboration__followup_task",
+        "collaboration__interrupt_agent",
+        "collaboration__send_message",
+    ],
+)
+def test_gateway_and_namespaced_collaboration_aliases_are_rejected(
+    tool_name: str,
+) -> None:
+    assert _errors(_receipt(tool_names=[tool_name]))
+
+
+def test_container_subclasses_are_rejected_before_callbacks() -> None:
+    class HostileMapping(dict[object, object]):
+        def __iter__(self):
+            raise AssertionError("mapping iteration callback invoked")
+
+        def items(self):
+            raise AssertionError("mapping items callback invoked")
+
+        def get(self, key: object, default: object = None):
+            raise AssertionError("mapping get callback invoked")
+
+        def __getitem__(self, key: object):
+            raise AssertionError("mapping item callback invoked")
+
+    class HostileList(list[object]):
+        def __iter__(self):
+            raise AssertionError("list iteration callback invoked")
+
+        def __len__(self):
+            raise AssertionError("list length callback invoked")
+
+        def __getitem__(self, key: object):
+            raise AssertionError("list item callback invoked")
+
+    assert _errors(HostileMapping())
+    assert _errors(_receipt(model=HostileMapping()))
+    assert _errors(_receipt(tool_names=HostileList()))
+
+
+@pytest.mark.parametrize(
     "tool_names",
     [
         [""],
