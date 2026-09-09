@@ -2051,6 +2051,85 @@ def test_known_disabled_agent_role_warning_is_narrowly_nonblocking(
     assert result["status"] == "completed", result
 
 
+_PINNED_HOST_WARNING_STDERR = """\
+2026-09-09T10:11:12.123456Z WARN codex_agent_roles::loader: Ignoring malformed agent role definition at /protected/.codex/agents/legacy.toml: TOML parse error at line 1, column 1
+  |
+1 | invalid = [
+  |            ^
+invalid array
+2026-09-09T10:11:12.234567Z WARN codex_rollout::list: state db discrepancy for thread 0199-example; using rollout metadata
+"""
+
+
+def test_pinned_runtime_warning_envelope_is_narrowly_admitted_only_with_agents_disabled(
+    scenario: Scenario,
+) -> None:
+    module = _launcher_module()
+    assert module._stderr_is_admissible(
+        _PINNED_HOST_WARNING_STDERR, agents_disabled=True
+    )
+    assert not module._stderr_is_admissible(
+        _PINNED_HOST_WARNING_STDERR, agents_disabled=False
+    )
+
+    plan = _plan(scenario)
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: {
+            "returncode": 0,
+            "stdout": _valid_jsonl(),
+            "stderr": _PINNED_HOST_WARNING_STDERR,
+        },
+    )
+    assert result["status"] == "completed", result
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        _PINNED_HOST_WARNING_STDERR.replace(" WARN ", " ERROR ", 1),
+        _PINNED_HOST_WARNING_STDERR.replace(
+            "codex_agent_roles::loader", "codex_mcp_client::startup", 1
+        ),
+        _PINNED_HOST_WARNING_STDERR + "arbitrary trailing stderr\n",
+        _PINNED_HOST_WARNING_STDERR.replace("Ignoring malformed", "MCP startup failed"),
+    ],
+)
+def test_pinned_runtime_warning_parser_rejects_near_miss_envelopes(
+    stderr: str,
+) -> None:
+    assert not _launcher_module()._stderr_is_admissible(
+        stderr, agents_disabled=True
+    )
+
+
+def test_item_level_disabled_agent_loader_warning_is_consistent_with_stderr() -> None:
+    events = (
+        {"type": "thread.started", "thread_id": "opaque"},
+        {"type": "turn.started"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "error",
+                "message": (
+                    "Ignoring malformed agent role definition at "
+                    "/protected/.codex/agents/legacy.toml: invalid role TOML"
+                ),
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "final"}},
+        {"type": "turn.completed"},
+    )
+    raw = "".join(json.dumps(event) + "\n" for event in events)
+    parsed = _function("parse_codex_jsonl")(raw, role="reviewer_high")
+    assert parsed["status"] == "completed"
+    assert parsed["warning_event_count"] == 1
+    assert parsed["error_event_count"] == 0
+
+
 @pytest.mark.parametrize(
     "stderr",
     [
