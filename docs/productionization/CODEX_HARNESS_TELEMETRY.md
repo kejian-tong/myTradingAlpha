@@ -14,12 +14,16 @@ or parse Codex transcripts. A passing receipt therefore never upgrades an unobse
 claimed model/sandbox/tool route into authenticated evidence.
 
 Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
-references, exact PR/role/config identity, model/effort, sandbox/profile/approval values, and a complete
-sorted unique bounded tool inventory. The verifier rejects unknown or duplicate fields, oversized input,
-config paths outside `.codex/agents/`, role/model/effort drift from TOML, a non-read-only effective
-capability for a configured read-only role, and explicit mutation tools. It performs no network or write
-operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
-evidence, with independent runtime observation and the normal review/CI/merge gates still required.
+references, exact PR/role/config identity, model/effort, an explicit legacy-sandbox or permission-profile
+system, sandbox/profile/approval values, and a complete sorted unique bounded tool inventory. The caller
+must supply trusted expected PR/base/head values separately. The verifier requires exact receipt equality,
+base ancestry, checked-out expected head, matching head tree, and role TOML loaded from that exact Git tree.
+It rejects unknown or duplicate fields, oversized or invalid Unicode input, role/model/effort drift,
+ambiguous or non-read-only local enforcement for a configured read-only role, collaboration controls,
+and external App/MCP/connector tools outside a narrow reviewed read-only allowlist. Diagnostic output does
+not echo untrusted receipt keys or values. The verifier performs no network or write operation and does not
+persist receipt data to telemetry. Invoke it only as supplemental admission evidence, with independent
+runtime observation and the normal review/CI/merge gates still required.
 
 ## Storage and exact-head safety
 

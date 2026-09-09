@@ -96,26 +96,14 @@ def _errors(
     expected_base_sha: str | None = None,
     expected_head_sha: str | None = None,
 ) -> list[str]:
-    module = _module()
-    candidate = receipt
-    if "permission_system" not in module.REQUIRED_FIELDS:
-        if type(candidate) is dict:
-            candidate = dict(candidate)
-            candidate.pop("permission_system", None)
-        elif isinstance(candidate, (bytes, str)):
-            decoded = json.loads(candidate)
-            decoded.pop("permission_system", None)
-            candidate = json.dumps(decoded)
-    kwargs: dict[str, object] = {"repo_root": repo_root}
-    parameters = inspect.signature(module.verify_receipt).parameters
-    if "expected_pr_id" in parameters:
-        kwargs.update(
-            expected_pr_id=expected_pr_id,
-            expected_base_sha=expected_base_sha
-            or _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
-            expected_head_sha=expected_head_sha or _git("HEAD"),
-        )
-    result = module.verify_receipt(candidate, **kwargs)
+    result = _module().verify_receipt(
+        receipt,
+        repo_root=repo_root,
+        expected_pr_id=expected_pr_id,
+        expected_base_sha=expected_base_sha
+        or _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
+        expected_head_sha=expected_head_sha or _git("HEAD"),
+    )
     assert isinstance(result, list), "verify_receipt must return a list of admission errors"
     return result
 
@@ -123,27 +111,21 @@ def _errors(
 def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
     if not SCRIPT.is_file():
         pytest.fail("missing implementation: scripts/runtime_capability_receipt.py")
-    arguments = [
-        sys.executable,
-        str(SCRIPT),
-        "--verify",
-        str(path),
-        "--repo-root",
-        str(ROOT),
-    ]
-    if "expected_pr_id" in inspect.signature(_module().verify_receipt).parameters:
-        arguments.extend(
-            [
-                "--expected-pr-id",
-                "HARNESS-AUD-01",
-                "--expected-base-sha",
-                _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
-                "--expected-head-sha",
-                _git("HEAD"),
-            ]
-        )
     return subprocess.run(
-        arguments,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--verify",
+            str(path),
+            "--repo-root",
+            str(ROOT),
+            "--expected-pr-id",
+            "HARNESS-AUD-01",
+            "--expected-base-sha",
+            _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
+            "--expected-head-sha",
+            _git("HEAD"),
+        ],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,
@@ -267,6 +249,7 @@ def test_duplicate_json_field_fails_closed(tmp_path: Path) -> None:
         ("head_sha", "not-a-sha"),
         ("tree_sha", "e" * 39),
         ("sandbox_mode", "unknown"),
+        ("permission_system", "unknown"),
         ("permission_profile", "workspace-write"),
         ("approval_policy", "ask-everything"),
         ("tool_inventory_complete", 1),
@@ -434,7 +417,7 @@ def test_disabled_permission_profile_is_not_read_only_when_profile_governs() -> 
     errors = _errors(
         _receipt(
             permission_system="permission_profile",
-            sandbox_mode="danger-full-access",
+            sandbox_mode="disabled",
             permission_profile="disabled",
         )
     )
@@ -446,8 +429,8 @@ def test_read_only_permission_profile_can_govern_independently_of_legacy_sandbox
     assert _errors(
         _receipt(
             permission_system="permission_profile",
-            sandbox_mode="danger-full-access",
-            permission_profile="read-only",
+            sandbox_mode="disabled",
+            permission_profile=":read-only",
         )
     ) == []
 
@@ -467,9 +450,6 @@ def test_unsorted_tool_names_fail_closed() -> None:
 @pytest.mark.parametrize(
     "tool_name",
     [
-        "apply_patch",
-        "exec_command",
-        "write_stdin",
         "mcp__codex_app__send_message_to_thread",
         "mcp__codex_apps__github_create_pull_request",
     ],
@@ -541,10 +521,11 @@ def test_oversize_receipt_input_fails_closed(tmp_path: Path) -> None:
     assert result.returncode != 0, result.stdout
 
 
-def test_cli_rejects_exposed_mutation_tool(tmp_path: Path) -> None:
+def test_cli_rejects_exposed_external_mutation_tool(tmp_path: Path) -> None:
     receipt_path = tmp_path / "mutation-tool.json"
     receipt_path.write_text(
-        json.dumps(_receipt(tool_names=["apply_patch"])), encoding="utf-8"
+        json.dumps(_receipt(tool_names=["mcp__codex_app__send_message_to_thread"])),
+        encoding="utf-8",
     )
 
     result = _run_cli(receipt_path)
