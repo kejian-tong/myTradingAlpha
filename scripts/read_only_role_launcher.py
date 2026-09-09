@@ -48,8 +48,15 @@ DOCS_MCP_TOOLS = ("fetch_openai_doc", "search_openai_docs")
 DENY_CANARY_RELATIVE = ".codex/read-only-probe.secret"
 DENY_CANARY_BYTES = b"harmless deny canary\n"
 _HOST_WARN_RE = re.compile(
-    r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z WARN "
+    r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z[ ]+WARN "
     r"(?P<target>codex_agent_roles::loader|codex_rollout::list): (?P<message>[^\r\n]+)\Z"
+)
+_AGENT_ROLE_PARSE_WARNING_RE = re.compile(
+    r"\AIgnoring malformed agent role definition: failed to parse agent role file at "
+    r"/[^\r\n]{1,320}\.toml: TOML parse error at line [1-9][0-9]*, column [1-9][0-9]*\Z"
+)
+_LEGACY_DISABLED_AGENT_WARNING_RE = re.compile(
+    r"\AIgnoring malformed agent role definition at /[^\r\n]{1,320}: agents are disabled\Z"
 )
 
 READ_ONLY_ROLES = frozenset(
@@ -1617,20 +1624,11 @@ def _toolchain_smoke_passed(value: object) -> bool:
 
 
 def _known_agent_role_warning(message: object) -> bool:
-    if type(message) is not str or not message.startswith(
-        "Ignoring malformed agent role definition"
-    ):
+    if type(message) is not str:
         return False
-    return (
-        "\n" not in message
-        and "\r" not in message
-        and len(message.encode("utf-8")) <= MAX_TEXT_LENGTH
-        and re.search(
-            r"\b(?:enabled|failed|MCP|tool|network|auth|credential|panic)\b",
-            message,
-            re.IGNORECASE,
-        )
-        is None
+    return len(message.encode("utf-8")) <= MAX_TEXT_LENGTH and bool(
+        _AGENT_ROLE_PARSE_WARNING_RE.fullmatch(message)
+        or _LEGACY_DISABLED_AGENT_WARNING_RE.fullmatch(message)
     )
 
 
@@ -1647,6 +1645,7 @@ def _stderr_is_admissible(raw: str, *, agents_disabled: bool) -> bool:
     if all(_known_agent_role_warning(line) for line in lines):
         return True
     in_loader_detail = False
+    blank_loader_separator = False
     for line in lines:
         match = _HOST_WARN_RE.fullmatch(line)
         if match:
@@ -1656,18 +1655,24 @@ def _stderr_is_admissible(raw: str, *, agents_disabled: bool) -> bool:
                 if not _known_agent_role_warning(message):
                     return False
                 in_loader_detail = True
+                blank_loader_separator = False
                 continue
-            if not message.startswith("state db discrepancy "):
-                return False
-            if re.search(
-                r"\b(?:MCP|tool|network|auth|credential|panic|failed|error)\b",
-                message,
-                re.IGNORECASE,
+            if message != (
+                "state db discrepancy during "
+                "find_thread_path_by_id_str_in_subdir: falling_back"
             ):
                 return False
             in_loader_detail = False
+            blank_loader_separator = False
             continue
         if not in_loader_detail or len(line.encode("utf-8")) > MAX_TEXT_LENGTH:
+            return False
+        if line == "":
+            if blank_loader_separator:
+                return False
+            blank_loader_separator = True
+            continue
+        if blank_loader_separator:
             return False
         if re.search(
             r"\b(?:MCP|tool|network|auth|credential|panic|failed)\b",
