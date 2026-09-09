@@ -1305,7 +1305,7 @@ def run_isolated_role(
             marker_paths=tuple(Path(path) for path in plan.get("probe_markers", ())),
             private_dirs=(cwd,),
         )
-        cleanup_errors = cleanup_private_dirs((cwd,), force=False)
+        cleanup_errors = cleanup_private_dirs((cwd, runtime_root), force=False)
     except (OSError, LauncherError) as exc:
         return fail([_diagnostic(exc)])
     if post_errors or cleanup_errors:
