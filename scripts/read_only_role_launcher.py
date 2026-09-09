@@ -552,8 +552,10 @@ def _runtime_dependency_roots(
                 continue
             resolved = _validated_tool_path("runtime library", dependency)
             for root in (
+                dependency.parent.parent,
                 dependency.parent,
                 dependency,
+                resolved.parent.parent,
                 resolved.parent,
                 resolved,
             ):

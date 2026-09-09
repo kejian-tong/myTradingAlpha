@@ -2224,6 +2224,7 @@ def test_non_system_runtime_library_dependencies_are_added_as_exact_read_roots(
 
     assert str(alias_library) in roots
     assert str(alias_library.parent) in roots
+    assert str(alias_root) in roots
     assert str(library.resolve()) in roots
     assert str(library.parent.resolve()) in roots
 
