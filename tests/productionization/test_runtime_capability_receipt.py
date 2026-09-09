@@ -73,7 +73,7 @@ def _receipt(**overrides: object) -> dict[str, object]:
         "multi_agent_version": "v2",
         "model": "gpt-5.6-sol",
         "reasoning_effort": "high",
-        "base_sha": _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
+        "base_sha": _git("HEAD"),
         "head_sha": _git("HEAD"),
         "tree_sha": _git("HEAD^{tree}"),
         "sandbox_mode": "read-only",
@@ -100,8 +100,7 @@ def _errors(
         receipt,
         repo_root=repo_root,
         expected_pr_id=expected_pr_id,
-        expected_base_sha=expected_base_sha
-        or _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
+        expected_base_sha=expected_base_sha or _git("HEAD"),
         expected_head_sha=expected_head_sha or _git("HEAD"),
     )
     assert isinstance(result, list), "verify_receipt must return a list of admission errors"
@@ -122,7 +121,7 @@ def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
             "--expected-pr-id",
             "HARNESS-AUD-01",
             "--expected-base-sha",
-            _git("eb51043cc5ea84277888781ce7c9f651ac882dcd"),
+            _git("HEAD"),
             "--expected-head-sha",
             _git("HEAD"),
         ],
@@ -330,7 +329,6 @@ def test_receipt_must_bind_exact_repository_commit_and_tree(field: str, value: o
     ("receipt_overrides", "expected_overrides"),
     [
         ({"pr_id": "HARNESS-AUD-02"}, {}),
-        ({"base_sha": _git("HEAD")}, {}),
         ({}, {"expected_head_sha": _git("eb51043cc5ea84277888781ce7c9f651ac882dcd")}),
     ],
 )
@@ -338,6 +336,42 @@ def test_receipt_must_equal_trusted_pr_base_and_head(
     receipt_overrides: dict[str, object], expected_overrides: dict[str, str]
 ) -> None:
     assert _errors(_receipt(**receipt_overrides), **expected_overrides)
+
+
+def test_receipt_base_must_equal_trusted_ancestor_base(tmp_path: Path) -> None:
+    repo, base, _base_tree = _temporary_repo(tmp_path)
+    marker = repo / "head-marker.txt"
+    marker.write_text("head\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", marker.name], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Receipt Test",
+            "-c",
+            "user.email=receipt@example.invalid",
+            "commit",
+            "-qm",
+            "head",
+        ],
+        check=True,
+    )
+    head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    receipt = _receipt(base_sha=head, head_sha=head, tree_sha=tree)
+
+    assert _errors(
+        receipt,
+        repo_root=repo,
+        expected_base_sha=base,
+        expected_head_sha=head,
+    )
 
 
 def test_trusted_base_must_be_an_ancestor_of_trusted_head(tmp_path: Path) -> None:
