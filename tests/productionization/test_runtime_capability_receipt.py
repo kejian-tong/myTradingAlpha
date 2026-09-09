@@ -12,9 +12,26 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/runtime_capability_receipt.py"
 ROLE_CONFIG = ".codex/agents/reviewer-high.toml"
+EXTERNAL_ROLE_CONFIG = ".codex/agents/external-spec-researcher.toml"
+_NON_EXTERNAL_ROLES = (
+    "normal_implementer",
+    "high_implementer",
+    "critical_implementer",
+    "reviewer_high",
+    "reviewer_xhigh",
+    "code_explorer",
+    "test_auditor",
+    "boundary_reviewer",
+    "astra_canary",
+)
 
 _REQUIRED_FIELDS = (
     "schema_version",
@@ -108,6 +125,33 @@ def _errors(
     return result
 
 
+def _trusted_errors(
+    receipt: object,
+    *,
+    expected_role: str,
+    expected_config_path: str,
+    repo_root: Path = ROOT,
+    expected_pr_id: str = "HARNESS-AUD-01",
+    expected_base_sha: str | None = None,
+    expected_head_sha: str | None = None,
+) -> list[str]:
+    parameters = inspect.signature(_module().verify_receipt).parameters
+    for name in ("expected_role", "expected_config_path"):
+        assert name in parameters, f"verify_receipt must require trusted {name}"
+        assert parameters[name].default is inspect.Parameter.empty
+    result = _module().verify_receipt(
+        receipt,
+        repo_root=repo_root,
+        expected_pr_id=expected_pr_id,
+        expected_base_sha=expected_base_sha or _git("HEAD"),
+        expected_head_sha=expected_head_sha or _git("HEAD"),
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
+    )
+    assert isinstance(result, list), "verify_receipt must return a list of admission errors"
+    return result
+
+
 def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
     if not SCRIPT.is_file():
         pytest.fail("missing implementation: scripts/runtime_capability_receipt.py")
@@ -188,7 +232,13 @@ def test_valid_receipt_is_structural_contract_evidence_only() -> None:
 def test_trusted_expectations_are_mandatory_verifier_inputs() -> None:
     parameters = inspect.signature(_module().verify_receipt).parameters
 
-    for name in ("expected_pr_id", "expected_base_sha", "expected_head_sha"):
+    for name in (
+        "expected_pr_id",
+        "expected_base_sha",
+        "expected_head_sha",
+        "expected_role",
+        "expected_config_path",
+    ):
         assert name in parameters
         assert parameters[name].default is inspect.Parameter.empty
 
@@ -618,16 +668,21 @@ def test_incomplete_tool_inventory_fails_closed() -> None:
     assert _errors(_receipt(tool_inventory_complete=False))
 
 
+def _configured_external_mcp_tool_names() -> list[str]:
+    configured = tomllib.loads(
+        (ROOT / EXTERNAL_ROLE_CONFIG).read_text(encoding="utf-8")
+    )
+    tools = configured["mcp_servers"]["openaiDeveloperDocs"]["enabled_tools"]
+    return [f"mcp__openaiDeveloperDocs__{tool}" for tool in tools]
+
+
 def _external_spec_receipt(**overrides: object) -> dict[str, object]:
     receipt = _receipt(
         role="external_spec_researcher",
-        config_path=".codex/agents/external-spec-researcher.toml",
+        config_path=EXTERNAL_ROLE_CONFIG,
         model="gpt-5.6-luna",
         reasoning_effort="max",
-        tool_names=[
-            "mcp__openaiDeveloperDocs__fetch_openai_doc",
-            "mcp__openaiDeveloperDocs__search_openai_docs",
-        ],
+        tool_names=_configured_external_mcp_tool_names(),
     )
     receipt.update(overrides)
     return receipt
@@ -635,6 +690,154 @@ def _external_spec_receipt(**overrides: object) -> dict[str, object]:
 
 def test_external_spec_researcher_allows_only_exact_openai_docs_mcp_tools() -> None:
     assert _errors(_external_spec_receipt()) == []
+
+
+def test_receipt_cannot_self_select_external_spec_researcher() -> None:
+    errors = _trusted_errors(
+        _external_spec_receipt(),
+        expected_role="reviewer_high",
+        expected_config_path=ROLE_CONFIG,
+    )
+    assert errors
+
+
+def test_receipt_must_match_trusted_role_and_config_path() -> None:
+    errors = _trusted_errors(
+        _receipt(),
+        expected_role="code_explorer",
+        expected_config_path=".codex/agents/code-explorer.toml",
+    )
+    assert errors
+
+
+def _temporary_external_repo(
+    tmp_path: Path,
+    mcp_configuration: str,
+) -> tuple[Path, str, str]:
+    repo = tmp_path / "external-repo"
+    config = repo / EXTERNAL_ROLE_CONFIG
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "\n".join(
+            (
+                'name = "external_spec_researcher"',
+                'model = "gpt-5.6-luna"',
+                'model_reasoning_effort = "max"',
+                'sandbox_mode = "read-only"',
+                "[agents]",
+                "enabled = false",
+                "[mcp_servers.openaiDeveloperDocs]",
+                mcp_configuration,
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", EXTERNAL_ROLE_CONFIG], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Receipt Test",
+            "-c",
+            "user.email=receipt@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    return repo, head, tree
+
+
+@pytest.mark.parametrize(
+    ("mcp_configuration", "valid"),
+    [
+        (
+            'url = "https://developers.openai.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+            True,
+        ),
+        (
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+            False,
+        ),
+        (
+            'url = "https://example.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+            False,
+        ),
+        ('url = "https://developers.openai.com/mcp"', False),
+        (
+            'url = "https://developers.openai.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_docs", "search_openai_docs"]',
+            False,
+        ),
+        (
+            'url = "https://developers.openai.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs", "extra"]',
+            False,
+        ),
+    ],
+)
+def test_external_spec_receipt_requires_exact_tree_mcp_intent(
+    tmp_path: Path, mcp_configuration: str, valid: bool
+) -> None:
+    repo, head, tree = _temporary_external_repo(tmp_path, mcp_configuration)
+    receipt = _external_spec_receipt(base_sha=head, head_sha=head, tree_sha=tree)
+    errors = _errors(
+        receipt,
+        repo_root=repo,
+        expected_base_sha=head,
+        expected_head_sha=head,
+    )
+    if valid:
+        assert errors == []
+    else:
+        assert errors
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "mcp.openaiDeveloperDocs.search_openai_docs",
+        "mcp:/openaiDeveloperDocs/search_openai_docs",
+        "github.create_pull_request",
+        "codex_app.send_message_to_thread",
+        "plugin__github__create_pull_request",
+    ],
+)
+def test_noncanonical_external_tool_names_fail_closed(tool_name: str) -> None:
+    """Only the canonical mcp__server__tool surface is eligible for MCP admission."""
+    assert _errors(_external_spec_receipt(tool_names=[tool_name]))
+
+
+def _configured_role(role: str) -> tuple[str, dict[str, object]]:
+    config_path = f".codex/agents/{role.replace('_', '-')}.toml"
+    config = tomllib.loads((ROOT / config_path).read_text(encoding="utf-8"))
+    return config_path, config
+
+
+@pytest.mark.parametrize("role", _NON_EXTERNAL_ROLES)
+def test_every_non_external_role_rejects_mcp_tools(role: str) -> None:
+    config_path, config = _configured_role(role)
+    receipt = _receipt(
+        role=role,
+        config_path=config_path,
+        model=config["model"],
+        reasoning_effort=config["model_reasoning_effort"],
+        tool_names=["mcp__openaiDeveloperDocs__search_openai_docs"],
+    )
+    assert _errors(receipt)
 
 
 @pytest.mark.parametrize(

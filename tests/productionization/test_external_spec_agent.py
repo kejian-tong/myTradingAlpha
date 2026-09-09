@@ -4,6 +4,8 @@ import importlib.util
 import shutil
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 _OPENAI_DOCS_MCP = "https://developers.openai.com/mcp"
 _OPENAI_DOCS_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
@@ -86,6 +88,48 @@ def test_role_cannot_override_project_apps_disablement(tmp_path: Path) -> None:
             errors,
         )
         path.write_text(original)
+
+
+def _insert_role_features(path: Path, declaration: str) -> None:
+    text = path.read_text()
+    marker = "\n[agents]\n"
+    assert marker in text
+    path.write_text(text.replace(marker, f"\n{declaration}\n[agents]\n", 1))
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        'features = "not-a-table"',
+        "features = []",
+        "features = {apps = false}",
+        '[features]\napps = "false"',
+        "[features]\napps = 0",
+        "[features]\napps = 1",
+        "[features]\napps = []",
+        "[features]\napps = {nested = 1}",
+        "[features]\napps = true",
+    ],
+)
+def test_malformed_role_features_and_apps_values_are_rejected(
+    tmp_path: Path, declaration: str
+) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / ".codex/agents/reviewer-high.toml"
+    _insert_role_features(path, declaration)
+    errors = checker.configuration_errors(fixture)
+    assert errors, (declaration, errors)
+
+
+def test_static_validator_diagnostic_describes_configuration_intent(tmp_path: Path) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / ".codex/config.toml"
+    path.write_text(path.read_text().replace("apps = false", "apps = true"))
+    errors = checker.configuration_errors(fixture)
+    assert any("configuration intent" in error.lower() for error in errors), errors
+    assert not any("runtime enforcement" in error.lower() for error in errors)
 
 
 def test_mcp_endpoint_drift_is_rejected(tmp_path: Path) -> None:
