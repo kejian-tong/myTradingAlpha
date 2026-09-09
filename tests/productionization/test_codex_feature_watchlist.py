@@ -98,3 +98,4 @@ def test_audit_protocol_records_official_web_fallback_limitation() -> None:
     assert "authorized official web/browser fallback" in text
     assert "does not satisfy the narrow OpenAI Developer Docs MCP receipt" in text
     assert "insufficient_evidence" in text
+    assert "GIT_NO_REPLACE_OBJECTS" in text
