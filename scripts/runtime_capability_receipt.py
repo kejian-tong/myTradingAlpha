@@ -184,8 +184,14 @@ def _local_enforcement_is_read_only(receipt: Mapping[str, object]) -> bool:
 
 
 def _git_environment() -> dict[str, str]:
-    environment = os.environ.copy()
-    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment = {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
+    environment.update(
+        GIT_NO_LAZY_FETCH="1",
+        GIT_OPTIONAL_LOCKS="0",
+        GIT_TERMINAL_PROMPT="0",
+    )
     return environment
 
 

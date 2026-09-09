@@ -50,7 +50,9 @@ head must be checked out, and the receipt tree must equal that head's tree. The 
 `.codex/agents/<role>.toml` from the exact head Git tree, not from mutable working-tree bytes, and derives
 model/effort and nested-delegation intent from it without a duplicated model allowlist. A repository
 configured as a partial clone or with a promisor remote is rejected before object lookup; verification
-must never trigger a lazy fetch.
+must never trigger a lazy fetch. Git subprocesses discard all inherited `GIT_*` variables and restore only
+the verifier's reviewed no-lazy-fetch, no-prompt, and no-optional-lock settings, so ambient repository,
+object, work-tree, or configuration redirects cannot override the supplied repository root.
 
 `permission_system=legacy_sandbox` requires an active legacy sandbox and
 `permission_profile=disabled`. `permission_system=permission_profile` requires the legacy sandbox to be

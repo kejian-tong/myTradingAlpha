@@ -555,7 +555,12 @@ def test_ambient_git_redirects_cannot_override_repo_root(
     assert object_snapshot() == before
     assert observed_git_environments
     assert all(
-        environment == {"GIT_NO_LAZY_FETCH": "1"}
+        environment
+        == {
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
         for environment in observed_git_environments
     )
 
