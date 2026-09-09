@@ -182,8 +182,13 @@ A config file expresses configured intent; it is not proof that a named role act
 requested route, configured route, successfully loaded named-role configured actual, and any independent
 runtime telemetry. Conflicting telemetry must be resolved before claiming a route.
 
-If a required named role cannot be loaded, record `insufficient_evidence` and stop the affected merge gate.
-Do not silently substitute a generic worker or different model and claim the intended route. An unavailable
+For required read-only review lanes, a protected-policy standalone top-level isolated role invocation is
+an admissible role-evidence category. It truthfully records `named_agent_loaded=false`; it is not a child
+configured-actual claim and must bind the protected role/config/model/effort plus exact target state in its
+launcher manifest. Writer roles still require their named-agent route. If the applicable required role
+cannot be established through its admissible category, record `insufficient_evidence` and stop the affected
+merge gate rather than substituting a generic worker or different model. PR #67 remains
+external-profile-only for bootstrap review because its protected base predates the launcher. An unavailable
 optional `astra_canary` blocks only that canary comparison; it never weakens or replaces the active Sol
 production route.
 

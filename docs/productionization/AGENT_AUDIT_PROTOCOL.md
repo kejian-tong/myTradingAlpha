@@ -180,9 +180,13 @@ default probe without equivalent TeamIdentifier/signature evidence remains `insu
 Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
 initial version probe through every policy/target/post-run Git query and the model shell, the launcher
 sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONFIG_NOSYSTEM=1`, removes
-caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. Every Git helper rejects
-nonempty stderr, including a zero-return-code status lookup, so an unreadable path cannot be classified as
-clean. The per-run profile denies direct reads of ignored/untracked `.env`, `secrets`, `*secret*`, and
+caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. Repository calls use the
+exact supplied `.git` and work-tree paths, require canonical `rev-parse --show-toplevel` equality, and apply
+highest-priority safe CLI controls for fsmonitor, hooks, submodule recursion, and protocols. Dangerous
+local/worktree `core.worktree`, `core.fsmonitor`, include, submodule, protocol, hook, SSH, attributes, or
+exclude configuration is inadmissible; status ignores submodules. Every Git helper and the initial Git/tool
+smokes reject nonempty stderr, including a zero-return-code status lookup, so an unreadable path cannot be
+classified as clean. The per-run profile denies direct reads of ignored/untracked `.env`, `secrets`, `*secret*`, and
 `*token*` paths under both policy and target roots, plus external credential paths. Committed current and
 history Git objects remain intentionally reviewable public-repository evidence through the admitted Git
 object database; this launcher is not a confidentiality boundary for committed or historical Git data.
@@ -231,10 +235,17 @@ canary. Its controlling review therefore uses a Master-constructed external Perm
 repository launcher activates prospectively only after merge, refreshed `main`, and a fresh invocation;
 candidate-policy smoke results are operability evidence only and never self-authorization.
 
-Immutable history is preserved without relabeling inaccurate evidence. Controlling test-only RED to GREEN
-pairs include `2520757 -> 617a798`, exact warning corrections `09eb421 -> 31fcabd` and
-`bc70174 -> f9589e0`, and exact Docs MCP correction `df5abf9 -> e7c79e8`. The current final repair starts
-at test-only RED `25d773f`; its exact GREEN head is recorded in durable PR evidence. The abandoned v2
+After this bootstrap, a protected-policy standalone top-level isolated role invocation is an admissible
+role-evidence category for required read-only lanes. Its manifest keeps `named_agent_loaded=false` truthful,
+binds the protected role/config/model/effort and exact target, and is not a child configured-actual claim.
+PR #67 itself remains external-profile-only and cannot use candidate policy to authorize its merge.
+
+Immutable history is preserved without relabeling inaccurate evidence. Historical controlling pairs from
+test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `09eb421 -> 31fcabd` and
+`bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
+`34fe529 -> b27553f`, and exact command-shape correction `6d69222 -> 05a902b`. The current repair starts
+at test-only RED `d1065b2`; its exact GREEN head is recorded
+in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 

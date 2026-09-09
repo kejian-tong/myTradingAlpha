@@ -141,6 +141,19 @@ _GIT_REDIRECTS = {
     "GIT_CONFIG_SYSTEM",
     "GIT_CONFIG_COUNT",
 }
+_SAFE_REPOSITORY_GIT_CONFIG = (
+    "core.fsmonitor=false",
+    "core.hooksPath=/dev/null",
+    "submodule.recurse=false",
+    "fetch.recurseSubmodules=false",
+    "protocol.allow=never",
+    "protocol.file.allow=never",
+    "protocol.ext.allow=never",
+)
+_DANGEROUS_REPOSITORY_CONFIG_RE = (
+    r"^(core\.(worktree|fsmonitor|hookspath|sshcommand|attributesfile|excludesfile)"
+    r"|include\..*|includeif\..*|submodule\..*|protocol\..*)$"
+)
 _ALLOWED_ROLE_KEYS = frozenset(
     {
         "name",
@@ -233,13 +246,34 @@ def _reject_ambient_git_redirects() -> None:
         raise LauncherError("ambient Git redirect variables are not permitted")
 
 
+def _repository_git_argv(
+    git_binary: Path, root: Path, *arguments: str
+) -> list[str]:
+    argv = [str(git_binary)]
+    for setting in _SAFE_REPOSITORY_GIT_CONFIG:
+        argv.extend(("-c", setting))
+    argv.extend(
+        (
+            "--git-dir",
+            str(Path(root) / ".git"),
+            "--work-tree",
+            str(root),
+            *arguments,
+        )
+    )
+    return argv
+
+
 def _git(
     git_binary: Path, root: Path, *arguments: str, allow_failure: bool = False
 ) -> str:
+    root = Path(root)
+    argv = _repository_git_argv(git_binary, root, *arguments)
     completed = subprocess.run(
-        [str(git_binary), "-C", str(root), *arguments],
+        argv,
         check=False,
         capture_output=True,
+        cwd=root,
         env=_git_environment(),
         text=True,
         timeout=5,
@@ -254,10 +288,13 @@ def _git(
 
 
 def _git_bytes(git_binary: Path, root: Path, *arguments: str) -> bytes:
+    root = Path(root)
+    argv = _repository_git_argv(git_binary, root, *arguments)
     completed = subprocess.run(
-        [str(git_binary), "-C", str(root), *arguments],
+        argv,
         check=False,
         capture_output=True,
+        cwd=root,
         env=_git_environment(),
         timeout=5,
     )
@@ -266,6 +303,44 @@ def _git_bytes(git_binary: Path, root: Path, *arguments: str) -> bytes:
     if completed.returncode != 0:
         raise LauncherError("Git object lookup failed")
     return completed.stdout
+
+
+def _reject_dangerous_repository_config(git_binary: Path, root: Path) -> None:
+    local = _git(
+        git_binary,
+        root,
+        "config",
+        "--local",
+        "--no-includes",
+        "--name-only",
+        "--get-regexp",
+        _DANGEROUS_REPOSITORY_CONFIG_RE,
+        allow_failure=True,
+    )
+    if local:
+        raise LauncherError("dangerous local Git configuration is not permitted")
+    worktree_config = _git(
+        git_binary,
+        root,
+        "config",
+        "--local",
+        "--no-includes",
+        "--get",
+        "extensions.worktreeConfig",
+        allow_failure=True,
+    )
+    if worktree_config.lower() == "true" and _git(
+        git_binary,
+        root,
+        "config",
+        "--worktree",
+        "--no-includes",
+        "--name-only",
+        "--get-regexp",
+        _DANGEROUS_REPOSITORY_CONFIG_RE,
+        allow_failure=True,
+    ):
+        raise LauncherError("dangerous worktree Git configuration is not permitted")
 
 
 def _repo_state(
@@ -277,10 +352,24 @@ def _repo_state(
     detached: bool,
 ) -> dict[str, object]:
     root = _require_absolute_path(root_value, "repository root")
+    try:
+        canonical_root = root.resolve(strict=True)
+    except OSError as exc:
+        raise LauncherError("repository root is unavailable") from exc
+    if canonical_root != root:
+        raise LauncherError("repository root must be canonical")
     if any(root == temp or root.is_relative_to(temp) for temp in _system_temp_roots()):
         raise LauncherError("policy/target worktrees must not live under a system temp root")
     if not root.is_dir() or not (root / ".git").exists():
         raise LauncherError("repository root is unavailable")
+    top_level = _git(git_binary, root, "rev-parse", "--show-toplevel")
+    try:
+        resolved_top_level = Path(top_level).resolve(strict=True)
+    except OSError as exc:
+        raise LauncherError("Git top-level path is unavailable") from exc
+    if resolved_top_level != root:
+        raise LauncherError("Git top-level path differs from supplied root")
+    _reject_dangerous_repository_config(git_binary, root)
     if _git(
         git_binary,
         root,
@@ -303,7 +392,14 @@ def _repo_state(
         raise LauncherError("promisor repositories are not permitted")
     if _git(git_binary, root, "replace", "-l", allow_failure=True):
         raise LauncherError("Git replace refs are not permitted")
-    if _git(git_binary, root, "status", "--porcelain=v1", "--untracked-files=all"):
+    if _git(
+        git_binary,
+        root,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignore-submodules=all",
+    ):
         raise LauncherError("repository must be clean")
     head = _git(git_binary, root, "rev-parse", "--verify", "HEAD")
     tree = _git(git_binary, root, "rev-parse", "--verify", "HEAD^{tree}")
@@ -664,14 +760,13 @@ def _toolchain(
         ],
     }
     if git_root is not None and git_commit is not None:
-        commands["git_resolve"] = [
-            str(git_path),
-            "-C",
-            str(git_root),
+        commands["git_resolve"] = _repository_git_argv(
+            git_path,
+            git_root,
             "rev-parse",
             "--verify",
             git_commit,
-        ]
+        )
     commands["rg_version"] = [str(rg_path), "--version"]
     commands["ruff_version"] = [str(ruff_path), "--version"]
     commands["uv_version"] = [str(uv_path), "--version"]
@@ -704,6 +799,8 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         timeout=5,
         shell=False,
     )
+    if output.stderr:
+        raise LauncherError("Codex version probe emitted stderr")
     version_output = (output.stdout or output.stderr).encode("utf-8", "replace")[:MAX_STDERR_BYTES]
     version_text = version_output.decode("utf-8", "replace")
     version_match = re.search(r"(?<![0-9])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9])", version_text)
@@ -757,6 +854,8 @@ def _default_git_probe(path: Path) -> dict[str, object]:
         timeout=5,
         shell=False,
     )
+    if output.stderr:
+        raise LauncherError("Git version probe emitted stderr")
     version_text = (output.stdout or output.stderr).encode(
         "utf-8", "replace"
     )[:MAX_STDERR_BYTES].decode("utf-8", "replace")
@@ -1644,6 +1743,7 @@ def _toolchain_smoke_passed(value: object) -> bool:
         and bool(stdout.strip())
         and len(stdout.encode("utf-8")) <= MAX_STDOUT_BYTES
         and type(stderr) is str
+        and stderr == ""
         and len(stderr.encode("utf-8")) <= MAX_STDERR_BYTES
     )
 
@@ -1735,22 +1835,35 @@ def _command_attempts_nested_codex(
     command: object, *, forbidden_codex_binary: str | None
 ) -> bool:
     tokens = list(_bounded_command_tokens(command))
-    executable = Path(tokens[0]).name
-    if executable == "env":
-        index = 1
-        while index < len(tokens):
-            value = tokens[index]
-            if value in {"-u", "--unset"} and index + 1 < len(tokens):
-                index += 2
-                continue
-            if value.startswith("-") or ("=" in value and not value.startswith("=")):
-                index += 1
-                continue
-            break
-        tokens = tokens[index:]
-        if not tokens:
-            return False
+    while tokens:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            tokens.pop(0)
+            continue
         executable = Path(tokens[0]).name
+        if executable == "env":
+            index = 1
+            while index < len(tokens):
+                value = tokens[index]
+                if value in {"-u", "--unset"} and index + 1 < len(tokens):
+                    index += 2
+                    continue
+                if value.startswith("-") or re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_]*=.*", value
+                ):
+                    index += 1
+                    continue
+                break
+            tokens = tokens[index:]
+            continue
+        if executable == "command":
+            tokens.pop(0)
+            while tokens and tokens[0].startswith("-"):
+                tokens.pop(0)
+            continue
+        break
+    if not tokens:
+        return False
+    executable = Path(tokens[0]).name
     if executable in {"sh", "bash", "dash", "zsh"}:
         for index, value in enumerate(tokens[1:], start=1):
             if value.startswith("-") and "c" in value[1:] and index + 1 < len(tokens):
@@ -2317,12 +2430,24 @@ def run_isolated_role(
             "target_tree_sha": actual_target_tree,
             "policy_status": (
                 "clean"
-                if not _git(git_binary, policy_root, "status", "--porcelain=v1")
+                if not _git(
+                    git_binary,
+                    policy_root,
+                    "status",
+                    "--porcelain=v1",
+                    "--ignore-submodules=all",
+                )
                 else "dirty"
             ),
             "target_status": (
                 "clean"
-                if not _git(git_binary, target_root, "status", "--porcelain=v1")
+                if not _git(
+                    git_binary,
+                    target_root,
+                    "status",
+                    "--porcelain=v1",
+                    "--ignore-submodules=all",
+                )
                 else "dirty"
             ),
         }

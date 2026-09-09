@@ -920,6 +920,7 @@ def test_repo_state_requires_exact_canonical_show_toplevel(
         return real_git(git_binary, root, *arguments, allow_failure=allow_failure)
 
     monkeypatch.setattr(module, "_git", mismatch)
+    monkeypatch.setattr(module, "_system_temp_roots", lambda: ())
     with pytest.raises((ValueError, RuntimeError)):
         module._repo_state(
             scenario.target.root,
