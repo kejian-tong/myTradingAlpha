@@ -529,6 +529,100 @@ def test_local_fsmonitor_is_rejected_without_execution(
     assert not marker.exists()
 
 
+@pytest.mark.parametrize("spelling", ["true", "yes", "on", "1"])
+def test_every_git_truthy_worktree_config_spelling_activates_inspection_without_fsmonitor(
+    scenario: Scenario, tmp_path: Path, spelling: str
+) -> None:
+    marker = tmp_path / f"fsmonitor-{spelling}"
+    monitor = tmp_path / f"monitor-{spelling}"
+    monitor.write_text(
+        f"#!/bin/sh\n/usr/bin/touch {marker}\nexit 0\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o755)
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", "true")
+    _run_git(
+        scenario.target.root,
+        "config",
+        "--worktree",
+        "core.fsmonitor",
+        str(monitor),
+    )
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", spelling)
+
+    _rejected_plan(scenario)
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("spelling", ["false", "no", "off", "0"])
+def test_every_git_falsy_worktree_config_spelling_keeps_worktree_scope_inactive(
+    scenario: Scenario, spelling: str
+) -> None:
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", "true")
+    _run_git(
+        scenario.target.root,
+        "config",
+        "--worktree",
+        "core.fsmonitor",
+        "/nonexistent/inactive-monitor",
+    )
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", spelling)
+
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
+def test_invalid_git_worktree_config_boolean_fails_closed(scenario: Scenario) -> None:
+    _run_git(scenario.target.root, "config", "extensions.worktreeConfig", "ambiguous")
+    _rejected_plan(scenario)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("diff.external", "/bin/echo"),
+        ("diff.hostile.command", "/bin/echo"),
+        ("diff.hostile.textconv", "/bin/echo"),
+        ("filter.hostile.process", "/bin/echo"),
+        ("filter.hostile.clean", "/bin/echo"),
+        ("filter.hostile.smudge", "/bin/echo"),
+        ("merge.hostile.driver", "/bin/echo"),
+        ("credential.helper", "!/bin/echo"),
+        ("core.gitProxy", "/bin/echo"),
+        ("core.askPass", "/bin/echo"),
+        ("core.editor", "/bin/echo"),
+        ("core.pager", "/bin/echo"),
+        ("interactive.diffFilter", "/bin/echo"),
+        ("pager.status", "/bin/echo"),
+        ("alias.hostile", "!/bin/echo"),
+        ("submodule.hostile.path", "../outside"),
+        ("protocol.file.allow", "always"),
+        ("include.path", "/outside/config"),
+        ("core.hooksPath", "/outside/hooks"),
+        ("core.fsmonitor", "/bin/echo"),
+        ("core.sshCommand", "/bin/echo"),
+        ("unreviewed.key", "value"),
+    ],
+)
+def test_execution_bearing_or_unknown_local_git_config_is_rejected(
+    scenario: Scenario, key: str, value: str
+) -> None:
+    _run_git(scenario.target.root, "config", key, value)
+    _rejected_plan(scenario)
+
+
+def test_repository_benign_local_git_metadata_allowlist_remains_admissible(
+    scenario: Scenario,
+) -> None:
+    _run_git(scenario.target.root, "config", "user.name", "Review Fixture")
+    _run_git(scenario.target.root, "config", "user.email", "review@example.invalid")
+    _run_git(scenario.target.root, "config", "remote.origin.url", "https://example.invalid/repo.git")
+    _run_git(scenario.target.root, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+    _run_git(scenario.target.root, "config", "branch.review.remote", "origin")
+    _run_git(scenario.target.root, "config", "branch.review.merge", "refs/heads/review")
+
+    assert _plan(scenario)["target_head_sha"] == scenario.target.head
+
+
 @pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"])
 def test_ambient_git_redirects_are_rejected(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch, variable: str
@@ -1982,6 +2076,8 @@ def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
         "SAFE=1 codex exec --json nested",
         "command codex exec --json nested",
         "/usr/bin/env SAFE=1 codex exec nested",
+        '/usr/bin/env -S "codex exec nested"',
+        '/usr/bin/env --split-string="codex exec nested"',
         "/bin/sh -c 'codex exec --json nested'",
         "/bin/sh -c 'SAFE=1 command codex exec --json nested'",
         ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
@@ -2011,6 +2107,8 @@ def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
     for command in (
         "rg -n 'codex exec' docs tests",
         ["rg", "-n", "codex exec", "docs", "tests"],
+        "command -v codex",
+        "command -V codex",
     ):
         parsed = parser(
             _command_jsonl(command),
@@ -2826,6 +2924,31 @@ def test_non_system_runtime_library_dependencies_are_added_as_exact_read_roots(
     assert str(alias_root.parent) in roots
     assert str(library.resolve()) in roots
     assert str(library.parent.resolve()) in roots
+
+
+def test_otool_dependency_probe_rejects_zero_return_with_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        module,
+        "_validated_tool_path",
+        lambda name, path: Path("/usr/bin/otool"),
+    )
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            0,
+            stdout="/reviewed/git:\n",
+            stderr="warning: incomplete dependency data\n",
+        ),
+    )
+
+    with pytest.raises((ValueError, RuntimeError)):
+        module._default_runtime_dependency_probe(Path("/reviewed/git"))
 
 
 def test_toolchain_merges_runtime_library_roots_before_profile_construction(
