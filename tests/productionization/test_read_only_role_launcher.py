@@ -315,6 +315,16 @@ def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, objec
     old_provider = getattr(module, "temp_root_provider", None)
     old_getter = getattr(module, "get_temp_root", None)
     old_system_temp_roots = getattr(module, "_system_temp_roots", None)
+    old_find_required_tool = module._find_required_tool
+    synthetic_tool_root = scenario.target.root.parent / ".test-toolchain"
+    synthetic_tools: dict[str, Path] = {}
+    for name in ("rg", "ruff"):
+        tool = synthetic_tool_root / name
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        if not tool.exists():
+            tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            tool.chmod(0o755)
+        synthetic_tools[name] = tool
     module.tempfile.gettempdir = lambda: str(synthetic_root)
     if old_provider is not None:
         module.temp_root_provider = lambda: synthetic_root
@@ -322,6 +332,7 @@ def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, objec
         module.get_temp_root = lambda: synthetic_root
     if old_system_temp_roots is not None:
         module._system_temp_roots = lambda: (synthetic_root.resolve(),)
+    module._find_required_tool = lambda name: synthetic_tools[name]
     try:
         result = module.build_invocation_plan(**values)
     finally:
@@ -332,6 +343,7 @@ def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, objec
             module.get_temp_root = old_getter
         if old_system_temp_roots is not None:
             module._system_temp_roots = old_system_temp_roots
+        module._find_required_tool = old_find_required_tool
     return result
 
 
@@ -1689,16 +1701,11 @@ def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
     expected_roots.update(str(Path(path).resolve()) for path in sysconfig.get_paths().values())
     assert expected_roots.issubset(roots)
     executables = toolchain["executables"]
+    assert executables["python"]["realpath"] == str(Path(sys.executable).resolve())
+    assert executables["git"]["realpath"] == str(scenario.git.path)
     for name in ("python", "git", "rg", "ruff"):
-        resolved = (
-            str(Path(sys.executable).resolve())
-            if name == "python"
-            else shutil.which(name)
-        )
-        if resolved:
-            assert executables[name]["realpath"] == str(Path(resolved).resolve())
-            assert executables[name]["parent"] == str(Path(resolved).resolve().parent)
-            assert executables[name]["parent"] in plan["exec_env"]["PATH"].split(os.pathsep)
+        assert Path(executables[name]["realpath"]).is_file()
+        assert executables[name]["parent"] in plan["exec_env"]["PATH"].split(os.pathsep)
     assert "/usr/bin" in plan["exec_env"]["PATH"].split(os.pathsep)
     assert "/bin" in plan["exec_env"]["PATH"].split(os.pathsep)
     commands = toolchain["commands"]
@@ -1709,37 +1716,19 @@ def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
     assert "pytest" in " ".join(commands["pytest_collection"])
 
 
-def _reviewed_tool_path(name: str, scenario: Scenario) -> Path:
-    if name == "python":
-        return Path(sys.executable).resolve()
-    if name == "git":
-        assert scenario.git is not None
-        return scenario.git.path
-    candidates = [
-        shutil.which(name),
-        str(Path(sys.prefix) / "bin" / name),
-        str(Path(sys.base_prefix) / "bin" / name),
-        f"/usr/bin/{name}",
-        f"/bin/{name}",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            return Path(candidate).resolve()
-    pytest.fail(f"reviewed {name} executable is unavailable")
-
-
 def test_toolchain_path_order_is_deterministic_and_all_required_tools_are_bound(
     scenario: Scenario,
 ) -> None:
     plan = _plan(scenario)
     entries = plan["exec_env"]["PATH"].split(os.pathsep)
+    executables = plan["toolchain"]["executables"]
     expected = []
     for entry in (
         str(Path(sys.prefix) / "bin"),
-        str(_reviewed_tool_path("python", scenario).parent),
-        str(_reviewed_tool_path("git", scenario).parent),
-        str(_reviewed_tool_path("rg", scenario).parent),
-        str(_reviewed_tool_path("ruff", scenario).parent),
+        executables["python"]["parent"],
+        executables["git"]["parent"],
+        executables["rg"]["parent"],
+        executables["ruff"]["parent"],
         "/usr/bin",
         "/bin",
     ):
@@ -1793,12 +1782,15 @@ def test_toolchain_smoke_commands_cover_python_pytest_git_rg_and_ruff(
 
 
 def test_missing_required_toolchain_executable_is_insufficient_evidence(
-    monkeypatch: pytest.MonkeyPatch,
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _launcher_module()
-    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+    def missing_tool(name: str) -> Path:
+        raise module.LauncherError(f"required {name} executable is unavailable")
+
+    monkeypatch.setattr(module, "_find_required_tool", missing_tool)
     with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)):
-        module._toolchain()
+        module._toolchain(git_binary=scenario.git.path)
 
 
 def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
