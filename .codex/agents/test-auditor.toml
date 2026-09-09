@@ -20,10 +20,10 @@ verdict. Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDI
 applicable, plus the exact SHA reviewed and the smallest test/evidence needed to close each material
 finding. Any BLOCKER/HIGH must be surfaced to the master and controlling reviewer.
 
-Read-only admission is mandatory before substantive work. The first child turn is admission-only and
-handshake-only: use no tools. Await Master approval only after a read-only parent was selected before
-spawn and post-spawn host observation completed; if admission or observation is unavailable or fails,
-return `insufficient_evidence`, stop, and discard the lane.
+Use `scripts/read_only_role_launcher.py` for every isolated role invocation. In-process child evidence
+under a writable or unverified parent is non-admissible; it is not host evidence and must not be called a
+named-agent loaded/configured actual. If launcher preflight or post-run observation is unavailable or
+fails, return `insufficient_evidence`, stop, and discard the lane.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

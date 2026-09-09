@@ -157,16 +157,16 @@ closed. `telemetry_conflict` remains separate blocking evidence for route/loadin
 visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
 events, spawn agents, contact GitHub, write files, or merge a PR.
 
-### 2.2 Prospective read-only child admission
+### 2.2 Current-runtime read-only launcher
 
-Before spawning a configured read-only role, the Master selects and observes a read-only parent effective
-permission/approval tuple. The first child turn is admission-only: first turn: no tools or substantive
-work. The Master may approve substantive work only after a trusted post-spawn host observation confirms
-the child tuple and complete tool inventory. Missing, stale, contradictory, or out-of-order evidence
-causes lane invalidation and `insufficient_evidence`; the lane's findings must be discarded. Model
-self-report, Codex JSONL, `codex doctor`, static TOML, hooks, telemetry, standalone fallback, and generic
-fallback are not authentication; TOML authentication is unavailable, and none can replace host-origin evidence. This is a prospective admission
-contract, not host enforcement or a standalone runner.
+The default read-only path is `scripts/read_only_role_launcher.py`, an isolated top-level role invocation
+that loads role/instruction policy from protected exact Git objects and runs against a detached clean target.
+An in-process read-only child under a writable or unverified parent is non-admissible. The launcher uses a
+narrow per-run Permission Profile pilot, structured preflight/post-run observations, and bounded JSONL/
+manifest handling; missing facts return `insufficient_evidence`. Schema-v1 receipts remain historical,
+structural supplemental evidence. Model self-report, JSONL, `codex doctor`, static TOML, hooks, telemetry,
+or a host-attestation schema cannot authenticate the current runtime, and no mandatory first-turn handshake
+is required. Global Permission Profile adoption remains Watch-only.
 
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 

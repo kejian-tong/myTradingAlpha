@@ -65,11 +65,12 @@ expose collaboration controls. Collaboration-control visibility alone is non-blo
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.
 
-For every configured read-only child, the Master must select and observe a read-only parent before spawn.
-The first child turn is admission-only: first turn: no tools or substantive work. Master approval follows
-only after trusted post-spawn host observation; missing or contradictory evidence causes lane invalidation
-and `insufficient_evidence`. Model self-report, Codex JSONL, `codex doctor`, static TOML, hooks, telemetry,
-standalone fallback, and generic fallback are not authentication.
+For every read-only lane, invoke `scripts/read_only_role_launcher.py` as an isolated top-level role
+invocation. An in-process child under a writable or unverified parent is non-admissible; model self-report,
+JSONL, doctor output, static TOML, hooks, and telemetry are not host attestation. Launcher preflight or
+post-run gaps return `insufficient_evidence`; schema-v1 receipts are historical supplemental evidence and
+the per-run Permission Profile is only a narrow pilot, not a global migration. No mandatory first-turn
+handshake is relied on.
 
 Record complete runtime observation and stop on an actual non-master invocation attempt; retain
 `telemetry_conflict` for separate route/loading contradictions.

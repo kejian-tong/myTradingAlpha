@@ -625,7 +625,7 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
         probe=probe,
         process_runner=runner,
     )
-    assert result["status"] == "completed"
+    assert result["status"] == "completed", result
     assert result["final_agent_message"] == "untrusted final output"
     assert "untrusted final output" not in json.dumps(result["manifest"])
     assert [name for name, _ in probe_calls] == list(_PROBE_ORDER)

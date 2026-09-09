@@ -10,7 +10,7 @@ and exact-head validation; it must not arrive incidentally inside a product-road
 | Capability | Current status | Why | Earliest reconsideration trigger |
 | --- | --- | --- | --- |
 | project-local `.codex/rules/*.rules` | watch only | Codex Rules are experimental and can change; the current sandbox, master-only delegation, hooks and GitHub gates already constrain execution | Rules become stable enough for a small command-policy pilot with `codex execpolicy check` regression cases |
-| Permission Profiles (`default_permissions` / `[permissions]`) | watch only | Permission Profiles are Beta and do not compose with the current `sandbox_mode`-based agent isolation; loaded `sandbox_mode` causes Codex to use the older sandbox system | permission profiles mature and a separate read-only-role pilot proves equivalent or stronger isolation before any migration |
+| Permission Profiles (`default_permissions` / `[permissions]`) | global migration watch only; narrow launcher pilot allowed | Permission Profiles are Beta and do not compose with the current `sandbox_mode`-based agent isolation; the isolated `read_only_role_launcher.py` may construct a per-run profile without changing project-global config | permission profiles mature and a separate read-only-role pilot proves equivalent or stronger isolation before any migration |
 | project Apps (`features.apps`) | explicitly disabled | productionization sessions do not need Codex Apps; the project setting records configuration intent without claiming control over global, installed-plugin, or managed runtime Apps | a separate reviewed pilot defines the required runtime capability receipt and verifies the actual App surface in a fresh session |
 | Codex Memories (`features.memories`) | off / watch only | this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable recovery; hidden/local learned state must not become execution authority | a future design proves deterministic export/audit/recovery semantics and demonstrates clear value beyond `AGENT_STATE.md`, PR evidence and scoped instructions |
 | OpenTelemetry exporters (`[otel]`) | watch only | current narrow Git-common-dir telemetry captures the routing/concurrency evidence this single repository needs without exporting prompts or broad runtime traces | multi-repo/team observability creates a concrete backend, retention, privacy and access-control requirement |
@@ -32,6 +32,10 @@ configuration when it detects any of these unapproved adoption surfaces or bound
 - `features.memories = true` or a top-level `[memories]` table;
 - a top-level `[otel]` table;
 - a top-level `[plugins]` table.
+
+The current runtime launcher is the sole narrow Permission Profile pilot. Its per-run profile is not a
+global adoption, does not add `default_permissions` to `.codex/config.toml`, and remains subject to exact
+binary, policy-root, target-root, preflight, post-run, and merge-gate evidence.
 
 The external specification role has an exact role-scoped OpenAI Developer Docs MCP declaration with two
 allowed tool names; ordinary roles declare no external MCP server. These checks describe checked-in

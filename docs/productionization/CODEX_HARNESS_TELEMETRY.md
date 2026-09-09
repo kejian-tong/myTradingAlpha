@@ -13,12 +13,12 @@ declared effective capabilities, but it cannot authenticate the host runtime, va
 or parse Codex transcripts. A passing receipt therefore never upgrades an unobserved hook event or a
 claimed model/sandbox/tool route into authenticated evidence.
 
-Read-only admission is prospective and requires a read-only parent selected before spawn, an admission-only
-first child turn (first turn: no tools or substantive work), and trusted post-spawn host observation before
-Master approval. Missing or contradictory evidence causes lane invalidation and `insufficient_evidence`.
-Model self-report, Codex JSONL, `codex doctor`, static TOML, hooks, telemetry, standalone fallback, and
-generic fallback are not authentication; this telemetry remains advisory and cannot replace host-origin
-evidence.
+Read-only lanes default to `scripts/read_only_role_launcher.py`, an isolated top-level role invocation.
+An in-process child under a writable or unverified parent is non-admissible. Launcher preflight/post-run
+gaps return `insufficient_evidence`; schema-v1 receipts remain historical structural supplemental evidence,
+and host attestation plus global Permission Profile migration remain Watch-only. Model self-report, JSONL,
+doctor output, static TOML, hooks, and telemetry cannot authenticate the current runtime, and no mandatory
+first-turn handshake replaces the launcher boundary.
 
 Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
 references, exact PR/role/config identity, model/effort, an explicit legacy-sandbox or permission-profile

@@ -153,7 +153,7 @@ def test_policy_prefers_isolated_launcher_and_keeps_receipts_supplemental() -> N
     assert "schema_version=1" in policy
     assert "structural" in policy
     assert "watch-only" in policy
-    assert "not mandatory" in policy and "handshake" in policy
+    assert ("not mandatory" in policy or "no mandatory" in policy) and "handshake" in policy
     assert "insufficient_evidence" in policy
     assert "in-process" in policy and "non-admissible" in policy
     assert "host attestation" in policy

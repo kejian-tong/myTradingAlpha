@@ -119,15 +119,16 @@ Specialists add evidence; they never replace the controlling independent reviewe
 The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
 immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
 
-### 5.1 Prospective read-only child admission
+### 5.1 Current-runtime read-only invocation
 
-A read-only parent must be selected and observed before spawn; a child TOML request is not host enforcement.
-The first child turn is admission-only: first turn: no tools or substantive work. The Master gives approval
-only after a trusted post-spawn host observation confirms the child tuple, complete tool inventory, and
-approval boundary. Missing, stale, contradictory, or out-of-order evidence causes lane invalidation and
-`insufficient_evidence`; do not salvage the lane. Model self-report, Codex JSONL, `codex doctor`, static
-TOML, hooks, telemetry, standalone fallback, and generic fallback are not authentication or a substitute
-for the required host observation.
+Use `scripts/read_only_role_launcher.py` as the default path for every read-only lane. It creates a
+top-level isolated role invocation from protected policy Git objects, a detached clean candidate, and a
+per-run Permission Profile pilot. An in-process child under a writable or unverified parent is
+non-admissible; its model self-report, JSONL, doctor output, static TOML, hooks, or telemetry cannot be
+host attestation. The launcher performs structured preflight/post-run checks and returns
+`insufficient_evidence` on missing or contradictory facts. Schema-v1 receipts remain historical,
+structural supplemental evidence only; host attestation and global Permission Profile migration stay
+Watch-only. No mandatory first-turn handshake is a substitute for the launcher boundary.
 
 ## 6. Adaptive model routing
 

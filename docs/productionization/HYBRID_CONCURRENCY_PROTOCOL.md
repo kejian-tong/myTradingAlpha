@@ -41,11 +41,11 @@ including a runtime-denied or no-op attempt, is a blocking violation. Complete o
 accept that no invocation occurred, and `telemetry_conflict` remains a separate blocking signal for actual
 route/loading contradictions.
 
-Read-only admission is a separate prospective gate. The Master selects and observes a read-only parent
-before spawn; the first child turn is admission-only: first turn: no tools or substantive work. Approval
-for substantive work follows only a trusted post-spawn host observation. Missing or contradictory
-evidence causes lane invalidation and `insufficient_evidence`; model self-report, Codex JSONL, `codex
-doctor`, static TOML, hooks, telemetry, standalone fallback, and generic fallback are not authentication.
+Read-only lanes use `scripts/read_only_role_launcher.py` for an isolated top-level role invocation. An
+in-process child under a writable or unverified parent is non-admissible; launcher preflight/post-run gaps
+return `insufficient_evidence`. Schema-v1 receipts are supplemental only, the per-run Permission Profile
+is a narrow pilot, and no mandatory first-turn handshake substitutes for the launcher. This does not alter
+the one-writer rule or authorize a merge.
 
 ## 3. Concurrency budget
 
