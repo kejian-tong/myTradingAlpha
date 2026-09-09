@@ -259,18 +259,37 @@ def _plan_kwargs(
     return values
 
 
+def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, object]:
+    module = _launcher_module()
+    synthetic_root = ROOT / ".test-runtime-root" / scenario.target.head[:16]
+    old_tempdir = module.tempfile.gettempdir
+    old_provider = getattr(module, "temp_root_provider", None)
+    old_getter = getattr(module, "get_temp_root", None)
+    module.tempfile.gettempdir = lambda: str(synthetic_root)
+    if old_provider is not None:
+        module.temp_root_provider = lambda: synthetic_root
+    if old_getter is not None:
+        module.get_temp_root = lambda: synthetic_root
+    try:
+        result = module.build_invocation_plan(**values)
+    finally:
+        module.tempfile.gettempdir = old_tempdir
+        if old_provider is not None:
+            module.temp_root_provider = old_provider
+        if old_getter is not None:
+            module.get_temp_root = old_getter
+    return result
+
+
 def _plan(scenario: Scenario, *, role: str = "reviewer_high", **overrides: object) -> dict[str, object]:
-    result = _function("build_invocation_plan")(
-        **_plan_kwargs(scenario, role=role, **overrides)
-    )
+    result = _call_plan(scenario, _plan_kwargs(scenario, role=role, **overrides))
     assert type(result) is dict, "launcher plan must be a plain mapping"
     return result
 
 
 def _rejected_plan(scenario: Scenario, *, role: str = "reviewer_high", **overrides: object) -> None:
-    function = _function("build_invocation_plan")
     try:
-        result = function(**_plan_kwargs(scenario, role=role, **overrides))
+        result = _call_plan(scenario, _plan_kwargs(scenario, role=role, **overrides))
     except (OSError, PermissionError, RuntimeError, ValueError) as exc:
         assert str(exc), "rejected launcher plans need bounded diagnostics"
         return
@@ -1445,6 +1464,10 @@ def test_canonical_permission_config_has_toml_network_and_exact_credential_denia
     assert filesystem[str(Path.home() / ".codex")] == "deny"
     assert filesystem[str(scenario.policy.root)] == "read"
     assert filesystem[str(scenario.target.root)] == "read"
+    shell_policy = config["shell_environment_policy"]
+    assert shell_policy["inherit"] == "none"
+    assert shell_policy["ignore_default_excludes"] is False
+    assert "LAUNCHER_SECRET_SENTINEL" not in shell_policy["set"]
 
 
 def test_plan_generates_secret_sentinel_even_without_caller_launcher_env(
@@ -1587,3 +1610,38 @@ def test_default_run_path_uses_low_level_subprocess_for_all_seven_probes(
     )
     assert result["status"] == "completed", result
     assert seen == ["/usr/bin/head", "/usr/bin/head", "/usr/bin/touch", "/usr/bin/head", "/usr/bin/touch", "/bin/sh", "/usr/bin/curl"]
+
+
+def test_real_system_temp_policy_or_target_worktree_is_rejected_without_test_provider_patch(
+    scenario: Scenario,
+) -> None:
+    module = _launcher_module()
+    with pytest.raises((OSError, PermissionError, RuntimeError, ValueError)):
+        module.build_invocation_plan(**_plan_kwargs(scenario))
+
+
+def test_default_binary_probe_canonicalizes_codex_cli_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    binary = tmp_path / "codex"
+    binary.write_bytes(b"binary")
+    binary.chmod(0o755)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        argv = list(args[0])
+        if argv[:2] == [str(binary), "--version"]:
+            return subprocess.CompletedProcess(argv, 0, "codex-cli 0.153.4\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "TeamIdentifier=2DC432GLL2\n")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    descriptor = module._default_binary_probe(binary)
+    assert descriptor["version"] == "0.153.4"
+    assert module.validate_binary(
+        path=binary,
+        expected_version="0.153.4",
+        expected_sha256=hashlib.sha256(b"binary").hexdigest(),
+        expected_team_identifier=TEAM_IDENTIFIER,
+        supported_versions=("0.153.4",),
+        probe=lambda _: descriptor,
+    ) == []

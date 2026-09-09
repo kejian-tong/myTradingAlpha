@@ -160,6 +160,12 @@ def test_policy_prefers_isolated_launcher_and_keeps_receipts_supplemental() -> N
     assert "launcher" in policy and "permission profile" in policy and "pilot" in policy
 
 
+def test_policy_requires_non_temp_review_worktrees_for_launcher_inputs() -> None:
+    policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
+    assert "non-temp" in policy or "non temp" in policy
+    assert "worktree" in policy
+
+
 def test_read_only_roles_use_launcher_protocol_without_unenforceable_handshake() -> None:
     for role in _READ_ONLY_ROLES:
         instructions = str(_role_config(role).get("developer_instructions", "")).lower()
