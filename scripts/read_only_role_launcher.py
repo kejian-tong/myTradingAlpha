@@ -551,7 +551,15 @@ def _runtime_dependency_roots(
             ):
                 continue
             resolved = _validated_tool_path("runtime library", dependency)
+            parts = dependency.parts
+            opt_index = len(parts) - 1 - parts[::-1].index("opt") if "opt" in parts else -1
+            alias_anchor = (
+                Path(*parts[: opt_index + 1])
+                if opt_index >= 0
+                else dependency.parent.parent
+            )
             for root in (
+                alias_anchor,
                 dependency.parent.parent,
                 dependency.parent,
                 dependency,
