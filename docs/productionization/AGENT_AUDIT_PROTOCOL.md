@@ -193,8 +193,11 @@ Any unavailable tool or failed smoke blocks model start. Ordinary roles reject e
 `openaiDeveloperDocs` and exact tools `fetch_openai_doc` or `search_openai_docs`; malformed, replayed,
 failed, unknown, or incomplete MCP activity cannot produce a completed lane. Its MCP is required at
 runtime so startup failure is fatal. Codex 0.153.4's bounded pre-turn `Ignoring malformed agent role
-definition` warning is non-blocking only while agents are disabled and the complete stderr consists of
-that warning class; other startup/tool stderr remains inadmissible.
+definition` warning is non-blocking only while agents are disabled and the complete stderr matches the
+exact timestamped `codex_agent_roles::loader` envelope, its bounded TOML diagnostic lines, and optional
+timestamped `codex_rollout::list: state db discrepancy` warning. The same exact loader message is treated
+as a warning if surfaced as an item-level error. Other logger targets, severities, continuations,
+startup/tool stderr, and all other item errors remain inadmissible.
 
 The isolated runtime explicitly disables web search, standalone/deprecated web-search flags, skill
 search and host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots,

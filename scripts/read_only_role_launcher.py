@@ -47,6 +47,10 @@ DOCS_MCP_URL = "https://developers.openai.com/mcp"
 DOCS_MCP_TOOLS = ("fetch_openai_doc", "search_openai_docs")
 DENY_CANARY_RELATIVE = ".codex/read-only-probe.secret"
 DENY_CANARY_BYTES = b"harmless deny canary\n"
+_HOST_WARN_RE = re.compile(
+    r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z WARN "
+    r"(?P<target>codex_agent_roles::loader|codex_rollout::list): (?P<message>[^\r\n]+)\Z"
+)
 
 READ_ONLY_ROLES = frozenset(
     {
@@ -1612,21 +1616,69 @@ def _toolchain_smoke_passed(value: object) -> bool:
     )
 
 
+def _known_agent_role_warning(message: object) -> bool:
+    if type(message) is not str or not message.startswith(
+        "Ignoring malformed agent role definition"
+    ):
+        return False
+    return (
+        "\n" not in message
+        and "\r" not in message
+        and len(message.encode("utf-8")) <= MAX_TEXT_LENGTH
+        and re.search(
+            r"\b(?:enabled|failed|MCP|tool|network|auth|credential|panic)\b",
+            message,
+            re.IGNORECASE,
+        )
+        is None
+    )
+
+
 def _stderr_is_admissible(raw: str, *, agents_disabled: bool) -> bool:
-    """Allow only the bounded known agent-definition warning from 0.153.4."""
+    """Admit only pinned 0.153.4 loader/rollout warning envelopes."""
 
     if not raw:
         return True
     if not agents_disabled or len(raw.encode("utf-8")) > MAX_STDERR_BYTES:
         return False
     lines = raw.splitlines()
-    if not lines:
+    if not lines or len(lines) > 32:
         return False
+    if all(_known_agent_role_warning(line) for line in lines):
+        return True
+    in_loader_detail = False
     for line in lines:
-        if (
-            not line.startswith("Ignoring malformed agent role definition")
-            or len(line.encode("utf-8")) > MAX_TEXT_LENGTH
-            or re.search(r"\b(?:enabled|failed|error|MCP|tool)\b", line, re.IGNORECASE)
+        match = _HOST_WARN_RE.fullmatch(line)
+        if match:
+            target = match.group("target")
+            message = match.group("message")
+            if target == "codex_agent_roles::loader":
+                if not _known_agent_role_warning(message):
+                    return False
+                in_loader_detail = True
+                continue
+            if not message.startswith("state db discrepancy "):
+                return False
+            if re.search(
+                r"\b(?:MCP|tool|network|auth|credential|panic|failed|error)\b",
+                message,
+                re.IGNORECASE,
+            ):
+                return False
+            in_loader_detail = False
+            continue
+        if not in_loader_detail or len(line.encode("utf-8")) > MAX_TEXT_LENGTH:
+            return False
+        if re.search(
+            r"\b(?:MCP|tool|network|auth|credential|panic|failed)\b",
+            line,
+            re.IGNORECASE,
+        ):
+            return False
+        if not (
+            re.fullmatch(r"\s*\|.*", line)
+            or re.fullmatch(r"\s*\d+\s*\|.*", line)
+            or re.fullmatch(r"[\x20-\x7e]+", line)
         ):
             return False
     return True
@@ -1781,7 +1833,11 @@ def parse_codex_jsonl(
                 elif item_type == "warning":
                     warnings.append(item.get("message", ""))
                 elif item_type == "error":
-                    errors.append(item.get("message", ""))
+                    message = item.get("message", "")
+                    if _known_agent_role_warning(message):
+                        warnings.append(message)
+                    else:
+                        errors.append(message)
     except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise LauncherError("malformed JSONL output") from exc
     types = [event["type"] for event in events]
