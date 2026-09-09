@@ -1919,8 +1919,18 @@ def parse_codex_jsonl(
                         raise LauncherError("nested Codex invocation attempt")
                     if event["type"] == "item.started":
                         if (
-                            set(item) != {"id", "type", "command", "status"}
+                            set(item)
+                            != {
+                                "aggregated_output",
+                                "command",
+                                "exit_code",
+                                "id",
+                                "status",
+                                "type",
+                            }
                             or item.get("status") != "in_progress"
+                            or item.get("aggregated_output") != ""
+                            or item.get("exit_code") is not None
                             or item_id in active_commands
                             or item_id in completed_commands
                         ):
