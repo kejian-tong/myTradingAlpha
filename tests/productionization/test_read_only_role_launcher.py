@@ -989,33 +989,49 @@ def test_exec_argv_binds_strict_config_route_profile_environment_and_features(
     assert "--color" in argv and "never" in argv
     assert "-m" in argv and argv[argv.index("-m") + 1] == plan["model"]
     config_values = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "-c"]
+    profile_name = str(plan["permission_profile_name"])
     required_prefixes = (
         "model_reasoning_effort=",
         "developer_instructions=",
         "approval_policy=",
-        "default_permissions=",
-        "permissions=",
-        "shell_environment=",
+        "shell_environment_policy=",
         "agents.enabled=",
         "features.apps=",
         "features.plugins=",
+        "features.hooks=",
         "features.memories=",
-        "features.browser=",
-        "features.computer=",
-        "features.image=",
-        "features.workspace=",
-        "features.remote=",
+        "features.multi_agent=",
+        "features.multi_agent_v2=",
+        "features.browser_use=",
+        "features.browser_use_external=",
+        "features.browser_use_full_cdp_access=",
+        "features.computer_use=",
+        "features.image_generation=",
+        "features.in_app_browser=",
+        "features.workspace_dependencies=",
+        "features.remote_plugin=",
+        "features.skill_mcp_dependency_install=",
+        "features.tool_call_mcp_elicitation=",
+        "features.auth_elicitation=",
         "features.code_mode=",
-        "features.web=",
-        "features.search=",
-        "features.mcp_elicitation=",
+        "features.code_mode_host=",
+        "features.code_mode_only=",
         "mcp_servers=",
+        f"permissions.{profile_name}.filesystem=",
+        f"permissions.{profile_name}.network=",
     )
     for prefix in required_prefixes:
         assert any(value.startswith(prefix) for value in config_values), prefix
+    assert "-p" in argv and argv[argv.index("-p") + 1] == profile_name
     forbidden = {"--sandbox", "--agent", "--approve-for-me", "--yolo"}
     assert not forbidden.intersection(argv)
-    assert not any(any(token in value for token in (";", "&&", "|", "`")) for value in argv)
+    assert "-" in argv
+    assert plan["prompt_transport"] == "stdin"
+    assert not any(
+        value in {"sh", "bash", "zsh", "eval"}
+        or (index > 0 and value == "-c" and argv[index - 1] in {"sh", "bash", "zsh"})
+        for index, value in enumerate(argv)
+    )
 
 
 @pytest.mark.parametrize("probe_name", _PROBE_ORDER)
