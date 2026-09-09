@@ -81,3 +81,20 @@ def test_watchlist_documents_all_reviewed_decisions() -> None:
     for term in ("Codex Rules", "Permission Profiles", "Codex Memories", "OpenTelemetry", "plugin"):
         assert term in text
     assert "separate reviewed harness PR" in text
+
+
+def test_telemetry_documents_trusted_role_and_config_path() -> None:
+    text = (ROOT / "docs/productionization/CODEX_HARNESS_TELEMETRY.md").read_text(
+        encoding="utf-8"
+    )
+    assert "trusted expected role" in text
+    assert "trusted expected config path" in text
+
+
+def test_audit_protocol_records_official_web_fallback_limitation() -> None:
+    text = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "authorized official web/browser fallback" in text
+    assert "does not satisfy the narrow OpenAI Developer Docs MCP receipt" in text
+    assert "insufficient_evidence" in text

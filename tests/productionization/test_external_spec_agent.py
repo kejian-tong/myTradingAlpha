@@ -159,4 +159,6 @@ def test_mcp_leak_to_reviewer_is_rejected(tmp_path: Path) -> None:
     shutil.copyfile(ROOT / "AGENTS.md", tmp_path / "AGENTS.md")
     path = tmp_path / ".codex/agents/reviewer-high.toml"
     path.write_text(path.read_text() + '\n[mcp_servers.bad]\nurl = "https://example.com"\n')
-    assert "reviewer_high must not receive external MCP servers" in checker.configuration_errors(tmp_path)
+    errors = checker.configuration_errors(tmp_path)
+    assert "reviewer_high must not declare role-level MCP configuration intent" in errors
+    assert not any("receive" in error.lower() for error in errors)

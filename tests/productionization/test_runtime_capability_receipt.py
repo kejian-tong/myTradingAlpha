@@ -494,6 +494,64 @@ def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path:
     ) == []
 
 
+def test_repository_replace_cannot_substitute_trusted_head_tree(tmp_path: Path) -> None:
+    repo, original_head, _original_tree = _temporary_repo(tmp_path)
+    role_path = repo / ROLE_CONFIG
+    role_path.write_text(
+        role_path.read_text(encoding="utf-8").replace(
+            'model = "gpt-5.6-sol"', 'model = "replacement-model"'
+        )
+        + 'mcp_policy = "replacement-intent"\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", ROLE_CONFIG], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Receipt Test",
+            "-c",
+            "user.email=receipt@example.invalid",
+            "commit",
+            "-qm",
+            "replacement",
+        ],
+        check=True,
+    )
+    replacement_head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    replacement_tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", original_head], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "replace", original_head, replacement_head],
+        check=True,
+    )
+    try:
+        errors = _errors(
+            _receipt(
+                model="replacement-model",
+                base_sha=original_head,
+                head_sha=original_head,
+                tree_sha=replacement_tree,
+            ),
+            repo_root=repo,
+            expected_base_sha=original_head,
+            expected_head_sha=original_head,
+        )
+    finally:
+        subprocess.run(
+            ["git", "-C", str(repo), "replace", "-d", original_head],
+            check=True,
+        )
+
+    assert errors
+
+
 def test_promisor_repository_rejects_before_lazy_fetch_or_object_mutation(
     tmp_path: Path,
 ) -> None:
