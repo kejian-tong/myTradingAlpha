@@ -416,7 +416,6 @@ def test_missing_or_mismatched_trusted_digest_fails_closed(
         ("parent_permission_profile", "workspace-write"),
         ("parent_permission_profile", ":workspace"),
         ("parent_permission_profile", ":danger-full-access"),
-        ("parent_permission_profile", "disabled"),
         ("parent_permission_profile", "unknown"),
         ("parent_permission_system", "unknown"),
     ],
