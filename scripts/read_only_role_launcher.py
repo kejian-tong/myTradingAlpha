@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import signal
 import stat
 import subprocess
@@ -521,9 +522,17 @@ def build_permission_profile(
         str(Path(target_root).resolve() / "*secret*"),
         str(Path(target_root).resolve() / "*token*"),
     ]
+    permissions.update(dict.fromkeys(denied, "deny"))
+    permissions[str(scratch_root.resolve())] = "write"
+    permissions[str(Path(policy_root).resolve())] = "read"
+    permissions[str(Path(target_root).resolve())] = "read"
+    permissions[str(Path(common_git_root).resolve())] = "read"
+    for dependency in dependency_roots:
+        permissions[str(Path(dependency).resolve())] = "read"
+    profile_name = "launcher_read_only"
     return {
         "scope": "launcher_pilot",
-        "name": "launcher_read_only",
+        "name": profile_name,
         "default_permissions": permissions,
         "network": "disabled",
         "credential_probe_path": str(credential),
@@ -533,7 +542,31 @@ def build_permission_profile(
             "set": shell_set,
         },
         "deny_paths": denied,
+        "permissions": {
+            profile_name: {
+                "filesystem": permissions,
+                "network": {"enabled": False},
+            }
+        },
     }
+
+
+def _validate_credential_path(value: object, roots: Sequence[Path]) -> Path:
+    path = _require_absolute_path(value, "credential_probe_path")
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise LauncherError("credential probe path is unavailable") from exc
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise LauncherError("credential probe path must be a regular non-symlink file")
+    if info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise LauncherError("credential probe path ownership/mode is unsafe")
+    if not os.access(path, os.R_OK):
+        raise LauncherError("credential probe path is not readable by the launcher")
+    resolved = path.resolve()
+    if any(resolved.is_relative_to(root.resolve()) for root in roots):
+        raise LauncherError("credential probe path overlaps a protected launcher root")
+    return resolved
 
 
 def build_invocation_plan(
@@ -550,6 +583,7 @@ def build_invocation_plan(
     expected_binary_sha256: object,
     expected_binary_team_identifier: object,
     supported_binary_versions: Sequence[str],
+    credential_probe_path: object,
     binary_probe: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     _reject_ambient_git_redirects()
@@ -578,17 +612,24 @@ def build_invocation_plan(
     if binary_errors:
         raise LauncherError("; ".join(binary_errors))
     common_git = Path(target["common_git_root"])
+    credential_path = _validate_credential_path(
+        credential_probe_path,
+        (Path(policy["root"]), Path(target["root"])),
+    )
+    runtime_token = secrets.token_hex(32)
     runtime_root = (
         Path(tempfile.gettempdir()).resolve()
         / "mytradingalpha-read-only-launcher"
-        / str(target["head_sha"])[:16]
+        / runtime_token
     )
     if any(runtime_root == root or runtime_root.is_relative_to(root) for root in (
         Path(policy["root"]).resolve(), Path(target["root"]).resolve(), common_git.resolve()
     )):
         raise LauncherError("launcher runtime root overlaps a protected repository")
+    if credential_path.is_relative_to(runtime_root):
+        raise LauncherError("credential probe path overlaps launcher runtime")
     scratch = runtime_root / "cwd"
-    credential_probe = runtime_root / "credential-probe" / "credentials.json"
+    credential_probe = credential_path
     profile = build_permission_profile(
         policy_root=Path(policy["root"]),
         target_root=Path(target["root"]),
@@ -637,28 +678,50 @@ def build_invocation_plan(
         "mcp_servers": mcp_servers,
         "permission_profile": profile,
     }
-    argv = [
-        str(binary),
-        "exec",
-        "--strict-config",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--json",
-        "--color",
-        "never",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "-m",
-        model,
-        "-",
-    ]
+    argv = [str(binary)]
     for value in config_values:
         argv.extend(("-c", value))
+    argv.extend(
+        (
+            "exec",
+            "--strict-config",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--json",
+            "--color",
+            "never",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "-m",
+            model,
+            "-",
+        )
+    )
+    probe_paths = {
+        "policy_read": str(Path(policy["root"]) / "AGENTS.md"),
+        "target_read": str(Path(target["root"]) / "candidate.txt"),
+        "target_write_denied": str(Path(target["root"]) / ".launcher-target-write-probe"),
+        "credential_read_denied": str(credential_path),
+        "scratch_write": str(scratch / ".launcher-scratch-probe"),
+        "secret_env_absent": str(scratch / ".launcher-secret-env-probe"),
+        "network_denied": "https://example.com",
+    }
+    host_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"PATH", "HOME", "CODEX_HOME", "OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"}
+        or key.startswith("LAUNCHER_")
+    }
+    host_env.setdefault("PATH", os.defpath)
+    host_env["TMPDIR"] = str(runtime_root)
+    host_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    host_env["GIT_OPTIONAL_LOCKS"] = "0"
     return {
         "invocation_kind": "isolated_role_invocation",
         "policy_root": str(policy["root"]),
         "target_root": str(target["root"]),
         "runtime_root": str(runtime_root),
+        "runtime_token": str(runtime_root),
         "role": role,
         "config_path": policy_path,
         "model": model,
@@ -676,13 +739,15 @@ def build_invocation_plan(
         "binary_version": expected_binary_version,
         "binary_sha256": expected_binary_sha256,
         "binary_team_identifier": expected_binary_team_identifier,
+        "credential_probe_path": str(credential_path),
         "argv": argv,
         "cwd": str(scratch),
         "permission_profile_name": profile_name,
         "permission_profile_digest": _digest(profile),
         "prompt_transport": "stdin",
         "config_values": config_values,
-        "exec_env": dict(profile["shell_environment"]["set"]),
+        "exec_env": host_env,
+        "probe_paths": probe_paths,
         "probe_markers": [str(Path(target["root"]) / ".launcher-target-write-probe")],
         "cwd_is_private_empty": True,
         "approval_policy": "never",
@@ -705,19 +770,42 @@ def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dic
     config_values = plan.get("config_values")
     if type(config_values) is not list or not all(type(value) is str for value in config_values):
         raise LauncherError("canonical launcher config is unavailable")
-    argv = [
-        str(plan["binary_realpath"]),
-        "sandbox",
-        "--include-managed-config",
-        "--strict-config",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--cd",
-        str(plan["cwd"]),
-    ]
+    argv = [str(plan["binary_realpath"])]
     for value in config_values:
         argv.extend(("-c", value))
-    argv.extend(("--", probe_name))
+    argv.extend(
+        (
+            "sandbox",
+            "-P",
+            str(plan["permission_profile_name"]),
+            "--include-managed-config",
+            "-C",
+            str(plan["cwd"]),
+            "--",
+        )
+    )
+    paths = plan["probe_paths"]
+    if probe_name in {"policy_read", "target_read", "credential_read_denied"}:
+        argv.extend(("/usr/bin/head", "-c", "1", str(paths[probe_name])))
+    elif probe_name in {"target_write_denied", "scratch_write"}:
+        argv.extend(("/usr/bin/touch", "--", str(paths[probe_name])))
+    elif probe_name == "secret_env_absent":
+        argv.extend(("/bin/sh", "-c", "test -z \"${LAUNCHER_SECRET_SENTINEL:-}\""))
+    else:
+        argv.extend(
+            (
+                "/usr/bin/curl",
+                "--silent",
+                "--show-error",
+                "--connect-timeout",
+                "2",
+                "--max-time",
+                "3",
+                "--output",
+                "/dev/null",
+                str(paths[probe_name]),
+            )
+        )
     return {
         "argv": argv,
         "cwd": plan["cwd"],
@@ -812,18 +900,7 @@ def _default_sandbox_runner(**kwargs: object) -> dict[str, object]:
     )
     stdout = completed.stdout[:MAX_STDOUT_BYTES]
     stderr = completed.stderr[:MAX_STDERR_BYTES]
-    if completed.returncode != 0:
-        return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
-    try:
-        payload = json.loads(stdout)
-    except (TypeError, ValueError):
-        return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
-    if type(payload) is not dict:
-        return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
-    payload.setdefault("returncode", completed.returncode)
-    payload.setdefault("stdout", stdout)
-    payload.setdefault("stderr", stderr)
-    return payload
+    return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
 
 
 def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[str, object]:
@@ -1189,6 +1266,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-binary-version", default=CODEX_VERSION)
     parser.add_argument("--expected-binary-sha256", required=True)
     parser.add_argument("--expected-binary-team-identifier", default=CODEX_TEAM_IDENTIFIER)
+    parser.add_argument("--credential-probe-path", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         prompt = sys.stdin.read(MAX_PROMPT_BYTES + 1)
@@ -1212,6 +1290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_binary_sha256=args.expected_binary_sha256,
             expected_binary_team_identifier=args.expected_binary_team_identifier,
             supported_binary_versions=(CODEX_VERSION,),
+            credential_probe_path=args.credential_probe_path,
         )
         result = run_isolated_role(plan, prompt=prompt)
     except (LauncherError, OSError, ValueError) as exc:
