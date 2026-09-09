@@ -41,6 +41,12 @@ including a runtime-denied or no-op attempt, is a blocking violation. Complete o
 accept that no invocation occurred, and `telemetry_conflict` remains a separate blocking signal for actual
 route/loading contradictions.
 
+Read-only admission is a separate prospective gate. The Master selects and observes a read-only parent
+before spawn; the first child turn is admission-only: first turn: no tools or substantive work. Approval
+for substantive work follows only a trusted post-spawn host observation. Missing or contradictory
+evidence causes lane invalidation and `insufficient_evidence`; model self-report, Codex JSONL, `codex
+doctor`, static TOML, hooks, telemetry, standalone fallback, and generic fallback are not authentication.
+
 ## 3. Concurrency budget
 
 Project config currently uses:

@@ -157,6 +157,17 @@ closed. `telemetry_conflict` remains separate blocking evidence for route/loadin
 visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
 events, spawn agents, contact GitHub, write files, or merge a PR.
 
+### 2.2 Prospective read-only child admission
+
+Before spawning a configured read-only role, the Master selects and observes a read-only parent effective
+permission/approval tuple. The first child turn is admission-only: first turn: no tools or substantive
+work. The Master may approve substantive work only after a trusted post-spawn host observation confirms
+the child tuple and complete tool inventory. Missing, stale, contradictory, or out-of-order evidence
+causes lane invalidation and `insufficient_evidence`; the lane's findings must be discarded. Model
+self-report, Codex JSONL, `codex doctor`, static TOML, hooks, telemetry, standalone fallback, and generic
+fallback are not authentication; TOML authentication is unavailable, and none can replace host-origin evidence. This is a prospective admission
+contract, not host enforcement or a standalone runner.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**

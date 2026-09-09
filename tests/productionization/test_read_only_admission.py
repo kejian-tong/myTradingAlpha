@@ -517,7 +517,6 @@ def test_child_activity_before_admission_invalidates_the_lane() -> None:
         ({}, {"role": "code_explorer"}),
         ({}, {"config_path": ".codex/agents/code-explorer.toml"}),
         ({}, {"tree_sha": "f" * 40}),
-        ({}, {"session_digest": "f" * 64}),
         ({}, {"parent_session_digest": "f" * 64}),
     ],
 )
@@ -555,11 +554,16 @@ def test_read_only_admission_accepts_reviewed_local_read_only_tools(
 
 
 def test_external_researcher_keeps_only_the_reviewed_docs_mcp_allowlist() -> None:
-    assert _admission_errors(_external_admission_receipt()) == []
+    expected = {
+        "expected_role": "external_spec_researcher",
+        "expected_config_path": EXTERNAL_ROLE_CONFIG,
+    }
+    assert _admission_errors(_external_admission_receipt(), **expected) == []
     assert _admission_errors(
         _external_admission_receipt(
             tool_names=["mcp__openaiDeveloperDocs__fetch_openai_docs"]
-        )
+        ),
+        **expected,
     )
 
 

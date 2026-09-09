@@ -1,9 +1,10 @@
-"""Verify a bounded host-runtime capability receipt without granting authority.
+"""Verify bounded host-runtime capability receipts without granting authority.
 
-This verifier checks only a receipt's declared structure, repository binding, and
-the configured intent of the named project role.  A successful result is
-structural contract evidence; it does not authenticate the runtime, source
-references, model route, sandbox, tools, or any Codex transcript.
+This verifier checks only declared structure, repository binding, configured
+role intent, and (for schema v2) a caller-supplied read-only admission tuple. A
+successful result is structural contract evidence; it does not authenticate
+the runtime, source references, model route, sandbox, tools, or any Codex
+transcript.
 """
 
 from __future__ import annotations
@@ -54,6 +55,23 @@ REQUIRED_FIELDS = frozenset(
         "observed_at_ms",
     }
 )
+
+_READ_ONLY_ADMISSION_FIELDS = frozenset(
+    {
+        "parent_session_digest",
+        "permission_epoch_digest",
+        "spawn_event_digest",
+        "parent_permission_system",
+        "parent_sandbox_mode",
+        "parent_permission_profile",
+        "parent_approval_policy",
+        "parent_observation_complete",
+        "spawn_observation_complete",
+        "parent_observed_at_ms",
+        "child_activity_before_admission",
+    }
+)
+_READ_ONLY_ADMISSION_REQUIRED_FIELDS = REQUIRED_FIELDS | _READ_ONLY_ADMISSION_FIELDS
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _OBJECT_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -127,6 +145,15 @@ _STRING_FIELDS = (
     "permission_system",
     "permission_profile",
     "approval_policy",
+)
+_READ_ONLY_ADMISSION_STRING_FIELDS = (
+    "parent_session_digest",
+    "permission_epoch_digest",
+    "spawn_event_digest",
+    "parent_permission_system",
+    "parent_sandbox_mode",
+    "parent_permission_profile",
+    "parent_approval_policy",
 )
 
 
@@ -630,6 +657,237 @@ def _validate_expected_identity(
     if relative.is_absolute() or ".." in relative.parts:
         errors.append("expected_config_path must not escape the repository")
     return errors
+
+
+def _validate_read_only_admission_shape(receipt: object) -> list[str]:
+    if type(receipt) is not dict:
+        return ["receipt must be an exact JSON object"]
+    if any(type(key) is not str for key in receipt):
+        return ["receipt field names must be exact strings"]
+    keys = set(receipt)
+    errors: list[str] = []
+    missing = sorted(_READ_ONLY_ADMISSION_REQUIRED_FIELDS - keys)
+    if missing:
+        errors.append(f"missing fields: {', '.join(missing)}")
+    if keys - _READ_ONLY_ADMISSION_REQUIRED_FIELDS:
+        errors.append("receipt contains unknown fields")
+    return errors
+
+
+def _validate_read_only_admission_types(receipt: dict[str, object]) -> list[str]:
+    errors = _validate_exact_field_types(receipt)
+    if errors:
+        return errors
+
+    for field in _READ_ONLY_ADMISSION_STRING_FIELDS:
+        if type(receipt[field]) is not str:
+            errors.append(f"{field} must be an exact string")
+    for field in (
+        "parent_observation_complete",
+        "spawn_observation_complete",
+        "child_activity_before_admission",
+    ):
+        if type(receipt[field]) is not bool:
+            errors.append(f"{field} must be an exact boolean")
+    if type(receipt["parent_observed_at_ms"]) is not int:
+        errors.append("parent_observed_at_ms must be an exact integer")
+    return errors
+
+
+def _validate_read_only_admission_values(receipt: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    if receipt["schema_version"] != 2:
+        errors.append("schema_version must be exactly 2")
+    for field in (
+        "parent_session_digest",
+        "permission_epoch_digest",
+        "spawn_event_digest",
+    ):
+        if _SHA256_RE.fullmatch(receipt[field]) is None:
+            errors.append(f"{field} must be a lowercase sha256 digest")
+
+    errors.extend(
+        _enum(
+            receipt["parent_permission_system"],
+            "parent_permission_system",
+            _PERMISSION_SYSTEMS,
+        )
+    )
+    errors.extend(
+        _enum(receipt["parent_sandbox_mode"], "parent_sandbox_mode", _SANDBOX_MODES)
+    )
+    errors.extend(
+        _enum(
+            receipt["parent_permission_profile"],
+            "parent_permission_profile",
+            _PERMISSION_PROFILES,
+        )
+    )
+    errors.extend(
+        _enum(
+            receipt["parent_approval_policy"],
+            "parent_approval_policy",
+            _APPROVAL_POLICIES,
+        )
+    )
+    if errors:
+        return errors
+
+    parent_system = receipt["parent_permission_system"]
+    parent_sandbox = receipt["parent_sandbox_mode"]
+    parent_profile = receipt["parent_permission_profile"]
+    if parent_system == "legacy_sandbox":
+        if parent_sandbox != "read-only":
+            errors.append("parent effective sandbox is not read-only")
+        if parent_profile != "disabled":
+            errors.append("parent permission profile must be disabled under legacy sandbox")
+    elif parent_system == "permission_profile":
+        if parent_sandbox != "disabled":
+            errors.append("parent legacy sandbox must be disabled under permission profiles")
+        if parent_profile != ":read-only":
+            errors.append("parent permission profile is not read-only")
+
+    if receipt["parent_approval_policy"] != "never":
+        errors.append("parent approval policy must be never")
+    if receipt["approval_policy"] != "never":
+        errors.append("child approval policy must be never")
+
+    if receipt["parent_observation_complete"] is not True:
+        errors.append("parent observation is incomplete")
+    if receipt["spawn_observation_complete"] is not True:
+        errors.append("post-spawn observation is incomplete")
+    if receipt["child_activity_before_admission"] is not False:
+        errors.append("child activity before admission invalidates the lane")
+
+    parent_observed = receipt["parent_observed_at_ms"]
+    child_observed = receipt["observed_at_ms"]
+    if parent_observed < 0:
+        errors.append("parent_observed_at_ms must be a non-negative integer")
+    if parent_observed >= child_observed:
+        errors.append("parent observation must precede child observation")
+    if not _local_enforcement_is_read_only(receipt):
+        errors.append("child effective local enforcement is not read-only")
+    return errors
+
+
+def _validate_read_only_admission_expectations(
+    *,
+    expected_pr_id: object,
+    expected_base_sha: object,
+    expected_head_sha: object,
+    expected_role: object,
+    expected_config_path: object,
+    expected_parent_session_digest: object,
+    expected_permission_epoch_digest: object,
+    expected_spawn_event_digest: object,
+) -> list[str]:
+    errors: list[str] = []
+    if type(expected_pr_id) is not str or _PR_ID_RE.fullmatch(expected_pr_id) is None:
+        errors.append("expected_pr_id has an invalid identifier")
+    for field, value in (
+        ("expected_base_sha", expected_base_sha),
+        ("expected_head_sha", expected_head_sha),
+    ):
+        if type(value) is not str or _OBJECT_SHA_RE.fullmatch(value) is None:
+            errors.append(f"{field} must be a lowercase commit SHA")
+    errors.extend(_validate_expected_identity(expected_role, expected_config_path))
+    for field, value in (
+        ("expected_parent_session_digest", expected_parent_session_digest),
+        ("expected_permission_epoch_digest", expected_permission_epoch_digest),
+        ("expected_spawn_event_digest", expected_spawn_event_digest),
+    ):
+        if type(value) is not str or _SHA256_RE.fullmatch(value) is None:
+            errors.append(f"{field} must be a lowercase sha256 digest")
+    return errors
+
+
+def verify_read_only_admission(
+    receipt: object,
+    *,
+    repo_root: Path,
+    expected_pr_id: str,
+    expected_base_sha: str,
+    expected_head_sha: str,
+    expected_role: str,
+    expected_config_path: str,
+    expected_parent_session_digest: str,
+    expected_permission_epoch_digest: str,
+    expected_spawn_event_digest: str,
+) -> list[str]:
+    """Return structural errors for a prospective read-only child admission.
+
+    Schema v2 binds a child receipt to independently supplied parent, epoch,
+    and spawn digest references plus a complete read-only observation tuple.
+    The digest references are opaque data: this function does not authenticate
+    their source or establish host enforcement.
+    """
+
+    expectation_errors = _validate_read_only_admission_expectations(
+        expected_pr_id=expected_pr_id,
+        expected_base_sha=expected_base_sha,
+        expected_head_sha=expected_head_sha,
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
+        expected_parent_session_digest=expected_parent_session_digest,
+        expected_permission_epoch_digest=expected_permission_epoch_digest,
+        expected_spawn_event_digest=expected_spawn_event_digest,
+    )
+    if expectation_errors:
+        return expectation_errors
+
+    decoded, decode_errors = _decode_receipt(receipt)
+    if decode_errors:
+        return decode_errors
+    shape_errors = _validate_read_only_admission_shape(decoded)
+    if shape_errors:
+        return shape_errors
+    assert type(decoded) is dict
+    type_errors = _validate_read_only_admission_types(decoded)
+    if type_errors:
+        return type_errors
+    value_errors = _validate_read_only_admission_values(decoded)
+    if value_errors:
+        return value_errors
+
+    expected_digests = {
+        "parent_session_digest": expected_parent_session_digest,
+        "permission_epoch_digest": expected_permission_epoch_digest,
+        "spawn_event_digest": expected_spawn_event_digest,
+    }
+    digest_errors = [
+        f"{field} does not match the trusted expectation"
+        for field, expected in expected_digests.items()
+        if decoded[field] != expected
+    ]
+    if digest_errors:
+        return digest_errors
+
+    try:
+        _config_path, configured = _resolve_role_config(
+            repo_root,
+            expected_role=expected_role,
+            expected_config_path=expected_config_path,
+            expected_head_sha=expected_head_sha,
+        )
+    except (OSError, UnicodeError, ValueError):
+        return ["role configuration is invalid or unavailable"]
+    if configured.get("sandbox_mode") != "read-only":
+        return ["read-only admission requires an exact-tree read-only role"]
+
+    child_receipt = {
+        field: decoded[field]
+        for field in REQUIRED_FIELDS
+    }
+    child_receipt["schema_version"] = 1
+    return verify_receipt(
+        child_receipt,
+        repo_root=repo_root,
+        expected_pr_id=expected_pr_id,
+        expected_base_sha=expected_base_sha,
+        expected_head_sha=expected_head_sha,
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
+    )
 
 
 def verify_receipt(

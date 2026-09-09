@@ -33,6 +33,11 @@ Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDIUM/LOW/NI
 paths/invariants, the exact SHA inspected, and the smallest safe closure evidence. Any BLOCKER/HIGH
 blocks progression until repaired and re-reviewed at the appropriate gate.
 
+Read-only admission is mandatory before substantive work. The first child turn is admission-only and
+handshake-only: use no tools. Await Master approval only after a read-only parent was selected before
+spawn and post-spawn host observation completed; if admission or observation is unavailable or fails,
+return `insufficient_evidence`, stop, and discard the lane.
+
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.

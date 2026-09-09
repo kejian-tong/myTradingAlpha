@@ -119,6 +119,16 @@ Specialists add evidence; they never replace the controlling independent reviewe
 The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
 immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
 
+### 5.1 Prospective read-only child admission
+
+A read-only parent must be selected and observed before spawn; a child TOML request is not host enforcement.
+The first child turn is admission-only: first turn: no tools or substantive work. The Master gives approval
+only after a trusted post-spawn host observation confirms the child tuple, complete tool inventory, and
+approval boundary. Missing, stale, contradictory, or out-of-order evidence causes lane invalidation and
+`insufficient_evidence`; do not salvage the lane. Model self-report, Codex JSONL, `codex doctor`, static
+TOML, hooks, telemetry, standalone fallback, and generic fallback are not authentication or a substitute
+for the required host observation.
+
 ## 6. Adaptive model routing
 
 Routing is execution policy, not production architecture. Select the least expensive adequate route from
