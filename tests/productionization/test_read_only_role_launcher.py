@@ -1632,6 +1632,39 @@ def test_successful_run_cleans_exact_launcher_runtime_and_cwd(
     assert not Path(plan["runtime_token"]).exists()
 
 
+def test_local_command_host_remains_enabled_inside_the_read_only_profile(
+    scenario: Scenario,
+) -> None:
+    plan = _plan(scenario)
+    config = tomllib.loads("\n".join(plan["config_values"]))
+    features = config["features"]
+    assert features["code_mode_host"] is True
+    assert features["code_mode"] is False
+    assert features["code_mode_only"] is False
+    for key in (
+        "apps",
+        "plugins",
+        "browser_use",
+        "browser_use_external",
+        "browser_use_full_cdp_access",
+        "computer_use",
+        "image_generation",
+        "multi_agent",
+        "multi_agent_v2",
+        "tool_call_mcp_elicitation",
+    ):
+        assert features[key] is False, key
+    host = plan["capability_closure"]["local_command_host"]
+    assert host["enabled"] is True
+    assert set(host["allowed_commands"]) >= {"pwd", "rg", "pytest"}
+    assert plan["capability_closure"].get("function_gateway") is not True
+    assert "functions.exec" not in json.dumps(plan)
+    profile = plan["permission_profile"]["permissions"][plan["permission_profile_name"]]
+    assert profile["filesystem"][str(scenario.target.root)] == "read"
+    assert profile["network"] == {"enabled": False}
+
+
+
 def test_real_system_temp_policy_or_target_worktree_is_rejected_without_test_provider_patch(
     scenario: Scenario,
 ) -> None:
