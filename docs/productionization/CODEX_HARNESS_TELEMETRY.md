@@ -18,10 +18,12 @@ references, exact PR/role/config identity, model/effort, an explicit legacy-sand
 system, sandbox/profile/approval values, and a complete sorted unique bounded tool inventory. The caller
 must supply trusted expected PR/base/head values separately. The verifier requires exact receipt equality,
 base ancestry, checked-out expected head, matching head tree, and role TOML loaded from that exact Git tree.
-It rejects unknown or duplicate fields, oversized or invalid Unicode input, role/model/effort drift,
+Partial/promisor repositories reject before object lookup so verification cannot trigger a lazy fetch. It
+rejects unknown or duplicate fields, oversized or invalid Unicode input, role/model/effort drift,
 ambiguous or non-read-only local enforcement for a configured read-only role, collaboration controls,
 high-capability function gateways, and external App/MCP/connector tools outside a narrow reviewed
-read-only allowlist. Canonical bare and namespaced collaboration aliases receive the same decision.
+read-only allowlist. Canonical bare and namespaced mutation/delegation aliases receive the same rejection;
+read-only `list_agents` and `wait_agent` observation controls may remain visible.
 Diagnostic output does not echo untrusted receipt keys or values. The verifier performs no network or
 write operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
 evidence, with independent runtime observation and the normal review/CI/merge gates still required.

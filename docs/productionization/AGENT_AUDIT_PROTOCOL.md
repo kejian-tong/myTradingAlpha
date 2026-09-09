@@ -48,7 +48,9 @@ validation. The caller must separately supply the trusted expected PR ID, exact 
 SHA; the receipt must equal those expectations, the base must be an ancestor of the head, the expected
 head must be checked out, and the receipt tree must equal that head's tree. The verifier reads the named
 `.codex/agents/<role>.toml` from the exact head Git tree, not from mutable working-tree bytes, and derives
-model/effort and nested-delegation intent from it without a duplicated model allowlist.
+model/effort and nested-delegation intent from it without a duplicated model allowlist. A repository
+configured as a partial clone or with a promisor remote is rejected before object lookup; verification
+must never trigger a lazy fetch.
 
 `permission_system=legacy_sandbox` requires an active legacy sandbox and
 `permission_profile=disabled`. `permission_system=permission_profile` requires the legacy sandbox to be
@@ -57,7 +59,8 @@ disabled and an active built-in profile; the official built-in read-only identit
 admissible only when the declared effective local enforcement is read-only. Local permission enforcement
 does not govern Apps, connectors, MCP servers, browsers, or collaboration controls, so those surfaces fail
 closed unless the tool is in the verifier's narrow reviewed read-only allowlist. High-capability function
-gateways and all canonical collaboration-control namespace aliases are always rejected.
+gateways and canonical mutation/delegation collaboration-control aliases are always rejected. Read-only
+`list_agents` and `wait_agent` observation controls may remain visible.
 
 For example:
 

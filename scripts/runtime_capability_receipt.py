@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -182,11 +183,18 @@ def _local_enforcement_is_read_only(receipt: Mapping[str, object]) -> bool:
     return False
 
 
+def _git_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    return environment
+
+
 def _git(root: Path, *arguments: str) -> str:
     completed = subprocess.run(
         ["git", "-C", str(root), *arguments],
         check=False,
         capture_output=True,
+        env=_git_environment(),
         text=True,
         timeout=5,
     )
@@ -203,6 +211,7 @@ def _git_bytes(root: Path, *arguments: str) -> bytes:
         ["git", "-C", str(root), *arguments],
         check=False,
         capture_output=True,
+        env=_git_environment(),
         timeout=5,
     )
     if completed.returncode != 0:
@@ -217,6 +226,7 @@ def _git_is_ancestor(root: Path, base_sha: str, head_sha: str) -> bool:
         ["git", "-C", str(root), "merge-base", "--is-ancestor", base_sha, head_sha],
         check=False,
         capture_output=True,
+        env=_git_environment(),
         timeout=5,
     )
     if completed.returncode == 0:
@@ -224,6 +234,36 @@ def _git_is_ancestor(root: Path, base_sha: str, head_sha: str) -> bool:
     if completed.returncode == 1:
         return False
     raise ValueError("git ancestry lookup failed")
+
+
+def _local_git_config(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), "config", "--local", *arguments],
+        check=False,
+        capture_output=True,
+        env=_git_environment(),
+        text=True,
+        timeout=5,
+    )
+
+
+def _repository_is_partial_or_promisor(root: Path) -> bool:
+    partial = _local_git_config(root, "--get", "extensions.partialClone")
+    if partial.returncode == 0:
+        return True
+    if partial.returncode != 1:
+        raise ValueError("local partial-clone configuration lookup failed")
+
+    promisors = _local_git_config(root, "--get-regexp", r"^remote\..*\.promisor$")
+    if promisors.returncode == 1:
+        return False
+    if promisors.returncode != 0:
+        raise ValueError("local promisor configuration lookup failed")
+    truthy = {"1", "on", "true", "yes"}
+    return any(
+        line.rpartition(" ")[2].strip().lower() in truthy
+        for line in promisors.stdout.splitlines()
+    )
 
 
 def _resolve_role_config(
@@ -451,6 +491,8 @@ def _validate_repository_binding(
 ) -> list[str]:
     try:
         resolved_root = root.resolve()
+        if _repository_is_partial_or_promisor(resolved_root):
+            return ["repository binding is unavailable"]
         current_head = _git(resolved_root, "rev-parse", "--verify", "HEAD")
         expected_head_commit = _git(
             resolved_root,
