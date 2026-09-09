@@ -1706,8 +1706,9 @@ def test_toolchain_plan_contains_stdlib_executable_roots_safe_path_and_commands(
     for name in ("python", "git", "rg", "ruff"):
         assert Path(executables[name]["realpath"]).is_file()
         assert executables[name]["parent"] in plan["exec_env"]["PATH"].split(os.pathsep)
-    assert "/usr/bin" in plan["exec_env"]["PATH"].split(os.pathsep)
-    assert "/bin" in plan["exec_env"]["PATH"].split(os.pathsep)
+    path_entries = plan["exec_env"]["PATH"].split(os.pathsep)
+    assert str(Path("/usr/bin").resolve()) in path_entries
+    assert str(Path("/bin").resolve()) in path_entries
     commands = toolchain["commands"]
     assert commands["python_encodings"][0] == sys.executable
     assert commands["python_encodings"][1:2] == ["-c"]
