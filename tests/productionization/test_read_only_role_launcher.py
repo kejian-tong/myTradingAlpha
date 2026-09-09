@@ -1536,6 +1536,34 @@ def test_cli_reads_bounded_prompt_from_stdin_and_never_uses_prompt_argv(
     assert "stdin" in help_output.lower()
 
 
+def test_cli_reports_bounded_safe_errors_for_insufficient_evidence(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    monkeypatch.setattr(module, "build_invocation_plan", lambda **kwargs: plan)
+    monkeypatch.setattr(
+        module,
+        "run_isolated_role",
+        lambda *args, **kwargs: {
+            "status": "insufficient_evidence",
+            "errors": [
+                "isolated role emitted a failed JSONL outcome",
+                '{"type":"error","raw":"sk-do-not-print"}',
+            ],
+        },
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("bounded prompt\n"))
+
+    assert module.main(_cli_identity_args(scenario)) == 1
+    payload = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert payload["status"] == "insufficient_evidence"
+    assert payload["errors"][0] == "isolated role emitted a failed JSONL outcome"
+    assert payload["errors"][1] == "redacted launcher diagnostic"
+    assert "sk-do-not-print" not in json.dumps(payload)
+    assert len(json.dumps(payload).encode("utf-8")) <= 4096
+
+
 def test_protected_instruction_sources_are_complete_and_not_truncated(
     scenario: Scenario,
 ) -> None:
@@ -1899,6 +1927,8 @@ def _mcp_jsonl(
         "tool": tool,
         "arguments": {"uri": "https://developers.openai.com/codex"},
         "status": started_status,
+        "result": None,
+        "error": None,
     }
     completed = {
         "id": item_id,
@@ -1907,11 +1937,9 @@ def _mcp_jsonl(
         "tool": tool,
         "arguments": {"uri": "https://developers.openai.com/codex"},
         "status": completed_status,
+        "result": result,
+        "error": error,
     }
-    if result is not None:
-        completed["result"] = result
-    if error is not None:
-        completed["error"] = error
     events = (
         {"type": "thread.started", "thread_id": "opaque"},
         {"type": "turn.started"},
@@ -1930,6 +1958,19 @@ def test_mcp_jsonl_parser_is_role_aware_and_docs_allowlisted() -> None:
     parser = _function("parse_codex_jsonl")
     for tool in DOCS_MCP_TOOLS:
         valid = _mcp_jsonl(server="openaiDeveloperDocs", tool=tool)
+        mcp_items = [
+            json.loads(line)["item"]
+            for line in valid.splitlines()
+            if json.loads(line).get("item", {}).get("type") == "mcp_tool_call"
+        ]
+        assert len(mcp_items) == 2
+        assert all(
+            set(item)
+            == {"arguments", "error", "id", "result", "server", "status", "tool", "type"}
+            for item in mcp_items
+        )
+        assert mcp_items[0]["result"] is None and mcp_items[0]["error"] is None
+        assert mcp_items[1]["error"] is None
         parsed = parser(valid, role="external_spec_researcher")
         assert parsed["status"] == "completed"
 
@@ -1990,6 +2031,10 @@ def test_mcp_jsonl_parser_is_role_aware_and_docs_allowlisted() -> None:
             server="openaiDeveloperDocs",
             tool="fetch_openai_doc",
         ).replace('"status": "in_progress"', '"status": "in_progress", "plugin_id": "x"', 1),
+        _mcp_jsonl(
+            server="openaiDeveloperDocs",
+            tool="fetch_openai_doc",
+        ).replace(', "error": null', "", 1),
         _mcp_jsonl(
             server="openaiDeveloperDocs",
             tool="fetch_openai_doc",
