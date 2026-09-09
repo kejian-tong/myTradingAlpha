@@ -11,7 +11,6 @@ authority or host attestation.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import os
@@ -20,6 +19,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -32,12 +32,12 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
 
 
 MAX_JSONL_BYTES = 1 * 1024 * 1024
-MAX_PROMPT_BYTES = 32 * 1024
+MAX_PROMPT_BYTES = 96 * 1024
 MAX_STDOUT_BYTES = 1 * 1024 * 1024
 MAX_STDERR_BYTES = 64 * 1024
 MAX_TEXT_LENGTH = 512
 MAX_DIAGNOSTIC_LENGTH = 512
-MAX_ROLE_INSTRUCTIONS = 64 * 1024
+MAX_ROLE_INSTRUCTIONS = 96 * 1024
 CODEX_VERSION = "0.153.4"
 CODEX_TEAM_IDENTIFIER = "2DC432GLL2"
 DOCS_MCP_URL = "https://developers.openai.com/mcp"
@@ -171,19 +171,6 @@ def _git_environment() -> dict[str, str]:
         GIT_OPTIONAL_LOCKS="0",
         GIT_TERMINAL_PROMPT="0",
     )
-    return environment
-
-
-def _safe_probe_environment(scratch: Path) -> dict[str, str]:
-    environment = {
-        "PATH": os.defpath,
-        "TMPDIR": str(scratch),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "GIT_OPTIONAL_LOCKS": "0",
-    }
-    for key in ("LANG", "LC_ALL", "TZ"):
-        if key in os.environ:
-            environment[key] = os.environ[key][:MAX_TEXT_LENGTH]
     return environment
 
 
@@ -349,20 +336,53 @@ def _protected_instructions(policy_root: Path, policy_head: str, role_instructio
         ".codex/config.toml",
         ".agents/skills/exact-head-review/SKILL.md",
     )
-    budget = MAX_PROMPT_BYTES - 4096
-    role_budget = min(8192, budget // 2)
-    file_budget = max(1024, (budget - role_budget) // len(required_paths))
-    parts = [role_instructions[:role_budget]]
+    parts = [role_instructions]
     for relative in required_paths:
         raw = _protected_file(policy_root, policy_head, relative)
         if not raw or len(raw) > MAX_ROLE_INSTRUCTIONS:
             raise LauncherError("protected policy instruction is missing or oversized")
-        parts.append(raw.decode("utf-8")[:file_budget])
+        parts.append(raw.decode("utf-8"))
+    pointers = [
+        f"Protected policy pointer: {(policy_root / relative).resolve()}"
+        for relative in (
+            "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
+            "docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md",
+            "docs/productionization/CODEX_HARNESS_TELEMETRY.md",
+            "docs/productionization/CODEX_FEATURE_WATCHLIST.md",
+        )
+    ]
+    parts.extend(pointers)
     combined = "\n\n".join(parts)
-    return combined.encode("utf-8")[:budget].decode("utf-8", "ignore")
+    if len(combined.encode("utf-8")) > MAX_PROMPT_BYTES:
+        raise LauncherError("protected instructions exceed the bounded prompt")
+    return combined
+
+
+def _toml_value(value: object) -> str:
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is str:
+        return json.dumps(value)
+    if type(value) is int:
+        return str(value)
+    if type(value) is list or type(value) is tuple:
+        return "[" + ",".join(_toml_value(item) for item in value) + "]"
+    if type(value) is dict:
+        return "{" + ",".join(
+            f"{json.dumps(str(key))} = {_toml_value(item)}"
+            for key, item in value.items()
+        ) + "}"
+    raise LauncherError("unsupported TOML config value")
 
 
 def _default_binary_probe(path: Path) -> dict[str, object]:
+    def file_digest() -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(64 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     stat_result = path.lstat()
     output = subprocess.run(
         [str(path), "--version"],
@@ -372,7 +392,9 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         timeout=5,
         shell=False,
     )
-    version = (output.stdout or output.stderr).strip().splitlines()[0][:MAX_TEXT_LENGTH]
+    version_output = (output.stdout or output.stderr).encode("utf-8", "replace")[:MAX_STDERR_BYTES]
+    version_lines = version_output.decode("utf-8", "replace").strip().splitlines()
+    version = version_lines[0][:MAX_TEXT_LENGTH] if version_lines else ""
     descriptor: dict[str, object] = {
         "realpath": str(path.resolve()),
         "is_regular": stat.S_ISREG(stat_result.st_mode),
@@ -380,7 +402,7 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         "owner_uid": stat_result.st_uid,
         "mode": stat_result.st_mode & 0o7777,
         "version": version,
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": file_digest(),
         "team_identifier": None,
     }
     if sys.platform == "darwin":
@@ -392,10 +414,12 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
             timeout=5,
             shell=False,
         )
-        for line in (codesign.stderr or "").splitlines():
+        for line in (codesign.stderr or "").encode("utf-8", "replace")[:MAX_STDERR_BYTES].decode("utf-8", "replace").splitlines():
             if line.startswith("TeamIdentifier="):
                 descriptor["team_identifier"] = line.partition("=")[2].strip()
                 break
+        if codesign.returncode != 0:
+            descriptor["team_identifier"] = None
     return descriptor
 
 
@@ -461,6 +485,7 @@ def build_permission_profile(
     common_git_root: Path,
     dependency_roots: Sequence[Path],
     scratch_root: Path,
+    credential_probe_path: Path | None = None,
 ) -> dict[str, object]:
     """Build a per-run Permission Profile pilot without legacy sandbox flags."""
 
@@ -479,24 +504,29 @@ def build_permission_profile(
     for key in ("LANG", "LC_ALL", "TZ"):
         if key in os.environ and not any(secret in key.lower() for secret in ("token", "secret", "key")):
             shell_set[key] = os.environ[key][:MAX_TEXT_LENGTH]
+    home = Path.home().resolve()
+    credential = Path(credential_probe_path or (home / ".codex/auth.json")).resolve()
     denied = [
-        "CODEX_HOME",
-        "codex/auth",
-        "codex/config",
-        ".ssh",
-        ".aws",
-        ".cloud",
-        "github",
-        "keychain",
-        "shell_history",
-        "secret",
-        "token",
-        "credential",
+        str(home / ".codex"),
+        str(credential),
+        str(home / ".ssh"),
+        str(home / ".aws"),
+        str(home / ".config/cloud"),
+        str(home / ".config/gh"),
+        str(home / ".config/github"),
+        str(home / "Library/Keychains"),
+        str(home / ".zsh_history"),
+        str(Path(target_root).resolve() / ".env"),
+        str(Path(target_root).resolve() / "secrets"),
+        str(Path(target_root).resolve() / "*secret*"),
+        str(Path(target_root).resolve() / "*token*"),
     ]
     return {
         "scope": "launcher_pilot",
+        "name": "launcher_read_only",
         "default_permissions": permissions,
         "network": "disabled",
+        "credential_probe_path": str(credential),
         "shell_environment": {
             "inherit": False,
             "ignore_default_excludes": False,
@@ -548,22 +578,61 @@ def build_invocation_plan(
     if binary_errors:
         raise LauncherError("; ".join(binary_errors))
     common_git = Path(target["common_git_root"])
-    scratch = common_git / "codex-harness" / "read-only-launcher" / target["head_sha"][:16]
+    runtime_root = (
+        Path(tempfile.gettempdir()).resolve()
+        / "mytradingalpha-read-only-launcher"
+        / str(target["head_sha"])[:16]
+    )
+    if any(runtime_root == root or runtime_root.is_relative_to(root) for root in (
+        Path(policy["root"]).resolve(), Path(target["root"]).resolve(), common_git.resolve()
+    )):
+        raise LauncherError("launcher runtime root overlaps a protected repository")
+    scratch = runtime_root / "cwd"
+    credential_probe = runtime_root / "credential-probe" / "credentials.json"
     profile = build_permission_profile(
         policy_root=Path(policy["root"]),
         target_root=Path(target["root"]),
         common_git_root=common_git,
         dependency_roots=(Path(sys.executable).resolve().parent,),
         scratch_root=scratch,
+        credential_probe_path=credential_probe,
     )
     model, effort = ROLE_ROUTES[str(role)]
     mcp_servers = configured.get("mcp_servers") or {}
     capability_closure = dict.fromkeys(_CAPABILITY_KEYS, False)
+    instructions = _protected_instructions(
+        Path(policy["root"]),
+        str(policy["head_sha"]),
+        str(configured["developer_instructions"]),
+    )
+    profile_name = str(profile["name"])
+    permission_table = profile["default_permissions"]
+    filesystem_config = _toml_value(permission_table)
+    config_values = [
+        f"model_reasoning_effort={json.dumps(effort)}",
+        f"developer_instructions={json.dumps(instructions)}",
+        'approval_policy="never"',
+        f"default_permissions={json.dumps(profile_name)}",
+        f"permissions.{profile_name}.filesystem={filesystem_config}",
+        f"permissions.{profile_name}.network={json.dumps('disabled')}",
+        f"shell_environment_policy={_toml_value({'inherit': 'none', 'ignore_default_excludes': False, 'set': profile['shell_environment']['set']})}",
+        "agents.enabled=false",
+    ]
+    disabled_features = (
+        "apps", "plugins", "hooks", "memories", "multi_agent", "multi_agent_v2",
+        "browser_use", "browser_use_external", "browser_use_full_cdp_access",
+        "computer_use", "image_generation", "in_app_browser", "workspace_dependencies",
+        "remote_plugin", "skill_mcp_dependency_install", "tool_call_mcp_elicitation",
+        "auth_elicitation", "code_mode", "code_mode_host", "code_mode_only",
+    )
+    config_values.extend(f"features.{name}=false" for name in disabled_features)
+    config_values.append(f"mcp_servers={_toml_value(mcp_servers)}")
     runtime_config = {
         "strict": True,
         "approval_policy": "never",
         "ephemeral": True,
-        "features": {key: False for key in _CAPABILITY_KEYS if key != "agents"},
+        "config_values": config_values,
+        "features": dict.fromkeys(disabled_features, False),
         "agents": {"enabled": False},
         "mcp_servers": mcp_servers,
         "permission_profile": profile,
@@ -571,24 +640,25 @@ def build_invocation_plan(
     argv = [
         str(binary),
         "exec",
+        "--strict-config",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--json",
         "--color",
         "never",
         "--ephemeral",
-        "--ignore-user-config",
         "--skip-git-repo-check",
-        "--config",
-        'approval_policy="never"',
+        "-m",
+        model,
+        "-",
     ]
-    instructions = _protected_instructions(
-        Path(policy["root"]),
-        str(policy["head_sha"]),
-        str(configured["developer_instructions"]),
-    )
+    for value in config_values:
+        argv.extend(("-c", value))
     return {
         "invocation_kind": "isolated_role_invocation",
         "policy_root": str(policy["root"]),
         "target_root": str(target["root"]),
+        "runtime_root": str(runtime_root),
         "role": role,
         "config_path": policy_path,
         "model": model,
@@ -608,6 +678,12 @@ def build_invocation_plan(
         "binary_team_identifier": expected_binary_team_identifier,
         "argv": argv,
         "cwd": str(scratch),
+        "permission_profile_name": profile_name,
+        "permission_profile_digest": _digest(profile),
+        "prompt_transport": "stdin",
+        "config_values": config_values,
+        "exec_env": dict(profile["shell_environment"]["set"]),
+        "probe_markers": [str(Path(target["root"]) / ".launcher-target-write-probe")],
         "cwd_is_private_empty": True,
         "approval_policy": "never",
         "strict_config": True,
@@ -623,6 +699,35 @@ def build_invocation_plan(
     }
 
 
+def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dict[str, object]:
+    if probe_name not in _PROBE_ORDER:
+        raise LauncherError("unknown sandbox probe")
+    config_values = plan.get("config_values")
+    if type(config_values) is not list or not all(type(value) is str for value in config_values):
+        raise LauncherError("canonical launcher config is unavailable")
+    argv = [
+        str(plan["binary_realpath"]),
+        "sandbox",
+        "--include-managed-config",
+        "--strict-config",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--cd",
+        str(plan["cwd"]),
+    ]
+    for value in config_values:
+        argv.extend(("-c", value))
+    argv.extend(("--", probe_name))
+    return {
+        "argv": argv,
+        "cwd": plan["cwd"],
+        "binary_realpath": plan["binary_realpath"],
+        "profile_digest": plan["permission_profile_digest"],
+        "probe_name": probe_name,
+        "shell": False,
+    }
+
+
 def _probe_result(name: str, value: object) -> bool:
     if type(value) is not dict:
         return False
@@ -635,126 +740,6 @@ def _probe_result(name: str, value: object) -> bool:
     if name in {"target_write_denied", "network_denied"}:
         return value.get("denied") is True and value.get("marker_absent") is True
     return False
-
-
-def _default_probe(name: str, plan: dict[str, object]) -> dict[str, object] | None:
-    if name == "policy_read":
-        try:
-            _protected_file(Path(str(plan["policy_root"])), str(plan["policy_head_sha"]), "AGENTS.md")
-            return {"allowed": True}
-        except (OSError, LauncherError):
-            return {"allowed": False}
-    if name == "target_read":
-        try:
-            current = _git(Path(str(plan["target_root"])), "rev-parse", "--verify", "HEAD")
-            return {"allowed": current == plan["target_head_sha"]}
-        except LauncherError:
-            return {"allowed": False}
-    if name == "scratch_write":
-        scratch = Path(str(plan["cwd"]))
-        marker = scratch / ".launcher-scratch-probe"
-        try:
-            marker.write_text("probe\n", encoding="utf-8", newline="")
-            marker.unlink()
-            return {"allowed": True}
-        except OSError:
-            with contextlib.suppress(OSError):
-                marker.unlink()
-            return {"allowed": False}
-    if name == "secret_env_absent":
-        forbidden = {
-            key
-            for key in os.environ
-            if key.upper().startswith(("OPENAI_", "CODEX_", "AWS_", "GH_", "GITHUB_"))
-            and key.upper() not in {"GIT_OPTIONAL_LOCKS"}
-        }
-        return {"absent": not forbidden}
-    if name == "target_write_denied":
-        target = Path(str(plan["target_root"]))
-        marker = target / ".launcher-target-write-probe"
-        if marker.exists() or marker.is_symlink():
-            return {"denied": False, "marker_absent": False, "returncode": 0}
-        command = [
-            sys.executable,
-            "-c",
-            "from pathlib import Path; Path(__import__('sys').argv[1]).write_text('probe')",
-            str(marker),
-        ]
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=str(target),
-            env=_safe_probe_environment(Path(str(plan["cwd"]))),
-            shell=False,
-        )
-        created = marker.exists()
-        if created:
-            with contextlib.suppress(OSError):
-                marker.unlink()
-        return {
-            "denied": completed.returncode != 0,
-            "marker_absent": not created,
-            "returncode": completed.returncode,
-        }
-    if name == "credential_read_denied":
-        credential = Path(str(plan["policy_root"])) / ".codex/credentials.json"
-        command = [
-            sys.executable,
-            "-c",
-            "import pathlib,sys; sys.stdout.write(pathlib.Path(sys.argv[1]).read_text())",
-            str(credential),
-        ]
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=str(plan["cwd"]),
-            env=_safe_probe_environment(Path(str(plan["cwd"]))),
-            shell=False,
-        )
-        return {
-            "denied": completed.returncode != 0,
-            "stdout": completed.stdout,
-            "marker_absent": not credential.exists(),
-            "returncode": completed.returncode,
-        }
-    if name == "network_denied":
-        command = [
-            "curl",
-            "--silent",
-            "--show-error",
-            "--connect-timeout",
-            "2",
-            "--max-time",
-            "3",
-            "--output",
-            "/dev/null",
-            "https://example.com",
-        ]
-        try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-                cwd=str(plan["cwd"]),
-                env=_safe_probe_environment(Path(str(plan["cwd"]))),
-                shell=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return {
-            "denied": completed.returncode != 0,
-            "marker_absent": True,
-            "returncode": completed.returncode,
-        }
-    return None
 
 
 def _prompt(plan: dict[str, object], prompt: object) -> str:
@@ -811,6 +796,36 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
     }
 
 
+def _default_sandbox_runner(**kwargs: object) -> dict[str, object]:
+    argv = kwargs.get("argv")
+    if type(argv) is not list or not all(type(value) is str for value in argv):
+        raise LauncherError("sandbox argv must be a string list")
+    completed = subprocess.run(
+        argv,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=kwargs.get("cwd"),
+        env=kwargs.get("env"),
+        timeout=kwargs.get("timeout", 30),
+        shell=False,
+    )
+    stdout = completed.stdout[:MAX_STDOUT_BYTES]
+    stderr = completed.stderr[:MAX_STDERR_BYTES]
+    if completed.returncode != 0:
+        return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
+    try:
+        payload = json.loads(stdout)
+    except (TypeError, ValueError):
+        return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
+    if type(payload) is not dict:
+        return {"returncode": completed.returncode, "stdout": stdout, "stderr": stderr}
+    payload.setdefault("returncode", completed.returncode)
+    payload.setdefault("stdout", stdout)
+    payload.setdefault("stderr", stderr)
+    return payload
+
+
 def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[str, object]:
     if type(raw) is str:
         encoded = raw.encode("utf-8")
@@ -834,21 +849,44 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
 
     events: list[dict[str, object]] = []
     final_message: str | None = None
-    allowed = {"thread.started", "turn.started", "item.completed", "turn.completed"}
+    errors: list[object] = []
+    warnings: list[object] = []
+    allowed = {
+        "thread.started",
+        "turn.started",
+        "item.started",
+        "item.completed",
+        "turn.completed",
+    }
     try:
         for line in raw.splitlines():
             event = json.loads(line, object_pairs_hook=unique_pairs)
             if type(event) is not dict or event.get("type") not in allowed:
                 raise LauncherError("unknown or malformed top-level JSONL event")
             events.append(event)
-            if event["type"] == "item.completed":
+            if event["type"] in {"item.started", "item.completed"}:
                 item = event.get("item")
-                if type(item) is not dict or item.get("type") != "agent_message":
+                if type(item) is not dict or item.get("type") not in {
+                    "agent_message",
+                    "command_execution",
+                    "warning",
+                    "error",
+                }:
                     raise LauncherError("unexpected item event")
-                text = item.get("text")
-                if type(text) is not str or len(text.encode("utf-8")) > MAX_TEXT_LENGTH * 128:
-                    raise LauncherError("agent message is invalid or oversized")
-                final_message = text
+                item_type = item["type"]
+                if item_type == "agent_message":
+                    text = item.get("text")
+                    if event["type"] == "item.completed":
+                        if type(text) is not str or len(text.encode("utf-8")) > MAX_TEXT_LENGTH * 128:
+                            raise LauncherError("agent message is invalid or oversized")
+                        final_message = text
+                elif item_type == "command_execution":
+                    if event["type"] == "item.completed" and type(item.get("exit_code")) is not int:
+                        raise LauncherError("command execution result is malformed")
+                elif item_type == "warning":
+                    warnings.append(item.get("message", ""))
+                elif item_type == "error":
+                    errors.append(item.get("message", ""))
     except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise LauncherError("malformed JSONL output") from exc
     types = [event["type"] for event in events]
@@ -858,7 +896,16 @@ def parse_codex_jsonl(raw: object, *, max_bytes: int = MAX_JSONL_BYTES) -> dict[
         raise LauncherError("JSONL terminal event is missing or replayed")
     if final_message is None:
         raise LauncherError("JSONL final agent message is missing")
-    return {"events": events, "final_agent_message": final_message}
+    error_material = json.dumps(
+        {"errors": errors, "warnings": warnings}, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "events": events,
+        "final_agent_message": final_message,
+        "error_event_count": len(errors),
+        "warning_event_count": len(warnings),
+        "error_digest": hashlib.sha256(error_material).hexdigest(),
+    }
 
 
 def _digest(value: object) -> str:
@@ -980,48 +1027,70 @@ def run_isolated_role(
     *,
     prompt: str,
     probe: Callable[..., object] | None = None,
+    sandbox_runner: Callable[..., Mapping[str, object]] | None = None,
     process_runner: Callable[..., Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     rendered_prompt = _prompt(plan, prompt)
+    runtime_root = Path(str(plan["runtime_root"]))
     cwd = Path(str(plan["cwd"]))
-    if cwd.exists() and (cwd.is_symlink() or not cwd.is_dir()):
-        return {"status": "insufficient_evidence", "errors": ["private cwd is unsafe"]}
+
+    def fail(errors: Sequence[str]) -> dict[str, object]:
+        cleanup_errors = cleanup_private_dirs((cwd, runtime_root), force=False)
+        return {"status": "insufficient_evidence", "errors": [*errors, *cleanup_errors]}
+
+    if runtime_root.is_symlink() or cwd.is_symlink():
+        return fail(["private runtime path is a symlink"])
+    if runtime_root.exists() and not runtime_root.is_dir():
+        return fail(["private runtime root is unsafe"])
+    if cwd.exists() and not cwd.is_dir():
+        return fail(["private cwd is unsafe"])
     if cwd.exists():
         try:
             if any(cwd.iterdir()):
-                return {"status": "insufficient_evidence", "errors": ["private cwd is not empty"]}
+                return fail(["private cwd is not empty"])
         except OSError as exc:
-            return {"status": "insufficient_evidence", "errors": [_diagnostic(exc)]}
+            return fail([_diagnostic(exc)])
     try:
-        cwd.mkdir(parents=True, mode=0o700, exist_ok=True)
-        if cwd.stat().st_uid != os.getuid() or cwd.stat().st_mode & 0o077:
-            return {"status": "insufficient_evidence", "errors": ["private cwd is unsafe"]}
+        runtime_root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        cwd.mkdir(mode=0o700, exist_ok=True)
+        for private in (runtime_root, cwd):
+            info = private.lstat()
+            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                return fail(["private runtime path is unsafe"])
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                return fail(["private runtime path ownership/mode is unsafe"])
     except OSError as exc:
-        return {"status": "insufficient_evidence", "errors": [_diagnostic(exc)]}
+        return fail([_diagnostic(exc)])
     observations: dict[str, object] = {}
+    sandbox = sandbox_runner or _default_sandbox_runner
     for name in _PROBE_ORDER:
         try:
-            result = (probe(name, plan) if probe is not None else _default_probe(name, plan))
+            if probe is not None:
+                result = probe(name, plan)
+            else:
+                probe_spec = build_sandbox_probe_argv(plan, name)
+                result = sandbox(
+                    argv=probe_spec["argv"],
+                    cwd=probe_spec["cwd"],
+                    env=plan["exec_env"],
+                    timeout=30,
+                    shell=False,
+                    probe_name=name,
+                    plan=plan,
+                )
         except Exception as exc:  # injected probes are untrusted test/runtime boundaries
-            return {"status": "insufficient_evidence", "errors": [_diagnostic(exc)]}
+            return fail([_diagnostic(exc)])
         observations[name] = result
         if not _probe_result(name, result):
-            return {"status": "insufficient_evidence", "errors": [f"preflight {name} unavailable"]}
+            return fail([f"preflight {name} unavailable"])
 
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key in {"PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "PYTHONDONTWRITEBYTECODE", "GIT_OPTIONAL_LOCKS"}
-    }
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    environment["GIT_OPTIONAL_LOCKS"] = "0"
     runner = process_runner or _default_process_runner
     try:
         result = dict(
             runner(
                 argv=list(plan["argv"]),
                 cwd=str(cwd),
-                env=environment,
+                env=plan["exec_env"],
                 stdin=rendered_prompt,
                 timeout=300,
                 process_group=True,
@@ -1029,19 +1098,19 @@ def run_isolated_role(
             )
         )
     except Exception as exc:
-        return {"status": "insufficient_evidence", "errors": [_diagnostic(exc)]}
+        return fail([_diagnostic(exc)])
     if result.get("timed_out") is True or result.get("returncode") != 0:
-        return {"status": "failed", "errors": ["isolated role process failed"]}
+        return fail(["isolated role process failed"])
     stdout = result.get("stdout")
     stderr = result.get("stderr", "")
     if type(stdout) is not str or type(stderr) is not str:
-        return {"status": "insufficient_evidence", "errors": ["process output is malformed"]}
+        return fail(["process output is malformed"])
     if len(stdout.encode()) > MAX_STDOUT_BYTES or len(stderr.encode()) > MAX_STDERR_BYTES:
-        return {"status": "insufficient_evidence", "errors": ["process output exceeds bounds"]}
+        return fail(["process output exceeds bounds"])
     try:
         parsed = parse_codex_jsonl(stdout)
     except (LauncherError, ValueError) as exc:
-        return {"status": "insufficient_evidence", "errors": [_diagnostic(exc)]}
+        return fail([_diagnostic(exc)])
     try:
         before = {
             "policy_head_sha": plan["policy_head_sha"],
@@ -1050,16 +1119,25 @@ def run_isolated_role(
             "target_tree_sha": plan["target_tree_sha"],
             "target_status": "clean",
         }
+        policy_root = Path(str(plan["policy_root"]))
+        target_root = Path(str(plan["target_root"]))
+        actual_policy_head = _git(policy_root, "rev-parse", "--verify", "HEAD")
+        actual_policy_tree = _git(policy_root, "rev-parse", "--verify", "HEAD^{tree}")
+        actual_target_head = _git(target_root, "rev-parse", "--verify", "HEAD")
+        actual_target_tree = _git(target_root, "rev-parse", "--verify", "HEAD^{tree}")
         after = {
-            **before,
+            "policy_head_sha": actual_policy_head,
+            "policy_tree_sha": actual_policy_tree,
+            "target_head_sha": actual_target_head,
+            "target_tree_sha": actual_target_tree,
             "policy_status": (
-                "clean"
-                if not _git(Path(str(plan["policy_root"])), "status", "--porcelain=v1")
+            "clean"
+                if not _git(policy_root, "status", "--porcelain=v1")
                 else "dirty"
             ),
             "target_status": (
                 "clean"
-                if not _git(Path(str(plan["target_root"])), "status", "--porcelain=v1")
+                if not _git(target_root, "status", "--porcelain=v1")
                 else "dirty"
             ),
         }
@@ -1067,17 +1145,14 @@ def run_isolated_role(
             plan,
             before=before,
             after=after,
-            marker_paths=(),
+            marker_paths=tuple(Path(path) for path in plan.get("probe_markers", ())),
             private_dirs=(cwd,),
         )
         cleanup_errors = cleanup_private_dirs((cwd,), force=False)
     except (OSError, LauncherError) as exc:
-        return {"status": "insufficient_evidence", "errors": [_diagnostic(exc)]}
+        return fail([_diagnostic(exc)])
     if post_errors or cleanup_errors:
-        return {
-            "status": "insufficient_evidence",
-            "errors": [*post_errors, *cleanup_errors],
-        }
+        return fail([*post_errors, *cleanup_errors])
     now = int(time.time() * 1000)
     manifest = build_redacted_manifest(
         plan,
@@ -1099,7 +1174,10 @@ def run_isolated_role(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="The bounded task prompt is read from stdin; it is never placed in process argv.",
+    )
     parser.add_argument("--policy-root", type=Path, required=True)
     parser.add_argument("--target-root", type=Path, required=True)
     parser.add_argument("--role", required=True, choices=sorted(READ_ONLY_ROLES))
@@ -1111,8 +1189,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-binary-version", default=CODEX_VERSION)
     parser.add_argument("--expected-binary-sha256", required=True)
     parser.add_argument("--expected-binary-team-identifier", default=CODEX_TEAM_IDENTIFIER)
-    parser.add_argument("--prompt", required=True)
     args = parser.parse_args(argv)
+    try:
+        prompt = sys.stdin.read(MAX_PROMPT_BYTES + 1)
+    except OSError as exc:
+        print(json.dumps({"status": "insufficient_evidence", "error": _diagnostic(exc)}))
+        return 1
+    if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
+        print(json.dumps({"status": "insufficient_evidence", "error": "stdin prompt exceeds bound"}))
+        return 1
     try:
         plan = build_invocation_plan(
             policy_root=args.policy_root,
@@ -1128,7 +1213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_binary_team_identifier=args.expected_binary_team_identifier,
             supported_binary_versions=(CODEX_VERSION,),
         )
-        result = run_isolated_role(plan, prompt=args.prompt)
+        result = run_isolated_role(plan, prompt=prompt)
     except (LauncherError, OSError, ValueError) as exc:
         print(json.dumps({"status": "insufficient_evidence", "error": _diagnostic(exc)}))
         return 1

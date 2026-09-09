@@ -637,7 +637,7 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
     assert call["shell"] is False
     assert type(call["argv"]) is list
     assert type(call["stdin"]) is str
-    assert len(call["stdin"].encode()) <= 32_768
+    assert len(call["stdin"].encode()) <= 96 * 1024
     assert Path(call["cwd"]) == Path(plan["cwd"])
     assert 0 < call["timeout"] <= 300
     assert call["process_group"] is True
@@ -1024,7 +1024,10 @@ def test_exec_argv_binds_strict_config_route_profile_environment_and_features(
     for prefix in required_prefixes:
         assert any(value.startswith(prefix) for value in config_values), prefix
     assert "-p" not in argv and "--profile" not in argv
-    assert any(value == f"default_permissions={profile_name}" for value in config_values)
+    assert any(
+        value.startswith("default_permissions=") and profile_name in value
+        for value in config_values
+    )
     assert not any(value.startswith("sandbox_mode=") for value in config_values)
     forbidden = {"--sandbox", "--agent", "--approve-for-me", "--yolo"}
     assert not forbidden.intersection(argv)
@@ -1108,7 +1111,7 @@ def test_default_path_cannot_claim_completed_without_real_sandbox_probe_runner(
 ) -> None:
     module = _launcher_module()
     plan = _plan(scenario)
-    monkeypatch.setattr(module, "_default_probe", lambda name, plan: _valid_sandbox_results()[name])
+    monkeypatch.setattr(module, "_default_sandbox_runner", lambda **kwargs: None)
     exec_calls: list[object] = []
     result = module.run_isolated_role(
         plan,
@@ -1204,7 +1207,8 @@ def test_parser_accepts_observed_lifecycle_command_and_error_items() -> None:
     raw = "".join(json.dumps(event) + "\n" for event in events)
     parsed = _function("parse_codex_jsonl")(raw)
     assert parsed["final_agent_message"] == "final"
-    assert parsed["error_event_count"] == 2
+    assert parsed["error_event_count"] == 1
+    assert parsed["warning_event_count"] == 1
     assert len(parsed["error_digest"]) == 64
 
 

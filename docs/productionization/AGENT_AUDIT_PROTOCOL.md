@@ -166,7 +166,9 @@ narrow per-run Permission Profile pilot, structured preflight/post-run observati
 manifest handling; missing facts return `insufficient_evidence`. Schema-v1 receipts remain historical,
 structural supplemental evidence. Model self-report, JSONL, `codex doctor`, static TOML, hooks, telemetry,
 or a host-attestation schema cannot authenticate the current runtime, and no mandatory first-turn handshake
-is required. Global Permission Profile adoption remains Watch-only.
+is required. Global Permission Profile adoption remains Watch-only. The host Codex client may perform
+bounded authentication or cache operations outside the model-command profile; those operations are not
+treated as model capability evidence.
 
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
