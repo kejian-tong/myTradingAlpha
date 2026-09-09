@@ -623,7 +623,10 @@ def test_plan_closes_capabilities_and_uses_strict_current_runtime_flags(
     assert "--color" in argv and "never" in argv
     assert plan["approval_policy"] == "never"
     assert plan["strict_config"] is True
-    assert plan["capability_closure"] == dict.fromkeys(_CAPABILITY_KEYS, False)
+    closure = plan["capability_closure"]
+    assert {key: closure[key] for key in _CAPABILITY_KEYS} == dict.fromkeys(_CAPABILITY_KEYS, False)
+    assert closure["local_command_host"]["enabled"] is True
+    assert closure["function_gateway"] is False
     assert plan["cwd_is_private_empty"] is True
 
 

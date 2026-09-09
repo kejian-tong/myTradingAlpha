@@ -658,6 +658,13 @@ def build_invocation_plan(
     model, effort = ROLE_ROUTES[str(role)]
     mcp_servers = configured.get("mcp_servers") or {}
     capability_closure = dict.fromkeys(_CAPABILITY_KEYS, False)
+    capability_closure["local_command_host"] = {
+        "enabled": True,
+        "allowed_commands": ["pwd", "rg", "pytest"],
+        "filesystem": "permission_profile",
+        "network": "permission_profile",
+    }
+    capability_closure["function_gateway"] = False
     instructions = _protected_instructions(
         Path(policy["root"]),
         str(policy["head_sha"]),
@@ -681,16 +688,17 @@ def build_invocation_plan(
         "browser_use", "browser_use_external", "browser_use_full_cdp_access",
         "computer_use", "image_generation", "in_app_browser", "workspace_dependencies",
         "remote_plugin", "skill_mcp_dependency_install", "tool_call_mcp_elicitation",
-        "auth_elicitation", "code_mode", "code_mode_host", "code_mode_only",
+        "auth_elicitation", "code_mode", "code_mode_only",
     )
     config_values.extend(f"features.{name}=false" for name in disabled_features)
+    config_values.append("features.code_mode_host=true")
     config_values.append(f"mcp_servers={_toml_value(mcp_servers)}")
     runtime_config = {
         "strict": True,
         "approval_policy": "never",
         "ephemeral": True,
         "config_values": config_values,
-        "features": dict.fromkeys(disabled_features, False),
+        "features": {**dict.fromkeys(disabled_features, False), "code_mode_host": True},
         "agents": {"enabled": False},
         "mcp_servers": mcp_servers,
         "permission_profile": profile,
