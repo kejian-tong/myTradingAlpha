@@ -43,6 +43,7 @@ MAX_STDERR_BYTES = 64 * 1024
 MAX_TEXT_LENGTH = 512
 MAX_DIAGNOSTIC_LENGTH = 512
 MAX_ROLE_INSTRUCTIONS = 96 * 1024
+MAX_GIT_CONFIG_VALUES_BYTES = 64 * 1024
 CODEX_VERSION = "0.153.4"
 CODEX_TEAM_IDENTIFIER = "2DC432GLL2"
 DOCS_MCP_URL = "https://developers.openai.com/mcp"
@@ -141,6 +142,15 @@ _GIT_REDIRECTS = {
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_SYSTEM",
     "GIT_CONFIG_COUNT",
+}
+_ALLOWED_AMBIENT_GIT_CONTROLS = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_NO_LAZY_FETCH": "1",
+    "GIT_NO_REPLACE_OBJECTS": "1",
+    "GIT_OPTIONAL_LOCKS": "0",
+    "GIT_TERMINAL_PROMPT": "0",
 }
 _SAFE_REPOSITORY_GIT_CONFIG = (
     "core.fsmonitor=false",
@@ -245,11 +255,16 @@ def _git_environment() -> dict[str, str]:
 
 
 def _reject_ambient_git_redirects() -> None:
-    unexpected = sorted(
-        name
-        for name in os.environ
-        if name in _GIT_REDIRECTS or name.startswith("GIT_CONFIG_KEY_")
-    )
+    unexpected: list[str] = []
+    for name, value in os.environ.items():
+        if name.startswith("GIT_CONFIG_KEY_") or name == "GIT_CONFIG_COUNT":
+            unexpected.append(name)
+        elif name in _ALLOWED_AMBIENT_GIT_CONTROLS:
+            if value != _ALLOWED_AMBIENT_GIT_CONTROLS[name]:
+                unexpected.append(name)
+        elif name in _GIT_REDIRECTS:
+            unexpected.append(name)
+    unexpected.sort()
     if unexpected:
         raise LauncherError("ambient Git redirect variables are not permitted")
 
@@ -313,6 +328,25 @@ def _git_bytes(git_binary: Path, root: Path, *arguments: str) -> bytes:
     return completed.stdout
 
 
+def _parse_nul_config_values(raw: object) -> tuple[str, ...]:
+    if type(raw) is not bytes or not raw or len(raw) > MAX_GIT_CONFIG_VALUES_BYTES:
+        raise LauncherError("Git config value records are missing or oversized")
+    if not raw.endswith(b"\0"):
+        raise LauncherError("Git config value records are truncated")
+    records = raw[:-1].split(b"\0")
+    if not records or len(records) > 32 or any(not record for record in records):
+        raise LauncherError("Git config value record structure is invalid")
+    values: list[str] = []
+    for record in records:
+        if len(record) > MAX_REMOTE_URL_LENGTH:
+            raise LauncherError("Git config value record is oversized")
+        try:
+            values.append(record.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise LauncherError("Git config value record encoding is invalid") from exc
+    return tuple(values)
+
+
 def _repository_config_keys(
     git_binary: Path, root: Path, *, scope: str
 ) -> tuple[str, ...]:
@@ -334,15 +368,18 @@ def _repository_config_keys(
     for key in keys:
         if not key.startswith("remote.") or not key.endswith(".url"):
             continue
-        values = _git(
-            git_binary,
-            root,
-            "config",
-            scope,
-            "--no-includes",
-            "--get-all",
-            key,
-        ).splitlines()
+        values = _parse_nul_config_values(
+            _git_bytes(
+                git_binary,
+                root,
+                "config",
+                scope,
+                "--no-includes",
+                "--null",
+                "--get-all",
+                key,
+            )
+        )
         if not values or any(not _remote_url_is_reviewed(value) for value in values):
             raise LauncherError("remote Git URL is not in the reviewed syntax")
     return keys
@@ -399,6 +436,7 @@ def _remote_url_is_reviewed(value: object) -> bool:
         or parsed.query
         or parsed.fragment
         or port is not None
+        or parsed.netloc.endswith(":")
     ):
         return False
     if parsed.scheme == "https":
@@ -1920,6 +1958,35 @@ def _bounded_command_tokens(command: object) -> tuple[str, ...]:
     return tokens
 
 
+def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
+    if not command or len(command.encode("utf-8")) > 16 * 1024:
+        raise LauncherError("shell command is invalid or oversized")
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+        lexer.commenters = ""
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError as exc:
+        raise LauncherError("shell command is malformed") from exc
+    if len(tokens) > 512:
+        raise LauncherError("shell command has too many tokens")
+    segments: list[tuple[str, ...]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and all(character in ";&|\n" for character in token):
+            if current:
+                segments.append(tuple(current))
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(tuple(current))
+    if len(segments) > 128:
+        raise LauncherError("shell command has too many segments")
+    return tuple(segments)
+
+
 def _command_attempts_nested_codex(
     command: object, *, forbidden_codex_binary: str | None
 ) -> bool:
@@ -1931,19 +1998,24 @@ def _command_attempts_nested_codex(
         executable = Path(tokens[0]).name
         if executable == "env":
             index = 1
+            expanded_split = False
             while index < len(tokens):
                 value = tokens[index]
                 if value in {"-S", "--split-string"} and index + 1 < len(tokens):
                     tokens = [
+                        "env",
                         *_bounded_command_tokens(tokens[index + 1]),
                         *tokens[index + 2 :],
                     ]
+                    expanded_split = True
                     break
                 if value.startswith("--split-string="):
                     tokens = [
+                        "env",
                         *_bounded_command_tokens(value.partition("=")[2]),
                         *tokens[index + 1 :],
                     ]
+                    expanded_split = True
                     break
                 if value in {"-u", "--unset"} and index + 1 < len(tokens):
                     index += 2
@@ -1956,6 +2028,8 @@ def _command_attempts_nested_codex(
                 break
             else:
                 tokens = []
+            if expanded_split:
+                continue
             if tokens and Path(tokens[0]).name == "env":
                 tokens = tokens[index:]
             continue
@@ -1973,8 +2047,12 @@ def _command_attempts_nested_codex(
     if executable in {"sh", "bash", "dash", "zsh"}:
         for index, value in enumerate(tokens[1:], start=1):
             if value.startswith("-") and "c" in value[1:] and index + 1 < len(tokens):
-                return _command_attempts_nested_codex(
-                    tokens[index + 1], forbidden_codex_binary=forbidden_codex_binary
+                return any(
+                    _command_attempts_nested_codex(
+                        list(segment),
+                        forbidden_codex_binary=forbidden_codex_binary,
+                    )
+                    for segment in _bounded_shell_segments(tokens[index + 1])
                 )
         return False
     candidate = tokens[0]

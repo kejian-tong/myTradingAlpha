@@ -180,7 +180,9 @@ default probe without equivalent TeamIdentifier/signature evidence remains `insu
 Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
 initial version probe through every policy/target/post-run Git query and the model shell, the launcher
 sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONFIG_NOSYSTEM=1`, removes
-caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. Repository calls use the
+caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. An outer launcher profile
+may supply only these exact neutral values plus the documented no-lazy-fetch/no-replace/optional-locks/
+terminal-prompt settings; divergent values and config-key injection fail closed. Repository calls use the
 exact supplied `.git` and work-tree paths, require canonical `rev-parse --show-toplevel` equality, and apply
 highest-priority safe CLI controls for fsmonitor, hooks, submodule recursion, and protocols. Dangerous
 local/worktree configuration is governed by a conservative allowlist limited to the repository's standard
@@ -189,6 +191,8 @@ keys, execution helpers, includes, unsafe remote URL syntax, and active unreview
 inadmissible. Remote metadata permits bounded HTTPS without userinfo/query/fragment and reviewed SSH/scp
 forms only with the exact non-secret `git` user; HTTP, embedded credentials, ambiguous percent encoding,
 local/file/ext syntax, arbitrary SSH users, controls, and oversized values fail without diagnostic echo.
+Git config values are read as bounded NUL-delimited records with exact trailing and nonempty record
+structure, so embedded newlines cannot become separately valid visual lines.
 `extensions.worktreeConfig` is interpreted through Git's canonical boolean parser, including
 `true/yes/on/1` and `false/no/off/0`; invalid or diagnostic-producing values fail closed. This conservative
 boundary intentionally risks false positives when new benign repository config is introduced and requires a
@@ -236,7 +240,9 @@ authentication context.
 The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
 leading assignments, `env`, `env -S`/`--split-string`, `command codex`, and shell `-c` forms. Harmless
 `command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
-remain admissible. Parsing is bounded. This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
+remain admissible. Direct shell `-c` parsing inspects every bounded simple-command segment across newline,
+sequence, conditional, and pipeline operators without claiming arbitrary shell or obfuscation completeness.
+This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
 obfuscated shell execution cannot be certified absent. Preventive delegation control remains deferred to
 the separate later Master-only enforcement remediation.
 
@@ -254,8 +260,9 @@ Immutable history is preserved without relabeling inaccurate evidence. Historica
 test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `09eb421 -> 31fcabd` and
 `bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
 `34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
-anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. The current repair
-starts at test-only RED `276dd72`; its exact GREEN head is recorded
+anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
+also includes remote-credential parsing `276dd72 -> cf6fd19`. The current repair starts at
+test-only RED `487190a`; its exact GREEN head is recorded
 in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
