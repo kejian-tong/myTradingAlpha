@@ -174,7 +174,8 @@ treated as model capability evidence.
 
 The launcher runtime contract also requires bounded streaming, timeout escalation, validated toolchain
 roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `codesign --verify` before
-binary acceptance.
+binary acceptance. The reviewed binary registry is the signed macOS Codex 0.153.4 bundle; a non-Darwin
+default probe without equivalent TeamIdentifier/signature evidence remains `insufficient_evidence`.
 
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 

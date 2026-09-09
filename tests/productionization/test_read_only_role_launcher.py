@@ -267,11 +267,14 @@ def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, objec
     old_tempdir = module.tempfile.gettempdir
     old_provider = getattr(module, "temp_root_provider", None)
     old_getter = getattr(module, "get_temp_root", None)
+    old_system_temp_roots = getattr(module, "_system_temp_roots", None)
     module.tempfile.gettempdir = lambda: str(synthetic_root)
     if old_provider is not None:
         module.temp_root_provider = lambda: synthetic_root
     if old_getter is not None:
         module.get_temp_root = lambda: synthetic_root
+    if old_system_temp_roots is not None:
+        module._system_temp_roots = lambda: (synthetic_root.resolve(),)
     try:
         result = module.build_invocation_plan(**values)
     finally:
@@ -280,6 +283,8 @@ def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, objec
             module.temp_root_provider = old_provider
         if old_getter is not None:
             module.get_temp_root = old_getter
+        if old_system_temp_roots is not None:
+            module._system_temp_roots = old_system_temp_roots
     return result
 
 
@@ -387,6 +392,10 @@ def test_partial_or_promisor_repositories_fail_closed(
 def test_replace_refs_cannot_substitute_target_objects(scenario: Scenario) -> None:
     replacement = _run_git(
         scenario.target.root,
+        "-c",
+        "user.name=Launcher Test",
+        "-c",
+        "user.email=launcher@example.invalid",
         "commit-tree",
         scenario.target.tree,
         "-m",
@@ -1865,4 +1874,7 @@ def test_default_binary_probe_canonicalizes_codex_cli_version(
         expected_team_identifier=TEAM_IDENTIFIER,
         supported_versions=("0.153.4",),
         probe=lambda _: descriptor,
-    ) == []
+    ) == ([] if sys.platform == "darwin" else [
+        "binary codesign TeamIdentifier drifted",
+        "binary codesign verification failed",
+    ])

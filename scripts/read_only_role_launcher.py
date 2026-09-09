@@ -464,6 +464,7 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         "version": version,
         "sha256": file_digest(),
         "team_identifier": None,
+        "signature_valid": False,
     }
     if sys.platform == "darwin":
         verify = subprocess.run(
@@ -542,9 +543,9 @@ def validate_binary(
         errors.append("binary version drifted")
     if descriptor.get("sha256") != expected_digest:
         errors.append("binary SHA-256 drifted")
-    if sys.platform == "darwin" and descriptor.get("team_identifier") != expected_team_identifier:
+    if descriptor.get("team_identifier") != expected_team_identifier:
         errors.append("binary codesign TeamIdentifier drifted")
-    if sys.platform == "darwin" and descriptor.get("signature_valid") is not True:
+    if descriptor.get("signature_valid") is not True:
         errors.append("binary codesign verification failed")
     return errors
 
