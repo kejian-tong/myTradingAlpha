@@ -606,6 +606,39 @@ def test_binary_requires_absolute_regular_non_symlink_path(scenario: Scenario) -
     assert _binary_errors(scenario, path=symlink)
 
 
+@pytest.mark.skipif(
+    not Path("/usr/bin/git").is_file() or Path("/usr/bin/git").is_symlink(),
+    reason="hosted Linux system Git fixture is unavailable",
+)
+def test_git_validation_accepts_root_owned_system_binary_but_rejects_unrelated_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    git_path = Path("/usr/bin/git").resolve()
+    descriptor = module._default_git_probe(git_path)
+    if descriptor["owner_uid"] != 0:
+        pytest.skip("system Git fixture is not root-owned on this host")
+    fake_uid = 4242
+    monkeypatch.setattr(module.os, "getuid", lambda: fake_uid)
+
+    accepted, _, _ = module.validate_git_binary(
+        path=git_path,
+        expected_version=descriptor["version"],
+        expected_sha256=descriptor["sha256"],
+        probe=lambda _: dict(descriptor),
+    )
+    assert accepted == []
+
+    unrelated = {**descriptor, "owner_uid": fake_uid + 1}
+    rejected, _, _ = module.validate_git_binary(
+        path=git_path,
+        expected_version=descriptor["version"],
+        expected_sha256=descriptor["sha256"],
+        probe=lambda _: unrelated,
+    )
+    assert rejected
+
+
 def test_plan_and_manifest_bind_explicit_git_identity(scenario: Scenario) -> None:
     git = scenario.git
     assert git is not None
