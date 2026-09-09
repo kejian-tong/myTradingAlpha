@@ -25,6 +25,7 @@ import sysconfig
 import tempfile
 import threading
 import time
+import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -160,11 +161,7 @@ _BENIGN_REPOSITORY_CONFIG_RES = tuple(
         r"user\.(name|email)",
     )
 )
-_SAFE_REMOTE_URL_RE = re.compile(
-    r"(?:https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
-    r"|ssh://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
-    r"|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[A-Za-z0-9._~/-]+)\Z"
-)
+MAX_REMOTE_URL_LENGTH = 2048
 _ALLOWED_ROLE_KEYS = frozenset(
     {
         "name",
@@ -346,9 +343,72 @@ def _repository_config_keys(
             "--get-all",
             key,
         ).splitlines()
-        if not values or any(_SAFE_REMOTE_URL_RE.fullmatch(value) is None for value in values):
+        if not values or any(not _remote_url_is_reviewed(value) for value in values):
             raise LauncherError("remote Git URL is not in the reviewed syntax")
     return keys
+
+
+def _reviewed_remote_host(value: object) -> bool:
+    if type(value) is not str or not value or len(value) > 253 or ".." in value:
+        return False
+    try:
+        value.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    labels = value.split(".")
+    return all(
+        label
+        and len(label) <= 63
+        and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+        for label in labels
+    )
+
+
+def _reviewed_remote_path(value: object) -> bool:
+    if type(value) is not str or not value or value in {"/", "."}:
+        return False
+    if re.fullmatch(r"[A-Za-z0-9._~/-]+", value) is None:
+        return False
+    return not any(part in {"", ".", ".."} for part in value.strip("/").split("/"))
+
+
+def _remote_url_is_reviewed(value: object) -> bool:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > MAX_REMOTE_URL_LENGTH
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+        or "%" in value
+        or "\\" in value
+    ):
+        return False
+    scp = re.fullmatch(r"git@(?P<host>[A-Za-z0-9.-]+):(?P<path>[A-Za-z0-9._~/-]+)", value)
+    if scp is not None:
+        return _reviewed_remote_host(scp.group("host")) and _reviewed_remote_path(
+            scp.group("path")
+        )
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme not in {"https", "ssh"}
+        or not _reviewed_remote_host(parsed.hostname)
+        or not _reviewed_remote_path(parsed.path)
+        or parsed.query
+        or parsed.fragment
+        or port is not None
+    ):
+        return False
+    if parsed.scheme == "https":
+        return parsed.username is None and parsed.password is None and "@" not in parsed.netloc
+    return (
+        parsed.username == "git"
+        and parsed.password is None
+        and parsed.netloc.startswith("git@")
+        and parsed.netloc.count("@") == 1
+    )
 
 
 def _reject_unreviewed_repository_config(git_binary: Path, root: Path) -> None:
