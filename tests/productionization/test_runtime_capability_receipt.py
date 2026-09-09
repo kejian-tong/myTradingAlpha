@@ -584,6 +584,78 @@ def test_container_subclasses_are_rejected_before_callbacks() -> None:
 
 
 @pytest.mark.parametrize(
+    "field",
+    ["permission_system", "sandbox_mode", "permission_profile"],
+)
+def test_scalar_subclasses_are_rejected_before_comparison_callbacks(
+    field: str,
+) -> None:
+    callbacks: list[str] = []
+
+    class HostileStr(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            callbacks.append("eq")
+            return super().__eq__(other)
+
+        def __ne__(self, other: object) -> bool:
+            callbacks.append("ne")
+            return super().__ne__(other)
+
+    errors = _errors(_receipt(**{field: HostileStr("read-only")}))
+
+    assert errors
+    assert callbacks == []
+
+
+def test_raw_string_subclass_is_rejected_before_callbacks() -> None:
+    callbacks: list[str] = []
+
+    class HostileStr(str):
+        __hash__ = str.__hash__
+
+        def encode(self, *args: object, **kwargs: object) -> bytes:
+            callbacks.append("encode")
+            return str(self).encode(*args, **kwargs)
+
+        def __eq__(self, other: object) -> bool:
+            callbacks.append("eq")
+            return super().__eq__(other)
+
+        def __ne__(self, other: object) -> bool:
+            callbacks.append("ne")
+            return super().__ne__(other)
+
+    errors = _errors(HostileStr(json.dumps(_receipt())))
+
+    assert errors
+    assert callbacks == []
+
+
+def test_raw_bytes_subclass_is_rejected_before_callbacks() -> None:
+    callbacks: list[str] = []
+
+    class HostileBytes(bytes):
+        def decode(self, *args: object, **kwargs: object) -> str:
+            callbacks.append("decode")
+            return bytes(self).decode(*args, **kwargs)
+
+        def __eq__(self, other: object) -> bool:
+            callbacks.append("eq")
+            return super().__eq__(other)
+
+        def __ne__(self, other: object) -> bool:
+            callbacks.append("ne")
+            return super().__ne__(other)
+
+    errors = _errors(HostileBytes(json.dumps(_receipt()).encode()))
+
+    assert errors
+    assert callbacks == []
+
+
+@pytest.mark.parametrize(
     "tool_names",
     [
         [""],
