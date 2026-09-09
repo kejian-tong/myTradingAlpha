@@ -309,7 +309,8 @@ def _plan_kwargs(
 
 def _call_plan(scenario: Scenario, values: dict[str, object]) -> dict[str, object]:
     module = _launcher_module()
-    synthetic_root = ROOT / ".test-runtime-root" / scenario.target.head[:16]
+    synthetic_root = scenario.target.root.parent / ".test-runtime-root" / scenario.target.head[:16]
+    assert not synthetic_root.resolve().is_relative_to(ROOT.resolve())
     old_tempdir = module.tempfile.gettempdir
     old_provider = getattr(module, "temp_root_provider", None)
     old_getter = getattr(module, "get_temp_root", None)
@@ -2324,3 +2325,7 @@ def test_default_binary_probe_canonicalizes_codex_cli_version(
         "binary codesign TeamIdentifier drifted",
         "binary codesign verification failed",
     ])
+
+
+def test_focused_launcher_fixtures_do_not_dirty_repository_with_runtime_roots() -> None:
+    assert not (ROOT / ".test-runtime-root").exists()
