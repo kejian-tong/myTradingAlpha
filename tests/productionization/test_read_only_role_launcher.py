@@ -47,6 +47,7 @@ _PROBE_ORDER = (
     "secret_env_absent",
     "network_denied",
 )
+_MAX_JSONL_BYTES = 1 * 1024 * 1024
 _CAPABILITY_KEYS = (
     "agents",
     "apps",
@@ -541,7 +542,22 @@ def test_permission_profile_is_per_run_launcher_pilot_not_global_sandbox(
     shell = profile["shell_environment"]
     assert shell["inherit"] is False
     assert shell["ignore_default_excludes"] is False
-    assert set(shell["set"]).issubset({"PATH", "LANG", "LC_ALL", "TZ"})
+    allowed_shell_keys = {
+        "PATH",
+        "TMPDIR",
+        "PYTHONDONTWRITEBYTECODE",
+        "GIT_OPTIONAL_LOCKS",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+    }
+    assert set(shell["set"]).issubset(allowed_shell_keys)
+    assert {
+        "PATH",
+        "TMPDIR",
+        "PYTHONDONTWRITEBYTECODE",
+        "GIT_OPTIONAL_LOCKS",
+    }.issubset(shell["set"])
     assert shell["set"]
     assert not {str(key).lower() for key in shell["set"]} & {
         "token",
@@ -610,6 +626,8 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
         process_runner=runner,
     )
     assert result["status"] == "completed"
+    assert result["final_agent_message"] == "untrusted final output"
+    assert "untrusted final output" not in json.dumps(result["manifest"])
     assert [name for name, _ in probe_calls] == list(_PROBE_ORDER)
     assert all(observed is plan for _, observed in probe_calls)
     assert len(runner_calls) == 1
@@ -669,7 +687,19 @@ def test_missing_preflight_probe_is_insufficient_evidence_and_no_exec(
         name = name or str(kwargs["name"])
         if name == "network_denied":
             return None
-        return {"allowed": True}
+        results = {
+            "policy_read": {"allowed": True},
+            "target_read": {"allowed": True},
+            "target_write_denied": {"denied": True, "marker_absent": True},
+            "credential_read_denied": {
+                "denied": True,
+                "stdout": "",
+                "marker_absent": True,
+            },
+            "scratch_write": {"allowed": True},
+            "secret_env_absent": {"absent": True},
+        }
+        return results[name]
 
     def runner(**kwargs: object) -> None:
         runner_calls.append(kwargs)
@@ -722,9 +752,13 @@ def test_jsonl_parser_rejects_malformed_duplicate_truncated_unknown_or_replayed_
 
 
 def test_jsonl_parser_rejects_oversized_output() -> None:
-    raw = _valid_jsonl() + "x" * 70_000
+    module = _launcher_module()
+    assert module.MAX_JSONL_BYTES == _MAX_JSONL_BYTES
+    raw = _valid_jsonl() + "x" * (
+        _MAX_JSONL_BYTES + 1 - len(_valid_jsonl().encode())
+    )
     with pytest.raises((ValueError, RuntimeError)):
-        _function("parse_codex_jsonl")(raw)
+        module.parse_codex_jsonl(raw)
 
 
 def test_redacted_manifest_binds_identity_and_digests_without_secrets(
