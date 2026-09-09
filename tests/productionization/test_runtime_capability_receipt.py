@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -420,6 +421,75 @@ def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path:
     ) == []
 
 
+def test_promisor_repository_rejects_before_lazy_fetch_or_object_mutation(
+    tmp_path: Path,
+) -> None:
+    source, _source_head, _source_tree = _temporary_repo(tmp_path / "source")
+    subprocess.run(
+        ["git", "-C", str(source), "config", "uploadpack.allowFilter", "true"],
+        check=True,
+    )
+    partial = tmp_path / "partial"
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "-q",
+            "--filter=blob:none",
+            "--no-checkout",
+            f"file://{source}",
+            str(partial),
+        ],
+        check=True,
+    )
+    sentinel_marker = tmp_path / "upload-pack-called"
+    sentinel = tmp_path / "upload-pack-sentinel.sh"
+    sentinel.write_text(
+        "#!/bin/sh\n"
+        f": > {shlex.quote(str(sentinel_marker))}\n"
+        "exit 97\n",
+        encoding="utf-8",
+    )
+    sentinel.chmod(0o755)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(partial),
+            "config",
+            "remote.origin.uploadpack",
+            str(sentinel),
+        ],
+        check=True,
+    )
+    head = subprocess.check_output(
+        ["git", "-C", str(partial), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(partial), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    object_root = partial / ".git/objects"
+
+    def object_snapshot() -> list[tuple[str, int]]:
+        return sorted(
+            (path.relative_to(object_root).as_posix(), path.stat().st_size)
+            for path in object_root.rglob("*")
+            if path.is_file()
+        )
+
+    before = object_snapshot()
+    errors = _errors(
+        _receipt(base_sha=head, head_sha=head, tree_sha=tree),
+        repo_root=partial,
+        expected_base_sha=head,
+        expected_head_sha=head,
+    )
+
+    assert not sentinel_marker.exists()
+    assert object_snapshot() == before
+    assert errors == ["repository binding is unavailable"]
+
+
 def test_model_is_derived_from_exact_role_toml_without_a_global_allowlist(
     tmp_path: Path,
 ) -> None:
@@ -552,6 +622,23 @@ def test_gateway_and_namespaced_collaboration_aliases_are_rejected(
     tool_name: str,
 ) -> None:
     assert _errors(_receipt(tool_names=[tool_name]))
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "list_agents",
+        "wait_agent",
+        "collaboration.list_agents",
+        "collaboration.wait_agent",
+        "collaboration__list_agents",
+        "collaboration__wait_agent",
+    ],
+)
+def test_read_only_collaboration_observation_aliases_are_allowed(
+    tool_name: str,
+) -> None:
+    assert _errors(_receipt(tool_names=[tool_name])) == []
 
 
 def test_container_subclasses_are_rejected_before_callbacks() -> None:
