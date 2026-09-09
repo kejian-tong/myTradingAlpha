@@ -2200,6 +2200,60 @@ def test_required_tool_discovery_never_uses_ambient_path_resolution() -> None:
     assert "shutil.which" not in source
 
 
+def test_non_system_runtime_library_dependencies_are_added_as_exact_read_roots(
+    tmp_path: Path,
+) -> None:
+    module = _launcher_module()
+    executable = tmp_path / "bin/git"
+    library = tmp_path / "Cellar/gettext/lib/libintl.8.dylib"
+    executable.parent.mkdir(parents=True)
+    library.parent.mkdir(parents=True)
+    executable.write_bytes(b"git")
+    library.write_bytes(b"library")
+    executable.chmod(0o755)
+    library.chmod(0o644)
+
+    roots = module._runtime_dependency_roots(
+        executable,
+        probe=lambda _: (library,),
+    )
+
+    assert str(library.resolve()) in roots
+    assert str(library.parent.resolve()) in roots
+
+
+def test_toolchain_merges_runtime_library_roots_before_profile_construction(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    dependency = scenario.target.root.parent / "runtime-library/libintl.8.dylib"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_bytes(b"library")
+    dependency.chmod(0o644)
+    synthetic_tools = {
+        name: scenario.target.root.parent / f"tool-{name}"
+        for name in ("rg", "ruff", "uv")
+    }
+    for tool in synthetic_tools.values():
+        tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        tool.chmod(0o755)
+    monkeypatch.setattr(module, "_find_required_tool", lambda name: synthetic_tools[name])
+    monkeypatch.setattr(
+        module,
+        "_runtime_dependency_roots",
+        lambda executable: [str(dependency.parent), str(dependency)],
+    )
+
+    toolchain = module._toolchain(
+        git_binary=scenario.git.path,
+        git_root=scenario.target.root,
+        git_commit=scenario.target.head,
+    )
+
+    assert str(dependency.parent.resolve()) in toolchain["read_roots"]
+    assert str(dependency.resolve()) in toolchain["read_roots"]
+
+
 def test_toolchain_smokes_execute_before_preflight_and_model(
     scenario: Scenario,
 ) -> None:
