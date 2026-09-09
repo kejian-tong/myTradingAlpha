@@ -183,10 +183,16 @@ sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONF
 caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. Repository calls use the
 exact supplied `.git` and work-tree paths, require canonical `rev-parse --show-toplevel` equality, and apply
 highest-priority safe CLI controls for fsmonitor, hooks, submodule recursion, and protocols. Dangerous
-local/worktree `core.worktree`, `core.fsmonitor`, include, submodule, protocol, hook, SSH, attributes, or
-exclude configuration is inadmissible; status ignores submodules. Every Git helper and the initial Git/tool
-smokes reject nonempty stderr, including a zero-return-code status lookup, so an unreadable path cannot be
-classified as clean. The per-run profile denies direct reads of ignored/untracked `.env`, `secrets`, `*secret*`, and
+local/worktree configuration is governed by a conservative allowlist limited to the repository's standard
+core metadata, reviewed remote/branch metadata, worktree-config extension flag, and user name/email. Unknown
+keys, execution helpers, includes, unsafe remote URL syntax, and active unreviewed worktree keys are
+inadmissible. `extensions.worktreeConfig` is interpreted through Git's canonical boolean parser, including
+`true/yes/on/1` and `false/no/off/0`; invalid or diagnostic-producing values fail closed. This conservative
+boundary intentionally risks false positives when new benign repository config is introduced and requires a
+reviewed Harness update rather than an implicit pass. Status ignores submodules. Every Git helper, the initial
+Git/tool smokes, and runtime-library `otool` discovery reject nonempty stderr, including a zero-return-code
+lookup, so incomplete evidence cannot be classified as clean. The per-run profile denies direct reads of
+ignored/untracked `.env`, `secrets`, `*secret*`, and
 `*token*` paths under both policy and target roots, plus external credential paths. Committed current and
 history Git objects remain intentionally reviewable public-repository evidence through the admitted Git
 object database; this launcher is not a confidentiality boundary for committed or historical Git data.
@@ -225,8 +231,9 @@ absence of auth, config, and agent files without executing Codex. The outer host
 authentication context.
 
 The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
-`env` and shell `-c` forms, while an ordinary `rg` search containing the text `codex exec` remains
-admissible. This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
+leading assignments, `env`, `env -S`/`--split-string`, `command codex`, and shell `-c` forms. Harmless
+`command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
+remain admissible. Parsing is bounded. This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
 obfuscated shell execution cannot be certified absent. Preventive delegation control remains deferred to
 the separate later Master-only enforcement remediation.
 
@@ -243,8 +250,8 @@ PR #67 itself remains external-profile-only and cannot use candidate policy to a
 Immutable history is preserved without relabeling inaccurate evidence. Historical controlling pairs from
 test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `09eb421 -> 31fcabd` and
 `bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
-`34fe529 -> b27553f`, and exact command-shape correction `6d69222 -> 05a902b`. The current repair starts
-at test-only RED `d1065b2`; its exact GREEN head is recorded
+`34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
+anchoring `d1065b2 -> e213507`. The current repair starts at test-only RED `1072d1f`; its exact GREEN head is recorded
 in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.

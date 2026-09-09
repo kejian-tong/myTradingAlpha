@@ -150,9 +150,20 @@ _SAFE_REPOSITORY_GIT_CONFIG = (
     "protocol.file.allow=never",
     "protocol.ext.allow=never",
 )
-_DANGEROUS_REPOSITORY_CONFIG_RE = (
-    r"^(core\.(worktree|fsmonitor|hookspath|sshcommand|attributesfile|excludesfile)"
-    r"|include\..*|includeif\..*|submodule\..*|protocol\..*)$"
+_BENIGN_REPOSITORY_CONFIG_RES = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)",
+        r"extensions\.worktreeconfig",
+        r"remote\.[a-z0-9._-]+\.(url|fetch|gh-resolved)",
+        r"branch\..+\.(remote|merge|vscode-merge-base|github-pr-owner-number|github-pr-base-branch)",
+        r"user\.(name|email)",
+    )
+)
+_SAFE_REMOTE_URL_RE = re.compile(
+    r"(?:https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
+    r"|ssh://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
+    r"|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[A-Za-z0-9._~/-]+)\Z"
 )
 _ALLOWED_ROLE_KEYS = frozenset(
     {
@@ -305,42 +316,58 @@ def _git_bytes(git_binary: Path, root: Path, *arguments: str) -> bytes:
     return completed.stdout
 
 
-def _reject_dangerous_repository_config(git_binary: Path, root: Path) -> None:
-    local = _git(
+def _repository_config_keys(
+    git_binary: Path, root: Path, *, scope: str
+) -> tuple[str, ...]:
+    raw = _git(
         git_binary,
         root,
         "config",
-        "--local",
+        scope,
         "--no-includes",
         "--name-only",
-        "--get-regexp",
-        _DANGEROUS_REPOSITORY_CONFIG_RE,
-        allow_failure=True,
+        "--list",
     )
-    if local:
-        raise LauncherError("dangerous local Git configuration is not permitted")
+    keys = tuple(line.lower() for line in raw.splitlines() if line)
+    if any(
+        not any(pattern.fullmatch(key) for pattern in _BENIGN_REPOSITORY_CONFIG_RES)
+        for key in keys
+    ):
+        raise LauncherError("unreviewed repository Git configuration is not permitted")
+    for key in keys:
+        if not key.startswith("remote.") or not key.endswith(".url"):
+            continue
+        values = _git(
+            git_binary,
+            root,
+            "config",
+            scope,
+            "--no-includes",
+            "--get-all",
+            key,
+        ).splitlines()
+        if not values or any(_SAFE_REMOTE_URL_RE.fullmatch(value) is None for value in values):
+            raise LauncherError("remote Git URL is not in the reviewed syntax")
+    return keys
+
+
+def _reject_unreviewed_repository_config(git_binary: Path, root: Path) -> None:
+    _repository_config_keys(git_binary, root, scope="--local")
     worktree_config = _git(
         git_binary,
         root,
         "config",
         "--local",
         "--no-includes",
+        "--bool",
         "--get",
         "extensions.worktreeConfig",
         allow_failure=True,
     )
-    if worktree_config.lower() == "true" and _git(
-        git_binary,
-        root,
-        "config",
-        "--worktree",
-        "--no-includes",
-        "--name-only",
-        "--get-regexp",
-        _DANGEROUS_REPOSITORY_CONFIG_RE,
-        allow_failure=True,
-    ):
-        raise LauncherError("dangerous worktree Git configuration is not permitted")
+    if worktree_config not in {"", "true", "false"}:
+        raise LauncherError("worktree Git configuration boolean is invalid")
+    if worktree_config == "true":
+        _repository_config_keys(git_binary, root, scope="--worktree")
 
 
 def _repo_state(
@@ -369,7 +396,7 @@ def _repo_state(
         raise LauncherError("Git top-level path is unavailable") from exc
     if resolved_top_level != root:
         raise LauncherError("Git top-level path differs from supplied root")
-    _reject_dangerous_repository_config(git_binary, root)
+    _reject_unreviewed_repository_config(git_binary, root)
     if _git(
         git_binary,
         root,
@@ -620,6 +647,8 @@ def _default_runtime_dependency_probe(executable: Path) -> tuple[Path, ...]:
     )
     if completed.returncode != 0:
         raise LauncherError("runtime library dependency probe failed")
+    if completed.stderr:
+        raise LauncherError("runtime library dependency probe emitted stderr")
     dependencies: list[Path] = []
     for line in completed.stdout.splitlines()[1:]:
         value = line.strip().split(" (compatibility version", 1)[0]
@@ -1844,6 +1873,18 @@ def _command_attempts_nested_codex(
             index = 1
             while index < len(tokens):
                 value = tokens[index]
+                if value in {"-S", "--split-string"} and index + 1 < len(tokens):
+                    tokens = [
+                        *_bounded_command_tokens(tokens[index + 1]),
+                        *tokens[index + 2 :],
+                    ]
+                    break
+                if value.startswith("--split-string="):
+                    tokens = [
+                        *_bounded_command_tokens(value.partition("=")[2]),
+                        *tokens[index + 1 :],
+                    ]
+                    break
                 if value in {"-u", "--unset"} and index + 1 < len(tokens):
                     index += 2
                     continue
@@ -1853,9 +1894,14 @@ def _command_attempts_nested_codex(
                     index += 1
                     continue
                 break
-            tokens = tokens[index:]
+            else:
+                tokens = []
+            if tokens and Path(tokens[0]).name == "env":
+                tokens = tokens[index:]
             continue
         if executable == "command":
+            if len(tokens) >= 2 and tokens[1] in {"-v", "-V"}:
+                return False
             tokens.pop(0)
             while tokens and tokens[0].startswith("-"):
                 tokens.pop(0)
