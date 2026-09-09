@@ -17,6 +17,7 @@ Official references:
 
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
 - https://learn.chatgpt.com/docs/config-file/config-reference
+- https://learn.chatgpt.com/docs/permissions
 
 For a named custom agent, the custom agent file's `model` and `model_reasoning_effort` are the routing
 configuration of record. Codex documentation specifies that values set in the custom agent file take
@@ -28,6 +29,56 @@ additional observation when exposed, but lack of UI telemetry does not turn a su
 custom-agent configuration into `unknown`.
 
 Do not infer configured actual routing when a generic/default agent was used.
+
+### 1.1 Host-runtime capability receipt
+
+When a fresh implementation, reviewer, or specialist context exposes a host-runtime capability receipt,
+the Master may run the bounded offline verifier at `scripts/runtime_capability_receipt.py`. The verifier
+is an admission contract, not an authentication service. A successful result says only that the supplied
+receipt is structurally valid, matches the named role's checked-in TOML intent, and is bound to the
+checked-out commit/tree; it does not prove that the runtime emitted the receipt, that a digest identifies
+the claimed source, or that a transcript was inspected.
+
+The JSON receipt is strict and contains exactly the schema-versioned fields `schema_version=1`,
+`evidence_source=host_runtime`, four lowercase SHA-256 digest references, PR/role/config identity,
+runtime and Multi-Agent version, model/effort, base/head/tree SHAs, effective sandbox/profile/approval,
+an explicit `permission_system`, complete sorted unique bounded `tool_names`, and non-negative
+`observed_at_ms`. Raw JSON is bounded at 64 KiB and duplicate keys are rejected before structural
+validation. The caller must separately supply the trusted expected PR ID, exact base SHA, and exact head
+SHA; the receipt must equal those expectations, the base must be an ancestor of the head, the expected
+head must be checked out, and the receipt tree must equal that head's tree. The verifier reads the named
+`.codex/agents/<role>.toml` from the exact head Git tree, not from mutable working-tree bytes, and derives
+model/effort and nested-delegation intent from it without a duplicated model allowlist. A repository
+configured as a partial clone or with a promisor remote is rejected before object lookup; verification
+must never trigger a lazy fetch. Git subprocesses discard all inherited `GIT_*` variables and restore only
+the verifier's reviewed no-lazy-fetch, no-prompt, and no-optional-lock settings, so ambient repository,
+object, work-tree, or configuration redirects cannot override the supplied repository root.
+
+`permission_system=legacy_sandbox` requires an active legacy sandbox and
+`permission_profile=disabled`. `permission_system=permission_profile` requires the legacy sandbox to be
+disabled and an active built-in profile; the official built-in read-only identity is `:read-only`.
+`disabled` never means read-only. Local `exec_command`, `write_stdin`, and `apply_patch` exposure is
+admissible only when the declared effective local enforcement is read-only. Local permission enforcement
+does not govern Apps, connectors, MCP servers, browsers, or collaboration controls, so those surfaces fail
+closed unless the tool is in the verifier's narrow reviewed read-only allowlist. High-capability function
+gateways and canonical mutation/delegation collaboration-control aliases are always rejected. Read-only
+`list_agents` and `wait_agent` observation controls may remain visible.
+
+For example:
+
+```bash
+python scripts/runtime_capability_receipt.py \
+  --verify /path/to/receipt.json \
+  --repo-root /path/to/checkout \
+  --expected-pr-id HARNESS-AUD-01 \
+  --expected-base-sha <exact-base-commit> \
+  --expected-head-sha <exact-head-commit>
+```
+
+The verifier performs no network, file-write, transcript, or runtime-control operation. Its `PASS` output
+must remain supplemental evidence and cannot replace complete runtime observation, independent review,
+required CI, or the Master merge gate. A missing or contradictory receipt remains `insufficient_evidence`
+at any gate that requires authenticated runtime evidence; no caller may upgrade this structural result.
 
 ## 2. Required named roles
 
