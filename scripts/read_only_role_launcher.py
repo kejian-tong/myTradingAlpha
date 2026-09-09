@@ -1762,9 +1762,17 @@ def parse_codex_jsonl(
                         raise LauncherError("ordinary read-only role emitted MCP activity")
                     if event["type"] == "item.updated":
                         raise LauncherError("Docs MCP item updates are not admitted")
-                    required = {"id", "type", "server", "tool", "arguments", "status"}
-                    mcp_allowed = required | {"result", "error"}
-                    if set(item) - mcp_allowed or not required.issubset(item):
+                    required = {
+                        "arguments",
+                        "error",
+                        "id",
+                        "result",
+                        "server",
+                        "status",
+                        "tool",
+                        "type",
+                    }
+                    if set(item) != required or type(item["arguments"]) is not dict:
                         raise LauncherError("Docs MCP item shape is invalid")
                     item_id = item["id"]
                     if (
@@ -1782,8 +1790,9 @@ def parse_codex_jsonl(
                     }
                     if event["type"] == "item.started":
                         if (
-                            set(item) != required
-                            or item["status"] != "in_progress"
+                            item["status"] != "in_progress"
+                            or item["result"] is not None
+                            or item["error"] is not None
                             or item_id in active_mcp
                             or item_id in completed_mcp
                         ):
@@ -1798,13 +1807,12 @@ def parse_codex_jsonl(
                     mcp_call_count += 1
                     status = item["status"]
                     if status == "completed":
-                        if "error" in item or "result" not in item:
+                        if item["error"] is not None:
                             raise LauncherError("Docs MCP success shape is invalid")
                         result = item["result"]
                         if (
                             type(result) is not dict
-                            or not {"content"}.issubset(result)
-                            or set(result) - {"content", "_meta", "structured_content"}
+                            or set(result) != {"content", "structured_content"}
                             or type(result["content"]) is not list
                             or len(result["content"]) > 128
                             or any(
@@ -1816,9 +1824,9 @@ def parse_codex_jsonl(
                         ):
                             raise LauncherError("Docs MCP result is malformed")
                     elif status == "failed":
-                        error = item.get("error")
+                        error = item["error"]
                         if (
-                            "result" in item
+                            item["result"] is not None
                             or type(error) is not dict
                             or set(error) != {"message"}
                             or type(error.get("message")) is not str
@@ -2207,6 +2215,36 @@ def run_isolated_role(
     }
 
 
+_SAFE_PUBLIC_ERROR_RE = re.compile(
+    r"\A(?:"
+    r"malformed JSONL output|"
+    r"isolated role (?:process failed|emitted a failed JSONL outcome|emitted unadmitted stderr)|"
+    r"process output (?:is malformed|exceeds bounds)|"
+    r"toolchain smoke (?:python_encodings|pytest_import|git_resolve|rg_version|ruff_version|uv_version) unavailable|"
+    r"preflight (?:policy_read|target_read|policy_secret_denied|target_secret_denied|target_write_denied|credential_read_denied|scratch_write|secret_env_absent|network_denied) unavailable|"
+    r"(?:policy|target) repository is dirty after invocation|"
+    r"(?:policy|target)_(?:head|tree)_sha drifted|"
+    r"probe marker remains after invocation|"
+    r"private (?:runtime path|runtime root|cwd|path)[^\r\n]{0,160}|"
+    r"unowned private path preserved|unsafe private path preserved"
+    r")\Z"
+)
+
+
+def _public_errors(value: object) -> list[str]:
+    if type(value) is not list or not value:
+        return ["redacted launcher diagnostic"]
+    public: list[str] = []
+    for item in value[:8]:
+        if type(item) is str and _SAFE_PUBLIC_ERROR_RE.fullmatch(item):
+            public.append(item)
+        else:
+            public.append("redacted launcher diagnostic")
+    if len(value) > 8:
+        public.append("additional launcher diagnostics omitted")
+    return public
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -2261,7 +2299,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (LauncherError, OSError, ValueError) as exc:
         print(json.dumps({"status": "insufficient_evidence", "error": _diagnostic(exc)}))
         return 1
-    print(json.dumps({"status": result.get("status"), "manifest": result.get("manifest")}))
+    payload = {"status": result.get("status"), "manifest": result.get("manifest")}
+    if result.get("status") != "completed":
+        payload["errors"] = _public_errors(result.get("errors"))
+    print(json.dumps(payload))
     if result.get("final_agent_message") is not None:
         print("UNTRUSTED_FINAL_AGENT_MESSAGE:")
         print(result["final_agent_message"])
