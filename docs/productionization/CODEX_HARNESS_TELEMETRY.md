@@ -16,7 +16,8 @@ claimed model/sandbox/tool route into authenticated evidence.
 Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
 references, exact PR/role/config identity, model/effort, an explicit legacy-sandbox or permission-profile
 system, sandbox/profile/approval values, and a complete sorted unique bounded tool inventory. The caller
-must supply trusted expected PR/base/head values separately. The verifier requires exact receipt equality,
+must supply trusted expected PR/base/head values plus the trusted expected role and trusted expected config path
+separately. The verifier requires exact receipt equality,
 base ancestry, checked-out expected head, matching head tree, and role TOML loaded from that exact Git tree.
 Partial/promisor repositories reject before object lookup so verification cannot trigger a lazy fetch. It
 rejects unknown or duplicate fields, oversized or invalid Unicode input, role/model/effort drift,

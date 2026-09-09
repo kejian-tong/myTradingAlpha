@@ -691,6 +691,7 @@ def test_ambient_git_redirects_cannot_override_repo_root(
         environment
         == {
             "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
         }

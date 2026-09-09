@@ -70,6 +70,10 @@ and `wait_agent` observation controls may remain visible, but visibility is not 
 The project Apps/MCP declarations are configuration intent; they do not inspect or deny inherited/global
 Apps, installed plugins, organization-managed policy, or other runtime surfaces.
 
+An authorized official web/browser fallback does not satisfy the narrow OpenAI Developer Docs MCP receipt.
+Record the fallback limitation and `insufficient_evidence` for MCP-backed verification when that fallback
+is used.
+
 For example:
 
 ```bash

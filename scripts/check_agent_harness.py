@@ -286,7 +286,7 @@ def configuration_errors(root: Path) -> list[str]:
                 if mcp_servers != expected_mcp:
                     errors.append("external_spec_researcher OpenAI docs MCP configuration intent differs from reviewed policy")
             elif "mcp_servers" in role:
-                errors.append(f"{name} must not receive external MCP servers")
+                errors.append(f"{name} must not declare role-level MCP configuration intent")
             instructions = role.get("developer_instructions", "")
             if type(instructions) is not str or any(
                 clause not in instructions for clause in _COLLABORATION_INSTRUCTION_CONTRACT
