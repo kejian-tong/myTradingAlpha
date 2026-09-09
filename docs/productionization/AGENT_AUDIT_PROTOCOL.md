@@ -212,13 +212,19 @@ Chronicle, Apps, plugins, memories, browser/computer/image surfaces, multi-agent
 The reviewed under-development warning is suppressed after these exact flags are bound so it cannot
 create a permanent item-error false stop.
 `code_mode_host=true` remains enabled solely for sandboxed local commands under the same read-only
-profile; configuration closure is intent and the preflight/post-run evidence remains mandatory. The model
-profile adds a more-specific deny for the exact validated Codex binary after broader supporting-tool read
-grants. A real `nested_codex_denied` preflight executes that binary with `--version` and must observe a
-nonzero result with empty stdout. The command-event parser separately rejects a direct exact-path or bare
-`codex` invocation, including direct `env` and shell `-c` forms, while an ordinary `rg` search containing
-the text `codex exec` remains admissible. The operating-system deny is primary; JSONL parsing is
-defense-in-depth and never proves that an attempted nested process did not start.
+profile; configuration closure is intent and the preflight/post-run evidence remains mandatory. Permission
+Profile filesystem `deny` controls reads but does not prevent the same executable from running: direct
+current-runtime evidence showed the denied Codex binary still completed `--version`. The launcher therefore
+does not claim preventive host enforcement for nested Codex. Instead, model commands receive launcher-owned
+scratch values for `HOME` and `CODEX_HOME`; an `isolated_home` preflight verifies those exact values and the
+absence of auth, config, and agent files without executing Codex. The outer host process retains its real
+authentication context.
+
+The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
+`env` and shell `-c` forms, while an ordinary `rg` search containing the text `codex exec` remains
+admissible. This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
+obfuscated shell execution cannot be certified absent. Preventive delegation control remains deferred to
+the separate later Master-only enforcement remediation.
 
 PR #67 is a bootstrap exception: protected base `8092018` contains neither this launcher protocol nor its
 canary. Its controlling review therefore uses a Master-constructed external Permission Profile. The

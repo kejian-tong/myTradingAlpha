@@ -968,6 +968,8 @@ def test_permission_profile_is_per_run_launcher_pilot_not_global_sandbox(
     allowed_shell_keys = {
         "PATH",
         "TMPDIR",
+        "HOME",
+        "CODEX_HOME",
             "PYTHONDONTWRITEBYTECODE",
             "GIT_CONFIG_GLOBAL",
             "GIT_CONFIG_SYSTEM",

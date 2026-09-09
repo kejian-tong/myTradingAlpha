@@ -94,7 +94,7 @@ _PROBE_ORDER = (
     "target_secret_denied",
     "target_write_denied",
     "credential_read_denied",
-    "nested_codex_denied",
+    "isolated_home",
     "scratch_write",
     "secret_env_absent",
     "network_denied",
@@ -895,7 +895,6 @@ def build_permission_profile(
     dependency_roots: Sequence[Path],
     scratch_root: Path,
     credential_probe_path: Path | None = None,
-    forbidden_executable_path: Path | None = None,
 ) -> dict[str, object]:
     """Build a per-run Permission Profile pilot without legacy sandbox flags."""
 
@@ -908,6 +907,8 @@ def build_permission_profile(
     shell_set = {
         "PATH": os.defpath,
         "TMPDIR": str(scratch_root.resolve()),
+        "HOME": str(scratch_root.resolve()),
+        "CODEX_HOME": str(scratch_root.resolve()),
         "PYTHONDONTWRITEBYTECODE": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
@@ -953,12 +954,6 @@ def build_permission_profile(
     for dependency in dependency_roots:
         permissions[str(Path(dependency))] = "read"
         permissions[str(Path(dependency).resolve())] = "read"
-    if forbidden_executable_path is not None:
-        forbidden_executable = _require_absolute_path(
-            forbidden_executable_path, "forbidden executable"
-        ).resolve(strict=True)
-        permissions[str(forbidden_executable)] = "deny"
-        denied.append(str(forbidden_executable))
     profile_name = "launcher_read_only"
     return {
         "scope": "launcher_pilot",
@@ -1105,7 +1100,6 @@ def build_invocation_plan(
         dependency_roots=tuple(toolchain_roots),
         scratch_root=scratch,
         credential_probe_path=credential_probe,
-        forbidden_executable_path=binary,
     )
     profile_shell = profile["shell_environment"]
     profile_shell["set"]["PATH"] = str(toolchain["path"])
@@ -1119,6 +1113,8 @@ def build_invocation_plan(
         "filesystem": "permission_profile",
         "network": "permission_profile",
     }
+    capability_closure["nested_delegation_prevention"] = False
+    capability_closure["direct_codex_attempt_detection"] = True
     capability_closure["function_gateway"] = False
     instructions = _protected_instructions(
         git_path,
@@ -1197,7 +1193,7 @@ def build_invocation_plan(
         "target_secret_denied": str(Path(target["root"]) / DENY_CANARY_RELATIVE),
         "target_write_denied": str(Path(target["root"]) / ".launcher-target-write-probe"),
         "credential_read_denied": str(credential_path),
-        "nested_codex_denied": str(binary.resolve()),
+        "isolated_home": str(scratch),
         "scratch_write": str(scratch / ".launcher-scratch-probe"),
         "secret_env_absent": str(scratch / ".launcher-secret-env-probe"),
         "network_denied": "CODEX_SANDBOX_NETWORK_DISABLED=1",
@@ -1312,8 +1308,19 @@ def build_sandbox_probe_argv(plan: Mapping[str, object], probe_name: str) -> dic
         argv.extend(("/usr/bin/head", "-c", "1", str(paths[probe_name])))
     elif probe_name in {"target_write_denied", "scratch_write"}:
         argv.extend(("/usr/bin/touch", "--", str(paths[probe_name])))
-    elif probe_name == "nested_codex_denied":
-        argv.extend((str(plan["binary_realpath"]), "--version"))
+    elif probe_name == "isolated_home":
+        argv.extend(
+            (
+                "/bin/sh",
+                "-c",
+                'test "$HOME" = "$1" && test "$CODEX_HOME" = "$1" '
+                '&& test ! -e "$1/auth.json" && test ! -e "$1/config.toml" '
+                '&& test ! -e "$1/agents" && test ! -e "$1/.codex/auth.json" '
+                '&& test ! -e "$1/.codex/config.toml" && test ! -e "$1/.codex/agents"',
+                "launcher-isolated-home",
+                str(paths[probe_name]),
+            )
+        )
     elif probe_name == "secret_env_absent":
         argv.extend(("/bin/sh", "-c", "test -z \"${LAUNCHER_SECRET_SENTINEL:-}\""))
     else:
@@ -1368,11 +1375,12 @@ def _probe_result(name: str, value: object) -> bool:
         return value.get("allowed") is True
     if name == "secret_env_absent":
         return value.get("absent") is True
+    if name == "isolated_home":
+        return value.get("isolated") is True and value.get("stdout", "") == ""
     if name in {
         "policy_secret_denied",
         "target_secret_denied",
         "credential_read_denied",
-        "nested_codex_denied",
     }:
         return (
             value.get("denied") is True
@@ -1419,9 +1427,10 @@ def _evaluate_sandbox_probe(
         "credential_read_denied",
         "policy_secret_denied",
         "target_secret_denied",
-        "nested_codex_denied",
     }:
         result["denied"] = returncode != 0 and not stdout and not marker_exists
+    elif probe_name == "isolated_home":
+        result["isolated"] = returncode == 0 and not stdout and not marker_exists
     elif probe_name == "scratch_write":
         result["allowed"] = returncode == 0
         if result["allowed"] and marker is not None and marker.exists():
@@ -2355,7 +2364,7 @@ _SAFE_PUBLIC_ERROR_RE = re.compile(
     r"isolated role (?:process failed|emitted a failed JSONL outcome|emitted unadmitted stderr)|"
     r"process output (?:is malformed|exceeds bounds)|"
     r"toolchain smoke (?:python_encodings|pytest_import|git_resolve|rg_version|ruff_version|uv_version) unavailable|"
-    r"preflight (?:policy_read|target_read|policy_secret_denied|target_secret_denied|target_write_denied|credential_read_denied|scratch_write|secret_env_absent|network_denied) unavailable|"
+    r"preflight (?:policy_read|target_read|policy_secret_denied|target_secret_denied|target_write_denied|credential_read_denied|isolated_home|scratch_write|secret_env_absent|network_denied) unavailable|"
     r"(?:policy|target) repository is dirty after invocation|"
     r"(?:policy|target)_(?:head|tree)_sha drifted|"
     r"probe marker remains after invocation|"
