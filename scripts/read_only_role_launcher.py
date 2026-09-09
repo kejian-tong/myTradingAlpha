@@ -444,7 +444,7 @@ def _validated_tool_path(name: str, candidate: Path) -> Path:
         raise LauncherError(f"required {name} executable is unavailable") from exc
     if not stat.S_ISREG(info.st_mode):
         raise LauncherError(f"required {name} executable is not a regular file")
-    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+    if info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022:
         raise LauncherError(f"required {name} executable ownership/mode is unsafe")
     return path
 
@@ -688,7 +688,7 @@ def _validate_executable(
         errors.append(f"{label} binary is not regular")
     if descriptor.get("is_symlink") is not False:
         errors.append(f"{label} binary symlink state is unsafe")
-    if descriptor.get("owner_uid") != os.getuid():
+    if descriptor.get("owner_uid") not in {0, os.getuid()}:
         errors.append(f"{label} binary is not owned by the current user")
     mode = descriptor.get("mode")
     if type(mode) is not int or mode & 0o022:
