@@ -27,8 +27,11 @@ Master uses GPT-5.6 Sol / xhigh (Extra High). reviewer_high and boundary_reviewe
 reviewer_xhigh uses Sol/xhigh. Normal and critical implementation stays on Luna/max. Difficult
 escalation uses Sol/high implementation, and the hardest production layer uses Sol/xhigh implementation
 with a fresh Sol/xhigh reviewer. The external_spec_researcher uses Luna/max and is read-only; its
-dedicated OpenAI Developer Docs MCP is capability-isolated to that role and configured availability is
-not proof that the runtime exposed or successfully called the MCP.
+role-scoped OpenAI Developer Docs MCP configuration intent allows only the reviewed documentation
+tools. This declaration is not runtime capability isolation and configured availability is not proof
+that the runtime exposed or successfully called the MCP. Project Apps are explicitly disabled below,
+but global, installed-plugin, and managed runtime policy remain outside this repository configuration's
+authority.
 
 The astra_canary uses GPT-6 Astra / xhigh in a read-only, no-child, no-MCP shadow context for closed
 historical or immutable replay tasks only. It may not implement, repair, control-review, merge, or act as
@@ -90,3 +93,6 @@ New files are configuration intent until the runtime exposes and successfully lo
 enabled = true
 # This is a concurrency guardrail, not a lifetime/per-PR spawn cap. The master/root thread is separate.
 max_concurrent_threads_per_session = 6
+
+[features]
+apps = false

@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -18,6 +20,24 @@ def test_current_project_has_no_unapproved_watchlist_features() -> None:
     checker = _checker()
     config = checker._toml(ROOT / ".codex/config.toml")
     assert checker._watch_only_feature_errors(ROOT, config) == []
+
+
+def test_project_apps_setting_is_explicitly_disabled_as_configuration_intent() -> None:
+    checker = _checker()
+    config = checker._toml(ROOT / ".codex/config.toml")
+    assert config.get("features", {}).get("apps") is False
+
+
+@pytest.mark.parametrize(
+    "config",
+    [{}, {"features": {}}, {"features": {"apps": True}}],
+)
+def test_missing_or_enabled_project_apps_setting_is_rejected(
+    tmp_path: Path, config: dict[str, object]
+) -> None:
+    checker = _checker()
+    errors = checker._watch_only_feature_errors(tmp_path, config)
+    assert any("apps" in error.lower() for error in errors), errors
 
 
 def test_project_local_rules_are_rejected(tmp_path: Path) -> None:
@@ -51,7 +71,9 @@ def test_memories_otel_and_plugins_require_separate_adoption(tmp_path: Path) -> 
 
 def test_explicitly_disabled_memories_remain_allowed(tmp_path: Path) -> None:
     checker = _checker()
-    assert checker._watch_only_feature_errors(tmp_path, {"features": {"memories": False}}) == []
+    assert checker._watch_only_feature_errors(
+        tmp_path, {"features": {"apps": False, "memories": False}}
+    ) == []
 
 
 def test_watchlist_documents_all_reviewed_decisions() -> None:
@@ -59,3 +81,21 @@ def test_watchlist_documents_all_reviewed_decisions() -> None:
     for term in ("Codex Rules", "Permission Profiles", "Codex Memories", "OpenTelemetry", "plugin"):
         assert term in text
     assert "separate reviewed harness PR" in text
+
+
+def test_telemetry_documents_trusted_role_and_config_path() -> None:
+    text = (ROOT / "docs/productionization/CODEX_HARNESS_TELEMETRY.md").read_text(
+        encoding="utf-8"
+    )
+    assert "trusted expected role" in text
+    assert "trusted expected config path" in text
+
+
+def test_audit_protocol_records_official_web_fallback_limitation() -> None:
+    text = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "authorized official web/browser fallback" in text
+    assert "does not satisfy the narrow OpenAI Developer Docs MCP receipt" in text
+    assert "insufficient_evidence" in text
+    assert "GIT_NO_REPLACE_OBJECTS" in text

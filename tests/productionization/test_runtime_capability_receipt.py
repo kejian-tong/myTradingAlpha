@@ -12,9 +12,26 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/runtime_capability_receipt.py"
 ROLE_CONFIG = ".codex/agents/reviewer-high.toml"
+EXTERNAL_ROLE_CONFIG = ".codex/agents/external-spec-researcher.toml"
+_NON_EXTERNAL_ROLES = (
+    "normal_implementer",
+    "high_implementer",
+    "critical_implementer",
+    "reviewer_high",
+    "reviewer_xhigh",
+    "code_explorer",
+    "test_auditor",
+    "boundary_reviewer",
+    "astra_canary",
+)
 
 _REQUIRED_FIELDS = (
     "schema_version",
@@ -82,7 +99,7 @@ def _receipt(**overrides: object) -> dict[str, object]:
         "permission_profile": "disabled",
         "approval_policy": "never",
         "tool_inventory_complete": True,
-        "tool_names": ["mcp__codex_app__read_thread", "view_image"],
+        "tool_names": ["view_image"],
         "observed_at_ms": 0,
     }
     receipt.update(overrides)
@@ -96,13 +113,59 @@ def _errors(
     expected_pr_id: str = "HARNESS-AUD-01",
     expected_base_sha: str | None = None,
     expected_head_sha: str | None = None,
+    expected_role: str | None = None,
+    expected_config_path: str | None = None,
 ) -> list[str]:
+    if expected_role is None or expected_config_path is None:
+        if type(receipt) is dict:
+            candidate_role = receipt.get("role")
+            candidate_config_path = receipt.get("config_path")
+        else:
+            candidate_role = None
+            candidate_config_path = None
+        expected_role = (
+            candidate_role if type(candidate_role) is str else "reviewer_high"
+        )
+        expected_config_path = (
+            candidate_config_path
+            if type(candidate_config_path) is str
+            else ROLE_CONFIG
+        )
     result = _module().verify_receipt(
         receipt,
         repo_root=repo_root,
         expected_pr_id=expected_pr_id,
         expected_base_sha=expected_base_sha or _git("HEAD"),
         expected_head_sha=expected_head_sha or _git("HEAD"),
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
+    )
+    assert isinstance(result, list), "verify_receipt must return a list of admission errors"
+    return result
+
+
+def _trusted_errors(
+    receipt: object,
+    *,
+    expected_role: str,
+    expected_config_path: str,
+    repo_root: Path = ROOT,
+    expected_pr_id: str = "HARNESS-AUD-01",
+    expected_base_sha: str | None = None,
+    expected_head_sha: str | None = None,
+) -> list[str]:
+    parameters = inspect.signature(_module().verify_receipt).parameters
+    for name in ("expected_role", "expected_config_path"):
+        assert name in parameters, f"verify_receipt must require trusted {name}"
+        assert parameters[name].default is inspect.Parameter.empty
+    result = _module().verify_receipt(
+        receipt,
+        repo_root=repo_root,
+        expected_pr_id=expected_pr_id,
+        expected_base_sha=expected_base_sha or _git("HEAD"),
+        expected_head_sha=expected_head_sha or _git("HEAD"),
+        expected_role=expected_role,
+        expected_config_path=expected_config_path,
     )
     assert isinstance(result, list), "verify_receipt must return a list of admission errors"
     return result
@@ -125,6 +188,10 @@ def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
             _git("HEAD"),
             "--expected-head-sha",
             _git("HEAD"),
+            "--expected-role",
+            "reviewer_high",
+            "--expected-config-path",
+            ROLE_CONFIG,
         ],
         cwd=ROOT,
         text=True,
@@ -188,7 +255,13 @@ def test_valid_receipt_is_structural_contract_evidence_only() -> None:
 def test_trusted_expectations_are_mandatory_verifier_inputs() -> None:
     parameters = inspect.signature(_module().verify_receipt).parameters
 
-    for name in ("expected_pr_id", "expected_base_sha", "expected_head_sha"):
+    for name in (
+        "expected_pr_id",
+        "expected_base_sha",
+        "expected_head_sha",
+        "expected_role",
+        "expected_config_path",
+    ):
         assert name in parameters
         assert parameters[name].default is inspect.Parameter.empty
 
@@ -421,6 +494,64 @@ def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path:
     ) == []
 
 
+def test_repository_replace_cannot_substitute_trusted_head_tree(tmp_path: Path) -> None:
+    repo, original_head, _original_tree = _temporary_repo(tmp_path)
+    role_path = repo / ROLE_CONFIG
+    role_path.write_text(
+        role_path.read_text(encoding="utf-8").replace(
+            'model = "gpt-5.6-sol"', 'model = "replacement-model"'
+        )
+        + 'mcp_policy = "replacement-intent"\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", ROLE_CONFIG], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Receipt Test",
+            "-c",
+            "user.email=receipt@example.invalid",
+            "commit",
+            "-qm",
+            "replacement",
+        ],
+        check=True,
+    )
+    replacement_head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    replacement_tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", original_head], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "replace", original_head, replacement_head],
+        check=True,
+    )
+    try:
+        errors = _errors(
+            _receipt(
+                model="replacement-model",
+                base_sha=original_head,
+                head_sha=original_head,
+                tree_sha=replacement_tree,
+            ),
+            repo_root=repo,
+            expected_base_sha=original_head,
+            expected_head_sha=original_head,
+        )
+    finally:
+        subprocess.run(
+            ["git", "-C", str(repo), "replace", "-d", original_head],
+            check=True,
+        )
+
+    assert errors
+
+
 def test_promisor_repository_rejects_before_lazy_fetch_or_object_mutation(
     tmp_path: Path,
 ) -> None:
@@ -549,6 +680,8 @@ def test_ambient_git_redirects_cannot_override_repo_root(
         expected_pr_id="HARNESS-AUD-01",
         expected_base_sha=head,
         expected_head_sha=head,
+        expected_role="reviewer_high",
+        expected_config_path=ROLE_CONFIG,
     )
 
     assert errors == ["repository binding is unavailable"]
@@ -558,6 +691,7 @@ def test_ambient_git_redirects_cannot_override_repo_root(
         environment
         == {
             "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
         }
@@ -618,6 +752,228 @@ def test_incomplete_tool_inventory_fails_closed() -> None:
     assert _errors(_receipt(tool_inventory_complete=False))
 
 
+def _configured_external_mcp_tool_names() -> list[str]:
+    configured = tomllib.loads(
+        (ROOT / EXTERNAL_ROLE_CONFIG).read_text(encoding="utf-8")
+    )
+    tools = configured["mcp_servers"]["openaiDeveloperDocs"]["enabled_tools"]
+    return [f"mcp__openaiDeveloperDocs__{tool}" for tool in tools]
+
+
+def _external_spec_receipt(**overrides: object) -> dict[str, object]:
+    receipt = _receipt(
+        role="external_spec_researcher",
+        config_path=EXTERNAL_ROLE_CONFIG,
+        model="gpt-5.6-luna",
+        reasoning_effort="max",
+        tool_names=_configured_external_mcp_tool_names(),
+    )
+    receipt.update(overrides)
+    return receipt
+
+
+def test_external_spec_researcher_allows_only_exact_openai_docs_mcp_tools() -> None:
+    assert _errors(_external_spec_receipt()) == []
+
+
+def test_receipt_cannot_self_select_external_spec_researcher() -> None:
+    errors = _trusted_errors(
+        _external_spec_receipt(),
+        expected_role="reviewer_high",
+        expected_config_path=ROLE_CONFIG,
+    )
+    assert errors
+
+
+def test_receipt_must_match_trusted_role_and_config_path() -> None:
+    errors = _trusted_errors(
+        _receipt(),
+        expected_role="code_explorer",
+        expected_config_path=".codex/agents/code-explorer.toml",
+    )
+    assert errors
+
+
+def _temporary_external_repo(
+    tmp_path: Path,
+    mcp_configuration: str,
+) -> tuple[Path, str, str]:
+    repo = tmp_path / "external-repo"
+    config = repo / EXTERNAL_ROLE_CONFIG
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "\n".join(
+            (
+                'name = "external_spec_researcher"',
+                'model = "gpt-5.6-luna"',
+                'model_reasoning_effort = "max"',
+                'sandbox_mode = "read-only"',
+                "[agents]",
+                "enabled = false",
+                "[mcp_servers.openaiDeveloperDocs]",
+                mcp_configuration,
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", EXTERNAL_ROLE_CONFIG], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Receipt Test",
+            "-c",
+            "user.email=receipt@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    return repo, head, tree
+
+
+@pytest.mark.parametrize(
+    ("mcp_configuration", "valid"),
+    [
+        (
+            'url = "https://developers.openai.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+            True,
+        ),
+        (
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+            False,
+        ),
+        (
+            'url = "https://example.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
+            False,
+        ),
+        ('url = "https://developers.openai.com/mcp"', False),
+        (
+            'url = "https://developers.openai.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_docs", "search_openai_docs"]',
+            False,
+        ),
+        (
+            'url = "https://developers.openai.com/mcp"\n'
+            'enabled_tools = ["fetch_openai_doc", "search_openai_docs", "extra"]',
+            False,
+        ),
+    ],
+)
+def test_external_spec_receipt_requires_exact_tree_mcp_intent(
+    tmp_path: Path, mcp_configuration: str, valid: bool
+) -> None:
+    repo, head, tree = _temporary_external_repo(tmp_path, mcp_configuration)
+    receipt = _external_spec_receipt(base_sha=head, head_sha=head, tree_sha=tree)
+    errors = _errors(
+        receipt,
+        repo_root=repo,
+        expected_base_sha=head,
+        expected_head_sha=head,
+    )
+    if valid:
+        assert errors == []
+    else:
+        assert errors
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "mcp.openaiDeveloperDocs.search_openai_docs",
+        "mcp:/openaiDeveloperDocs/search_openai_docs",
+        "github.create_pull_request",
+        "codex_app.send_message_to_thread",
+        "plugin__github__create_pull_request",
+    ],
+)
+def test_noncanonical_external_tool_names_fail_closed(tool_name: str) -> None:
+    """Only the canonical mcp__server__tool surface is eligible for MCP admission."""
+    assert _errors(_external_spec_receipt(tool_names=[tool_name]))
+
+
+def _configured_role(role: str) -> tuple[str, dict[str, object]]:
+    config_path = f".codex/agents/{role.replace('_', '-')}.toml"
+    config = tomllib.loads((ROOT / config_path).read_text(encoding="utf-8"))
+    return config_path, config
+
+
+@pytest.mark.parametrize("role", _NON_EXTERNAL_ROLES)
+def test_every_non_external_role_rejects_mcp_tools(role: str) -> None:
+    config_path, config = _configured_role(role)
+    receipt = _receipt(
+        role=role,
+        config_path=config_path,
+        model=config["model"],
+        reasoning_effort=config["model_reasoning_effort"],
+        tool_names=["mcp__openaiDeveloperDocs__search_openai_docs"],
+    )
+    assert _errors(receipt)
+
+
+@pytest.mark.parametrize(
+    ("role", "model", "effort", "config_path"),
+    [
+        (
+            "reviewer_high",
+            "gpt-5.6-sol",
+            "high",
+            ".codex/agents/reviewer-high.toml",
+        ),
+        (
+            "code_explorer",
+            "gpt-5.6-luna",
+            "max",
+            ".codex/agents/code-explorer.toml",
+        ),
+    ],
+)
+def test_default_read_only_roles_reject_external_mcp_tools(
+    role: str, model: str, effort: str, config_path: str
+) -> None:
+    valid = _receipt(
+        role=role,
+        model=model,
+        reasoning_effort=effort,
+        config_path=config_path,
+        tool_names=["view_image"],
+    )
+    assert _errors(valid) == []
+    assert _errors(
+        {**valid, "tool_names": ["mcp__openaiDeveloperDocs__search_openai_docs"]}
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "mcp__openaiDeveloperDocs__fetch_openai_docs",
+        "mcp__openaiDeveloperDocs__unknown",
+        "mcp__codex_app__read_thread",
+        "mcp__github__list_pull_requests",
+        "mcp__gmail__send_email",
+        "mcp__sites__publish",
+    ],
+)
+def test_external_spec_researcher_rejects_wrong_or_unrelated_mcp_tools(
+    tool_name: str,
+) -> None:
+    assert _errors(_external_spec_receipt(tool_names=[tool_name]))
+
+
 def test_duplicate_tool_names_fail_closed() -> None:
     assert _errors(_receipt(tool_names=["view_image", "view_image"]))
 
@@ -643,7 +999,6 @@ def test_explicit_mutation_tool_exposure_fails_closed(tool_name: str) -> None:
         "apply_patch",
         "exec_command",
         "write_stdin",
-        "mcp__codex_app__get_handoff_status",
     ],
 )
 def test_sandbox_governed_local_tools_are_allowed_in_read_only_sandbox(
@@ -872,7 +1227,13 @@ def test_cli_requires_all_trusted_expectations(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0, result.stdout
-    for option in ("--expected-pr-id", "--expected-base-sha", "--expected-head-sha"):
+    for option in (
+        "--expected-pr-id",
+        "--expected-base-sha",
+        "--expected-head-sha",
+        "--expected-role",
+        "--expected-config-path",
+    ):
         assert option in result.stdout
 
 

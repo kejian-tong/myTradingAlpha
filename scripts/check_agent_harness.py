@@ -62,6 +62,7 @@ _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _TELEMETRY_CLEANUP_HOOK = "SessionEnd"
 _PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
+_OPENAI_DOCS_MCP_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
 
 
@@ -188,7 +189,7 @@ def _hook_errors(root: Path) -> list[str]:
 
 
 def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
-    """Reject project-local adoption of deliberately watched Codex capabilities."""
+    """Reject unreviewed project features and enforce narrow configuration intent."""
     errors = []
     if (root / ".codex/rules").exists():
         errors.append("project-local Codex Rules require a separate reviewed adoption PR")
@@ -203,6 +204,13 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
         errors.append("Codex OpenTelemetry exporters require a separate reviewed adoption PR")
     if "plugins" in config:
         errors.append("repo-level Codex plugin configuration requires a separate reviewed adoption PR")
+    if type(features) is not dict or features.get("apps") is not False:
+        errors.append(
+            "project Codex Apps configuration intent must set features.apps = false; "
+            "inherited/global/plugin/managed runtime Apps remain outside this checker"
+        )
+    if "mcp_servers" in config:
+        errors.append("project-level MCP servers are not permitted; configure only the reviewed role intent")
     return errors
 
 
@@ -263,15 +271,22 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append(f"invalid name/model/effort for {name}")
             if role.get("agents") != {"enabled": False}:
                 errors.append(f"{name} must disable nested delegation")
+            if "features" in role:
+                errors.append(f"{name} must not declare role-level features or override project Apps")
             if readonly and role.get("sandbox_mode") != "read-only":
                 errors.append(f"{name} must request read-only mode")
             mcp_servers = role.get("mcp_servers")
             if name == "external_spec_researcher":
-                expected_mcp = {"openaiDeveloperDocs": {"url": _OPENAI_DOCS_MCP_URL}}
+                expected_mcp = {
+                    "openaiDeveloperDocs": {
+                        "url": _OPENAI_DOCS_MCP_URL,
+                        "enabled_tools": _OPENAI_DOCS_MCP_TOOLS,
+                    }
+                }
                 if mcp_servers != expected_mcp:
-                    errors.append("external_spec_researcher OpenAI docs MCP differs from reviewed policy")
-            elif mcp_servers:
-                errors.append(f"{name} must not receive external MCP servers")
+                    errors.append("external_spec_researcher OpenAI docs MCP configuration intent differs from reviewed policy")
+            elif "mcp_servers" in role:
+                errors.append(f"{name} must not declare role-level MCP configuration intent")
             instructions = role.get("developer_instructions", "")
             if type(instructions) is not str or any(
                 clause not in instructions for clause in _COLLABORATION_INSTRUCTION_CONTRACT

@@ -53,4 +53,4 @@ def test_astra_canary_mcp_leak_is_rejected(tmp_path: Path) -> None:
     _copy_harness(tmp_path)
     path = tmp_path / ".codex/agents/astra-canary.toml"
     path.write_text(path.read_text() + '\n[mcp_servers.bad]\nurl = "https://example.com"\n')
-    assert "astra_canary must not receive external MCP servers" in checker.configuration_errors(tmp_path)
+    assert "astra_canary must not declare role-level MCP configuration intent" in checker.configuration_errors(tmp_path)
