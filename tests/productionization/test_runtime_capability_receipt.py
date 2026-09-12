@@ -99,7 +99,7 @@ def _receipt(**overrides: object) -> dict[str, object]:
         "permission_profile": "disabled",
         "approval_policy": "never",
         "tool_inventory_complete": True,
-        "tool_names": ["view_image"],
+        "tool_names": [],
         "observed_at_ms": 0,
     }
     receipt.update(overrides)
@@ -123,13 +123,9 @@ def _errors(
         else:
             candidate_role = None
             candidate_config_path = None
-        expected_role = (
-            candidate_role if type(candidate_role) is str else "reviewer_high"
-        )
+        expected_role = candidate_role if type(candidate_role) is str else "reviewer_high"
         expected_config_path = (
-            candidate_config_path
-            if type(candidate_config_path) is str
-            else ROLE_CONFIG
+            candidate_config_path if type(candidate_config_path) is str else ROLE_CONFIG
         )
     result = _module().verify_receipt(
         receipt,
@@ -432,9 +428,7 @@ def test_receipt_base_must_equal_trusted_ancestor_base(tmp_path: Path) -> None:
         ],
         check=True,
     )
-    head = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
-    ).strip()
+    head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     tree = subprocess.check_output(
         ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
     ).strip()
@@ -479,19 +473,22 @@ def test_trusted_base_must_be_an_ancestor_of_trusted_head(tmp_path: Path) -> Non
 def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path: Path) -> None:
     repo, head, tree = _temporary_repo(tmp_path)
     (repo / ROLE_CONFIG).write_text(
-        (repo / ROLE_CONFIG).read_text(encoding="utf-8").replace(
-            'model = "gpt-5.6-sol"', 'model = "dirty-untrusted-model"'
-        ),
+        (repo / ROLE_CONFIG)
+        .read_text(encoding="utf-8")
+        .replace('model = "gpt-5.6-sol"', 'model = "dirty-untrusted-model"'),
         encoding="utf-8",
     )
     receipt = _receipt(base_sha=head, head_sha=head, tree_sha=tree)
 
-    assert _errors(
-        receipt,
-        repo_root=repo,
-        expected_base_sha=head,
-        expected_head_sha=head,
-    ) == []
+    assert (
+        _errors(
+            receipt,
+            repo_root=repo,
+            expected_base_sha=head,
+            expected_head_sha=head,
+        )
+        == []
+    )
 
 
 def test_repository_replace_cannot_substitute_trusted_head_tree(tmp_path: Path) -> None:
@@ -576,9 +573,7 @@ def test_promisor_repository_rejects_before_lazy_fetch_or_object_mutation(
     sentinel_marker = tmp_path / "upload-pack-called"
     sentinel = tmp_path / "upload-pack-sentinel.sh"
     sentinel.write_text(
-        "#!/bin/sh\n"
-        f": > {shlex.quote(str(sentinel_marker))}\n"
-        "exit 97\n",
+        f"#!/bin/sh\n: > {shlex.quote(str(sentinel_marker))}\nexit 97\n",
         encoding="utf-8",
     )
     sentinel.chmod(0o755)
@@ -664,11 +659,7 @@ def test_ambient_git_redirects_cannot_override_repo_root(
         environment = kwargs.get("env")
         assert type(environment) is dict
         observed_git_environments.append(
-            {
-                key: value
-                for key, value in environment.items()
-                if key.startswith("GIT_")
-            }
+            {key: value for key, value in environment.items() if key.startswith("GIT_")}
         )
         return real_run(*args, **kwargs)
 
@@ -703,16 +694,17 @@ def test_model_is_derived_from_exact_role_toml_without_a_global_allowlist(
     tmp_path: Path,
 ) -> None:
     repo, head, tree = _temporary_repo(tmp_path, model="future-model-test")
-    receipt = _receipt(
-        model="future-model-test", base_sha=head, head_sha=head, tree_sha=tree
-    )
+    receipt = _receipt(model="future-model-test", base_sha=head, head_sha=head, tree_sha=tree)
 
-    assert _errors(
-        receipt,
-        repo_root=repo,
-        expected_base_sha=head,
-        expected_head_sha=head,
-    ) == []
+    assert (
+        _errors(
+            receipt,
+            repo_root=repo,
+            expected_base_sha=head,
+            expected_head_sha=head,
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -722,7 +714,9 @@ def test_model_is_derived_from_exact_role_toml_without_a_global_allowlist(
         ("permission_profile", "workspace-write"),
     ],
 )
-def test_read_only_role_rejects_non_read_only_effective_capability(field: str, value: object) -> None:
+def test_read_only_role_rejects_non_read_only_effective_capability(
+    field: str, value: object
+) -> None:
     assert _errors(_receipt(**{field: value}))
 
 
@@ -739,25 +733,20 @@ def test_disabled_permission_profile_is_not_read_only_when_profile_governs() -> 
 
 
 def test_read_only_permission_profile_can_govern_independently_of_legacy_sandbox() -> None:
-    assert _errors(
-        _receipt(
-            permission_system="permission_profile",
-            sandbox_mode="disabled",
-            permission_profile=":read-only",
+    assert (
+        _errors(
+            _receipt(
+                permission_system="permission_profile",
+                sandbox_mode="disabled",
+                permission_profile=":read-only",
+            )
         )
-    ) == []
+        == []
+    )
 
 
 def test_incomplete_tool_inventory_fails_closed() -> None:
     assert _errors(_receipt(tool_inventory_complete=False))
-
-
-def _configured_external_mcp_tool_names() -> list[str]:
-    configured = tomllib.loads(
-        (ROOT / EXTERNAL_ROLE_CONFIG).read_text(encoding="utf-8")
-    )
-    tools = configured["mcp_servers"]["openaiDeveloperDocs"]["enabled_tools"]
-    return [f"mcp__openaiDeveloperDocs__{tool}" for tool in tools]
 
 
 def _external_spec_receipt(**overrides: object) -> dict[str, object]:
@@ -766,14 +755,20 @@ def _external_spec_receipt(**overrides: object) -> dict[str, object]:
         config_path=EXTERNAL_ROLE_CONFIG,
         model="gpt-5.6-luna",
         reasoning_effort="max",
-        tool_names=_configured_external_mcp_tool_names(),
+        tool_names=[],
     )
     receipt.update(overrides)
     return receipt
 
 
-def test_external_spec_researcher_allows_only_exact_openai_docs_mcp_tools() -> None:
-    assert _errors(_external_spec_receipt()) == []
+def test_external_spec_researcher_has_no_admissible_runtime_receipt() -> None:
+    errors = _errors(_external_spec_receipt())
+    assert any("no admissible runtime receipt" in error for error in errors)
+
+
+def test_external_spec_role_declares_no_mcp_server() -> None:
+    configured = tomllib.loads((ROOT / EXTERNAL_ROLE_CONFIG).read_text(encoding="utf-8"))
+    assert "mcp_servers" not in configured
 
 
 def test_receipt_cannot_self_select_external_spec_researcher() -> None:
@@ -792,102 +787,6 @@ def test_receipt_must_match_trusted_role_and_config_path() -> None:
         expected_config_path=".codex/agents/code-explorer.toml",
     )
     assert errors
-
-
-def _temporary_external_repo(
-    tmp_path: Path,
-    mcp_configuration: str,
-) -> tuple[Path, str, str]:
-    repo = tmp_path / "external-repo"
-    config = repo / EXTERNAL_ROLE_CONFIG
-    config.parent.mkdir(parents=True)
-    config.write_text(
-        "\n".join(
-            (
-                'name = "external_spec_researcher"',
-                'model = "gpt-5.6-luna"',
-                'model_reasoning_effort = "max"',
-                'sandbox_mode = "read-only"',
-                "[agents]",
-                "enabled = false",
-                "[mcp_servers.openaiDeveloperDocs]",
-                mcp_configuration,
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", EXTERNAL_ROLE_CONFIG], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.name=Receipt Test",
-            "-c",
-            "user.email=receipt@example.invalid",
-            "commit",
-            "-qm",
-            "fixture",
-        ],
-        check=True,
-    )
-    head = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
-    ).strip()
-    tree = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
-    ).strip()
-    return repo, head, tree
-
-
-@pytest.mark.parametrize(
-    ("mcp_configuration", "valid"),
-    [
-        (
-            'url = "https://developers.openai.com/mcp"\n'
-            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
-            True,
-        ),
-        (
-            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
-            False,
-        ),
-        (
-            'url = "https://example.com/mcp"\n'
-            'enabled_tools = ["fetch_openai_doc", "search_openai_docs"]',
-            False,
-        ),
-        ('url = "https://developers.openai.com/mcp"', False),
-        (
-            'url = "https://developers.openai.com/mcp"\n'
-            'enabled_tools = ["fetch_openai_docs", "search_openai_docs"]',
-            False,
-        ),
-        (
-            'url = "https://developers.openai.com/mcp"\n'
-            'enabled_tools = ["fetch_openai_doc", "search_openai_docs", "extra"]',
-            False,
-        ),
-    ],
-)
-def test_external_spec_receipt_requires_exact_tree_mcp_intent(
-    tmp_path: Path, mcp_configuration: str, valid: bool
-) -> None:
-    repo, head, tree = _temporary_external_repo(tmp_path, mcp_configuration)
-    receipt = _external_spec_receipt(base_sha=head, head_sha=head, tree_sha=tree)
-    errors = _errors(
-        receipt,
-        repo_root=repo,
-        expected_base_sha=head,
-        expected_head_sha=head,
-    )
-    if valid:
-        assert errors == []
-    else:
-        assert errors
 
 
 @pytest.mark.parametrize(
@@ -949,12 +848,10 @@ def test_default_read_only_roles_reject_external_mcp_tools(
         model=model,
         reasoning_effort=effort,
         config_path=config_path,
-        tool_names=["view_image"],
+        tool_names=[],
     )
     assert _errors(valid) == []
-    assert _errors(
-        {**valid, "tool_names": ["mcp__openaiDeveloperDocs__search_openai_docs"]}
-    )
+    assert _errors({**valid, "tool_names": ["mcp__openaiDeveloperDocs__search_openai_docs"]})
 
 
 @pytest.mark.parametrize(
@@ -968,7 +865,7 @@ def test_default_read_only_roles_reject_external_mcp_tools(
         "mcp__sites__publish",
     ],
 )
-def test_external_spec_researcher_rejects_wrong_or_unrelated_mcp_tools(
+def test_external_spec_researcher_rejects_every_mcp_tool(
     tool_name: str,
 ) -> None:
     assert _errors(_external_spec_receipt(tool_names=[tool_name]))
@@ -1001,10 +898,10 @@ def test_explicit_mutation_tool_exposure_fails_closed(tool_name: str) -> None:
         "write_stdin",
     ],
 )
-def test_sandbox_governed_local_tools_are_allowed_in_read_only_sandbox(
+def test_sandbox_governed_local_tools_are_rejected_for_zero_tool_roles(
     tool_name: str,
 ) -> None:
-    assert _errors(_receipt(tool_names=[tool_name])) == []
+    assert _errors(_receipt(tool_names=[tool_name]))
 
 
 @pytest.mark.parametrize(
@@ -1065,10 +962,10 @@ def test_gateway_and_namespaced_collaboration_aliases_are_rejected(
         "collaboration__wait_agent",
     ],
 )
-def test_read_only_collaboration_observation_aliases_are_allowed(
+def test_read_only_collaboration_observation_aliases_are_rejected(
     tool_name: str,
 ) -> None:
-    assert _errors(_receipt(tool_names=[tool_name])) == []
+    assert _errors(_receipt(tool_names=[tool_name]))
 
 
 def test_container_subclasses_are_rejected_before_callbacks() -> None:

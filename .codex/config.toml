@@ -65,12 +65,13 @@ expose collaboration controls. Collaboration-control visibility alone is non-blo
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.
 
-For every read-only lane, invoke `scripts/read_only_role_launcher.py` as an isolated top-level role
-invocation. An in-process child under a writable or unverified parent is non-admissible; model self-report,
-JSONL, doctor output, static TOML, hooks, and telemetry are not host attestation. Launcher preflight or
-post-run gaps return `insufficient_evidence`; schema-v1 receipts are historical supplemental evidence and
-the per-run Permission Profile is only a narrow pilot, not a global migration. No mandatory first-turn
-handshake is relied on.
+For every ordinary read-only lane, invoke `scripts/read_only_role_launcher.py` with its canonical exact-object
+static review bundle and zero-tool runtime. The model receives no shell, file, MCP, Apps, web, browser,
+computer, image, collaboration, permission, approval, discovery, or mutation tool. The launcher requires a
+same-PID `READY` / `RELEASE` bootstrap before the exact signed client can receive candidate bytes. Missing
+context, unsafe objects, runtime/tool contradictions, or post-run drift return `insufficient_evidence`; there
+is no shell fallback. `external_spec_researcher` is unavailable through this launcher until its separate
+remote isolation boundary is proven, and candidate bundles are never sent to that lane.
 
 Record complete runtime observation and stop on an actual non-master invocation attempt; retain
 `telemetry_conflict` for separate route/loading contradictions.

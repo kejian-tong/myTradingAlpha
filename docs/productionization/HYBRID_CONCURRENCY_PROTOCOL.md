@@ -41,11 +41,14 @@ including a runtime-denied or no-op attempt, is a blocking violation. Complete o
 accept that no invocation occurred, and `telemetry_conflict` remains a separate blocking signal for actual
 route/loading contradictions.
 
-Read-only lanes use `scripts/read_only_role_launcher.py` for an isolated top-level role invocation. An
-in-process child under a writable or unverified parent is non-admissible; launcher preflight/post-run gaps
-return `insufficient_evidence`. Schema-v1 receipts are supplemental only, the per-run Permission Profile
-is a narrow pilot, and no mandatory first-turn handshake substitutes for the launcher. This does not alter
-the one-writer rule or authorize a merge.
+Ordinary read-only lanes use `scripts/read_only_role_launcher.py` as Master-owned, top-level, zero-tool
+static reviews over one canonical exact-object bundle. The model has no shell, file, MCP, Apps, web,
+collaboration, or mutation tool. A validated bootstrap blocks at `READY`; the parent verifies
+`PID == PGID == SID`, arms observation, and sends `RELEASE` before the same PID executes the exact signed
+client and receives candidate bytes. Missing context, any tool event, or runtime/exact-head contradiction
+returns `insufficient_evidence`; there is no shell fallback. `external_spec_researcher` remains unavailable
+through this path and never receives a candidate bundle. This does not alter the one-writer rule or
+authorize a merge.
 
 ## 3. Concurrency budget
 

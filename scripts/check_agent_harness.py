@@ -44,25 +44,55 @@ _SKILL_NAMES = (
 )
 _ORDER = tuple(
     f"{prefix}-{number:02d}"
-    for prefix, count in (("FND", 4), ("PIT", 6), ("SIG", 5), ("BT", 6), ("RSK", 5),
-                          ("EXC", 4), ("EXP", 4), ("OMS", 6), ("FWD", 3), ("LIVE", 4))
+    for prefix, count in (
+        ("FND", 4),
+        ("PIT", 6),
+        ("SIG", 5),
+        ("BT", 6),
+        ("RSK", 5),
+        ("EXC", 4),
+        ("EXP", 4),
+        ("OMS", 6),
+        ("FWD", 3),
+        ("LIVE", 4),
+    )
     for number in range(1, count + 1)
 )
-_HASH_FIELDS = ("head_sha", "base_sha", "review_head_sha", "review_base_sha", "ci_head_sha",
-                "source_tree", "ci_checkout_tree")
+_HASH_FIELDS = (
+    "head_sha",
+    "base_sha",
+    "review_head_sha",
+    "review_base_sha",
+    "ci_head_sha",
+    "source_tree",
+    "ci_checkout_tree",
+)
 _TRUE_FIELDS = ("prerequisites_verified", "named_role_loaded", "ci_pass", "review_approved")
 _FALSE_FIELDS = ("telemetry_conflict", "blocking_findings")
-_TEXT_FIELDS = ("operation", "session_id", "authorized_session_id", "pr_id", "stop_after",
-                "implementer_context", "reviewer_context")
-_GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
-                "authorized_operations", "active_writers", "collaboration_controls_visible",
-                "collaboration_observation_complete", "non_master_collaboration_invoked"}
+_TEXT_FIELDS = (
+    "operation",
+    "session_id",
+    "authorized_session_id",
+    "pr_id",
+    "stop_after",
+    "implementer_context",
+    "reviewer_context",
+)
+_GATE_FIELDS = {
+    *_HASH_FIELDS,
+    *_TRUE_FIELDS,
+    *_FALSE_FIELDS,
+    *_TEXT_FIELDS,
+    "authorized_operations",
+    "active_writers",
+    "collaboration_controls_visible",
+    "collaboration_observation_complete",
+    "non_master_collaboration_invoked",
+}
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _TELEMETRY_CLEANUP_HOOK = "SessionEnd"
 _PRETOOL_HOOK = "PreToolUse"
-_OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
-_OPENAI_DOCS_MCP_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
 
 
@@ -77,7 +107,9 @@ def _toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def _single_hook_handler(event_map: dict, event: str, errors: list[str]) -> tuple[dict, dict] | None:
+def _single_hook_handler(
+    event_map: dict, event: str, errors: list[str]
+) -> tuple[dict, dict] | None:
     entries = event_map.get(event)
     if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
         errors.append(f"{event} must have exactly one project hook entry")
@@ -104,7 +136,9 @@ def _hook_errors(root: Path) -> list[str]:
         errors.append("missing Codex PreToolUse destructive-command guard")
     hooks = json.loads(hook_path.read_text(encoding="utf-8"))
     event_map = hooks.get("hooks") if isinstance(hooks, dict) else None
-    expected_events = set(_GUARD_HOOKS) | _TELEMETRY_HOOKS | {_TELEMETRY_CLEANUP_HOOK, _PRETOOL_HOOK}
+    expected_events = (
+        set(_GUARD_HOOKS) | _TELEMETRY_HOOKS | {_TELEMETRY_CLEANUP_HOOK, _PRETOOL_HOOK}
+    )
     if not isinstance(event_map, dict) or set(event_map) != expected_events:
         return [*errors, "project hooks differ from reviewed telemetry-v3 event set"]
 
@@ -119,7 +153,11 @@ def _hook_errors(root: Path) -> list[str]:
             errors.append(f"{event} hook must be a synchronous command")
         if handler.get("timeout") != 15:
             errors.append(f"{event} hook timeout differs from reviewed policy")
-        if not isinstance(command, str) or "codex_hook_guard.py" not in command or mode not in command:
+        if (
+            not isinstance(command, str)
+            or "codex_hook_guard.py" not in command
+            or mode not in command
+        ):
             errors.append(f"{event} Unix hook command differs from reviewed policy")
         if (
             not isinstance(command_windows, str)
@@ -138,7 +176,9 @@ def _hook_errors(root: Path) -> list[str]:
         if handler.get("type") != "command" or handler.get("async") is not False:
             errors.append("PreToolUse destructive-command guard must be synchronous")
         if handler.get("timeout") != 5:
-            errors.append("PreToolUse destructive-command guard timeout differs from reviewed policy")
+            errors.append(
+                "PreToolUse destructive-command guard timeout differs from reviewed policy"
+            )
         if not isinstance(command, str) or "codex_pretool_guard.py" not in command:
             errors.append("PreToolUse Unix command differs from reviewed policy")
         if not isinstance(command_windows, str) or "codex_pretool_guard.py" not in command_windows:
@@ -194,7 +234,9 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
     if (root / ".codex/rules").exists():
         errors.append("project-local Codex Rules require a separate reviewed adoption PR")
     if "default_permissions" in config or "permissions" in config:
-        errors.append("Codex Permission Profiles are watch-only while sandbox_mode isolation is active")
+        errors.append(
+            "Codex Permission Profiles are watch-only while sandbox_mode isolation is active"
+        )
     features = config.get("features")
     if isinstance(features, dict) and features.get("memories") not in (None, False):
         errors.append("Codex Memories are watch-only for this auditable repository harness")
@@ -203,14 +245,18 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
     if "otel" in config:
         errors.append("Codex OpenTelemetry exporters require a separate reviewed adoption PR")
     if "plugins" in config:
-        errors.append("repo-level Codex plugin configuration requires a separate reviewed adoption PR")
+        errors.append(
+            "repo-level Codex plugin configuration requires a separate reviewed adoption PR"
+        )
     if type(features) is not dict or features.get("apps") is not False:
         errors.append(
             "project Codex Apps configuration intent must set features.apps = false; "
             "inherited/global/plugin/managed runtime Apps remain outside this checker"
         )
     if "mcp_servers" in config:
-        errors.append("project-level MCP servers are not permitted; configure only the reviewed role intent")
+        errors.append(
+            "project-level MCP servers are not permitted; configure only the reviewed role intent"
+        )
     return errors
 
 
@@ -239,14 +285,23 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
             errors.append(f"missing skill description: {name}")
         if name not in root_text:
             errors.append(f"root AGENTS.md does not advertise repo skill: {name}")
-    if "`astra_canary`" not in root_text or "GPT-6 production routes remain disabled" not in root_text:
+    if (
+        "`astra_canary`" not in root_text
+        or "GPT-6 production routes remain disabled" not in root_text
+    ):
         errors.append("root Astra canary policy is missing or activates GPT-6 production routing")
     watchlist = root / _WATCHLIST_PATH
     if not watchlist.is_file():
         errors.append("missing Codex feature adoption watchlist")
     else:
         text = watchlist.read_text(encoding="utf-8")
-        for term in ("Codex Rules", "Permission Profiles", "Codex Memories", "OpenTelemetry", "plugin"):
+        for term in (
+            "Codex Rules",
+            "Permission Profiles",
+            "Codex Memories",
+            "OpenTelemetry",
+            "plugin",
+        ):
             if term not in text:
                 errors.append(f"Codex feature watchlist is missing decision: {term}")
     return errors
@@ -267,25 +322,21 @@ def configuration_errors(root: Path) -> list[str]:
             errors.append("named role file set differs from reviewed policy")
         for name, (model, effort, readonly) in _ROLES.items():
             role = _toml(root / ".codex/agents" / (name.replace("_", "-") + ".toml"))
-            if (role.get("name"), role.get("model"), role.get("model_reasoning_effort")) != (name, model, effort):
+            if (role.get("name"), role.get("model"), role.get("model_reasoning_effort")) != (
+                name,
+                model,
+                effort,
+            ):
                 errors.append(f"invalid name/model/effort for {name}")
             if role.get("agents") != {"enabled": False}:
                 errors.append(f"{name} must disable nested delegation")
             if "features" in role:
-                errors.append(f"{name} must not declare role-level features or override project Apps")
+                errors.append(
+                    f"{name} must not declare role-level features or override project Apps"
+                )
             if readonly and role.get("sandbox_mode") != "read-only":
                 errors.append(f"{name} must request read-only mode")
-            mcp_servers = role.get("mcp_servers")
-            if name == "external_spec_researcher":
-                expected_mcp = {
-                    "openaiDeveloperDocs": {
-                        "url": _OPENAI_DOCS_MCP_URL,
-                        "enabled_tools": _OPENAI_DOCS_MCP_TOOLS,
-                    }
-                }
-                if mcp_servers != expected_mcp:
-                    errors.append("external_spec_researcher OpenAI docs MCP configuration intent differs from reviewed policy")
-            elif "mcp_servers" in role:
+            if "mcp_servers" in role:
                 errors.append(f"{name} must not declare role-level MCP configuration intent")
             instructions = role.get("developer_instructions", "")
             if type(instructions) is not str or any(
@@ -298,9 +349,21 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append("initial implementer must inherit normal/high/critical safety class")
             if name == "astra_canary" and (
                 type(instructions) is not str
-                or not all(term in instructions for term in ("shadow-only", "historical", "active candidate"))
+                or not all(
+                    term in instructions
+                    for term in ("shadow-only", "historical", "active candidate")
+                )
             ):
-                errors.append("astra_canary instructions must remain shadow-only historical evaluation")
+                errors.append(
+                    "astra_canary instructions must remain shadow-only historical evaluation"
+                )
+            if name == "external_spec_researcher" and (
+                type(instructions) is not str
+                or "No model-accessible tools" not in instructions
+                or "Candidate bundles" not in instructions
+                or "before model start" not in instructions
+            ):
+                errors.append("external_spec_researcher must remain unavailable before model start")
         errors.extend(_hook_errors(root))
         errors.extend(_instruction_and_skill_errors(root))
         for filename in ("AGENT_AUDIT_PROTOCOL.md", "PR_IMPLEMENTATION_SPEC_TEMPLATE.md"):
@@ -319,11 +382,15 @@ def gate_errors(record: object) -> list[str]:
     if type(record) is not dict or set(record) != _GATE_FIELDS:
         return ["missing or unknown gate fields"]
     errors = []
-    if any(type(record[key]) is not str or not record[key] or record[key] != record[key].strip()
-           for key in _TEXT_FIELDS):
+    if any(
+        type(record[key]) is not str or not record[key] or record[key] != record[key].strip()
+        for key in _TEXT_FIELDS
+    ):
         return ["invalid gate identity fields"]
-    if any(type(record[key]) is not str or re.fullmatch(r"[0-9a-f]{40}", record[key]) is None
-           for key in _HASH_FIELDS):
+    if any(
+        type(record[key]) is not str or re.fullmatch(r"[0-9a-f]{40}", record[key]) is None
+        for key in _HASH_FIELDS
+    ):
         errors.append("invalid full commit/tree SHA")
     if type(record["collaboration_controls_visible"]) is not bool:
         errors.append("collaboration_controls_visible must be an exact boolean")
@@ -352,8 +419,12 @@ def gate_errors(record: object) -> list[str]:
         errors.append("stop_after would be crossed")
     if type(record["active_writers"]) is not int or record["active_writers"] != 0:
         errors.append("freeze candidate and stop writers before the merge gate")
-    for actual, expected in (("review_head_sha", "head_sha"), ("review_base_sha", "base_sha"),
-                             ("ci_head_sha", "head_sha"), ("ci_checkout_tree", "source_tree")):
+    for actual, expected in (
+        ("review_head_sha", "head_sha"),
+        ("review_base_sha", "base_sha"),
+        ("ci_head_sha", "head_sha"),
+        ("ci_checkout_tree", "source_tree"),
+    ):
         if record[actual] != record[expected]:
             errors.append(f"stale or mismatched {actual}")
     if record["implementer_context"] == record["reviewer_context"]:
@@ -373,7 +444,9 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd())
-    parser.add_argument("--gate", type=Path, help="optional offline evidence JSON; never executes a merge")
+    parser.add_argument(
+        "--gate", type=Path, help="optional offline evidence JSON; never executes a merge"
+    )
     args = parser.parse_args()
     errors = configuration_errors(args.root.resolve())
     if args.gate is not None:
@@ -387,7 +460,9 @@ def main() -> int:
     for error in errors:
         print(error)
     if not errors:
-        print("PASS: offline consistency only; runtime loading and authorization require independent evidence")
+        print(
+            "PASS: offline consistency only; runtime loading and authorization require independent evidence"
+        )
     return int(bool(errors))
 
 

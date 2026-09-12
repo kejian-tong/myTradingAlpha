@@ -91,11 +91,11 @@ def test_telemetry_documents_trusted_role_and_config_path() -> None:
     assert "trusted expected config path" in text
 
 
-def test_audit_protocol_records_official_web_fallback_limitation() -> None:
+def test_audit_protocol_records_official_documentation_fallback_limitation() -> None:
     text = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
         encoding="utf-8"
     )
-    assert "authorized official web/browser fallback" in text
-    assert "does not satisfy the narrow OpenAI Developer Docs MCP receipt" in text
+    assert "official-documentation fallback" in text
+    assert "unavailable MCP lane" in text
     assert "insufficient_evidence" in text
     assert "GIT_NO_REPLACE_OBJECTS" in text

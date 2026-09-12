@@ -156,7 +156,7 @@ def _trusted_context(head: str) -> list[dict[str, object]]:
 
 def _bundle(module, repo: dict[str, object], **overrides: object):
     values: dict[str, object] = {
-        "git_binary": Path(shutil.which("git") or ""),
+        "git_binary": Path(shutil.which("git") or "").resolve(),
         "policy_root": repo["root"],
         "target_root": repo["root"],
         "expected_policy_sha": repo["base"],
@@ -522,7 +522,7 @@ def test_handshake_blocks_client_until_parent_arms_and_releases(tmp_path: Path) 
 
     result = module._run_preexec_handshake(
         _fixture_plan(tmp_path, marker),
-        bootstrap_python=Path(sys.executable),
+        bootstrap_python=Path(sys.executable).resolve(),
         before_release=before_release,
     )
     assert result["returncode"] == 0
@@ -549,7 +549,7 @@ def test_pre_release_failure_cleans_blocked_leader_before_reap(tmp_path: Path) -
 
     result = module._run_preexec_handshake(
         _fixture_plan(tmp_path, marker),
-        bootstrap_python=Path(sys.executable),
+        bootstrap_python=Path(sys.executable).resolve(),
         before_release=fail_before_release,
     )
     assert result["status"] == "insufficient_evidence"

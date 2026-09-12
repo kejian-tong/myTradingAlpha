@@ -62,18 +62,11 @@ disabled and an active built-in profile; the official built-in read-only identit
 `disabled` never means read-only. Local `exec_command`, `write_stdin`, and `apply_patch` exposure is
 admissible only when the declared effective local enforcement is read-only. Local permission enforcement
 does not govern Apps, connectors, MCP servers, browsers, or collaboration controls. The receipt verifier
-therefore rejects every `mcp__` tool for ordinary roles and admits only the exact
-`mcp__openaiDeveloperDocs__fetch_openai_doc` and
-`mcp__openaiDeveloperDocs__search_openai_docs` names for `external_spec_researcher`. It rejects all
-Codex App, GitHub, Gmail, Sites, unknown, and mutation MCP names. High-capability function gateways and
-canonical mutation/delegation collaboration-control aliases are always rejected. Read-only `list_agents`
-and `wait_agent` observation controls may remain visible, but visibility is not runtime authentication.
-The project Apps/MCP declarations are configuration intent; they do not inspect or deny inherited/global
-Apps, installed plugins, organization-managed policy, or other runtime surfaces.
-
-An authorized official web/browser fallback does not satisfy the narrow OpenAI Developer Docs MCP receipt.
-Record the fallback limitation and `insufficient_evidence` for MCP-backed verification when that fallback
-is used.
+therefore rejects every declared tool for an ordinary zero-tool role and rejects every runtime receipt for
+`external_spec_researcher`. It also rejects Codex App, GitHub, Gmail, Sites, unknown, mutation, gateway,
+and collaboration surfaces. The project configuration is intent only; it does not inspect or deny a user's
+global layer, installed plugins, organization-managed policy, or other runtime surfaces. An explicitly
+authorized official-documentation fallback must record `insufficient_evidence` for the unavailable MCP lane.
 
 For example:
 
@@ -157,168 +150,123 @@ closed. `telemetry_conflict` remains separate blocking evidence for route/loadin
 visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
 events, spawn agents, contact GitHub, write files, or merge a PR.
 
-### 2.2 Current-runtime read-only launcher
+### 2.2 Current-runtime zero-tool static review launcher
 
-The default read-only path is `scripts/read_only_role_launcher.py`, an isolated top-level role invocation
-that loads role/instruction policy from protected exact Git objects and runs against a detached clean target.
-Review policy and candidate worktrees must be non-temp, explicitly owned paths; system temporary roots are
-reserved for launcher-private runtime scratch only.
-An in-process read-only child under a writable or unverified parent is non-admissible. The launcher uses a
-narrow per-run Permission Profile pilot, structured preflight/post-run observations, and bounded JSONL/
-manifest handling; missing facts return `insufficient_evidence`. Schema-v1 receipts remain historical,
-structural supplemental evidence. Model self-report, JSONL, `codex doctor`, static TOML, hooks, telemetry,
-or a host-attestation schema cannot authenticate the current runtime, and no mandatory first-turn handshake
-is required. Global Permission Profile adoption remains Watch-only. The host Codex client may perform
-bounded authentication or cache operations outside the model-command profile; those operations are not
-treated as model capability evidence.
+The default path for `reviewer_high`, `reviewer_xhigh`, `code_explorer`, `test_auditor`,
+`boundary_reviewer`, and `astra_canary` is `scripts/read_only_role_launcher.py`. It is a
+Master-owned top-level static review invocation, not an in-process child, a named-agent loaded claim,
+or a shell-capable repository session. The model receives one complete canonical exact-object bundle
+and no model-accessible tool. A successful lane remains review evidence only; candidate code, candidate
+instructions, reviewer output, and the launcher manifest never authorize merge.
 
-The launcher runtime contract also requires bounded streaming, timeout escalation, validated toolchain
-roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `codesign --verify` before
-binary acceptance. Its reviewed exact macOS registry contains only Codex `0.153.4`, SHA-256
-`a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629`, and the currently installed
-`0.154.0-alpha.6.2`, SHA-256
-`ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb`; both require signed
-TeamIdentifier `2DC432GLL2`. The [official changelog](https://learn.chatgpt.com/docs/changelog) records the
-stable 0.154.0 release on 2026-09-09. That release is adjacent documentation evidence for the feature
-generation, not an identity substitute for the exact signed alpha build installed and exercised here.
-There is no generic version-range admission. A non-Darwin default probe without equivalent
-TeamIdentifier/signature evidence remains `insufficient_evidence`.
+#### Exact-object and trusted-context boundary
 
-On POSIX, the launcher immediately validates the exact session-leader identity created by
-`start_new_session` (`PID == PGID == SID`) and verifies that it cannot address the launcher/test process
-group. It observes leader exit only with `waitid(P_PID, ..., WEXITED | WNOHANG | WNOWAIT)`; `Popen.poll`,
-`wait`, and `communicate` are forbidden until group supervision is complete, so the exited leader remains
-waitable and its numeric PID/PGID cannot be reused. Exact membership comes from an in-process bounded
-Darwin `proc_listpgrppids` provider or a bounded Linux `/proc/[pid]/stat` scan. Unsupported POSIX hosts,
-truncation, malformed records, session mismatch, and uncertain membership fail closed; there is no `ps`
-fallback. Any member beyond the anchored leader is positive descendant evidence. Cleanup sends SIGTERM to
-the anchored group, waits only a monotonic bounded grace period, and sends SIGKILL when the leader or any
-descendant remains; leader exit never suppresses descendant escalation. Completion requires two stable
-leader-only membership snapshots, joined stdin/stdout/stderr workers, frozen buffers, and exactly one
-final `Popen.wait` that releases the anchor. No membership query or group signal is permitted after that
-reap. Missing anchor/order evidence, descendant observation, membership uncertainty, an unjoined drainer,
-or cleanup failure makes the lane `insufficient_evidence` even if the direct child returned zero.
+Before starting a model, the launcher receives explicit full protected policy, base, head, and tree
+object IDs. It verifies commit/tree types, ancestry, a clean detached candidate, and the clean protected
+policy checkout once; bundle construction uses only those exact immutable IDs and never rereads a
+mutable branch name. The caller must provide the canonical realpath and exact identity of the reviewed
+Git executable. Git runs with global/system config, replacement objects, lazy fetch, optional locks,
+terminal prompts, external diff/textconv, filters, hooks, pager, rename heuristics, submodule recursion,
+and all network protocols disabled. Replace refs, alternates, partial/promisor repositories, unreviewed
+repository config, missing objects, stderr, excessive subprocesses, and excessive output fail closed.
 
-Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
-initial version probe through every policy/target/post-run Git query and the model shell, the launcher
-sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONFIG_NOSYSTEM=1`, removes
-caller-supplied Git redirects, and retains the no-replace/no-lazy-fetch controls. An outer launcher profile
-may supply only these exact neutral values plus the documented no-lazy-fetch/no-replace/optional-locks/
-terminal-prompt settings; divergent values and config-key injection fail closed. Repository calls use the
-exact supplied `.git` and work-tree paths, require canonical `rev-parse --show-toplevel` equality, and apply
-highest-priority safe CLI controls for fsmonitor, hooks, submodule recursion, and protocols. Dangerous
-local/worktree configuration is governed by a conservative allowlist limited to the repository's standard
-core metadata, reviewed remote/branch metadata, worktree-config extension flag, and user name/email. Unknown
-keys, execution helpers, includes, unsafe remote URL syntax, and active unreviewed worktree keys are
-inadmissible. Remote metadata permits bounded HTTPS without userinfo/query/fragment and reviewed SSH/scp
-forms only with the exact non-secret `git` user; HTTP, embedded credentials, ambiguous percent encoding,
-local/file/ext syntax, arbitrary SSH users, controls, and oversized values fail without diagnostic echo.
-Git config values are read as bounded NUL-delimited records with exact trailing and nonempty record
-structure, so embedded newlines cannot become separately valid visual lines.
-`extensions.worktreeConfig` is interpreted through Git's canonical boolean parser, including
-`true/yes/on/1` and `false/no/off/0`; invalid or diagnostic-producing values fail closed. This conservative
-boundary intentionally risks false positives when new benign repository config is introduced and requires a
-reviewed Harness update rather than an implicit pass. Status ignores submodules. Every Git helper, the initial
-Git/tool smokes, and runtime-library `otool` discovery reject nonempty stderr, including a zero-return-code
-lookup, so incomplete evidence cannot be classified as clean. The per-run profile denies direct reads of
-ignored/untracked `.env`, `secrets`, `*secret*`, and
-`*token*` paths under both policy and target roots, plus external credential paths. Committed current and
-history Git objects remain intentionally reviewable public-repository evidence through the admitted Git
-object database; this launcher is not a confidentiality boundary for committed or historical Git data.
-If either repository contains confidential committed/history objects, launcher use is inadmissible and
-requires a sanitized repository or human review path. The committed `.codex/read-only-probe.secret` is
-harmless fixed data and proves direct-path denial only, not Git-object secrecy.
+The canonical, versioned, domain-separated JSON is built in memory once. Its exact bytes are hashed and
+those same bytes are appended once to the protected-role prompt. Records have deterministic IDs and
+contain:
 
-Python `encodings`, pytest importability, exact target-head Git resolution, and `rg`/Ruff/`uv` versions
-are executed through the same signed Codex binary and Permission Profile before the repository probes.
-Any unavailable tool or failed smoke blocks model start. Ordinary roles reject every MCP item. Only
-`external_spec_researcher` admits a matched start/completion lifecycle for exact server
-`openaiDeveloperDocs` and exact tools `fetch_openai_doc` or `search_openai_docs`; malformed, replayed,
-failed, unknown, or incomplete MCP activity cannot produce a completed lane. Its MCP is required at
-runtime so startup failure is fatal. Codex 0.153.4's bounded pre-turn `Ignoring malformed agent role
-definition` warning is non-blocking only while agents are disabled and the complete stderr matches the
-exact timestamped `codex_agent_roles::loader` envelope, its bounded TOML diagnostic lines, and optional
-timestamped `codex_rollout::list: state db discrepancy` warning. The same exact loader message is treated
-as a warning if surfaced as an item-level error. Other logger targets, severities, continuations,
-startup/tool stderr, and all other item errors remain inadmissible. All item-level `warning` events are
-material and fail the lane; only the exact multiline loader diagnostic emitted as item type `error` is
-classified as the known nonmaterial host condition.
+- policy/base/head/tree identity and disabled-rename semantics;
+- every changed path, old/new mode, and old/new blob ID;
+- a deterministic complete per-path line-opcode diff generated from exact object bytes, with full
+  base/head content records as its immutable operands;
+- the full exact base and head UTF-8 text for every changed file, including explicit absent sides;
+- every applicable root/scoped `AGENTS.md` from base and head as separate tagged records; and
+- explicit Master-supplied JIT, roadmap/phase context, RED, GREEN, and exact-head CI evidence with
+  producer, bound head, command, status, output digest, timestamp, and content provenance.
 
-The isolated runtime explicitly disables web search and standalone search; deprecated web-search
-feature overrides are omitted because 0.153.4 emits them as item errors. Version-specific feature closure
-preserves that exact 0.153.4 configuration without passing newer unknown flags. For the registered
-0.154 alpha build, the actual `features list` surface is additionally closed for `worktrees`, `goals`,
-`sleep_tool`, `guardian_approval`, `fast_mode`, `in_app_local_automation`, `in_app_chat`, `in_app_updates`,
-`in_app_dictation`, `request_permissions_tool`, `exec_permission_approvals`, and the other reviewed
-current capability/discovery features bound by the launcher tests. Both versions disable skill search and
-host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots, Chronicle, Apps,
-plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP. Only
-`code_mode_host=true` and `shell_tool=true` remain enabled for the required sandboxed local command path;
-an exact-head candidate smoke proved that disabling `shell_tool` removes the local command tool.
-GPT-6 production routes remain disabled; this runtime compatibility registration does not change model routing.
-The reviewed under-development warning is suppressed after these exact flags are bound so it cannot create a
-permanent item-error false stop.
-`code_mode_host=true` remains enabled solely for sandboxed local commands under the same read-only
-profile; configuration closure is intent and the preflight/post-run evidence remains mandatory. Permission
-Profile filesystem `deny` controls reads but does not prevent the same executable from running: direct
-current-runtime evidence showed the denied Codex binary still completed `--version`. The launcher therefore
-does not claim preventive host enforcement for nested Codex. Instead, model commands receive launcher-owned
-scratch values for `HOME` and `CODEX_HOME`; an `isolated_home` preflight verifies those exact values and the
-absence of auth, config, and agent files without executing Codex. The outer host process retains its real
-authentication context.
+Base instructions are tagged `trusted_base`; candidate/head instructions, code, diffs, and claims are
+tagged `untrusted_candidate`; Master evidence is tagged `trusted_master_supplied`. Protected role
+policy stays outside the candidate bundle. A roadmap lane must include the assigned row and complete
+relevant DESIGN/IMPLEMENTATION/JIT inputs. A Harness maintenance lane must explicitly mark roadmap row,
+phase DESIGN, and phase IMPLEMENTATION not applicable with a reason. Findings and the final verdict
+must cite bundle record IDs, paths, and base/head blob IDs.
 
-The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
-leading assignments, `env`, the exact bounded macOS short-option grammar (`-0iv`, argument-taking
-`-P`/`-S`/`-u`, combined or attached forms, `-`, and `--`), `command codex`, and shell `-c` forms.
-Unsupported long options, unknown short-option clusters, and missing arguments fail closed. `env -S` is
-interpreted only for a conservative literal subset: bounded printable ASCII tokens separated by spaces or
-tabs. Backslash escapes, substitution, comments, quotes, controls, non-ASCII text, and excessive recursive
-expansion are rejected rather than approximated with shell tokenization. Shell redirections observed in the
-original command text are normalized even when they occur among pre-utility env options or assignments;
-literal argv-list entries and tokens produced by `-S` are not reclassified as shell syntax. Harmless
-`command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
-remain admissible. Direct shell `-c` parsing inspects every bounded simple-command segment across newline,
-sequence, conditional, and pipeline operators. The exact direct-prefix grammar unwraps bounded ordinary
-`exec`, `time`, `nohup`, `nice`, `builtin command`, control-keyword, negation, parenthesis, and brace forms.
-It also normalizes bounded leading `<`, `>`, `>>`, `<&`, `>&`, `<>`, and `>|` redirections, with optional
-attached file descriptors; missing targets, unsupported heredoc/here-string syntax, malformed operators,
-and excessive redirection chains fail closed. This normalization does not inspect heredoc bodies.
-Text-only `printf`, `echo`, and `rg` arguments remain nonblocking. Token, segment, and recursion bounds apply
-without claiming command substitution, `eval`, `xargs`, arbitrary shell, or obfuscation completeness.
-This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
-obfuscated shell execution cannot be certified absent. Preventive delegation control remains deferred to
-the separate later Master-only enforcement remediation.
+The launcher preserves source bytes without Unicode normalization. It rejects absolute, option-like,
+escaping, invalid-UTF-8, overlong, control-bearing, or bidi-bearing paths; symlink, gitlink, binary,
+missing, or unsafe-mode objects; invalid UTF-8, NUL, ANSI, C0 controls except tab/LF/valid CRLF, bidi
+controls, pathological lines, and reviewed credential/private-key patterns. The fixed
+`.codex/read-only-probe.secret` is verified against its harmless exact bytes and represented only by
+sealed digest/length/mode metadata; its contents never enter the prompt. Any other secret-like changed
+path fails closed.
 
-PR #67 is a bootstrap exception: protected base `8092018` contains neither this launcher protocol nor its
-canary. Its controlling review therefore uses a Master-constructed external Permission Profile. The
-repository launcher activates prospectively only after merge, refreshed `main`, and a fresh invocation;
-candidate-policy smoke results are operability evidence only and never self-authorization.
+Hard limits are 1 MiB final bundle, 250,000 estimated input tokens with 22,000 output tokens reserved,
+256 changed paths/files, 1,024 records, 256 KiB per file, 50,000 aggregate lines, 16 KiB per line,
+512 path bytes, 32 trusted-context records, 512 KiB supplied trusted context, 32 Git subprocesses per
+reader, and bounded Git/runtime stdout/stderr/time. Oversize or incomplete review material returns
+`insufficient_evidence`; the fallback is a separately reviewed split or human review, never shell mode.
 
-After this bootstrap, a protected-policy standalone top-level isolated role invocation is an admissible
-role-evidence category for required read-only lanes. Its manifest keeps `named_agent_loaded=false` truthful,
-binds the protected role/config/model/effort and exact target, and is not a child configured-actual claim.
-PR #67 itself remains external-profile-only and cannot use candidate policy to authorize its merge.
+#### Zero-tool runtime and event admission
 
-Immutable history is preserved without relabeling inaccurate evidence. Historical controlling pairs from
-test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `09eb421 -> 31fcabd` and
-`bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
-`34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
-anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
-also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound correction
-`487190a -> 0ef6608`, direct-prefix correction `b0dc3e5 -> 243d95f`, current-runtime registration
-`6125464 -> ec8acdb`, and sandboxed local-command correction `8d08c74 -> 546be4a`. The current repair
-starts at test-only RED `4a39883`; the original process-group repair adds test-only RED `1a77fc5`, and the
-anchored no-reap repair adds test-only RED `11097c0` plus test-only evidence completion `3a29c90`. Each
-exact GREEN head is recorded in durable PR evidence. Linux provider false-stop repair RED `4bfc8b9`
-preserves strict target-group validation while admitting unrelated kernel groups. The abandoned v2
-proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
-non-controlling evidence, not valid standalone RED/GREEN pairs.
+For the exact reviewed Codex versions, ordinary roles set `shell_tool=false`,
+`agents.enabled=false`, and no MCP servers. Apps, plugins, hooks, memories, web/search, browser,
+computer, image, worktrees, goals, automation, permission/approval tools, discovery, collaboration,
+skills discovery, and mutation surfaces remain disabled. `code_mode_host=true` is retained only because
+the current client requires the host to initialize; the exact current hostile probe established that
+`shell_tool=false` registers no local command tool. This is version-specific closure, not a generic
+future-runtime claim. The signed Codex executable, its exact SHA-256, and TeamIdentifier `2DC432GLL2`
+are an explicit trusted boundary. Binary validation hashes and verifies the signature without executing
+Codex before the handshake.
 
-Residual risk remains explicit and deferred: supporting-tool exact identity needs a separate bounded
-contract beyond owner/mode/path plus smoke evidence, and launcher decomposition needs a later reviewed
-refactor of the large mixed-responsibility module. Neither deferred MEDIUM issue weakens this PR's fail-
-closed admission contract or authorizes expansion here.
+Ordinary-role JSONL admits only the single thread/turn lifecycle, bounded reasoning lifecycle, one final
+agent message, and the exact known malformed-agent loader diagnostic. Every command execution, MCP call,
+file change, plan update, tool, web, collaboration, unknown item/event, nonzero command/MCP/tool count,
+failed turn, warning, malformed lifecycle, or unadmitted stderr is blocking. The former direct-shell
+grammar and post-run direct-Codex parser have no security or gate authority and no fallback path.
 
+`external_spec_researcher` is unavailable through this launcher. It returns
+`insufficient_evidence` before model start, does not build or transmit a candidate bundle, and records
+that a Master-owned official OpenAI documentation fallback is a limited alternative only when the parent
+task explicitly permits it. A future MCP lane requires a separate reviewed isolation design; this PR does
+not add an MCP server.
+
+#### Same-PID pre-exec handshake and supervision
+
+The launcher starts a validated Python bootstrap with `-I -S`, scrubbed Python import environment,
+`start_new_session=True`, and private close-on-exec READY/release pipes. The trusted bootstrap imports
+only the standard `os` and `sys` modules, emits `READY:<pid>`, and blocks before exact-client exec or
+candidate-prompt transmission. The parent verifies `PID == PGID == SID`, confirms leader-only original
+group membership, starts bounded stdout/stderr observation, and records `observation_armed` before
+sending `RELEASE`. The bootstrap closes handshake descriptors and `execve` replaces it with the exact
+registered Codex argv in place, preserving PID/group/session. Only then does the parent write the
+immutable prompt bytes.
+
+A failure before RELEASE kills the still-blocked trusted leader/group before its single reap; no
+candidate/model-capable descendant can exist at that point. After release, the supervisor uses
+`waitid(P_PID, ..., WEXITED | WNOHANG | WNOWAIT)`, bounded drainers, timeout escalation, and original
+group membership snapshots. Any unexpected descendant is positive blocking evidence. The supervisor
+freezes buffers and performs exactly one final wait/reap; it never queries or signals the numeric group
+after reap. This is deliberately a bounded exact-client supervision contract, not a claim that userland
+process groups contain arbitrary shell processes or descendants that call `setsid()`.
+
+#### Manifest, freshness, and bootstrap
+
+Manifest v2 binds protected policy/base/head/tree, role/config/model/effort, exact Codex and Git
+identities, bundle byte length/digest/record IDs, exact transmitted-prompt digest, event/output digests,
+zero command/MCP/tool counts, READY/validation/arm/RELEASE/exit/reap ordering, cleanup, Master ownership,
+complete no-delegation observation, and quarantine references. Any commit invalidates the bundle,
+runtime evidence, review, and CI.
+
+Schema-v1 capability receipts remain historical structural supplemental evidence and do not authenticate
+runtime behavior. PR #67 is a bootstrap exception because its protected base predates this architecture:
+the controlling review must use a fresh Master-owned external zero-tool profile and cannot use candidate
+code to authorize itself. Historical shell-capable/non-master smokes remain quarantined and immutable.
+
+The exact signed registry currently contains Codex `0.153.4`
+(`a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629`) and
+`0.154.0-alpha.6.2`
+(`ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb`), both with
+TeamIdentifier `2DC432GLL2`. A future version requires a reviewed exact registration and fresh hostile
+zero-tool evidence. Supporting-tool identity beyond the exact Git/Codex boundary remains a separately
+bounded later issue; it does not permit a shell fallback here.
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**
