@@ -23,6 +23,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1649,10 +1650,27 @@ def _valid_process_result(
         "stdin_writer_joined": True,
         "stdout_drainer_joined": True,
         "stderr_drainer_joined": True,
+        "process_group_anchor_preserved": True,
+        "membership_certain": True,
         "descendant_detected": False,
         "process_group_empty": True,
         "process_group_state_certain": True,
         "cleanup_failed": False,
+        "buffers_frozen": True,
+        "leader_wait_count": 1,
+        "post_reap_group_access": False,
+        "process_group_events": (
+            "anchor_validated",
+            "waitid_probe",
+            "leader_exit_observed",
+            "membership_snapshot",
+            "leader_only_snapshot",
+            "membership_snapshot",
+            "leader_only_snapshot",
+            "drainers_joined",
+            "buffers_frozen",
+            "leader_reaped",
+        ),
     }
     result.update(overrides)
     return result
@@ -3722,6 +3740,53 @@ def test_nonfunctional_git_smoke_blocks_model_before_preflight(
     assert not process_calls
 
 
+def _wire_fake_posix_group(
+    module: object,
+    monkeypatch: pytest.MonkeyPatch,
+    child: object,
+    *,
+    process_id: int,
+) -> object:
+    """Attach a deterministic, test-owned POSIX anchor to an injected child."""
+    child.pid = process_id
+
+    def getpgid(pid: int) -> int:
+        assert pid == process_id
+        return process_id
+
+    def getsid(pid: int) -> int:
+        assert pid == process_id
+        return process_id
+
+    def waitid(idtype: int, pid: int, options: int) -> object | None:
+        assert idtype == module.os.P_PID
+        assert pid == process_id
+        assert options == (
+            module.os.WEXITED | module.os.WNOHANG | module.os.WNOWAIT
+        )
+        if getattr(child, "returncode", None) is None:
+            return None
+        return SimpleNamespace(si_pid=process_id)
+
+    def killpg(group_id: int, sent_signal: signal.Signals | int) -> None:
+        assert group_id == process_id
+        if sent_signal == 0:
+            return
+        if sent_signal == signal.SIGTERM:
+            child.terminate()
+            return
+        if sent_signal == signal.SIGKILL:
+            child.kill()
+            return
+        raise AssertionError(f"unexpected signal: {sent_signal}")
+
+    monkeypatch.setattr(module.os, "getpgid", getpgid)
+    monkeypatch.setattr(module.os, "getsid", getsid)
+    monkeypatch.setattr(module.os, "waitid", waitid)
+    monkeypatch.setattr(module.os, "killpg", killpg)
+    return lambda **_kwargs: frozenset({process_id})
+
+
 def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3751,6 +3816,9 @@ def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
 
     child = OverflowingChild()
     monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    membership_provider = _wire_fake_posix_group(
+        module, monkeypatch, child, process_id=810_001
+    )
     result = module._default_process_runner(
         argv=["/absolute/codex", "exec", "-"],
         cwd=str(tmp_path),
@@ -3760,6 +3828,7 @@ def test_process_runner_streams_bounded_output_and_reaps_overflowing_child(
         process_group=True,
         shell=False,
         max_output_bytes=1024,
+        process_group_members_provider=membership_provider,
     )
     assert result["output_limited"] is True
     assert result["timed_out"] is False
@@ -3798,6 +3867,9 @@ def test_process_runner_timeout_terminates_escalates_and_reaps_term_ignoring_chi
 
     child = TermIgnoringChild()
     monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    membership_provider = _wire_fake_posix_group(
+        module, monkeypatch, child, process_id=810_002
+    )
     result = module._default_process_runner(
         argv=["/absolute/codex", "exec", "-"],
         cwd=str(tmp_path),
@@ -3807,6 +3879,7 @@ def test_process_runner_timeout_terminates_escalates_and_reaps_term_ignoring_chi
         process_group=True,
         shell=False,
         max_output_bytes=1024,
+        process_group_members_provider=membership_provider,
     )
     assert result["timed_out"] is True
     assert child.term_count >= 1 and child.kill_count >= 1 and child.reaped
@@ -3861,6 +3934,9 @@ def test_process_runner_supervises_nonreading_stdin_and_joins_writer_on_timeout(
 
     child = NonreadingChild()
     monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    membership_provider = _wire_fake_posix_group(
+        module, monkeypatch, child, process_id=810_003
+    )
 
     result = module._default_process_runner(
         argv=["/absolute/codex", "exec", "-"],
@@ -3871,6 +3947,7 @@ def test_process_runner_supervises_nonreading_stdin_and_joins_writer_on_timeout(
         process_group=True,
         shell=False,
         max_output_bytes=1024,
+        process_group_members_provider=membership_provider,
     )
 
     assert result["timed_out"] is True
@@ -3925,6 +4002,9 @@ def test_process_runner_reports_broken_pipe_after_supervised_stdin_write(
 
     child = RunningChild()
     monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    membership_provider = _wire_fake_posix_group(
+        module, monkeypatch, child, process_id=810_004
+    )
 
     result = module._default_process_runner(
         argv=["/absolute/codex", "exec", "-"],
@@ -3935,6 +4015,7 @@ def test_process_runner_reports_broken_pipe_after_supervised_stdin_write(
         process_group=True,
         shell=False,
         max_output_bytes=1024,
+        process_group_members_provider=membership_provider,
     )
 
     assert result["stdin_write_error"] is True
@@ -3989,6 +4070,9 @@ def test_process_runner_output_overflow_also_closes_and_joins_stdin_writer(
 
     child = OverflowingChild()
     monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    membership_provider = _wire_fake_posix_group(
+        module, monkeypatch, child, process_id=810_005
+    )
 
     result = module._default_process_runner(
         argv=["/absolute/codex", "exec", "-"],
@@ -3999,12 +4083,376 @@ def test_process_runner_output_overflow_also_closes_and_joins_stdin_writer(
         process_group=True,
         shell=False,
         max_output_bytes=1024,
+        process_group_members_provider=membership_provider,
     )
 
     assert result["output_limited"] is True
     assert result["stdin_writer_joined"] is True
     assert result["reaped"] is True
     assert child.terminated and child.reaped and child.stdin.closed
+
+
+def _assert_event_subsequence(events: tuple[str, ...], expected: tuple[str, ...]) -> None:
+    position = 0
+    for event in events:
+        if position < len(expected) and event == expected[position]:
+            position += 1
+    assert position == len(expected), (events, expected)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_process_runner_keeps_leader_waitable_until_anchored_group_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    leader_pid = 820_001
+    descendant_pid = 820_002
+    observed: list[tuple[str, object]] = []
+
+    class ExitedLeader:
+        def __init__(self) -> None:
+            self.pid = leader_pid
+            self.stdin = None
+            self.stdout = io.BytesIO(b"bounded stdout")
+            self.stderr = io.BytesIO(b"bounded stderr")
+            self.returncode = None
+            self.reaped = False
+            self.wait_calls = 0
+
+        def poll(self) -> object:
+            raise AssertionError("Popen.poll would reap the process-group anchor")
+
+        def wait(self, timeout: object = None) -> int:
+            observed.append(("wait", timeout))
+            assert timeout is None
+            assert not self.reaped
+            assert descendant_pid not in members
+            self.wait_calls += 1
+            self.reaped = True
+            self.returncode = 0
+            return 0
+
+    child = ExitedLeader()
+    members = {leader_pid, descendant_pid}
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+
+    def getpgid(pid: int) -> int:
+        observed.append(("getpgid", pid))
+        assert not child.reaped
+        return leader_pid
+
+    def getsid(pid: int) -> int:
+        observed.append(("getsid", pid))
+        assert not child.reaped
+        return leader_pid
+
+    def waitid(idtype: int, pid: int, options: int) -> object:
+        observed.append(("waitid", options))
+        assert not child.reaped
+        assert idtype == module.os.P_PID and pid == leader_pid
+        assert options == (
+            module.os.WEXITED | module.os.WNOHANG | module.os.WNOWAIT
+        )
+        return SimpleNamespace(si_pid=leader_pid)
+
+    def membership_provider(**kwargs: object) -> frozenset[int]:
+        observed.append(("membership", tuple(sorted(members))))
+        assert not child.reaped
+        assert kwargs == {
+            "leader_pid": leader_pid,
+            "process_group_id": leader_pid,
+            "session_id": leader_pid,
+        }
+        return frozenset(members)
+
+    def killpg(group_id: int, sent_signal: signal.Signals) -> None:
+        observed.append(("signal", sent_signal))
+        assert not child.reaped
+        assert group_id == leader_pid
+        if sent_signal == signal.SIGTERM:
+            return
+        assert sent_signal == signal.SIGKILL
+        members.remove(descendant_pid)
+
+    monkeypatch.setattr(module.os, "getpgid", getpgid)
+    monkeypatch.setattr(module.os, "getsid", getsid)
+    monkeypatch.setattr(module.os, "waitid", waitid)
+    monkeypatch.setattr(module.os, "killpg", killpg)
+
+    result = module._default_process_runner(
+        argv=["/deterministic/non-codex-fixture"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="",
+        timeout=1,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+        process_group_members_provider=membership_provider,
+    )
+
+    assert result["returncode"] == 0
+    assert result["process_group_anchor_preserved"] is True
+    assert result["membership_certain"] is True
+    assert result["descendant_detected"] is True
+    assert result["cleanup_escalated"] is True
+    assert result["cleanup_failed"] is False
+    assert result["buffers_frozen"] is True
+    assert result["leader_wait_count"] == 1
+    assert result["post_reap_group_access"] is False
+    assert child.wait_calls == 1 and child.reaped
+    events = result["process_group_events"]
+    assert type(events) is tuple
+    _assert_event_subsequence(
+        events,
+        (
+            "anchor_validated",
+            "waitid_probe",
+            "leader_exit_observed",
+            "membership_snapshot",
+            "descendant_detected",
+            "signal_term",
+            "signal_kill",
+            "leader_only_snapshot",
+            "leader_only_snapshot",
+            "drainers_joined",
+            "buffers_frozen",
+            "leader_reaped",
+        ),
+    )
+    wait_position = next(index for index, event in enumerate(observed) if event[0] == "wait")
+    assert all(event[0] not in {"membership", "signal"} for event in observed[wait_position + 1 :])
+    assert result["stdout"] == "bounded stdout"
+    assert result["stderr"] == "bounded stderr"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_process_runner_does_not_signal_zombie_leader_only_group(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    leader_pid = 820_101
+    calls: list[str] = []
+
+    class ZombieLeader:
+        pid = leader_pid
+        stdin = None
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+        returncode = None
+
+        def poll(self) -> object:
+            raise AssertionError("poll is forbidden before anchored cleanup")
+
+        def wait(self, timeout: object = None) -> int:
+            assert timeout is None
+            calls.append("wait")
+            self.returncode = 0
+            return 0
+
+    child = ZombieLeader()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    monkeypatch.setattr(module.os, "getpgid", lambda pid: leader_pid)
+    monkeypatch.setattr(module.os, "getsid", lambda pid: leader_pid)
+    monkeypatch.setattr(
+        module.os,
+        "waitid",
+        lambda *args: SimpleNamespace(si_pid=leader_pid),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "killpg",
+        lambda *args: pytest.fail("a zombie-leader-only group must not be signalled"),
+    )
+
+    def members(**_kwargs: object) -> frozenset[int]:
+        assert "wait" not in calls
+        calls.append("membership")
+        return frozenset({leader_pid})
+
+    result = module._default_process_runner(
+        argv=["/deterministic/non-codex-fixture"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="",
+        timeout=1,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+        process_group_members_provider=members,
+    )
+
+    assert calls.count("membership") >= 2
+    assert calls[-1] == "wait"
+    assert result["descendant_detected"] is False
+    assert result["cleanup_escalated"] is False
+    assert result["process_group_anchor_preserved"] is True
+    assert result["membership_certain"] is True
+    assert result["process_group_empty"] is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_process_runner_fails_closed_but_cleans_anchor_on_membership_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _launcher_module()
+    leader_pid = 820_201
+    signals: list[signal.Signals] = []
+
+    class RunningLeader:
+        pid = leader_pid
+        stdin = None
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+        returncode = None
+        exited = False
+        reaped = False
+
+        def poll(self) -> object:
+            raise AssertionError("poll is forbidden before anchored cleanup")
+
+        def wait(self, timeout: object = None) -> int:
+            assert timeout is None and self.exited
+            self.reaped = True
+            self.returncode = -9
+            return -9
+
+    child = RunningLeader()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: child)
+    monkeypatch.setattr(module.os, "getpgid", lambda pid: leader_pid)
+    monkeypatch.setattr(module.os, "getsid", lambda pid: leader_pid)
+    monkeypatch.setattr(
+        module.os,
+        "waitid",
+        lambda *args: SimpleNamespace(si_pid=leader_pid) if child.exited else None,
+    )
+
+    def killpg(group_id: int, sent_signal: signal.Signals) -> None:
+        assert group_id == leader_pid and not child.reaped
+        signals.append(sent_signal)
+        if sent_signal == signal.SIGKILL:
+            child.exited = True
+
+    monkeypatch.setattr(module.os, "killpg", killpg)
+
+    def uncertain_members(**_kwargs: object) -> frozenset[int]:
+        raise RuntimeError("synthetic truncated membership snapshot")
+
+    result = module._default_process_runner(
+        argv=["/deterministic/non-codex-fixture"],
+        cwd=str(tmp_path),
+        env={},
+        stdin="",
+        timeout=0.01,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+        process_group_members_provider=uncertain_members,
+    )
+
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert child.reaped
+    assert result["process_group_anchor_preserved"] is True
+    assert result["membership_certain"] is False
+    assert result["cleanup_failed"] is True
+    assert result["process_group_empty"] is False
+    assert result["leader_wait_count"] == 1
+    assert result["post_reap_group_access"] is False
+
+
+def _proc_stat_record(pid: int, *, comm: str, pgrp: int, session: int) -> bytes:
+    return f"{pid} ({comm}) S 1 {pgrp} {session} 0 0 0 0\n".encode()
+
+
+def test_linux_membership_provider_parses_comm_and_validates_exact_session(
+    tmp_path: Path,
+) -> None:
+    module = _launcher_module()
+    proc_root = tmp_path / "proc"
+    for pid, comm in ((900_001, "leader ) name"), (900_002, "child (x)")):
+        directory = proc_root / str(pid)
+        directory.mkdir(parents=True)
+        (directory / "stat").write_bytes(
+            _proc_stat_record(pid, comm=comm, pgrp=900_001, session=900_001)
+        )
+    unrelated = proc_root / "900003"
+    unrelated.mkdir()
+    (unrelated / "stat").write_bytes(
+        _proc_stat_record(900_003, comm="other", pgrp=900_003, session=900_003)
+    )
+
+    members = module._linux_process_group_members(
+        leader_pid=900_001,
+        process_group_id=900_001,
+        session_id=900_001,
+        proc_root=proc_root,
+        max_numeric_entries=8,
+        max_members=4,
+        max_record_bytes=256,
+    )
+
+    assert members == frozenset({900_001, 900_002})
+
+
+@pytest.mark.parametrize("failure", ["numeric-cap", "member-cap", "record-cap", "session"])
+def test_linux_membership_provider_fails_closed_on_bounds_or_ambiguity(
+    tmp_path: Path, failure: str
+) -> None:
+    module = _launcher_module()
+    proc_root = tmp_path / "proc"
+    for pid in (910_001, 910_002, 910_003):
+        directory = proc_root / str(pid)
+        directory.mkdir(parents=True)
+        session = 999_999 if failure == "session" and pid == 910_002 else 910_001
+        record = _proc_stat_record(pid, comm="fixture", pgrp=910_001, session=session)
+        if failure == "record-cap" and pid == 910_002:
+            record = record[:-1] + b"x" * 300 + b"\n"
+        (directory / "stat").write_bytes(record)
+
+    kwargs = {
+        "leader_pid": 910_001,
+        "process_group_id": 910_001,
+        "session_id": 910_001,
+        "proc_root": proc_root,
+        "max_numeric_entries": 2 if failure == "numeric-cap" else 8,
+        "max_members": 1 if failure == "member-cap" else 4,
+        "max_record_bytes": 128,
+    }
+    with pytest.raises((OSError, RuntimeError, ValueError)):
+        module._linux_process_group_members(**kwargs)
+
+
+def test_darwin_membership_provider_rejects_truncation_without_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _launcher_module()
+    leader_pid = 920_001
+
+    def truncated(group_id: int, buffer: object, buffer_size: int) -> int:
+        assert group_id == leader_pid
+        assert buffer_size >= 3 * 4
+        buffer[0] = leader_pid
+        buffer[1] = leader_pid + 1
+        buffer[2] = leader_pid + 2
+        return 3
+
+    monkeypatch.setattr(module.os, "getpgid", lambda pid: leader_pid)
+    monkeypatch.setattr(module.os, "getsid", lambda pid: leader_pid)
+    with pytest.raises((OSError, RuntimeError, ValueError)):
+        module._darwin_process_group_members(
+            leader_pid=leader_pid,
+            process_group_id=leader_pid,
+            session_id=leader_pid,
+            proc_listpgrppids=truncated,
+            max_members=2,
+        )
+
+
+def test_process_group_provider_has_no_ps_fallback() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "proc_listpgrppids" in source
+    assert 'Path("/proc")' in source
+    assert '"/bin/ps"' not in source
 
 
 def _process_group_exists(process_group_id: int) -> bool:
@@ -4276,12 +4724,19 @@ def test_process_group_lifecycle_escalates_naturally_orphaned_term_ignoring_desc
     "unsafe_result",
     [
         {"descendant_detected": True},
+        {"process_group_anchor_preserved": False},
+        {"membership_certain": False},
         {"stdout_drainer_joined": False},
         {"stderr_drainer_joined": False},
         {"process_group_empty": False},
         {"process_group_empty": None},
         {"process_group_state_certain": False},
         {"cleanup_failed": True},
+        {"buffers_frozen": False},
+        {"leader_wait_count": 0},
+        {"leader_wait_count": 2},
+        {"post_reap_group_access": True},
+        {"process_group_events": ()},
     ],
 )
 def test_process_group_lifecycle_rejects_inadmissible_runner_state(
@@ -4299,12 +4754,60 @@ def test_process_group_lifecycle_rejects_inadmissible_runner_state(
         "stdin_writer_joined": True,
         "stdout_drainer_joined": True,
         "stderr_drainer_joined": True,
+        "process_group_anchor_preserved": True,
+        "membership_certain": True,
         "descendant_detected": False,
         "process_group_empty": True,
         "process_group_state_certain": True,
         "cleanup_failed": False,
+        "buffers_frozen": True,
+        "leader_wait_count": 1,
+        "post_reap_group_access": False,
+        "process_group_events": (
+            "anchor_validated",
+            "waitid_probe",
+            "leader_exit_observed",
+            "membership_snapshot",
+            "leader_only_snapshot",
+            "membership_snapshot",
+            "leader_only_snapshot",
+            "drainers_joined",
+            "buffers_frozen",
+            "leader_reaped",
+        ),
     }
     process_result.update(unsafe_result)
+
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: process_result,
+    )
+
+    assert result["status"] == "insufficient_evidence"
+    assert "isolated role process failed" in result["errors"]
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "process_group_anchor_preserved",
+        "membership_certain",
+        "buffers_frozen",
+        "leader_wait_count",
+        "post_reap_group_access",
+        "process_group_events",
+    ],
+)
+def test_process_group_lifecycle_rejects_missing_anchored_field(
+    scenario: Scenario, missing_field: str
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    process_result = _valid_process_result()
+    del process_result[missing_field]
 
     result = module.run_isolated_role(
         plan,
