@@ -15,10 +15,12 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1353,11 +1355,7 @@ def test_git_stderr_cannot_authenticate_clean_repo_or_post_run_state(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
-        process_runner=lambda **kwargs: {
-            "returncode": 0,
-            "stdout": _valid_jsonl(),
-            "stderr": "",
-        },
+        process_runner=lambda **kwargs: _valid_process_result(),
     )
     assert result["status"] == "insufficient_evidence"
 
@@ -1522,7 +1520,7 @@ def test_preflight_order_uses_same_binary_profile_and_blocks_runner_on_failure(
 
     def runner(**kwargs: object) -> dict[str, object]:
         runner_calls.append(kwargs)
-        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+        return _valid_process_result()
 
     result = _function("run_isolated_role")(
         plan,
@@ -1636,6 +1634,28 @@ def _valid_jsonl(*, final_text: str = "untrusted final output") -> str:
         {"type": "turn.completed"},
     )
     return "".join(json.dumps(event) + "\n" for event in events)
+
+
+def _valid_process_result(
+    *, stdout: str | None = None, stderr: str = "", **overrides: object
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "returncode": 0,
+        "stdout": _valid_jsonl() if stdout is None else stdout,
+        "stderr": stderr,
+        "timed_out": False,
+        "output_limited": False,
+        "stdin_write_error": False,
+        "stdin_writer_joined": True,
+        "stdout_drainer_joined": True,
+        "stderr_drainer_joined": True,
+        "descendant_detected": False,
+        "process_group_empty": True,
+        "process_group_state_certain": True,
+        "cleanup_failed": False,
+    }
+    result.update(overrides)
+    return result
 
 
 def test_jsonl_parser_accepts_top_level_events_and_returns_untrusted_final_message() -> None:
@@ -1820,7 +1840,7 @@ def test_successful_run_cannot_claim_clean_cleanup_with_owned_runtime_artifact(
 
     def process_runner(**kwargs: object) -> dict[str, object]:
         artifact.write_text("model-created secret-like artifact\n", encoding="utf-8")
-        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+        return _valid_process_result()
 
     result = _function("run_isolated_role")(
         plan,
@@ -2139,7 +2159,7 @@ def test_sandbox_runner_order_blocks_exec_until_all_probes_pass(
 
     def process_runner(**kwargs: object) -> dict[str, object]:
         exec_calls.append(kwargs)
-        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+        return _valid_process_result()
 
     result = _function("run_isolated_role")(
         plan,
@@ -2169,7 +2189,7 @@ def test_probe_failure_exception_or_timeout_cleans_only_launcher_owned_dirs(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=failing_runner,
-        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+        process_runner=lambda **kwargs: _valid_process_result(),
     )
     assert result["status"] == "insufficient_evidence"
     assert not Path(plan["runtime_root"]).exists()
@@ -2188,7 +2208,7 @@ def test_default_path_cannot_claim_completed_without_real_sandbox_probe_runner(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         process_runner=lambda **kwargs: exec_calls.append(kwargs)
-        or {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+        or _valid_process_result(),
     )
     assert result["status"] == "insufficient_evidence"
     assert not exec_calls
@@ -2806,7 +2826,7 @@ def test_actual_run_recomputes_target_snapshot_before_claiming_completion(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=mutate_target,
-        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+        process_runner=lambda **kwargs: _valid_process_result(),
     )
     assert result["status"] == "insufficient_evidence"
 
@@ -2998,7 +3018,7 @@ def test_host_and_exec_env_retain_auth_context_while_model_shell_filters_secret(
 
     def process_runner(**kwargs: object) -> dict[str, object]:
         exec_envs.append(dict(kwargs["env"]))
-        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+        return _valid_process_result()
 
     result = _function("run_isolated_role")(
         plan,
@@ -3253,11 +3273,7 @@ def test_unprefixed_agent_role_warning_is_not_a_pinned_host_envelope(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
-        process_runner=lambda **kwargs: {
-            "returncode": 0,
-            "stdout": _valid_jsonl(),
-            "stderr": stderr,
-        },
+        process_runner=lambda **kwargs: _valid_process_result(stderr=stderr),
     )
     assert result["status"] == "insufficient_evidence", result
 
@@ -3301,11 +3317,9 @@ def test_pinned_runtime_warning_envelope_is_narrowly_admitted_only_with_agents_d
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
-        process_runner=lambda **kwargs: {
-            "returncode": 0,
-            "stdout": _valid_jsonl(),
-            "stderr": _PINNED_HOST_WARNING_STDERR,
-        },
+        process_runner=lambda **kwargs: _valid_process_result(
+            stderr=_PINNED_HOST_WARNING_STDERR
+        ),
     )
     assert result["status"] == "completed", result
 
@@ -3418,11 +3432,7 @@ def test_material_or_nonexact_runtime_warning_blocks_completion(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
-        process_runner=lambda **kwargs: {
-            "returncode": 0,
-            "stdout": _valid_jsonl(),
-            "stderr": stderr,
-        },
+        process_runner=lambda **kwargs: _valid_process_result(stderr=stderr),
     )
     assert result["status"] == "insufficient_evidence"
 
@@ -3659,7 +3669,7 @@ def test_toolchain_smokes_execute_before_preflight_and_model(
     def process_runner(**kwargs: object) -> dict[str, object]:
         process_calls.append(kwargs)
         events.append(("model", kwargs["argv"]))
-        return {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""}
+        return _valid_process_result()
 
     result = module.run_isolated_role(
         plan,
@@ -3706,7 +3716,7 @@ def test_nonfunctional_git_smoke_blocks_model_before_preflight(
         toolchain_runner=toolchain_runner,
         sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
         process_runner=lambda **kwargs: process_calls.append(kwargs)
-        or {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+        or _valid_process_result(),
     )
     assert result["status"] == "insufficient_evidence"
     assert not process_calls
@@ -3997,6 +4007,317 @@ def test_process_runner_output_overflow_also_closes_and_joins_stdin_writer(
     assert child.terminated and child.reaped and child.stdin.closed
 
 
+def _process_group_exists(process_group_id: int) -> bool:
+    """Return whether an exact test-owned POSIX process group still exists."""
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _read_fixture_pid(path: Path) -> int:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            value = int(path.read_text(encoding="utf-8").strip())
+        except (FileNotFoundError, ValueError):
+            time.sleep(0.005)
+            continue
+        if value > 1:
+            return value
+        break
+    pytest.fail(f"fixture did not publish a safe pid: {path.name}")
+
+
+def _cleanup_fixture_group(process_group_id: int) -> None:
+    """Fail-safe cleanup for a group created only by the current test fixture."""
+    assert process_group_id > 1
+    assert process_group_id != os.getpgrp()
+    if _process_group_exists(process_group_id):
+        os.killpg(process_group_id, signal.SIGKILL)
+    deadline = time.monotonic() + 2.0
+    while _process_group_exists(process_group_id) and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_process_group_lifecycle_reports_clean_normal_command(tmp_path: Path) -> None:
+    module = _launcher_module()
+    started = time.monotonic()
+    result = module._default_process_runner(
+        argv=["/bin/sh", "-c", "printf normal"],
+        cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin"},
+        stdin="",
+        timeout=5,
+        process_group=True,
+        shell=False,
+        max_output_bytes=1024,
+    )
+
+    assert time.monotonic() - started < 2.0
+    assert result["returncode"] == 0
+    assert result["stdout"] == "normal"
+    assert result["descendant_detected"] is False
+    assert result["stdout_drainer_joined"] is True
+    assert result["stderr_drainer_joined"] is True
+    assert result["stdin_writer_joined"] is True
+    assert result["process_group_empty"] is True
+    assert result["process_group_state_certain"] is True
+    assert result["cleanup_escalated"] is False
+    assert result["cleanup_failed"] is False
+    process_group_id = result["process_group_id"]
+    assert type(process_group_id) is int and process_group_id > 1
+    assert process_group_id != os.getpgrp()
+    assert not _process_group_exists(process_group_id)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+@pytest.mark.parametrize(
+    "redirected",
+    [False, True],
+    ids=["inherited-pipes", "redirected-pipes"],
+)
+def test_process_group_lifecycle_detects_and_cleans_background_descendant(
+    tmp_path: Path, redirected: bool
+) -> None:
+    module = _launcher_module()
+    leader_file = tmp_path / "leader.pid"
+    child_file = tmp_path / "child.pid"
+    marker = tmp_path / "late.marker"
+    redirect = "</dev/null >/dev/null 2>&1" if redirected else ""
+    command = (
+        'printf "%s\\n" "$$" > "$LEADER_FILE"; '
+        f'( /bin/sleep 5; /usr/bin/touch "$MARKER" ) {redirect} & '
+        'printf "%s\\n" "$!" > "$CHILD_FILE"'
+    )
+    started = time.monotonic()
+    result: dict[str, object] | None = None
+    process_group_id: int | None = None
+    child_pid: int | None = None
+    try:
+        result = module._default_process_runner(
+            argv=["/bin/sh", "-c", command],
+            cwd=str(tmp_path),
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LEADER_FILE": str(leader_file),
+                "CHILD_FILE": str(child_file),
+                "MARKER": str(marker),
+            },
+            stdin="",
+            timeout=10,
+            process_group=True,
+            shell=False,
+            max_output_bytes=1024,
+        )
+        process_group_id = _read_fixture_pid(leader_file)
+        child_pid = _read_fixture_pid(child_file)
+        assert result["process_group_id"] == process_group_id
+        assert time.monotonic() - started < 3.0
+        assert result["returncode"] == 0
+        assert result["descendant_detected"] is True
+        assert result["stdout_drainer_joined"] is True
+        assert result["stderr_drainer_joined"] is True
+        assert result["stdin_writer_joined"] is True
+        assert result["process_group_empty"] is True
+        assert result["process_group_state_certain"] is True
+        assert result["cleanup_attempted"] is True
+        assert result["cleanup_failed"] is False
+        assert not _process_group_exists(process_group_id)
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+        frozen = (result["stdout"], result["stderr"])
+        time.sleep(0.05)
+        assert (result["stdout"], result["stderr"]) == frozen
+        assert not marker.exists()
+    finally:
+        if process_group_id is None and leader_file.exists():
+            process_group_id = _read_fixture_pid(leader_file)
+        if process_group_id is not None:
+            _cleanup_fixture_group(process_group_id)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                pytest.fail("background fixture process leaked after cleanup")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_process_group_lifecycle_escalates_after_leader_exits_on_term(
+    tmp_path: Path,
+) -> None:
+    module = _launcher_module()
+    leader_file = tmp_path / "leader.pid"
+    child_file = tmp_path / "child.pid"
+    command = (
+        'printf "%s\\n" "$$" > "$LEADER_FILE"; '
+        "( trap '' TERM; while :; do /bin/sleep 30; done ) "
+        '</dev/null >/dev/null 2>&1 & printf "%s\\n" "$!" > "$CHILD_FILE"; '
+        "/bin/sleep 30"
+    )
+    started = time.monotonic()
+    process_group_id: int | None = None
+    child_pid: int | None = None
+    try:
+        result = module._default_process_runner(
+            argv=["/bin/sh", "-c", command],
+            cwd=str(tmp_path),
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LEADER_FILE": str(leader_file),
+                "CHILD_FILE": str(child_file),
+            },
+            stdin="",
+            timeout=0.1,
+            process_group=True,
+            shell=False,
+            max_output_bytes=1024,
+        )
+        process_group_id = _read_fixture_pid(leader_file)
+        child_pid = _read_fixture_pid(child_file)
+        assert result["process_group_id"] == process_group_id
+        assert time.monotonic() - started < 3.0
+        assert result["timed_out"] is True
+        assert result["descendant_detected"] is True
+        assert result["cleanup_attempted"] is True
+        assert result["cleanup_escalated"] is True
+        assert result["cleanup_failed"] is False
+        assert result["process_group_empty"] is True
+        assert result["process_group_state_certain"] is True
+        assert result["stdout_drainer_joined"] is True
+        assert result["stderr_drainer_joined"] is True
+        assert result["stdin_writer_joined"] is True
+        assert not _process_group_exists(process_group_id)
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        if process_group_id is None and leader_file.exists():
+            process_group_id = _read_fixture_pid(leader_file)
+        if process_group_id is not None:
+            _cleanup_fixture_group(process_group_id)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                pytest.fail("TERM-ignoring fixture process leaked after cleanup")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_process_group_lifecycle_escalates_naturally_orphaned_term_ignoring_descendant(
+    tmp_path: Path,
+) -> None:
+    module = _launcher_module()
+    leader_file = tmp_path / "leader.pid"
+    child_file = tmp_path / "child.pid"
+    command = (
+        'printf "%s\\n" "$$" > "$LEADER_FILE"; '
+        "( trap '' TERM; while :; do /bin/sleep 30; done ) "
+        '</dev/null >/dev/null 2>&1 & printf "%s\\n" "$!" > "$CHILD_FILE"'
+    )
+    started = time.monotonic()
+    process_group_id: int | None = None
+    child_pid: int | None = None
+    try:
+        result = module._default_process_runner(
+            argv=["/bin/sh", "-c", command],
+            cwd=str(tmp_path),
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LEADER_FILE": str(leader_file),
+                "CHILD_FILE": str(child_file),
+            },
+            stdin="",
+            timeout=10,
+            process_group=True,
+            shell=False,
+            max_output_bytes=1024,
+        )
+        process_group_id = _read_fixture_pid(leader_file)
+        child_pid = _read_fixture_pid(child_file)
+        assert result["process_group_id"] == process_group_id
+        assert time.monotonic() - started < 3.0
+        assert result["returncode"] == 0
+        assert result["timed_out"] is False
+        assert result["descendant_detected"] is True
+        assert result["cleanup_attempted"] is True
+        assert result["cleanup_escalated"] is True
+        assert result["cleanup_failed"] is False
+        assert result["process_group_empty"] is True
+        assert result["process_group_state_certain"] is True
+        assert result["stdout_drainer_joined"] is True
+        assert result["stderr_drainer_joined"] is True
+        assert result["stdin_writer_joined"] is True
+        assert not _process_group_exists(process_group_id)
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        if process_group_id is None and leader_file.exists():
+            process_group_id = _read_fixture_pid(leader_file)
+        if process_group_id is not None:
+            _cleanup_fixture_group(process_group_id)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                pytest.fail("orphaned TERM-ignoring fixture process leaked after cleanup")
+
+
+@pytest.mark.parametrize(
+    "unsafe_result",
+    [
+        {"descendant_detected": True},
+        {"stdout_drainer_joined": False},
+        {"stderr_drainer_joined": False},
+        {"process_group_empty": False},
+        {"process_group_empty": None},
+        {"process_group_state_certain": False},
+        {"cleanup_failed": True},
+    ],
+)
+def test_process_group_lifecycle_rejects_inadmissible_runner_state(
+    scenario: Scenario, unsafe_result: dict[str, object]
+) -> None:
+    module = _launcher_module()
+    plan = _plan(scenario)
+    process_result: dict[str, object] = {
+        "returncode": 0,
+        "stdout": _valid_jsonl(),
+        "stderr": "",
+        "timed_out": False,
+        "output_limited": False,
+        "stdin_write_error": False,
+        "stdin_writer_joined": True,
+        "stdout_drainer_joined": True,
+        "stderr_drainer_joined": True,
+        "descendant_detected": False,
+        "process_group_empty": True,
+        "process_group_state_certain": True,
+        "cleanup_failed": False,
+    }
+    process_result.update(unsafe_result)
+
+    result = module.run_isolated_role(
+        plan,
+        prompt="bounded prompt",
+        toolchain_runner=_valid_toolchain_runner,
+        sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
+        process_runner=lambda **kwargs: process_result,
+    )
+
+    assert result["status"] == "insufficient_evidence"
+    assert "isolated role process failed" in result["errors"]
+
+
 @pytest.mark.parametrize("value", [0, -1, 1801, True, "1800"])
 def test_review_timeout_is_bounded_and_defaults_to_thirty_minutes(
     scenario: Scenario, value: object
@@ -4190,7 +4511,7 @@ def test_default_run_path_uses_low_level_subprocess_for_all_ten_probes(
         plan,
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
-        process_runner=lambda **kwargs: {"returncode": 0, "stdout": _valid_jsonl(), "stderr": ""},
+        process_runner=lambda **kwargs: _valid_process_result(),
     )
     assert result["status"] == "completed", result
     assert seen == [
@@ -4216,11 +4537,7 @@ def test_successful_run_cleans_exact_launcher_runtime_and_cwd(
         prompt="bounded prompt",
         toolchain_runner=_valid_toolchain_runner,
         sandbox_runner=_sandbox_runner_for(_valid_sandbox_results(), []),
-        process_runner=lambda **kwargs: {
-            "returncode": 0,
-            "stdout": _valid_jsonl(),
-            "stderr": "",
-        },
+        process_runner=lambda **kwargs: _valid_process_result(),
     )
     assert result["status"] == "completed", result
     assert not Path(plan["cwd"]).exists()
