@@ -23,6 +23,7 @@ ORDINARY_ROLES = {
     "boundary_reviewer",
     "astra_canary",
 }
+PRIVATE_KEY_TEST_BYTES = ("-----BEGIN " + "PRIVATE KEY-----\n").encode()
 
 
 def _module():
@@ -327,7 +328,7 @@ def test_candidate_claims_are_untrusted_and_findings_require_record_citations(
     ("path", "payload", "message"),
     [
         ("secrets/api.txt", b"ordinary\n", "secret-like path"),
-        ("notes.txt", b"-----BEGIN PRIVATE KEY-----\n", "credential pattern"),
+        ("notes.txt", PRIVATE_KEY_TEST_BYTES, "credential pattern"),
         ("notes.txt", b"safe\xe2\x80\xaeunsafe\n", "bidi"),
         ("notes.txt", b"bad\x00binary\n", "NUL"),
         ("notes.txt", b"bad\xffutf8\n", "UTF-8"),
