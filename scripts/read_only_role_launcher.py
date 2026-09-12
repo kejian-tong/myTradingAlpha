@@ -1962,7 +1962,7 @@ def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
     if not command or len(command.encode("utf-8")) > 16 * 1024:
         raise LauncherError("shell command is invalid or oversized")
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n()")
         lexer.commenters = ""
         lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
@@ -1974,10 +1974,14 @@ def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
     segments: list[tuple[str, ...]] = []
     current: list[str] = []
     for token in tokens:
-        if token and all(character in ";&|\n" for character in token):
-            if current:
-                segments.append(tuple(current))
-                current = []
+        if token and all(character in ";&|\n()" for character in token):
+            for character in token:
+                if character in ";&|\n":
+                    if current:
+                        segments.append(tuple(current))
+                        current = []
+                else:
+                    current.append(character)
             continue
         current.append(token)
     if current:
@@ -1988,8 +1992,10 @@ def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
 
 
 def _command_attempts_nested_codex(
-    command: object, *, forbidden_codex_binary: str | None
+    command: object, *, forbidden_codex_binary: str | None, _depth: int = 0
 ) -> bool:
+    if _depth > 8:
+        raise LauncherError("command observation recursion exceeds bound")
     tokens = list(_bounded_command_tokens(command))
     while tokens:
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
@@ -2040,6 +2046,85 @@ def _command_attempts_nested_codex(
             while tokens and tokens[0].startswith("-"):
                 tokens.pop(0)
             continue
+        if executable == "exec":
+            tokens.pop(0)
+            while tokens and tokens[0].startswith("-"):
+                option = tokens.pop(0)
+                if option == "--":
+                    break
+                if option == "-a" and tokens:
+                    tokens.pop(0)
+                    continue
+                if option == "-a" or re.fullmatch(r"-[cl]+", option):
+                    continue
+                if option.startswith("-a") and len(option) > 2:
+                    continue
+                return False
+            continue
+        if executable == "time":
+            tokens.pop(0)
+            while tokens and tokens[0].startswith("-"):
+                option = tokens.pop(0)
+                if option == "--":
+                    break
+                if option in {"-f", "--format", "-o", "--output"} and tokens:
+                    tokens.pop(0)
+                    continue
+                if option in {"-f", "--format", "-o", "--output"}:
+                    return False
+                if option.startswith(("-f", "-o")) and len(option) > 2:
+                    continue
+                if option.startswith(("--format=", "--output=")):
+                    continue
+                if option in {
+                    "-a",
+                    "--append",
+                    "-h",
+                    "-l",
+                    "-p",
+                    "--portability",
+                    "-q",
+                    "--quiet",
+                    "-v",
+                    "--verbose",
+                }:
+                    continue
+                return False
+            continue
+        if executable == "nohup":
+            tokens.pop(0)
+            if tokens and tokens[0] == "--":
+                tokens.pop(0)
+            continue
+        if executable == "nice":
+            tokens.pop(0)
+            while tokens and tokens[0].startswith("-"):
+                option = tokens.pop(0)
+                if option == "--":
+                    break
+                if option in {"-n", "--adjustment"} and tokens:
+                    tokens.pop(0)
+                    continue
+                if option in {"-n", "--adjustment"}:
+                    return False
+                if re.fullmatch(r"-[0-9]+", option):
+                    continue
+                if option.startswith("-n") and len(option) > 2:
+                    continue
+                if option.startswith("--adjustment="):
+                    continue
+                return False
+            continue
+        if executable == "builtin":
+            tokens.pop(0)
+            if tokens and tokens[0] == "--":
+                tokens.pop(0)
+            if not tokens or Path(tokens[0]).name != "command":
+                return False
+            continue
+        if tokens[0] in {"if", "then", "else", "elif", "while", "until", "do", "!", "(", "{"}:
+            tokens.pop(0)
+            continue
         break
     if not tokens:
         return False
@@ -2051,6 +2136,7 @@ def _command_attempts_nested_codex(
                     _command_attempts_nested_codex(
                         list(segment),
                         forbidden_codex_binary=forbidden_codex_binary,
+                        _depth=_depth + 1,
                     )
                     for segment in _bounded_shell_segments(tokens[index + 1])
                 )

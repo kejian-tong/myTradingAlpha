@@ -241,7 +241,10 @@ The command-event parser rejects an observed direct exact-path or bare `codex` a
 leading assignments, `env`, `env -S`/`--split-string`, `command codex`, and shell `-c` forms. Harmless
 `command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
 remain admissible. Direct shell `-c` parsing inspects every bounded simple-command segment across newline,
-sequence, conditional, and pipeline operators without claiming arbitrary shell or obfuscation completeness.
+sequence, conditional, and pipeline operators. The exact direct-prefix grammar unwraps bounded ordinary
+`exec`, `time`, `nohup`, `nice`, `builtin command`, control-keyword, negation, parenthesis, and brace forms.
+Text-only `printf`, `echo`, and `rg` arguments remain nonblocking. Token, segment, and recursion bounds apply
+without claiming command substitution, `eval`, `xargs`, arbitrary shell, or obfuscation completeness.
 This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
 obfuscated shell execution cannot be certified absent. Preventive delegation control remains deferred to
 the separate later Master-only enforcement remediation.
@@ -261,8 +264,8 @@ test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `
 `bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
 `34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
 anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
-also includes remote-credential parsing `276dd72 -> cf6fd19`. The current repair starts at
-test-only RED `487190a`; its exact GREEN head is recorded
+also includes remote-credential parsing `276dd72 -> cf6fd19` and NUL/compound correction
+`487190a -> 0ef6608`. The current repair starts at test-only RED `b0dc3e5`; its exact GREEN head is recorded
 in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
