@@ -83,6 +83,13 @@ _AGENT_ROLE_PARSE_WARNING_RE = re.compile(
     r"\AIgnoring malformed agent role definition: failed to parse agent role file at "
     r"/[\x20-\x7e]{1,320}\.toml: TOML parse error at line [1-9][0-9]*, column [1-9][0-9]*\Z"
 )
+_LEADING_REDIRECTION_RE = re.compile(
+    r"\A(?P<descriptor>[0-9]*)(?P<operator>>\||>>|<>|<&|>&|<|>)(?P<target>.*)\Z"
+)
+_UNSUPPORTED_LEADING_REDIRECTION_RE = re.compile(
+    r"\A(?:[0-9]*(?:<<<|<<|>{3,})|&>>?)"
+)
+_MAX_LEADING_REDIRECTIONS = 32
 
 READ_ONLY_ROLES = frozenset(
     {
@@ -2084,6 +2091,8 @@ def _bounded_command_tokens(command: object) -> tuple[str, ...]:
         raise LauncherError("command execution is malformed")
     if not tokens:
         raise LauncherError("command execution is empty")
+    if len(tokens) > 256:
+        raise LauncherError("command execution has too many tokens")
     return tokens
 
 
@@ -2103,6 +2112,13 @@ def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
     segments: list[tuple[str, ...]] = []
     current: list[str] = []
     for token in tokens:
+        if (
+            token in {"&", "|"}
+            and current
+            and re.fullmatch(r"[0-9]*[<>]", current[-1])
+        ):
+            current[-1] += token
+            continue
         if token and all(character in ";&|\n()" for character in token):
             for character in token:
                 if character in ";&|\n":
@@ -2120,13 +2136,43 @@ def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
     return tuple(segments)
 
 
+def _consume_leading_redirection(tokens: list[str]) -> bool:
+    token = tokens[0]
+    if _UNSUPPORTED_LEADING_REDIRECTION_RE.match(token):
+        raise LauncherError("unsupported leading shell redirection")
+    match = _LEADING_REDIRECTION_RE.fullmatch(token)
+    if match is None:
+        if token.startswith(("<", ">", "&>")) or re.match(r"[0-9]+[<>]", token):
+            raise LauncherError("malformed leading shell redirection")
+        return False
+    descriptor = match.group("descriptor")
+    if len(descriptor) > 10:
+        raise LauncherError("shell redirection descriptor exceeds bound")
+    tokens.pop(0)
+    target = match.group("target")
+    if not target:
+        if not tokens:
+            raise LauncherError("shell redirection target is missing")
+        target = tokens.pop(0)
+    if not target or target[0] in "<>" or target in {"(", ")", "{", "}"}:
+        raise LauncherError("shell redirection target is malformed")
+    return True
+
+
 def _command_attempts_nested_codex(
     command: object, *, forbidden_codex_binary: str | None, _depth: int = 0
 ) -> bool:
     if _depth > 8:
         raise LauncherError("command observation recursion exceeds bound")
     tokens = list(_bounded_command_tokens(command))
+    redirection_count = 0
+    env_split_expansions = 0
     while tokens:
+        if _consume_leading_redirection(tokens):
+            redirection_count += 1
+            if redirection_count > _MAX_LEADING_REDIRECTIONS:
+                raise LauncherError("leading shell redirection count exceeds bound")
+            continue
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
             tokens.pop(0)
             continue
@@ -2136,23 +2182,43 @@ def _command_attempts_nested_codex(
             expanded_split = False
             while index < len(tokens):
                 value = tokens[index]
-                if value in {"-S", "--split-string"} and index + 1 < len(tokens):
+                split_value: str | None = None
+                consumed = 1
+                if value in {"-S", "--split-string"}:
+                    if index + 1 >= len(tokens) or not tokens[index + 1]:
+                        raise LauncherError("env split-string argument is missing")
+                    split_value = tokens[index + 1]
+                    consumed = 2
+                elif value.startswith("--split-string="):
+                    split_value = value.partition("=")[2]
+                elif value.startswith("-S") and len(value) > 2:
+                    split_value = value[2:]
+                if split_value is not None:
+                    env_split_expansions += 1
+                    if env_split_expansions > 8:
+                        raise LauncherError("env split-string expansion exceeds bound")
                     tokens = [
                         "env",
-                        *_bounded_command_tokens(tokens[index + 1]),
-                        *tokens[index + 2 :],
+                        *_bounded_command_tokens(split_value),
+                        *tokens[index + consumed :],
                     ]
+                    if len(tokens) > 256 or sum(
+                        len(token.encode("utf-8")) for token in tokens
+                    ) > 16 * 1024:
+                        raise LauncherError("expanded env command exceeds bound")
                     expanded_split = True
                     break
-                if value.startswith("--split-string="):
-                    tokens = [
-                        "env",
-                        *_bounded_command_tokens(value.partition("=")[2]),
-                        *tokens[index + 1 :],
-                    ]
-                    expanded_split = True
-                    break
-                if value in {"-u", "--unset"} and index + 1 < len(tokens):
+                if value == "-P":
+                    if index + 1 >= len(tokens) or not tokens[index + 1]:
+                        raise LauncherError("env utilpath argument is missing")
+                    index += 2
+                    continue
+                if value.startswith("-P") and len(value) > 2:
+                    index += 1
+                    continue
+                if value in {"-u", "--unset"}:
+                    if index + 1 >= len(tokens) or not tokens[index + 1]:
+                        raise LauncherError("env unset argument is missing")
                     index += 2
                     continue
                 if value.startswith("-") or re.fullmatch(

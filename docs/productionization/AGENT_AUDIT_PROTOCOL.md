@@ -253,11 +253,16 @@ absence of auth, config, and agent files without executing Codex. The outer host
 authentication context.
 
 The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
-leading assignments, `env`, `env -S`/`--split-string`, `command codex`, and shell `-c` forms. Harmless
+leading assignments, `env`, macOS `env -P` with separate or attached utilpath, `env -S`/`--split-string`,
+`command codex`, and shell `-c` forms. Missing `env` option arguments and bounded split-string expansion
+fail closed. Harmless
 `command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
 remain admissible. Direct shell `-c` parsing inspects every bounded simple-command segment across newline,
 sequence, conditional, and pipeline operators. The exact direct-prefix grammar unwraps bounded ordinary
 `exec`, `time`, `nohup`, `nice`, `builtin command`, control-keyword, negation, parenthesis, and brace forms.
+It also normalizes bounded leading `<`, `>`, `>>`, `<&`, `>&`, `<>`, and `>|` redirections, with optional
+attached file descriptors; missing targets, unsupported heredoc/here-string syntax, malformed operators,
+and excessive redirection chains fail closed. This normalization does not inspect heredoc bodies.
 Text-only `printf`, `echo`, and `rg` arguments remain nonblocking. Token, segment, and recursion bounds apply
 without claiming command substitution, `eval`, `xargs`, arbitrary shell, or obfuscation completeness.
 This is post-run blocking observation and defense-in-depth, not preventive host enforcement;
@@ -280,9 +285,9 @@ test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `
 `34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
 anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
 also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound correction
-`487190a -> 0ef6608`, direct-prefix correction `b0dc3e5 -> 243d95f`, and current-runtime registration
-`6125464 -> ec8acdb`. The current repair starts at test-only RED `8d08c74`; its exact GREEN head is recorded
-in durable PR evidence. The abandoned v2
+`487190a -> 0ef6608`, direct-prefix correction `b0dc3e5 -> 243d95f`, current-runtime registration
+`6125464 -> ec8acdb`, and sandboxed local-command correction `8d08c74 -> 546be4a`. The current repair
+starts at test-only RED `4a39883`; its exact GREEN head is recorded in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 
