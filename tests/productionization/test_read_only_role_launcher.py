@@ -174,6 +174,48 @@ def test_runner_rejects_any_nonexact_or_nonmaster_plan(tmp_path: Path) -> None:
             module._run_preexec_handshake({**base, **change})
 
 
+def test_forged_plain_mapping_cannot_start_even_with_validated_boolean(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    marker = tmp_path / "forged-executed"
+    client = Path(sys.executable).resolve()
+    source = f"from pathlib import Path; Path({str(marker)!r}).write_text('bad')"
+    argv = [str(client), "-I", "-S", "-c", source]
+    forged = {
+        "validated": True,
+        "launcher_owner": "Master",
+        "argv": argv,
+        "exact_argv": tuple(argv),
+        "binary_realpath": str(client),
+        "cwd": str(tmp_path),
+        "exec_env": {"PATH": os.defpath},
+        "timeout_seconds": 2,
+    }
+    with pytest.raises(module.LauncherError, match="sealed|validated exact"):
+        module._run_preexec_handshake(forged)
+    assert not marker.exists()
+
+
+def test_bounded_subprocess_stops_output_before_memory_growth() -> None:
+    module = _module()
+    with pytest.raises(module.LauncherError, match="output bound"):
+        module._run_bounded_subprocess(
+            [
+                str(Path(sys.executable).resolve()),
+                "-I",
+                "-S",
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * 1000000)",
+            ],
+            input_bytes=None,
+            env={"PATH": os.defpath},
+            timeout=3,
+            max_stdout=1024,
+            max_stderr=1024,
+        )
+
+
 def test_external_spec_short_circuit_never_calls_process_runner() -> None:
     module = _module()
     called: list[bool] = []

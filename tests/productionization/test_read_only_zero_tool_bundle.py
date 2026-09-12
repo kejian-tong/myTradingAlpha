@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -328,6 +331,7 @@ def test_candidate_claims_are_untrusted_and_findings_require_record_citations(
     ("path", "payload", "message"),
     [
         ("secrets/api.txt", b"ordinary\n", "secret-like path"),
+        (".ssh/id_rsa", b"ordinary\n", "secret-like path"),
         ("notes.txt", PRIVATE_KEY_TEST_BYTES, "credential pattern"),
         ("notes.txt", b"safe\xe2\x80\xaeunsafe\n", "bidi"),
         ("notes.txt", b"bad\x00binary\n", "NUL"),
@@ -436,6 +440,27 @@ def test_bundle_rejects_replace_promisor_and_incomplete_context(
     _git(repo, "replace", str(exact_repo["base"]), str(exact_repo["head"]))
     with pytest.raises(module.LauncherError, match="replace"):
         _bundle(module, exact_repo)
+
+
+def test_bundle_rejects_policy_worktree_that_is_not_the_exact_policy_object(
+    exact_repo: dict[str, object],
+) -> None:
+    module = _module()
+    with pytest.raises(module.LauncherError, match="policy worktree"):
+        _bundle(
+            module,
+            exact_repo,
+            expected_policy_sha=exact_repo["base"],
+            expected_policy_tree_sha=exact_repo["base_tree"],
+        )
+
+
+def test_trusted_context_command_is_bounded(exact_repo: dict[str, object]) -> None:
+    module = _module()
+    contexts = _trusted_context(str(exact_repo["head"]))
+    contexts[-1] = {**contexts[-1], "command": "x" * 5000}
+    with pytest.raises(module.LauncherError, match="command.*bound"):
+        _bundle(module, exact_repo, trusted_context_records=contexts)
 
 
 def test_jsonl_accepts_only_lifecycle_reasoning_final_and_exact_loader_warning() -> None:
@@ -566,6 +591,57 @@ def test_pre_release_failure_cleans_blocked_leader_before_reap(tmp_path: Path) -
     assert events.index("blocked_leader_killed") < events.index("reaped")
     assert result["leader_wait_count"] == 1
     assert result["post_reap_group_access"] is False
+    assert result["stdout_drainer_joined"] is True
+    assert result["stderr_drainer_joined"] is True
+
+
+def test_unexpected_original_group_descendant_is_killed_before_reap(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    pid_file = tmp_path / "descendant.pid"
+    client = Path(sys.executable).resolve()
+    child_source = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)"
+    source = (
+        "import pathlib,subprocess,sys;"
+        f"p=subprocess.Popen([sys.executable,'-I','-S','-c',{child_source!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))"
+    )
+    argv = [str(client), "-I", "-S", "-c", source]
+    plan = {
+        "validated": True,
+        "launcher_owner": "Master",
+        "role": "reviewer_high",
+        "argv": argv,
+        "exact_argv": tuple(argv),
+        "binary_realpath": str(client),
+        "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
+        "cwd": str(tmp_path),
+        "timeout_seconds": 2,
+    }
+    descendant_pid: int | None = None
+    try:
+        result = module._run_preexec_handshake(
+            plan,
+            bootstrap_python=Path(sys.executable).resolve(),
+        )
+        deadline = time.monotonic() + 1
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        descendant_pid = int(pid_file.read_text())
+        assert result["status"] == "insufficient_evidence"
+        assert result["unexpected_descendant"] is True
+        assert result["cleanup_escalated"] is True
+        with pytest.raises(ProcessLookupError):
+            os.kill(descendant_pid, 0)
+        assert result["handshake_events"].index("signal_kill") < result["handshake_events"].index(
+            "reaped"
+        )
+    finally:
+        if descendant_pid is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(descendant_pid, signal.SIGKILL)
 
 
 def test_manifest_binds_bundle_prompt_zero_tools_handshake_and_owner() -> None:
