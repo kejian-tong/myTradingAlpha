@@ -336,7 +336,7 @@ def test_trusted_context_requires_master_exact_head_and_complete_categories() ->
             "category": category,
             "producer": "Master",
             "head_sha": head,
-            "command": None,
+            "command": ("exact validation command" if category in {"red", "green", "ci"} else None),
             "status": (
                 "not_applicable"
                 if category in {"roadmap_row", "phase_design", "phase_implementation"}

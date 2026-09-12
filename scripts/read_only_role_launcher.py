@@ -282,6 +282,20 @@ class PromptEnvelope:
 _PLAN_SEAL = object()
 
 
+def _freeze_plan_value(value: object) -> object:
+    if type(value) is dict:
+        if any(type(key) is not str for key in value):
+            raise LauncherError("validated plan contains a non-string key")
+        return MappingProxyType({key: _freeze_plan_value(item) for key, item in value.items()})
+    if type(value) in {list, tuple}:
+        return tuple(_freeze_plan_value(item) for item in value)
+    if type(value) in {set, frozenset}:
+        return frozenset(_freeze_plan_value(item) for item in value)
+    if type(value) in {str, bytes, int, bool, type(None)} or isinstance(value, PromptEnvelope):
+        return value
+    raise LauncherError("validated plan contains an unsupported mutable value")
+
+
 class _ValidatedZeroToolPlan(Mapping[str, object]):
     """Immutable top-level plan created only after all validation succeeds."""
 
@@ -290,12 +304,11 @@ class _ValidatedZeroToolPlan(Mapping[str, object]):
     def __init__(self, values: Mapping[str, object], *, seal: object) -> None:
         if seal is not _PLAN_SEAL:
             raise LauncherError("validated plan seal is invalid")
-        frozen = dict(values)
-        if type(frozen.get("argv")) is list:
-            frozen["argv"] = tuple(frozen["argv"])
-        if type(frozen.get("exact_argv")) is list:
-            frozen["exact_argv"] = tuple(frozen["exact_argv"])
-        self._values = MappingProxyType(frozen)
+        if type(values) is not dict:
+            raise LauncherError("validated plan source must be an exact dictionary")
+        self._values = MappingProxyType(
+            {key: _freeze_plan_value(item) for key, item in values.items()}
+        )
         self._seal = seal
 
     def __getitem__(self, key: str) -> object:
@@ -896,6 +909,8 @@ def _trusted_context(
         output_digest = item["output_digest"]
         observed_at = item["observed_at"]
         content = item["content"]
+        if category in {"red", "green", "ci"} and (type(command) is not str or not command.strip()):
+            raise LauncherError("trusted context command is required for RED/GREEN/CI")
         if (
             type(category) is not str
             or category not in required
@@ -1966,6 +1981,39 @@ def _safe_wait_once(process: subprocess.Popen[bytes], timeout: float = 5.0) -> i
         raise LauncherError("leader could not be reaped") from exc
 
 
+def _validate_private_runtime(plan: Mapping[str, object]) -> tuple[Path, Path]:
+    root = _absolute_dir(plan.get("runtime_root"), "private runtime root")
+    cwd = _absolute_dir(plan.get("cwd"), "private runtime cwd")
+    temp_roots = {
+        Path(tempfile.gettempdir()).resolve(),
+        Path("/tmp").resolve(),
+        Path("/private/tmp").resolve(),
+    }
+    if not root.name.startswith("mta-zero-tool-") or not any(
+        root.is_relative_to(candidate) for candidate in temp_roots
+    ):
+        raise LauncherError("private runtime ownership/root validation failed")
+    if cwd.parent != root:
+        raise LauncherError("private runtime cwd is outside its owned root")
+    for path in (root, cwd):
+        info = path.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o077
+        ):
+            raise LauncherError("private runtime ownership or mode is unsafe")
+    try:
+        root_entries = tuple(root.iterdir())
+        cwd_entries = tuple(cwd.iterdir())
+    except OSError as exc:
+        raise LauncherError("private runtime contents cannot be verified") from exc
+    if root_entries != (cwd,) or cwd_entries:
+        raise LauncherError("private runtime cwd must be empty before release")
+    return root, cwd
+
+
 def _run_preexec_handshake(
     plan: Mapping[str, object],
     *,
@@ -2001,6 +2049,7 @@ def _run_preexec_handshake(
     ):
         raise LauncherError("Python bootstrap override differs from sealed plan")
     python = registered_python
+    _runtime_root, private_cwd = _validate_private_runtime(plan)
     argv = [str(value) for value in plan["argv"]]
     if any(not value or "\0" in value for value in argv):
         raise LauncherError("exact client argv is malformed")
@@ -2045,7 +2094,7 @@ def _run_preexec_handshake(
                 str(release_r),
                 *argv,
             ],
-            cwd=str(plan["cwd"]),
+            cwd=str(private_cwd),
             env=dict(plan.get("exec_env", {})),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -2392,7 +2441,16 @@ def _remove_private_runtime(plan: Mapping[str, object]) -> list[str]:
 
 
 def _post_run_exact_state(plan: Mapping[str, object]) -> None:
-    git = Path(str(plan["git_realpath"]))
+    binary = _absolute_file(plan["binary_realpath"], "Codex binary")
+    bootstrap = _absolute_file(plan["bootstrap_python_realpath"], "isolated Python bootstrap")
+    git = _absolute_file(plan["git_realpath"], "Git binary")
+    for path, expected, label in (
+        (binary, plan["binary_sha256"], "Codex binary"),
+        (bootstrap, plan["bootstrap_python_sha256"], "Python bootstrap"),
+        (git, plan["git_sha256"], "Git binary"),
+    ):
+        if _hash_file(path) != _sha256(expected, f"{label} SHA-256"):
+            raise LauncherError(f"{label} changed during invocation")
     policy = _GitReader(git, Path(str(plan["policy_root"])))
     target = _GitReader(git, Path(str(plan["target_root"])))
     _worktree_state(

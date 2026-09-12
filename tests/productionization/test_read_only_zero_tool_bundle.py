@@ -623,6 +623,10 @@ def test_external_spec_fails_before_bundle_or_model_start() -> None:
 
 def _fixture_plan(module, tmp_path: Path, marker: Path, *, exit_code: int = 0):
     client = Path(sys.executable).resolve()
+    runtime_root = tmp_path / "mta-zero-tool-fixture-runtime"
+    cwd = runtime_root / "cwd"
+    runtime_root.mkdir(mode=0o700, exist_ok=True)
+    cwd.mkdir(mode=0o700, exist_ok=True)
     source = (
         "import json,pathlib,sys;"
         f"pathlib.Path({str(marker)!r}).write_text('executed');"
@@ -651,7 +655,8 @@ def _fixture_plan(module, tmp_path: Path, marker: Path, *, exit_code: int = 0):
             "bootstrap_python_realpath": str(client),
             "bootstrap_python_sha256": bootstrap_sha256,
             "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
-            "cwd": str(tmp_path),
+            "runtime_root": str(runtime_root),
+            "cwd": str(cwd),
             "timeout_seconds": 5,
         },
         seal=module._PLAN_SEAL,
@@ -735,6 +740,10 @@ def test_unexpected_original_group_descendant_is_killed_before_reap(
     pid_file = tmp_path / "descendant.pid"
     child_ready = tmp_path / "descendant.ready"
     client = Path(sys.executable).resolve()
+    runtime_root = tmp_path / "mta-zero-tool-descendant-runtime"
+    cwd = runtime_root / "cwd"
+    runtime_root.mkdir(mode=0o700)
+    cwd.mkdir(mode=0o700)
     child_source = (
         "import pathlib,signal,time;"
         "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
@@ -764,7 +773,8 @@ def test_unexpected_original_group_descendant_is_killed_before_reap(
             "bootstrap_python_realpath": str(client),
             "bootstrap_python_sha256": bootstrap_sha256,
             "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
-            "cwd": str(tmp_path),
+            "runtime_root": str(runtime_root),
+            "cwd": str(cwd),
             "timeout_seconds": 2,
         },
         seal=module._PLAN_SEAL,
