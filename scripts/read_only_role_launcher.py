@@ -217,7 +217,6 @@ _CURRENT_ONLY_DISABLED_FEATURES = (
     "request_permissions_tool",
     "runtime_metrics",
     "secret_auth_storage",
-    "shell_tool",
     "shell_zsh_fork",
     "sleep_tool",
     "terminal_visualization_instructions",
@@ -233,6 +232,16 @@ _DISABLED_FEATURES_BY_CODEX_VERSION = MappingProxyType(
         DEFAULT_CODEX_VERSION: (
             *_BASE_DISABLED_FEATURES,
             *_CURRENT_ONLY_DISABLED_FEATURES,
+        ),
+    }
+)
+_ENABLED_FEATURES_BY_CODEX_VERSION = MappingProxyType(
+    {
+        "0.153.4": ("skip_host_skill_discovery", "code_mode_host"),
+        DEFAULT_CODEX_VERSION: (
+            "skip_host_skill_discovery",
+            "code_mode_host",
+            "shell_tool",
         ),
     }
 )
@@ -1493,8 +1502,12 @@ def build_invocation_plan(
     if disabled_features is None:
         raise LauncherError("Codex feature closure is unavailable for the exact version")
     config_values.extend(f"features.{name}=false" for name in disabled_features)
-    config_values.append("features.skip_host_skill_discovery=true")
-    config_values.append("features.code_mode_host=true")
+    enabled_features = _ENABLED_FEATURES_BY_CODEX_VERSION.get(
+        str(expected_binary_version)
+    )
+    if enabled_features is None:
+        raise LauncherError("Codex feature closure is unavailable for the exact version")
+    config_values.extend(f"features.{name}=true" for name in enabled_features)
     config_values.append(f"mcp_servers={_toml_value(mcp_servers)}")
     runtime_config = {
         "strict": True,
@@ -1503,8 +1516,7 @@ def build_invocation_plan(
         "config_values": config_values,
         "features": {
             **dict.fromkeys(disabled_features, False),
-            "skip_host_skill_discovery": True,
-            "code_mode_host": True,
+            **dict.fromkeys(enabled_features, True),
         },
         "agents": {"enabled": False},
         "mcp_servers": mcp_servers,

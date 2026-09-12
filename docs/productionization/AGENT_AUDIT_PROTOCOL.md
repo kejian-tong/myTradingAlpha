@@ -238,7 +238,8 @@ preserves that exact 0.153.4 configuration without passing newer unknown flags. 
 current capability/discovery features bound by the launcher tests. Both versions disable skill search and
 host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots, Chronicle, Apps,
 plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP. Only
-`code_mode_host=true` remains enabled for the required sandboxed local command path.
+`code_mode_host=true` and `shell_tool=true` remain enabled for the required sandboxed local command path;
+an exact-head candidate smoke proved that disabling `shell_tool` removes the local command tool.
 GPT-6 production routes remain disabled; this runtime compatibility registration does not change model routing.
 The reviewed under-development warning is suppressed after these exact flags are bound so it cannot create a
 permanent item-error false stop.
@@ -279,8 +280,9 @@ test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `
 `34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
 anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
 also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound correction
-`487190a -> 0ef6608`, and direct-prefix correction `b0dc3e5 -> 243d95f`. The current repair starts at
-test-only RED `6125464`; its exact GREEN head is recorded in durable PR evidence. The abandoned v2
+`487190a -> 0ef6608`, direct-prefix correction `b0dc3e5 -> 243d95f`, and current-runtime registration
+`6125464 -> ec8acdb`. The current repair starts at test-only RED `8d08c74`; its exact GREEN head is recorded
+in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 
