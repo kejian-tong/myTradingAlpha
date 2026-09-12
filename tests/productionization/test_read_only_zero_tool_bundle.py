@@ -163,8 +163,8 @@ def _bundle(module, repo: dict[str, object], **overrides: object):
         "git_binary": Path(shutil.which("git") or "").resolve(),
         "policy_root": repo["root"],
         "target_root": repo["root"],
-        "expected_policy_sha": repo["base"],
-        "expected_policy_tree_sha": repo["base_tree"],
+        "expected_policy_sha": repo["head"],
+        "expected_policy_tree_sha": repo["head_tree"],
         "expected_target_base_sha": repo["base"],
         "expected_target_head_sha": repo["head"],
         "expected_target_tree_sha": repo["head_tree"],
@@ -511,7 +511,7 @@ def test_external_spec_fails_before_bundle_or_model_start() -> None:
     assert calls == []
 
 
-def _fixture_plan(tmp_path: Path, marker: Path, *, exit_code: int = 0) -> dict[str, object]:
+def _fixture_plan(module, tmp_path: Path, marker: Path, *, exit_code: int = 0):
     client = Path(sys.executable).resolve()
     source = (
         "import json,pathlib,sys;"
@@ -529,17 +529,20 @@ def _fixture_plan(tmp_path: Path, marker: Path, *, exit_code: int = 0) -> dict[s
         f"raise SystemExit({exit_code})"
     )
     argv = [str(client), "-I", "-S", "-c", source]
-    return {
-        "validated": True,
-        "launcher_owner": "Master",
-        "role": "reviewer_high",
-        "argv": argv,
-        "exact_argv": tuple(argv),
-        "binary_realpath": str(client),
-        "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
-        "cwd": str(tmp_path),
-        "timeout_seconds": 5,
-    }
+    return module._ValidatedZeroToolPlan(
+        {
+            "validated": True,
+            "launcher_owner": "Master",
+            "role": "reviewer_high",
+            "argv": argv,
+            "exact_argv": tuple(argv),
+            "binary_realpath": str(client),
+            "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
+            "cwd": str(tmp_path),
+            "timeout_seconds": 5,
+        },
+        seal=module._PLAN_SEAL,
+    )
 
 
 def test_handshake_blocks_client_until_parent_arms_and_releases(tmp_path: Path) -> None:
@@ -552,7 +555,7 @@ def test_handshake_blocks_client_until_parent_arms_and_releases(tmp_path: Path) 
         observed.append((pid, os.getpgid(pid), os.getsid(pid)))
 
     result = module._run_preexec_handshake(
-        _fixture_plan(tmp_path, marker),
+        _fixture_plan(module, tmp_path, marker),
         bootstrap_python=Path(sys.executable).resolve(),
         before_release=before_release,
     )
@@ -579,7 +582,7 @@ def test_pre_release_failure_cleans_blocked_leader_before_reap(tmp_path: Path) -
         raise RuntimeError("observation arm failed")
 
     result = module._run_preexec_handshake(
-        _fixture_plan(tmp_path, marker),
+        _fixture_plan(module, tmp_path, marker),
         bootstrap_python=Path(sys.executable).resolve(),
         before_release=fail_before_release,
     )
@@ -609,17 +612,20 @@ def test_unexpected_original_group_descendant_is_killed_before_reap(
         f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))"
     )
     argv = [str(client), "-I", "-S", "-c", source]
-    plan = {
-        "validated": True,
-        "launcher_owner": "Master",
-        "role": "reviewer_high",
-        "argv": argv,
-        "exact_argv": tuple(argv),
-        "binary_realpath": str(client),
-        "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
-        "cwd": str(tmp_path),
-        "timeout_seconds": 2,
-    }
+    plan = module._ValidatedZeroToolPlan(
+        {
+            "validated": True,
+            "launcher_owner": "Master",
+            "role": "reviewer_high",
+            "argv": argv,
+            "exact_argv": tuple(argv),
+            "binary_realpath": str(client),
+            "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
+            "cwd": str(tmp_path),
+            "timeout_seconds": 2,
+        },
+        seal=module._PLAN_SEAL,
+    )
     descendant_pid: int | None = None
     try:
         result = module._run_preexec_handshake(

@@ -128,7 +128,8 @@ _LS_TREE_RE = re.compile(
 )
 _SECRET_PATH_RE = re.compile(
     r"(?:\A|/)(?:\.env(?:\.|\Z)|secrets?(?:/|\Z)|credentials?(?:/|\Z)|"
-    r"[^/]*(?:secret|token|credential|private[-_]?key)[^/]*)(?:/|\Z)?",
+    r"[^/]*(?:secret|token|credential|private[-_]?key)[^/]*|"
+    r"id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx))(?:/|\Z)?",
     re.IGNORECASE,
 )
 _CREDENTIAL_PATTERNS = (
@@ -279,6 +280,38 @@ class PromptEnvelope:
         return self.bytes.count(value)
 
 
+_PLAN_SEAL = object()
+
+
+class _ValidatedZeroToolPlan(Mapping[str, object]):
+    """Immutable top-level plan created only after all validation succeeds."""
+
+    __slots__ = ("_seal", "_values")
+
+    def __init__(self, values: Mapping[str, object], *, seal: object) -> None:
+        if seal is not _PLAN_SEAL:
+            raise LauncherError("validated plan seal is invalid")
+        frozen = dict(values)
+        if type(frozen.get("argv")) is list:
+            frozen["argv"] = tuple(frozen["argv"])
+        if type(frozen.get("exact_argv")) is list:
+            frozen["exact_argv"] = tuple(frozen["exact_argv"])
+        self._values = MappingProxyType(frozen)
+        self._seal = seal
+
+    def __getitem__(self, key: str) -> object:
+        return self._values[key]
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def is_sealed(self) -> bool:
+        return self._seal is _PLAN_SEAL
+
+
 def _diagnostic(value: object) -> str:
     return str(value).replace("\n", " ").replace("\r", " ")[:MAX_DIAGNOSTIC_LENGTH]
 
@@ -386,6 +419,103 @@ _GIT_PREFIX = (
 )
 
 
+def _run_bounded_subprocess(
+    argv: Sequence[str],
+    *,
+    input_bytes: bytes | None,
+    env: Mapping[str, str],
+    timeout: float,
+    max_stdout: int,
+    max_stderr: int,
+    cwd: str | None = None,
+) -> Mapping[str, object]:
+    """Run a trusted executable while bounding both pipe buffers during execution."""
+
+    if (
+        type(argv) not in {list, tuple}
+        or not argv
+        or not all(type(value) is str and value and "\0" not in value for value in argv)
+        or type(input_bytes) not in {bytes, type(None)}
+        or input_bytes is not None
+        and len(input_bytes) > MAX_GIT_COMMAND_OUTPUT
+        or type(timeout) not in {int, float}
+        or not 0 < timeout <= 30
+        or type(max_stdout) is not int
+        or type(max_stderr) is not int
+        or not 0 < max_stdout <= MAX_GIT_COMMAND_OUTPUT
+        or not 0 < max_stderr <= MAX_STDERR_BYTES
+    ):
+        raise LauncherError("bounded subprocess contract is invalid")
+    process = subprocess.Popen(
+        list(argv),
+        cwd=cwd,
+        env=dict(env),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    stdout = _BoundedDrainer(process.stdout, max_stdout)
+    stderr = _BoundedDrainer(process.stderr, max_stderr)
+    stdout.thread.start()
+    stderr.thread.start()
+    write_error: Exception | None = None
+
+    def write_input() -> None:
+        nonlocal write_error
+        try:
+            assert process.stdin is not None
+            if input_bytes:
+                process.stdin.write(input_bytes)
+            process.stdin.close()
+        except (BrokenPipeError, OSError) as exc:
+            write_error = exc
+
+    writer = threading.Thread(target=write_input, daemon=True)
+    writer.start()
+    deadline = time.monotonic() + float(timeout)
+    killed_for_bound = False
+    timed_out = False
+    while process.poll() is None:
+        if stdout.overflow or stderr.overflow:
+            killed_for_bound = True
+            process.kill()
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            process.kill()
+            break
+        time.sleep(PROCESS_POLL_SECONDS)
+    try:
+        returncode = process.wait(timeout=2)
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        process.wait(timeout=2)
+        raise LauncherError("bounded subprocess could not be reaped") from exc
+    writer.join(timeout=2)
+    stdout.thread.join(timeout=2)
+    stderr.thread.join(timeout=2)
+    if killed_for_bound or stdout.overflow or stderr.overflow:
+        raise LauncherError("subprocess output bound exceeded")
+    if timed_out:
+        raise LauncherError("bounded subprocess timed out")
+    if (
+        writer.is_alive()
+        or stdout.thread.is_alive()
+        or stderr.thread.is_alive()
+        or stdout.error is not None
+        or stderr.error is not None
+        or write_error is not None
+    ):
+        raise LauncherError("bounded subprocess pipe supervision failed")
+    return {
+        "returncode": returncode,
+        "stdout": bytes(stdout.data),
+        "stderr": bytes(stderr.data),
+    }
+
+
 class _GitReader:
     """Bounded exact Git-object reader with a fixed subprocess budget."""
 
@@ -405,7 +535,7 @@ class _GitReader:
         if self.calls >= MAX_GIT_SUBPROCESSES:
             raise LauncherError("Git subprocess bound exceeded")
         self.calls += 1
-        completed = subprocess.run(
+        completed = _run_bounded_subprocess(
             [
                 str(self.binary),
                 "-C",
@@ -413,19 +543,20 @@ class _GitReader:
                 *_GIT_PREFIX,
                 *arguments,
             ],
-            input=input_bytes,
-            capture_output=True,
-            check=False,
+            input_bytes=input_bytes,
             env=_git_environment(),
             timeout=15,
+            max_stdout=max_output,
+            max_stderr=MAX_STDERR_BYTES,
         )
-        if completed.stderr:
+        stderr = completed["stderr"]
+        assert isinstance(stderr, bytes)
+        if stderr:
             raise LauncherError("Git emitted stderr")
-        if completed.returncode != 0 and not allow_failure:
+        if completed["returncode"] != 0 and not allow_failure:
             raise LauncherError("Git exact-object operation failed")
-        output = completed.stdout
-        if len(output) > max_output:
-            raise LauncherError("Git command output bound exceeded")
+        output = completed["stdout"]
+        assert isinstance(output, bytes)
         self.output_bytes += len(output)
         if self.output_bytes > MAX_GIT_TOTAL_OUTPUT:
             raise LauncherError("Git aggregate output bound exceeded")
@@ -733,6 +864,7 @@ def _trusted_context(
             or producer != "Master"
             or head != expected_head
             or (command is not None and type(command) is not str)
+            or (type(command) is str and (len(command.encode("utf-8")) > 4096 or "\0" in command))
             or type(status_value) is not str
             or status_value not in {"pass", "fail", "not_applicable"}
             or type(observed_at) is not str
@@ -740,8 +872,11 @@ def _trusted_context(
             or type(content) is not str
             or not content
         ):
+            if type(command) is str and len(command.encode("utf-8")) > 4096:
+                raise LauncherError("trusted context command exceeds bound")
             raise LauncherError("trusted context provenance is invalid")
         _sha256(output_digest, "trusted context output digest")
+        _validate_text(content.encode("utf-8"), "trusted context")
         total += len(content.encode("utf-8"))
         if total > MAX_TRUSTED_CONTEXT_BYTES:
             raise LauncherError("trusted context bytes exceed bound")
@@ -810,7 +945,7 @@ def build_review_bundle(
     expected_target_tree_sha: str,
     scope_kind: str,
     trusted_context_records: Sequence[Mapping[str, object]],
-) -> dict[str, object]:
+) -> Mapping[str, object]:
     """Build one complete canonical bundle from exact verified Git objects."""
 
     if scope_kind not in {"roadmap", "harness_maintenance"}:
@@ -834,6 +969,15 @@ def build_review_bundle(
         _object_type(reader, commit, "commit")
     if _tree_oid(policy, policy_sha) != policy_tree:
         raise LauncherError("protected policy tree binding failed")
+    try:
+        _worktree_state(
+            policy,
+            expected_head=policy_sha,
+            expected_tree=policy_tree,
+            require_detached=False,
+        )
+    except LauncherError as exc:
+        raise LauncherError("policy worktree exact binding failed") from exc
     if _tree_oid(target, head_sha) != head_tree:
         raise LauncherError("candidate tree binding failed")
     merge_base = target.text("merge-base", base_sha, head_sha)
@@ -1374,7 +1518,7 @@ def build_invocation_plan(
     timeout_seconds: int = 1800,
     quarantine_references: Sequence[str] = (),
     codesign_probe: Callable[[Path], Mapping[str, object]] | None = None,
-) -> dict[str, object]:
+) -> Mapping[str, object]:
     """Build the only validated execution plan accepted by the production runner."""
 
     if role not in READ_ONLY_ROLES:
@@ -1483,45 +1627,48 @@ def build_invocation_plan(
         "LC_ALL": "C",
     }
     environment = {key: value for key, value in environment.items() if value}
-    return {
-        "validated": True,
-        "invocation_kind": "zero_tool_static_review",
-        "launcher_owner": "Master",
-        "policy_root": str(Path(policy_root).resolve()),
-        "target_root": str(Path(target_root).resolve()),
-        "policy_head_sha": policy_sha,
-        "policy_tree_sha": policy_tree,
-        "target_base_sha": expected_target_base_sha,
-        "target_head_sha": head_sha,
-        "target_tree_sha": head_tree,
-        "role": role,
-        "config_path": config_path,
-        "model": model,
-        "reasoning_effort": effort,
-        "named_agent_loaded": False,
-        "policy_source": "protected_exact_git_object",
-        "candidate_source": "canonical_exact_object_bundle",
-        "binary_realpath": binary_descriptor["realpath"],
-        "binary_version": binary_descriptor["version"],
-        "binary_sha256": binary_descriptor["sha256"],
-        "binary_team_identifier": binary_descriptor["team_identifier"],
-        "git_realpath": git_descriptor["realpath"],
-        "git_version": git_descriptor["version"],
-        "git_sha256": git_descriptor["sha256"],
-        "runtime_config": runtime_config,
-        "config_values": config_values,
-        "bundle": bundle,
-        "prompt": prompt,
-        "argv": argv,
-        "exact_argv": tuple(argv),
-        "exec_env": environment,
-        "runtime_root": str(runtime_root),
-        "cwd": str(cwd),
-        "timeout_seconds": timeout_seconds,
-        "quarantine_references": list(quarantine_references),
-        "collaboration_observation_complete": True,
-        "non_master_collaboration_invoked": False,
-    }
+    return _ValidatedZeroToolPlan(
+        {
+            "validated": True,
+            "invocation_kind": "zero_tool_static_review",
+            "launcher_owner": "Master",
+            "policy_root": str(Path(policy_root).resolve()),
+            "target_root": str(Path(target_root).resolve()),
+            "policy_head_sha": policy_sha,
+            "policy_tree_sha": policy_tree,
+            "target_base_sha": expected_target_base_sha,
+            "target_head_sha": head_sha,
+            "target_tree_sha": head_tree,
+            "role": role,
+            "config_path": config_path,
+            "model": model,
+            "reasoning_effort": effort,
+            "named_agent_loaded": False,
+            "policy_source": "protected_exact_git_object",
+            "candidate_source": "canonical_exact_object_bundle",
+            "binary_realpath": binary_descriptor["realpath"],
+            "binary_version": binary_descriptor["version"],
+            "binary_sha256": binary_descriptor["sha256"],
+            "binary_team_identifier": binary_descriptor["team_identifier"],
+            "git_realpath": git_descriptor["realpath"],
+            "git_version": git_descriptor["version"],
+            "git_sha256": git_descriptor["sha256"],
+            "runtime_config": runtime_config,
+            "config_values": config_values,
+            "bundle": bundle,
+            "prompt": prompt,
+            "argv": argv,
+            "exact_argv": tuple(argv),
+            "exec_env": environment,
+            "runtime_root": str(runtime_root),
+            "cwd": str(cwd),
+            "timeout_seconds": timeout_seconds,
+            "quarantine_references": list(quarantine_references),
+            "collaboration_observation_complete": True,
+            "non_master_collaboration_invoked": False,
+        },
+        seal=_PLAN_SEAL,
+    )
 
 
 def _known_loader_diagnostic(message: object) -> bool:
@@ -1779,15 +1926,17 @@ def _run_preexec_handshake(
     """Run only a validated exact argv behind the same-PID release barrier."""
 
     if (
-        plan.get("validated") is not True
+        type(plan) is not _ValidatedZeroToolPlan
+        or not plan.is_sealed()
+        or plan.get("validated") is not True
         or plan.get("launcher_owner") != "Master"
-        or type(plan.get("argv")) is not list
+        or type(plan.get("argv")) is not tuple
         or tuple(plan["argv"]) != plan.get("exact_argv")
         or not plan["argv"]
         or str(Path(str(plan["argv"][0])).resolve())
         != str(Path(str(plan.get("binary_realpath"))).resolve())
     ):
-        raise LauncherError("runner requires a validated exact zero-tool plan")
+        raise LauncherError("runner requires a sealed validated exact zero-tool plan")
     python = _absolute_file(bootstrap_python or Path(sys.executable), "isolated Python bootstrap")
     argv = [str(value) for value in plan["argv"]]
     if any(not value or "\0" in value for value in argv):
@@ -1807,11 +1956,13 @@ def _run_preexec_handshake(
     process: subprocess.Popen[bytes] | None = None
     stdout_drainer: _BoundedDrainer | None = None
     stderr_drainer: _BoundedDrainer | None = None
+    writer: threading.Thread | None = None
     stdin_error = False
     stdin_joined = False
     timed_out = False
     unexpected_descendant = False
     cleanup = "clean"
+    cleanup_escalated = False
     returncode: int | None = None
     reaped = False
     leader_wait_count = 0
@@ -1880,46 +2031,44 @@ def _run_preexec_handshake(
         writer = threading.Thread(target=write_stdin, daemon=True)
         writer.start()
         deadline = start + float(plan.get("timeout_seconds", 1800))
-        terminating = False
+        termination_started: float | None = None
+        kill_sent_at: float | None = None
         while True:
             current_members = tuple(members(process.pid))
-            if any(member != process.pid for member in current_members):
+            descendants = tuple(member for member in current_members if member != process.pid)
+            if descendants:
                 unexpected_descendant = True
-            if not terminating and (
+            now = time.monotonic()
+            unsafe = (
                 stdout_drainer.overflow
                 or stderr_drainer.overflow
                 or stdout_drainer.error is not None
                 or stderr_drainer.error is not None
                 or unexpected_descendant
-            ):
-                terminating = True
+            )
+            if now >= deadline:
+                timed_out = True
+                unsafe = True
+            if unsafe and termination_started is None:
+                termination_started = now
                 cleanup = "failed_closed"
                 _signal_original_group(process.pid, signal.SIGTERM)
                 events.append("signal_term")
-            if _leader_exited_wnowait(process.pid):
+            if (
+                termination_started is not None
+                and kill_sent_at is None
+                and now - termination_started >= PROCESS_TERM_GRACE_SECONDS
+            ):
+                _signal_original_group(process.pid, signal.SIGKILL)
+                cleanup_escalated = True
+                kill_sent_at = now
+                events.append("signal_kill")
+            leader_exited = _leader_exited_wnowait(process.pid)
+            if leader_exited and not descendants:
                 events.append("leader_exit_observed_wnowait")
                 break
-            if time.monotonic() >= deadline:
-                timed_out = True
-                cleanup = "failed_closed"
-                if not terminating:
-                    _signal_original_group(process.pid, signal.SIGTERM)
-                    events.append("signal_term")
-                term_deadline = time.monotonic() + PROCESS_TERM_GRACE_SECONDS
-                while time.monotonic() < term_deadline:
-                    if _leader_exited_wnowait(process.pid):
-                        break
-                    time.sleep(PROCESS_POLL_SECONDS)
-                if not _leader_exited_wnowait(process.pid):
-                    _signal_original_group(process.pid, signal.SIGKILL)
-                    events.append("signal_kill")
-                kill_deadline = time.monotonic() + PROCESS_KILL_GRACE_SECONDS
-                while not _leader_exited_wnowait(process.pid) and time.monotonic() < kill_deadline:
-                    time.sleep(PROCESS_POLL_SECONDS)
-                if not _leader_exited_wnowait(process.pid):
-                    raise LauncherError("leader exit could not be observed")
-                events.append("leader_exit_observed_wnowait")
-                break
+            if kill_sent_at is not None and now - kill_sent_at >= PROCESS_KILL_GRACE_SECONDS:
+                raise LauncherError("original process group could not be cleaned")
             time.sleep(PROCESS_POLL_SECONDS)
         for _ in range(2):
             final_members = tuple(members(process.pid))
@@ -1947,6 +2096,7 @@ def _run_preexec_handshake(
                     with contextlib.suppress(ProcessLookupError):
                         os.kill(process.pid, signal.SIGKILL)
                 events.append("blocked_leader_killed")
+                cleanup_escalated = True
             else:
                 _signal_original_group(process.pid, signal.SIGKILL)
                 events.append("signal_kill")
@@ -1954,6 +2104,9 @@ def _run_preexec_handshake(
             leader_wait_count = 1
             reaped = True
             events.append("reaped")
+        for drainer in (stdout_drainer, stderr_drainer):
+            if drainer is not None:
+                drainer.thread.join(timeout=2)
         return {
             "status": "insufficient_evidence",
             "error": _diagnostic(exc),
@@ -1963,10 +2116,18 @@ def _run_preexec_handshake(
             "timed_out": timed_out,
             "unexpected_descendant": unexpected_descendant,
             "cleanup": cleanup,
+            "cleanup_escalated": cleanup_escalated,
             "handshake_events": events,
             "leader_wait_count": leader_wait_count,
             "post_reap_group_access": False,
             "bundle_transmitted": released,
+            "stdin_writer_joined": writer is None or not writer.is_alive(),
+            "stdout_drainer_joined": (
+                stdout_drainer is None or not stdout_drainer.thread.is_alive()
+            ),
+            "stderr_drainer_joined": (
+                stderr_drainer is None or not stderr_drainer.thread.is_alive()
+            ),
         }
     finally:
         for descriptor in (ready_r, ready_w, release_r, release_w):
@@ -2004,6 +2165,7 @@ def _run_preexec_handshake(
         "stderr_drainer_joined": not stderr_drainer.thread.is_alive(),
         "unexpected_descendant": unexpected_descendant,
         "cleanup": cleanup,
+        "cleanup_escalated": cleanup_escalated,
         "handshake_events": events,
         "leader_wait_count": leader_wait_count,
         "post_reap_group_access": False,
@@ -2148,7 +2310,9 @@ def run_isolated_role(
             ),
         }
     if (
-        plan.get("validated") is not True
+        type(plan) is not _ValidatedZeroToolPlan
+        or not plan.is_sealed()
+        or plan.get("validated") is not True
         or plan.get("invocation_kind") not in {None, "zero_tool_static_review"}
         or plan.get("launcher_owner") != "Master"
     ):
