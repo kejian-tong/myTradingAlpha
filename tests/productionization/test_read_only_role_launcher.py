@@ -4385,6 +4385,11 @@ def test_linux_membership_provider_parses_comm_and_validates_exact_session(
     (unrelated / "stat").write_bytes(
         _proc_stat_record(900_003, comm="other", pgrp=900_003, session=900_003)
     )
+    kernel_group = proc_root / "900004"
+    kernel_group.mkdir()
+    (kernel_group / "stat").write_bytes(
+        _proc_stat_record(900_004, comm="kernel", pgrp=0, session=0)
+    )
 
     members = module._linux_process_group_members(
         leader_pid=900_001,
