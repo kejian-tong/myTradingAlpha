@@ -2412,6 +2412,11 @@ def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
         '/usr/bin/env --split-string="codex exec nested"',
         "/usr/bin/env -S '-i' codex exec nested",
         "/usr/bin/env -S '--unset=FOO' codex exec nested",
+        "/usr/bin/env -P /usr/bin codex exec nested",
+        "/usr/bin/env -P/usr/bin codex exec nested",
+        "/usr/bin/env -S '-P /usr/bin codex exec nested'",
+        "/usr/bin/env -S '-P/usr/bin codex exec nested'",
+        "/usr/bin/env --split-string='-P /usr/bin codex exec nested'",
         "/bin/sh -c 'codex exec --json nested'",
         "/bin/sh -c 'SAFE=1 command codex exec --json nested'",
         "/bin/sh -c 'command -v codex; codex exec nested'",
@@ -2443,6 +2448,15 @@ def test_command_jsonl_fixture_uses_exact_current_runtime_start_shape() -> None:
         "/bin/sh -c '(codex exec nested)'",
         "/bin/sh -c '{ codex exec nested; }'",
         "/bin/sh -c '{ codex exec nested;}'",
+        "/bin/sh -c '</dev/null codex exec nested'",
+        "/bin/sh -c '0</dev/null codex exec nested'",
+        "/bin/sh -c '2>/dev/null codex exec nested'",
+        "/bin/sh -c '> /dev/null codex exec nested'",
+        "/bin/sh -c '>>/dev/null codex exec nested'",
+        "/bin/sh -c '0<>/dev/null codex exec nested'",
+        "/bin/sh -c '2<&0 codex exec nested'",
+        "/bin/sh -c '2>&1 codex exec nested'",
+        "/bin/sh -c '2>|/dev/null codex exec nested'",
         ["/usr/bin/env", "SAFE=1", "codex", "exec", "nested"],
     ],
 )
@@ -2494,6 +2508,22 @@ def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
         "/bin/sh -c '(printf codex)'",
         "/bin/sh -c '{ rg -n \"codex exec\" .; }'",
         "/bin/sh -c '{ printf codex;}'",
+        "/usr/bin/env -P /usr/bin printf codex",
+        "/usr/bin/env -P/usr/bin printf codex",
+        "/usr/bin/env -P codex printf ok",
+        "/usr/bin/env -S '-P /usr/bin printf codex'",
+        "/usr/bin/env --split-string='-P/usr/bin printf codex'",
+        "/bin/sh -c '</dev/null printf codex'",
+        "/bin/sh -c '0</dev/null echo codex'",
+        "/bin/sh -c '2>/dev/null rg -n \"codex exec\" .'",
+        "/bin/sh -c '> /dev/null printf codex'",
+        "/bin/sh -c '>>/dev/null printf codex'",
+        "/bin/sh -c '0<>/dev/null printf codex'",
+        "/bin/sh -c '2<&0 printf codex'",
+        "/bin/sh -c '2>&1 printf codex'",
+        "/bin/sh -c '2>|/dev/null printf codex'",
+        "/bin/sh -c \"printf '%s' '</dev/null codex exec nested'\"",
+        "/bin/sh -c \"echo '2>/dev/null codex exec nested'\"",
     ):
         parsed = parser(
             _command_jsonl(command),
@@ -2511,6 +2541,73 @@ def test_direct_command_observation_recursion_is_bounded() -> None:
         _function("_command_attempts_nested_codex")(
             payload,
             forbidden_codex_binary="/absolute/codex",
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/env -P /usr/bin codex exec nested",
+        "/usr/bin/env -S '-P /usr/bin codex exec nested'",
+        "/bin/sh -c '</dev/null codex exec nested'",
+        "/bin/sh -c '2>&1 codex exec nested'",
+        "/bin/sh -c '2>|/dev/null codex exec nested'",
+    ],
+)
+def test_direct_helper_observes_env_path_and_leading_redirection_forms(
+    command: str,
+) -> None:
+    assert _function("_command_attempts_nested_codex")(
+        command,
+        forbidden_codex_binary="/absolute/codex",
+    ) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/env -P",
+        "/usr/bin/env -P ''",
+        "/usr/bin/env -S '-P'",
+        "/bin/sh -c '2>'",
+        "/bin/sh -c '<<EOF codex exec nested'",
+        "/bin/sh -c '3<<<word codex exec nested'",
+    ],
+)
+def test_malformed_env_path_or_complex_redirection_fails_closed(
+    command: str,
+) -> None:
+    helper = _function("_command_attempts_nested_codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        helper(command, forbidden_codex_binary="/absolute/codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+def test_env_and_redirection_normalization_has_explicit_resource_bounds() -> None:
+    helper = _function("_command_attempts_nested_codex")
+    oversized_env = "env " + " ".join(f"SAFE_{index}=1" for index in range(300))
+    excessive_redirections = "/bin/sh -c " + shlex.quote(
+        ">/dev/null " * 33 + "codex exec nested"
+    )
+    for command in (oversized_env, excessive_redirections):
+        with pytest.raises((ValueError, RuntimeError)):
+            helper(command, forbidden_codex_binary="/absolute/codex")
+
+
+def test_shell_redirection_before_exact_codex_path_is_rejected(
+    scenario: Scenario,
+) -> None:
+    command = f"/bin/sh -c '</dev/null {scenario.binary.path} --version'"
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary=str(scenario.binary.path),
         )
 
 

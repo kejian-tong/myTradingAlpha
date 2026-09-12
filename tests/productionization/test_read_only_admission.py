@@ -334,6 +334,8 @@ def test_protocol_does_not_call_an_old_red_the_current_final_repair() -> None:
         "276dd72 -> cf6fd19",
         "487190a -> 0ef6608",
         "b0dc3e5 -> 243d95f",
+        "6125464 -> ec8acdb",
+        "8d08c74 -> 546be4a",
         "historical controlling pairs",
     ):
         assert marker in policy, marker
