@@ -309,7 +309,8 @@ also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound corre
 `6125464 -> ec8acdb`, and sandboxed local-command correction `8d08c74 -> 546be4a`. The current repair
 starts at test-only RED `4a39883`; the original process-group repair adds test-only RED `1a77fc5`, and the
 anchored no-reap repair adds test-only RED `11097c0` plus test-only evidence completion `3a29c90`. Each
-exact GREEN head is recorded in durable PR evidence. The abandoned v2
+exact GREEN head is recorded in durable PR evidence. Linux provider false-stop repair RED `4bfc8b9`
+preserves strict target-group validation while admitting unrelated kernel groups. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 

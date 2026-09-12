@@ -1966,8 +1966,6 @@ def _parse_linux_proc_stat(
         session_id = int(fields[3].decode("ascii"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise LauncherError("Linux proc stat identifiers are malformed") from exc
-    if process_group_id <= 1 or session_id <= 1:
-        raise LauncherError("Linux proc stat identifiers are unsafe")
     return expected_pid, process_group_id, session_id
 
 
