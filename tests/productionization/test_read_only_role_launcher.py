@@ -2512,7 +2512,6 @@ def test_parser_rejects_exact_forbidden_codex_binary_and_allows_rg_text_search(
         "/usr/bin/env -P/usr/bin printf codex",
         "/usr/bin/env -P codex printf ok",
         "/usr/bin/env -S '-P /usr/bin printf codex'",
-        "/usr/bin/env --split-string='-P/usr/bin printf codex'",
         "/bin/sh -c '</dev/null printf codex'",
         "/bin/sh -c '0</dev/null echo codex'",
         "/bin/sh -c '2>/dev/null rg -n \"codex exec\" .'",
@@ -2561,6 +2560,161 @@ def test_direct_helper_observes_env_path_and_leading_redirection_forms(
         command,
         forbidden_codex_binary="/absolute/codex",
     ) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/env -iv codex exec nested",
+        "/usr/bin/env -iP /usr/bin codex exec nested",
+        "/usr/bin/env -ivP/usr/bin codex exec nested",
+        "/usr/bin/env -iu SAFE codex exec nested",
+        "/usr/bin/env -ivuSAFE codex exec nested",
+        "/usr/bin/env -ivS 'SAFE=1 codex exec nested'",
+        "/usr/bin/env -ivS'SAFE=1 codex exec nested'",
+        "/usr/bin/env -S '-i -P /usr/bin codex exec nested'",
+        "/usr/bin/env -S '-ivP/usr/bin codex exec nested'",
+        "/usr/bin/env -S '' codex exec nested",
+        "/usr/bin/env -S '   \t  ' codex exec nested",
+        "/usr/bin/env -- codex exec nested",
+        "/usr/bin/env - codex exec nested",
+    ],
+)
+def test_macos_env_short_option_grammar_detects_direct_nested_invocation(
+    command: str,
+) -> None:
+    helper = _function("_command_attempts_nested_codex")
+    assert helper(command, forbidden_codex_binary="/absolute/codex") is True
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["/usr/bin/env", "-S", r"codex\_exec nested"],
+        ["/usr/bin/env", "-S", r"codex\cecho harmless"],
+        ["/usr/bin/env", "-S", r"codex\nexec nested"],
+        ["/usr/bin/env", "-S", "${SAFE} exec nested"],
+        ["/usr/bin/env", "-S", "SAFE=1 ${SAFE} exec nested"],
+        ["/usr/bin/env", "-S", "codex # ignored suffix"],
+        ["/usr/bin/env", "-S", "'codex exec' nested"],
+        ["/usr/bin/env", "-S", '"codex exec" nested'],
+        ["/usr/bin/env", "-S", "codex\nexec nested"],
+        ["/usr/bin/env", "-S", "codex\x1fexec nested"],
+    ],
+)
+def test_env_split_string_special_semantics_fail_closed(command: list[str]) -> None:
+    helper = _function("_command_attempts_nested_codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        helper(command, forbidden_codex_binary="/absolute/codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/env -x codex exec nested",
+        "/usr/bin/env -ivx codex exec nested",
+        "/usr/bin/env -iP",
+        "/usr/bin/env -ivu",
+        "/usr/bin/env -ivS",
+        "/usr/bin/env --ignore-environment codex exec nested",
+        "/usr/bin/env --unset SAFE codex exec nested",
+        "/usr/bin/env --unset=SAFE codex exec nested",
+        "/usr/bin/env --split-string='codex exec nested'",
+    ],
+)
+def test_unknown_or_incomplete_macos_env_options_fail_closed(command: str) -> None:
+    helper = _function("_command_attempts_nested_codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        helper(command, forbidden_codex_binary="/absolute/codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/env </dev/null -iv codex exec nested",
+        "/usr/bin/env -i </dev/null -P /usr/bin codex exec nested",
+        "/usr/bin/env -u SAFE 2>/dev/null codex exec nested",
+        "/usr/bin/env </dev/null SAFE=1 codex exec nested",
+        "/usr/bin/env SAFE=1 </dev/null codex exec nested",
+    ],
+)
+def test_string_env_redirections_do_not_hide_direct_nested_invocation(
+    command: str,
+) -> None:
+    helper = _function("_command_attempts_nested_codex")
+    assert helper(command, forbidden_codex_binary="/absolute/codex") is True
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/env -iv /usr/bin/printf codex",
+        "/usr/bin/env -iP /usr/bin /usr/bin/printf codex",
+        "/usr/bin/env -ivu SAFE /usr/bin/printf codex",
+        "/usr/bin/env -ivS 'SAFE=1 /usr/bin/printf codex'",
+        "/usr/bin/env -S '-ivP/usr/bin printf codex'",
+        "/usr/bin/env </dev/null -iv /usr/bin/printf codex",
+        "/usr/bin/env -i </dev/null -P /usr/bin /usr/bin/printf codex",
+    ],
+)
+def test_benign_macos_env_printf_mirrors_remain_nonblocking(command: str) -> None:
+    helper = _function("_command_attempts_nested_codex")
+    assert helper(command, forbidden_codex_binary="/absolute/codex") is False
+    parsed = _function("parse_codex_jsonl")(
+        _command_jsonl(command),
+        role="reviewer_high",
+        forbidden_codex_binary="/absolute/codex",
+    )
+    assert parsed["status"] == "completed"
+
+
+def test_env_redirection_handling_is_string_only() -> None:
+    command = ["/usr/bin/env", "</dev/null", "codex", "exec", "nested"]
+    helper = _function("_command_attempts_nested_codex")
+    assert helper(command, forbidden_codex_binary="/absolute/codex") is False
+    parsed = _function("parse_codex_jsonl")(
+        _command_jsonl(command),
+        role="reviewer_high",
+        forbidden_codex_binary="/absolute/codex",
+    )
+    assert parsed["status"] == "completed"
+
+
+def test_env_split_string_expansion_count_is_bounded() -> None:
+    command = ["/usr/bin/env", *(["-S", "-S"] * 9), "/usr/bin/printf", "ok"]
+    helper = _function("_command_attempts_nested_codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        helper(command, forbidden_codex_binary="/absolute/codex")
+    with pytest.raises((ValueError, RuntimeError)):
+        _function("parse_codex_jsonl")(
+            _command_jsonl(command),
+            role="reviewer_high",
+            forbidden_codex_binary="/absolute/codex",
+        )
 
 
 @pytest.mark.parametrize(
