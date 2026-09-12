@@ -249,6 +249,49 @@ def test_policy_documents_pr67_external_profile_bootstrap_boundary() -> None:
         assert marker in policy, marker
 
 
+def test_protocol_binds_reviewed_runtime_identities_without_generic_version_claim() -> None:
+    policy = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    for marker in (
+        "0.153.4",
+        "a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629",
+        "0.154.0-alpha.6.2",
+        "ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb",
+        "2dc432gll2",
+        "https://learn.chatgpt.com/docs/changelog",
+        "stable 0.154.0 release",
+        "adjacent documentation evidence",
+        "not an identity substitute",
+    ):
+        assert marker in policy, marker
+    assert "0.154.0 or later" not in policy
+    assert ">=0.154.0" not in policy
+
+
+def test_protocol_documents_current_version_specific_capability_closure() -> None:
+    policy = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    for marker in (
+        "version-specific feature closure",
+        "worktrees",
+        "goals",
+        "sleep_tool",
+        "guardian_approval",
+        "fast_mode",
+        "in_app_local_automation",
+        "in_app_chat",
+        "in_app_updates",
+        "in_app_dictation",
+        "request_permissions_tool",
+        "exec_permission_approvals",
+        "code_mode_host=true",
+        "gpt-6 production routes remain disabled",
+    ):
+        assert marker in policy, marker
+
+
 def test_policy_defers_supporting_tool_identity_and_launcher_decomposition() -> None:
     policy = "\n".join(path.read_text(encoding="utf-8") for path in _POLICY_SOURCES).lower()
     assert "supporting-tool exact identity" in policy
@@ -289,6 +332,7 @@ def test_protocol_does_not_call_an_old_red_the_current_final_repair() -> None:
         "1072d1f -> 5dbb133",
         "276dd72 -> cf6fd19",
         "487190a -> 0ef6608",
+        "b0dc3e5 -> 243d95f",
         "historical controlling pairs",
     ):
         assert marker in policy, marker

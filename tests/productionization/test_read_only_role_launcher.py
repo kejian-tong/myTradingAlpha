@@ -34,6 +34,9 @@ SCRIPT = ROOT / "scripts/read_only_role_launcher.py"
 DOCS_MCP_URL = "https://developers.openai.com/mcp"
 DOCS_MCP_TOOLS = ("fetch_openai_doc", "search_openai_docs")
 CODEX_VERSION = "0.153.4"
+CODEX_SHA256 = "a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629"
+CURRENT_CODEX_VERSION = "0.154.0-alpha.6.2"
+CURRENT_CODEX_SHA256 = "ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb"
 TEAM_IDENTIFIER = "2DC432GLL2"
 _READ_ONLY_ROLES = (
     "reviewer_high",
@@ -232,7 +235,7 @@ def _binary_fixture(root: Path) -> BinaryFixture:
     contents = b"synthetic codex executable for deterministic launcher tests\n"
     path.write_bytes(contents)
     path.chmod(0o755)
-    digest = hashlib.sha256(contents).hexdigest()
+    digest = CODEX_SHA256
     descriptor = {
         "realpath": str(path.resolve()),
         "is_regular": True,
@@ -874,8 +877,89 @@ def _binary_errors(scenario: Scenario, **overrides: object) -> list[str]:
     return result
 
 
+def _current_codex_plan(scenario: Scenario) -> dict[str, object]:
+    descriptor = {
+        **scenario.binary.descriptor,
+        "version": CURRENT_CODEX_VERSION,
+        "sha256": CURRENT_CODEX_SHA256,
+    }
+    return _plan(
+        scenario,
+        expected_binary_version=CURRENT_CODEX_VERSION,
+        expected_binary_sha256=CURRENT_CODEX_SHA256,
+        supported_binary_versions=(CODEX_VERSION, CURRENT_CODEX_VERSION),
+        binary_probe=_binary_probe(descriptor),
+    )
+
+
 def test_binary_identity_accepts_only_exact_injected_probe(scenario: Scenario) -> None:
     assert _binary_errors(scenario) == []
+
+
+def test_reviewed_codex_registry_binds_exact_version_hash_and_team() -> None:
+    module = _launcher_module()
+    assert not hasattr(module, "CODEX_VERSION")
+    assert module.DEFAULT_CODEX_VERSION == CURRENT_CODEX_VERSION
+    registry = {
+        version: dict(identity)
+        for version, identity in module.CODEX_BINARY_REGISTRY.items()
+    }
+    assert registry == {
+        CODEX_VERSION: {
+            "sha256": CODEX_SHA256,
+            "team_identifier": TEAM_IDENTIFIER,
+        },
+        CURRENT_CODEX_VERSION: {
+            "sha256": CURRENT_CODEX_SHA256,
+            "team_identifier": TEAM_IDENTIFIER,
+        },
+    }
+    with pytest.raises(TypeError):
+        module.CODEX_BINARY_REGISTRY["0.155.0"] = registry[CODEX_VERSION]
+
+
+@pytest.mark.parametrize(
+    ("version", "digest"),
+    [
+        (CURRENT_CODEX_VERSION, CODEX_SHA256),
+        (CURRENT_CODEX_VERSION, "f" * 64),
+        ("0.154.0", CURRENT_CODEX_SHA256),
+        ("0.154.0-alpha..6", CURRENT_CODEX_SHA256),
+        ("0.154.0-alpha.6.2+local", CURRENT_CODEX_SHA256),
+    ],
+)
+def test_binary_registry_rejects_cross_version_unregistered_and_malformed_identities(
+    scenario: Scenario, version: str, digest: str
+) -> None:
+    descriptor = {
+        **scenario.binary.descriptor,
+        "version": version,
+        "sha256": digest,
+    }
+    assert _binary_errors(
+        scenario,
+        expected_version=version,
+        expected_sha256=digest,
+        supported_versions=(CODEX_VERSION, CURRENT_CODEX_VERSION, version),
+        descriptor=descriptor,
+    )
+
+
+def test_binary_registry_accepts_current_exact_injected_probe(
+    scenario: Scenario,
+) -> None:
+    descriptor = {
+        **scenario.binary.descriptor,
+        "version": CURRENT_CODEX_VERSION,
+        "sha256": CURRENT_CODEX_SHA256,
+    }
+    assert _binary_errors(
+        scenario,
+        expected_version=CURRENT_CODEX_VERSION,
+        expected_sha256=CURRENT_CODEX_SHA256,
+        supported_versions=(CODEX_VERSION, CURRENT_CODEX_VERSION),
+        descriptor=descriptor,
+    ) == []
 
 
 @pytest.mark.parametrize(
@@ -1937,6 +2021,89 @@ def test_exec_argv_binds_strict_config_route_profile_environment_and_features(
     )
 
 
+def test_feature_closure_is_exactly_version_specific_without_gpt6_route_activation(
+    scenario: Scenario,
+) -> None:
+    old_plan = _plan(scenario)
+    current_plan = _current_codex_plan(scenario)
+    old_features = tomllib.loads("\n".join(old_plan["config_values"]))["features"]
+    current_features = tomllib.loads("\n".join(current_plan["config_values"]))[
+        "features"
+    ]
+    current_only_disabled = {
+        "artifact",
+        "bedrock_setup_wizard",
+        "code_mode_interrupt",
+        "code_mode_prewarm",
+        "current_time_reminder",
+        "default_mode_request_user_input",
+        "deferred_executor",
+        "deferred_tool_world_state",
+        "exec_permission_approvals",
+        "executor_capability_discovery",
+        "fast_mode",
+        "goals",
+        "guardian_approval",
+        "guardian_enhanced_node_repl_transcripts",
+        "guardian_ext",
+        "guardian_node_repl_transcript_images",
+        "guardian_reuse_parent_compaction",
+        "guardianv2",
+        "in_app_chat",
+        "in_app_dictation",
+        "in_app_local_automation",
+        "in_app_updates",
+        "network_proxy",
+        "personality",
+        "prevent_idle_sleep",
+        "psp",
+        "request_permissions_tool",
+        "runtime_metrics",
+        "secret_auth_storage",
+        "shell_tool",
+        "shell_zsh_fork",
+        "sleep_tool",
+        "terminal_visualization_instructions",
+        "unavailable_dummy_tools",
+        "use_agent_identity",
+        "view_image",
+        "worktrees",
+        "write_stdin_approval",
+    }
+    assert set(current_features) - set(old_features) == current_only_disabled
+    assert not set(old_features).intersection(current_only_disabled)
+    assert all(current_features[name] is False for name in current_only_disabled)
+    assert current_features["code_mode_host"] is True
+    assert {
+        role
+        for role, route in _launcher_module().ROLE_ROUTES.items()
+        if route[0].startswith("gpt-6")
+    } == {"astra_canary"}
+    assert current_plan["role"] == "reviewer_high"
+    assert current_plan["model"] == "gpt-5.6-sol"
+
+
+def test_current_plan_and_manifest_bind_full_prerelease_version_and_hash(
+    scenario: Scenario,
+) -> None:
+    plan = _current_codex_plan(scenario)
+    manifest = _function("build_redacted_manifest")(
+        plan,
+        config_bytes=b"config",
+        prompt="prompt",
+        event_output=_valid_jsonl(),
+        stderr="",
+        final_output="done",
+        probe_results={"network_denied": True},
+        observed_at_ms=1,
+        cleanup={"status": "clean"},
+    )
+    assert plan["binary_version"] == CURRENT_CODEX_VERSION
+    assert plan["binary_sha256"] == CURRENT_CODEX_SHA256
+    assert manifest["binary_version"] == CURRENT_CODEX_VERSION
+    assert manifest["binary_sha256"] == CURRENT_CODEX_SHA256
+
+
 @pytest.mark.parametrize("probe_name", _PROBE_ORDER)
 def test_every_preflight_probe_is_sandboxed_with_same_binary_and_profile(
     scenario: Scenario, probe_name: str
@@ -2048,6 +2215,33 @@ def test_cli_reads_bounded_prompt_from_stdin_and_never_uses_prompt_argv(
     assert "--prompt" not in help_output
     assert "--credential-probe-path" in help_output
     assert "stdin" in help_output.lower()
+
+
+def test_cli_defaults_to_current_exact_runtime_and_supplies_the_complete_registry(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _launcher_module()
+    captured: dict[str, object] = {}
+    plan = _plan(scenario)
+
+    def capture_plan(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return plan
+
+    monkeypatch.setattr(module, "build_invocation_plan", capture_plan)
+    monkeypatch.setattr(
+        module,
+        "run_isolated_role",
+        lambda *args, **kwargs: {"status": "insufficient_evidence", "manifest": {}},
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("bounded prompt\n"))
+
+    assert module.main(_cli_identity_args(scenario)) == 1
+    assert captured["expected_binary_version"] == CURRENT_CODEX_VERSION
+    assert tuple(captured["supported_binary_versions"]) == (
+        CODEX_VERSION,
+        CURRENT_CODEX_VERSION,
+    )
 
 
 def test_cli_reports_bounded_safe_errors_for_insufficient_evidence(
@@ -3853,8 +4047,9 @@ def test_real_system_temp_policy_or_target_worktree_is_rejected_without_test_pro
         module.build_invocation_plan(**_plan_kwargs(scenario))
 
 
-def test_default_binary_probe_canonicalizes_codex_cli_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("version", [CODEX_VERSION, CURRENT_CODEX_VERSION])
+def test_default_binary_probe_requires_and_preserves_exact_codex_cli_version_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
     module = _launcher_module()
     binary = tmp_path / "codex"
@@ -3864,23 +4059,66 @@ def test_default_binary_probe_canonicalizes_codex_cli_version(
     def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         argv = list(args[0])
         if argv[:2] == [str(binary), "--version"]:
-            return subprocess.CompletedProcess(argv, 0, "codex-cli 0.153.4\n", "")
+            return subprocess.CompletedProcess(argv, 0, f"codex-cli {version}\n", "")
         return subprocess.CompletedProcess(argv, 0, "", "TeamIdentifier=2DC432GLL2\n")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_file_sha256",
+        lambda _: CODEX_SHA256 if version == CODEX_VERSION else CURRENT_CODEX_SHA256,
+    )
     descriptor = module._default_binary_probe(binary)
-    assert descriptor["version"] == "0.153.4"
+    digest = CODEX_SHA256 if version == CODEX_VERSION else CURRENT_CODEX_SHA256
+    assert descriptor["version"] == version
     assert module.validate_binary(
         path=binary,
-        expected_version="0.153.4",
-        expected_sha256=hashlib.sha256(b"binary").hexdigest(),
+        expected_version=version,
+        expected_sha256=digest,
         expected_team_identifier=TEAM_IDENTIFIER,
-        supported_versions=("0.153.4",),
+        supported_versions=(CODEX_VERSION, CURRENT_CODEX_VERSION),
         probe=lambda _: descriptor,
     ) == ([] if sys.platform == "darwin" else [
         "binary codesign TeamIdentifier drifted",
         "binary codesign verification failed",
     ])
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr"),
+    [
+        (1, f"codex-cli {CURRENT_CODEX_VERSION}\n", ""),
+        (0, f"codex-cli {CURRENT_CODEX_VERSION}", ""),
+        (0, f"prefix codex-cli {CURRENT_CODEX_VERSION}\n", ""),
+        (0, f"codex-cli {CURRENT_CODEX_VERSION}\nextra\n", ""),
+        (0, f"codex-cli {CURRENT_CODEX_VERSION}\ncodex-cli {CURRENT_CODEX_VERSION}\n", ""),
+        (0, "codex-cli 0.154.0-alpha..6\n", ""),
+        (0, "codex-cli 0.154.0-alpha.6.2+local\n", ""),
+        (0, "codex-cli 00.154.0\n", ""),
+        (0, f"codex-cli {CURRENT_CODEX_VERSION}\n", "unexpected warning\n"),
+    ],
+)
+def test_default_binary_probe_rejects_failed_extra_ambiguous_or_malformed_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    module = _launcher_module()
+    binary = tmp_path / "codex"
+    binary.write_bytes(b"binary")
+    binary.chmod(0o755)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        argv = list(args[0])
+        if argv[:2] == [str(binary), "--version"]:
+            return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
+        return subprocess.CompletedProcess(argv, 0, "", "TeamIdentifier=2DC432GLL2\n")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    with pytest.raises((ValueError, RuntimeError)):
+        module._default_binary_probe(binary)
 
 
 def test_focused_launcher_fixtures_do_not_dirty_repository_with_runtime_roots() -> None:
