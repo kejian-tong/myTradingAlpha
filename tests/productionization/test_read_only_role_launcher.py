@@ -2060,7 +2060,6 @@ def test_feature_closure_is_exactly_version_specific_without_gpt6_route_activati
         "request_permissions_tool",
         "runtime_metrics",
         "secret_auth_storage",
-        "shell_tool",
         "shell_zsh_fork",
         "sleep_tool",
         "terminal_visualization_instructions",
@@ -2070,10 +2069,15 @@ def test_feature_closure_is_exactly_version_specific_without_gpt6_route_activati
         "worktrees",
         "write_stdin_approval",
     }
-    assert set(current_features) - set(old_features) == current_only_disabled
+    assert set(current_features) - set(old_features) == {
+        *current_only_disabled,
+        "shell_tool",
+    }
     assert not set(old_features).intersection(current_only_disabled)
+    assert "shell_tool" not in old_features
     assert all(current_features[name] is False for name in current_only_disabled)
     assert current_features["code_mode_host"] is True
+    assert current_features["shell_tool"] is True
     assert {
         role
         for role, route in _launcher_module().ROLE_ROUTES.items()

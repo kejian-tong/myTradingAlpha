@@ -287,6 +287,7 @@ def test_protocol_documents_current_version_specific_capability_closure() -> Non
         "request_permissions_tool",
         "exec_permission_approvals",
         "code_mode_host=true",
+        "shell_tool=true",
         "gpt-6 production routes remain disabled",
     ):
         assert marker in policy, marker
