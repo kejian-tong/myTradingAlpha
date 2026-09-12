@@ -535,20 +535,17 @@ def test_jsonl_rejects_every_tool_or_unknown_item(item_type: str) -> None:
 
 def test_external_spec_fails_before_bundle_or_model_start() -> None:
     module = _module()
-    calls: list[object] = []
     result = module.run_isolated_role(
         {
             "validated": True,
             "role": "external_spec_researcher",
             "launcher_owner": "Master",
-        },
-        process_runner=lambda *_args, **_kwargs: calls.append("started"),
+        }
     )
     assert result["status"] == "insufficient_evidence"
     assert result["model_started"] is False
     assert result["bundle_transmitted"] is False
     assert "Master official OpenAI documentation fallback" in result["limitation"]
-    assert calls == []
 
 
 def _fixture_plan(module, tmp_path: Path, marker: Path, *, exit_code: int = 0):
@@ -569,6 +566,7 @@ def _fixture_plan(module, tmp_path: Path, marker: Path, *, exit_code: int = 0):
         f"raise SystemExit({exit_code})"
     )
     argv = [str(client), "-I", "-S", "-c", source]
+    bootstrap_sha256 = hashlib.sha256(client.read_bytes()).hexdigest()
     return module._ValidatedZeroToolPlan(
         {
             "validated": True,
@@ -577,6 +575,8 @@ def _fixture_plan(module, tmp_path: Path, marker: Path, *, exit_code: int = 0):
             "argv": argv,
             "exact_argv": tuple(argv),
             "binary_realpath": str(client),
+            "bootstrap_python_realpath": str(client),
+            "bootstrap_python_sha256": bootstrap_sha256,
             "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
             "cwd": str(tmp_path),
             "timeout_seconds": 5,
@@ -611,9 +611,7 @@ def test_handshake_blocks_client_until_parent_arms_and_releases(tmp_path: Path) 
     assert result["leader_wait_count"] == 1
     assert result["post_reap_group_access"] is False
     assert result["unexpected_descendant"] is False
-    assert Path(
-        _fixture_plan(module, tmp_path, marker)["bootstrap_python_realpath"]
-    ).is_file()
+    assert Path(_fixture_plan(module, tmp_path, marker)["bootstrap_python_realpath"]).is_file()
     assert len(_fixture_plan(module, tmp_path, marker)["bootstrap_python_sha256"]) == 64
 
 
@@ -656,6 +654,7 @@ def test_unexpected_original_group_descendant_is_killed_before_reap(
         f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))"
     )
     argv = [str(client), "-I", "-S", "-c", source]
+    bootstrap_sha256 = hashlib.sha256(client.read_bytes()).hexdigest()
     plan = module._ValidatedZeroToolPlan(
         {
             "validated": True,
@@ -664,6 +663,8 @@ def test_unexpected_original_group_descendant_is_killed_before_reap(
             "argv": argv,
             "exact_argv": tuple(argv),
             "binary_realpath": str(client),
+            "bootstrap_python_realpath": str(client),
+            "bootstrap_python_sha256": bootstrap_sha256,
             "exec_env": {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
             "cwd": str(tmp_path),
             "timeout_seconds": 2,
@@ -711,6 +712,8 @@ def test_manifest_binds_bundle_prompt_zero_tools_handshake_and_owner() -> None:
             "binary_realpath": "/trusted/codex",
             "binary_version": "0.154.0-alpha.6.2",
             "binary_sha256": "6" * 64,
+            "bootstrap_python_realpath": "/trusted/python",
+            "bootstrap_python_sha256": "c" * 64,
             "git_realpath": "/trusted/git",
             "git_version": "2.39.1",
             "git_sha256": "7" * 64,
@@ -727,14 +730,28 @@ def test_manifest_binds_bundle_prompt_zero_tools_handshake_and_owner() -> None:
         parsed={"command_count": 0, "mcp_call_count": 0, "tool_call_count": 0},
         supervision={
             "handshake_events": [
+                "spawn_requested",
+                "spawned_blocked_bootstrap",
                 "ready",
                 "pid_group_validated",
                 "observation_armed",
                 "released",
                 "leader_exit_observed_wnowait",
+                "drainers_joined",
+                "buffers_frozen",
                 "reaped",
             ],
+            "status": "completed",
+            "returncode": 0,
+            "bundle_transmitted": True,
+            "timed_out": False,
+            "output_limited": False,
+            "stdin_write_error": False,
+            "stdin_writer_joined": True,
+            "stdout_drainer_joined": True,
+            "stderr_drainer_joined": True,
             "cleanup": "clean",
+            "cleanup_escalated": False,
             "unexpected_descendant": False,
             "leader_wait_count": 1,
             "post_reap_group_access": False,

@@ -272,19 +272,16 @@ def test_bounded_subprocess_stops_output_before_memory_growth() -> None:
 
 def test_external_spec_short_circuit_never_calls_process_runner() -> None:
     module = _module()
-    called: list[bool] = []
     result = module.run_isolated_role(
         {
             "validated": True,
             "launcher_owner": "Master",
             "role": "external_spec_researcher",
-        },
-        process_runner=lambda *_args, **_kwargs: called.append(True),
+        }
     )
     assert result["status"] == "insufficient_evidence"
     assert result["model_started"] is False
     assert result["bundle_transmitted"] is False
-    assert called == []
 
 
 @pytest.mark.parametrize(

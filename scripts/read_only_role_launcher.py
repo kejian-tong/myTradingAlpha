@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import ctypes
-import difflib
 import hashlib
 import json
 import os
@@ -812,6 +811,46 @@ def _applicable_instruction_paths(
     return sorted(selected, key=lambda value: value.encode())
 
 
+def _linear_diff_opcodes(old_lines: Sequence[str], new_lines: Sequence[str]) -> list[list[object]]:
+    """Return a complete deterministic O(n) prefix/middle/suffix line delta."""
+
+    prefix = 0
+    shared = min(len(old_lines), len(new_lines))
+    while prefix < shared and old_lines[prefix] == new_lines[prefix]:
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < len(old_lines) - prefix
+        and suffix < len(new_lines) - prefix
+        and old_lines[len(old_lines) - 1 - suffix] == new_lines[len(new_lines) - 1 - suffix]
+    ):
+        suffix += 1
+    result: list[list[object]] = []
+    if prefix:
+        result.append(["equal", 0, prefix, 0, prefix])
+    old_end = len(old_lines) - suffix
+    new_end = len(new_lines) - suffix
+    if prefix != old_end or prefix != new_end:
+        if prefix == old_end:
+            tag = "insert"
+        elif prefix == new_end:
+            tag = "delete"
+        else:
+            tag = "replace"
+        result.append([tag, prefix, old_end, prefix, new_end])
+    if suffix:
+        result.append(
+            [
+                "equal",
+                old_end,
+                len(old_lines),
+                new_end,
+                len(new_lines),
+            ]
+        )
+    return result
+
+
 def _trusted_context(
     supplied: Sequence[Mapping[str, object]],
     *,
@@ -833,6 +872,7 @@ def _trusted_context(
     }
     records: list[dict[str, object]] = []
     total = 0
+    total_lines = 0
     for item in supplied:
         if type(item) is not dict:
             raise LauncherError("trusted context record is malformed")
@@ -878,8 +918,11 @@ def _trusted_context(
         _sha256(output_digest, "trusted context output digest")
         _validate_text(content.encode("utf-8"), "trusted context")
         total += len(content.encode("utf-8"))
+        total_lines += max(1, len(content.splitlines()))
         if total > MAX_TRUSTED_CONTEXT_BYTES:
             raise LauncherError("trusted context bytes exceed bound")
+        if total_lines > MAX_TOTAL_LINES:
+            raise LauncherError("trusted context aggregate line count exceeds bound")
         records.append(dict(item))
     categories = [str(record["category"]) for record in records]
     if set(categories) != required or len(categories) != len(required):
@@ -1029,6 +1072,8 @@ def build_review_bundle(
                 commit,
             )
         )
+        if "AGENTS.md" not in instruction_maps[side]:
+            raise LauncherError("root AGENTS governing instructions are missing")
         selected = _applicable_instruction_paths(
             [item["path"] for item in changed], instruction_maps[side]
         )
@@ -1142,12 +1187,7 @@ def build_review_bundle(
             new_text = "" if new_oid == zero else validated_text[new_oid]
             old_lines = old_text.splitlines(keepends=True)
             new_lines = new_text.splitlines(keepends=True)
-            opcodes = [
-                [tag, old_start, old_end, new_start, new_end]
-                for tag, old_start, old_end, new_start, new_end in difflib.SequenceMatcher(
-                    None, old_lines, new_lines, autojunk=False
-                ).get_opcodes()
-            ]
+            opcodes = _linear_diff_opcodes(old_lines, new_lines)
             records.append(
                 _record(
                     "path_diff",
@@ -1155,7 +1195,7 @@ def build_review_bundle(
                     path=path,
                     old_blob_oid=old_oid,
                     new_blob_oid=new_oid,
-                    algorithm="python.difflib.SequenceMatcher.opcodes/v1;autojunk=false;renames=false",
+                    algorithm="prefix_suffix_replace.opcodes/v1;linear=true;renames=false",
                     old_line_count=len(old_lines),
                     new_line_count=len(new_lines),
                     opcodes=opcodes,
@@ -1192,6 +1232,14 @@ def build_review_bundle(
     )
     for item in contexts:
         records.append(_record("trusted_context", "trusted_master_supplied", **item))
+    record_lines = sum(
+        len(value.splitlines())
+        for record in records
+        for key in ("text", "content")
+        if type(value := record.get(key)) is str
+    )
+    if record_lines > MAX_TOTAL_LINES:
+        raise LauncherError("bundle aggregate line count exceeds bound")
     _assign_record_ids(records)
     document: dict[str, object] = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
@@ -1517,7 +1565,6 @@ def build_invocation_plan(
     trusted_context_records: Sequence[Mapping[str, object]],
     timeout_seconds: int = 1800,
     quarantine_references: Sequence[str] = (),
-    codesign_probe: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> Mapping[str, object]:
     """Build the only validated execution plan accepted by the production runner."""
 
@@ -1576,8 +1623,9 @@ def build_invocation_plan(
         expected_version=expected_binary_version,
         expected_sha256=expected_binary_sha256,
         expected_team_identifier=expected_binary_team_identifier,
-        codesign_probe=codesign_probe,
     )
+    bootstrap_python = _absolute_file(Path(sys.executable).resolve(), "isolated Python bootstrap")
+    bootstrap_sha256 = _hash_file(bootstrap_python)
     bundle = build_review_bundle(
         git_binary=Path(str(git_descriptor["realpath"])),
         policy_root=policy_root,
@@ -1650,6 +1698,8 @@ def build_invocation_plan(
             "binary_version": binary_descriptor["version"],
             "binary_sha256": binary_descriptor["sha256"],
             "binary_team_identifier": binary_descriptor["team_identifier"],
+            "bootstrap_python_realpath": str(bootstrap_python),
+            "bootstrap_python_sha256": bootstrap_sha256,
             "git_realpath": git_descriptor["realpath"],
             "git_version": git_descriptor["version"],
             "git_sha256": git_descriptor["sha256"],
@@ -1937,7 +1987,20 @@ def _run_preexec_handshake(
         != str(Path(str(plan.get("binary_realpath"))).resolve())
     ):
         raise LauncherError("runner requires a sealed validated exact zero-tool plan")
-    python = _absolute_file(bootstrap_python or Path(sys.executable), "isolated Python bootstrap")
+    registered_python = _absolute_file(
+        plan.get("bootstrap_python_realpath"), "isolated Python bootstrap"
+    )
+    if _hash_file(registered_python) != _sha256(
+        plan.get("bootstrap_python_sha256"), "Python bootstrap SHA-256"
+    ):
+        raise LauncherError("isolated Python bootstrap identity differs")
+    if (
+        bootstrap_python is not None
+        and _absolute_file(bootstrap_python, "isolated Python bootstrap override")
+        != registered_python
+    ):
+        raise LauncherError("Python bootstrap override differs from sealed plan")
+    python = registered_python
     argv = [str(value) for value in plan["argv"]]
     if any(not value or "\0" in value for value in argv):
         raise LauncherError("exact client argv is malformed")
@@ -2173,6 +2236,40 @@ def _run_preexec_handshake(
     }
 
 
+_SUCCESS_HANDSHAKE_EVENTS = (
+    "spawn_requested",
+    "spawned_blocked_bootstrap",
+    "ready",
+    "pid_group_validated",
+    "observation_armed",
+    "released",
+    "leader_exit_observed_wnowait",
+    "drainers_joined",
+    "buffers_frozen",
+    "reaped",
+)
+
+
+def _supervision_is_admissible(result: Mapping[str, object]) -> bool:
+    return bool(
+        result.get("status") == "completed"
+        and result.get("returncode") == 0
+        and result.get("bundle_transmitted") is True
+        and result.get("timed_out") is False
+        and result.get("output_limited") is False
+        and result.get("stdin_write_error") is False
+        and result.get("stdin_writer_joined") is True
+        and result.get("stdout_drainer_joined") is True
+        and result.get("stderr_drainer_joined") is True
+        and result.get("unexpected_descendant") is False
+        and result.get("cleanup") == "clean"
+        and result.get("cleanup_escalated") is False
+        and result.get("leader_wait_count") == 1
+        and result.get("post_reap_group_access") is False
+        and tuple(result.get("handshake_events", ())) == _SUCCESS_HANDSHAKE_EVENTS
+    )
+
+
 def build_redacted_manifest(
     plan: Mapping[str, object],
     *,
@@ -2195,6 +2292,8 @@ def build_redacted_manifest(
     }
     if any(value != 0 for value in runtime_counts.values()):
         raise LauncherError("manifest cannot admit nonzero tool counts")
+    if not _supervision_is_admissible(supervision):
+        raise LauncherError("manifest supervision evidence is inadmissible")
     return {
         "manifest_version": MANIFEST_VERSION,
         "launcher_owner": "Master",
@@ -2225,6 +2324,11 @@ def build_redacted_manifest(
                 else {}
             ),
         },
+        "bootstrap_python": {
+            "realpath": plan["bootstrap_python_realpath"],
+            "sha256": _sha256(plan["bootstrap_python_sha256"], "Python bootstrap SHA-256"),
+            "isolated_flags": ["-I", "-S"],
+        },
         "git": {
             "realpath": plan["git_realpath"],
             "version": plan["git_version"],
@@ -2239,7 +2343,20 @@ def build_redacted_manifest(
         "event_digest": _sha256(event_digest, "event digest"),
         "output_digest": _sha256(output_digest, "output digest"),
         "runtime_counts": runtime_counts,
-        "handshake": dict(supervision),
+        "handshake": {
+            "events": list(supervision["handshake_events"]),
+            "cleanup": supervision["cleanup"],
+            "cleanup_escalated": supervision["cleanup_escalated"],
+            "timed_out": supervision["timed_out"],
+            "output_limited": supervision["output_limited"],
+            "stdin_write_error": supervision["stdin_write_error"],
+            "stdin_writer_joined": supervision["stdin_writer_joined"],
+            "stdout_drainer_joined": supervision["stdout_drainer_joined"],
+            "stderr_drainer_joined": supervision["stderr_drainer_joined"],
+            "unexpected_descendant": supervision["unexpected_descendant"],
+            "leader_wait_count": supervision["leader_wait_count"],
+            "post_reap_group_access": supervision["post_reap_group_access"],
+        },
         "collaboration_observation_complete": True,
         "non_master_collaboration_invoked": False,
         "candidate_output_merge_authority": False,
@@ -2294,8 +2411,6 @@ def _post_run_exact_state(plan: Mapping[str, object]) -> None:
 
 def run_isolated_role(
     plan: Mapping[str, object],
-    *,
-    process_runner: Callable[..., Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Run an exact validated static lane; never accept a caller task or argv."""
 
@@ -2317,9 +2432,8 @@ def run_isolated_role(
         or plan.get("launcher_owner") != "Master"
     ):
         raise LauncherError("isolated role plan is not validated")
-    runner = process_runner or _run_preexec_handshake
     try:
-        result = dict(runner(plan))
+        result = dict(_run_preexec_handshake(plan))
     except Exception as exc:
         cleanup_errors = _remove_private_runtime(plan)
         return {
@@ -2328,15 +2442,7 @@ def run_isolated_role(
             "model_started": False,
             "bundle_transmitted": False,
         }
-    if (
-        result.get("status") != "completed"
-        or result.get("returncode") != 0
-        or result.get("bundle_transmitted") is not True
-        or result.get("unexpected_descendant") is not False
-        or result.get("leader_wait_count") != 1
-        or result.get("post_reap_group_access") is not False
-        or result.get("cleanup") != "clean"
-    ):
+    if not _supervision_is_admissible(result):
         cleanup_errors = _remove_private_runtime(plan)
         return {
             "status": "insufficient_evidence",
@@ -2374,13 +2480,7 @@ def run_isolated_role(
             event_digest=hashlib.sha256(stdout.encode()).hexdigest(),
             output_digest=hashlib.sha256(output.encode()).hexdigest(),
             parsed=parsed,
-            supervision={
-                "events": list(result["handshake_events"]),
-                "cleanup": result["cleanup"],
-                "unexpected_descendant": result["unexpected_descendant"],
-                "leader_wait_count": result["leader_wait_count"],
-                "post_reap_group_access": result["post_reap_group_access"],
-            },
+            supervision=result,
             observed_at_ms=int(time.time() * 1000),
         )
     except (AssertionError, KeyError, LauncherError, OSError, UnicodeError) as exc:
