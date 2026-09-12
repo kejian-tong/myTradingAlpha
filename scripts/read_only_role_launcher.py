@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -46,6 +48,13 @@ MAX_TEXT_LENGTH = 512
 MAX_DIAGNOSTIC_LENGTH = 512
 MAX_ROLE_INSTRUCTIONS = 96 * 1024
 MAX_GIT_CONFIG_VALUES_BYTES = 64 * 1024
+MAX_PROCESS_GROUP_MEMBERS = 4096
+MAX_PROC_NUMERIC_ENTRIES = 262_144
+MAX_PROC_STAT_BYTES = 8192
+PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.005
+PROCESS_GROUP_STABLE_INTERVAL_SECONDS = 0.01
+PROCESS_GROUP_TERM_GRACE_SECONDS = 0.25
+PROCESS_GROUP_KILL_GRACE_SECONDS = 1.0
 CODEX_TEAM_IDENTIFIER = "2DC432GLL2"
 DEFAULT_CODEX_VERSION = "0.154.0-alpha.6.2"
 CODEX_BINARY_REGISTRY = MappingProxyType(
@@ -1823,6 +1832,239 @@ def _prompt(plan: dict[str, object], prompt: object) -> str:
     return rendered
 
 
+def _validate_process_group_members(
+    members: object,
+    *,
+    leader_pid: int,
+    process_group_id: int,
+    session_id: int,
+    validate_kernel_identity: bool,
+    max_members: int,
+) -> frozenset[int]:
+    if type(members) not in {tuple, list, set, frozenset}:
+        raise LauncherError("process-group membership has an invalid shape")
+    if not 0 < max_members <= MAX_PROCESS_GROUP_MEMBERS:
+        raise LauncherError("process-group member bound is invalid")
+    sequence = tuple(members)
+    if not sequence or len(sequence) > max_members:
+        raise LauncherError("process-group membership is empty or truncated")
+    if any(type(pid) is not int or pid <= 1 for pid in sequence):
+        raise LauncherError("process-group membership contains an invalid PID")
+    if len(set(sequence)) != len(sequence):
+        raise LauncherError("process-group membership contains duplicate PIDs")
+    result = frozenset(sequence)
+    if leader_pid not in result:
+        raise LauncherError("process-group membership lost the waitable leader anchor")
+    if not validate_kernel_identity:
+        return result
+    for pid in result:
+        if pid == leader_pid:
+            # The leader was validated before any wait operation. Keeping it
+            # waitable prevents reuse even where a zombie cannot be queried by
+            # getpgid(2)/getsid(2), as on Darwin.
+            continue
+        try:
+            observed_group = os.getpgid(pid)
+            observed_session = os.getsid(pid)
+        except ProcessLookupError as exc:
+            raise LauncherError(
+                "process-group membership changed during identity validation"
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise LauncherError(
+                "process-group member identity is unavailable"
+            ) from exc
+        if observed_group != process_group_id or observed_session != session_id:
+            raise LauncherError("process-group member identity is inconsistent")
+    return result
+
+
+def _darwin_process_group_members(
+    *,
+    leader_pid: int,
+    process_group_id: int,
+    session_id: int,
+    proc_listpgrppids: Callable[[int, object, int], int] | None = None,
+    max_members: int = MAX_PROCESS_GROUP_MEMBERS,
+) -> frozenset[int]:
+    """Return one bounded Darwin libproc process-group snapshot in-process."""
+    if not 0 < max_members <= MAX_PROCESS_GROUP_MEMBERS:
+        raise LauncherError("Darwin process-group member bound is invalid")
+    capacity = max_members + 1
+    buffer = (ctypes.c_int * capacity)()
+    proc_list = proc_listpgrppids
+    if proc_list is None:
+        try:
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            proc_list = libproc.proc_listpgrppids
+            proc_list.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+            proc_list.restype = ctypes.c_int
+        except (AttributeError, OSError) as exc:
+            raise LauncherError("Darwin libproc membership provider is unavailable") from exc
+    ctypes.set_errno(0)
+    try:
+        count = proc_list(process_group_id, buffer, ctypes.sizeof(buffer))
+    except (OSError, TypeError, ValueError) as exc:
+        raise LauncherError("Darwin process-group membership query failed") from exc
+    if type(count) is not int:
+        raise LauncherError("Darwin process-group membership count is invalid")
+    if count < 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, "Darwin process-group membership query failed")
+    if count > max_members or count > capacity:
+        raise LauncherError("Darwin process-group membership snapshot is truncated")
+    members = _validate_process_group_members(
+        tuple(buffer[index] for index in range(count)),
+        leader_pid=leader_pid,
+        process_group_id=process_group_id,
+        session_id=session_id,
+        validate_kernel_identity=False,
+        max_members=max_members,
+    )
+    for pid in members:
+        if pid == leader_pid:
+            continue
+        try:
+            observed_group = os.getpgid(pid)
+            observed_session = os.getsid(pid)
+        except ProcessLookupError:
+            # libproc supplied positive exact-group evidence. A member that
+            # disappears before the identity cross-check is retained in this
+            # snapshot so descendant evidence is never erased; a later stable
+            # snapshot must prove leader-only membership.
+            continue
+        except (OSError, ValueError) as exc:
+            raise LauncherError(
+                "Darwin process-group member identity is unavailable"
+            ) from exc
+        if observed_group != process_group_id or observed_session != session_id:
+            raise LauncherError("Darwin process-group member identity is inconsistent")
+    return members
+
+
+def _parse_linux_proc_stat(
+    raw: bytes, *, expected_pid: int, max_record_bytes: int
+) -> tuple[int, int, int]:
+    if not 0 < max_record_bytes <= MAX_PROC_STAT_BYTES:
+        raise LauncherError("Linux proc stat record bound is invalid")
+    if not raw or len(raw) > max_record_bytes or not raw.endswith(b"\n"):
+        raise LauncherError("Linux proc stat record is empty, truncated, or unterminated")
+    record = raw[:-1]
+    prefix = f"{expected_pid} (".encode("ascii")
+    if not record.startswith(prefix):
+        raise LauncherError("Linux proc stat PID is inconsistent")
+    close_index = record.rfind(b")")
+    if close_index < len(prefix) or record[close_index : close_index + 2] != b") ":
+        raise LauncherError("Linux proc stat comm field is malformed")
+    fields = record[close_index + 2 :].split()
+    if len(fields) < 4 or len(fields[0]) != 1:
+        raise LauncherError("Linux proc stat fields are incomplete")
+    if any(not token.isdigit() for token in (fields[2], fields[3])):
+        raise LauncherError("Linux proc stat identifiers are malformed")
+    try:
+        process_group_id = int(fields[2].decode("ascii"))
+        session_id = int(fields[3].decode("ascii"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise LauncherError("Linux proc stat identifiers are malformed") from exc
+    if process_group_id <= 1 or session_id <= 1:
+        raise LauncherError("Linux proc stat identifiers are unsafe")
+    return expected_pid, process_group_id, session_id
+
+
+def _linux_process_group_members(
+    *,
+    leader_pid: int,
+    process_group_id: int,
+    session_id: int,
+    proc_root: Path = Path("/proc"),
+    max_numeric_entries: int = MAX_PROC_NUMERIC_ENTRIES,
+    max_members: int = MAX_PROCESS_GROUP_MEMBERS,
+    max_record_bytes: int = MAX_PROC_STAT_BYTES,
+) -> frozenset[int]:
+    """Return one bounded Linux /proc process-group snapshot without helpers."""
+    if not 0 < max_numeric_entries <= MAX_PROC_NUMERIC_ENTRIES:
+        raise LauncherError("Linux proc numeric-entry bound is invalid")
+    if not 0 < max_members <= MAX_PROCESS_GROUP_MEMBERS:
+        raise LauncherError("Linux process-group member bound is invalid")
+    if not 0 < max_record_bytes <= MAX_PROC_STAT_BYTES:
+        raise LauncherError("Linux proc stat record bound is invalid")
+    numeric_entries = 0
+    members: list[int] = []
+    try:
+        iterator = os.scandir(proc_root)
+    except OSError as exc:
+        raise LauncherError("Linux proc membership provider is unavailable") from exc
+    with iterator:
+        for entry in iterator:
+            name = entry.name
+            if not name.isascii() or not name.isdecimal():
+                continue
+            numeric_entries += 1
+            if numeric_entries > max_numeric_entries:
+                raise LauncherError("Linux proc numeric-entry snapshot is truncated")
+            pid = int(name)
+            if pid <= 1:
+                continue
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor: int | None = None
+            try:
+                descriptor = os.open(Path(entry.path) / "stat", flags)
+                raw = os.read(descriptor, max_record_bytes + 1)
+                if len(raw) <= max_record_bytes and os.read(descriptor, 1):
+                    raise LauncherError("Linux proc stat record exceeds its bound")
+            except (FileNotFoundError, ProcessLookupError):
+                # An entry that disappears during this exact scan is omitted;
+                # final admission requires two later stable leader-only scans.
+                continue
+            except OSError as exc:
+                raise LauncherError("Linux proc stat record is unavailable") from exc
+            finally:
+                if descriptor is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+            observed_pid, observed_group, observed_session = _parse_linux_proc_stat(
+                raw,
+                expected_pid=pid,
+                max_record_bytes=max_record_bytes,
+            )
+            if observed_group != process_group_id:
+                continue
+            if observed_session != session_id:
+                raise LauncherError("Linux process-group session is inconsistent")
+            members.append(observed_pid)
+            if len(members) > max_members:
+                raise LauncherError("Linux process-group membership snapshot is truncated")
+    return _validate_process_group_members(
+        members,
+        leader_pid=leader_pid,
+        process_group_id=process_group_id,
+        session_id=session_id,
+        validate_kernel_identity=False,
+        max_members=max_members,
+    )
+
+
+def _default_process_group_members(
+    *, leader_pid: int, process_group_id: int, session_id: int
+) -> frozenset[int]:
+    if os.name != "posix":
+        raise LauncherError("process-group membership requires POSIX")
+    if sys.platform == "darwin":
+        return _darwin_process_group_members(
+            leader_pid=leader_pid,
+            process_group_id=process_group_id,
+            session_id=session_id,
+        )
+    if sys.platform.startswith("linux"):
+        return _linux_process_group_members(
+            leader_pid=leader_pid,
+            process_group_id=process_group_id,
+            session_id=session_id,
+        )
+    raise LauncherError("no reviewed process-group membership provider for this POSIX host")
+
+
 def _default_process_runner(**kwargs: object) -> dict[str, object]:
     argv = kwargs["argv"]
     cwd = kwargs["cwd"]
@@ -1834,7 +2076,20 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         raise LauncherError("runner argv must be a string list")
     if kwargs.get("process_group") is not True or kwargs.get("shell") is not False:
         raise LauncherError("runner requires an isolated process group without a shell")
-    posix_group = os.name == "posix"
+    if os.name != "posix":
+        raise LauncherError("runner requires reviewed POSIX process-group supervision")
+    if sys.platform != "darwin" and not sys.platform.startswith("linux"):
+        raise LauncherError("runner has no reviewed membership provider on this POSIX host")
+    if any(
+        not hasattr(os, name)
+        for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
+    ):
+        raise LauncherError("runner requires waitid WNOWAIT support")
+    membership_provider = kwargs.get(
+        "process_group_members_provider", _default_process_group_members
+    )
+    if not callable(membership_provider):
+        raise LauncherError("process-group membership provider must be callable")
     process = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -1844,8 +2099,39 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         stderr=subprocess.PIPE,
         text=False,
         shell=False,
-        start_new_session=posix_group,
+        start_new_session=True,
     )
+    events: list[str] = []
+    post_reap_group_access = False
+    leader_reaped = False
+    leader_wait_count = 0
+    raw_pid = getattr(process, "pid", None)
+    parent_pid = os.getpid()
+    parent_group = os.getpgrp()
+    process_group_id = (
+        raw_pid
+        if type(raw_pid) is int
+        and raw_pid > 1
+        and raw_pid not in {parent_pid, parent_group}
+        else None
+    )
+    session_id = process_group_id
+    process_group_anchor_preserved = process_group_id is not None
+    if process_group_id is not None:
+        try:
+            observed_group = os.getpgid(process_group_id)
+            observed_session = os.getsid(process_group_id)
+        except (OSError, ValueError):
+            process_group_anchor_preserved = False
+        else:
+            process_group_anchor_preserved = (
+                observed_group == process_group_id
+                and observed_session == process_group_id
+                and observed_group != parent_group
+            )
+    if process_group_anchor_preserved:
+        events.append("anchor_validated")
+
     buffers: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
     buffer_lock = threading.Lock()
     output_limited = threading.Event()
@@ -1914,37 +2200,15 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
     cleanup_failed = False
     descendant_detected = False
     supervision_error = False
-    process_group_observed_empty = False
-
-    raw_pid = getattr(process, "pid", None)
-    process_group_id = (
-        raw_pid
-        if posix_group
-        and type(raw_pid) is int
-        and raw_pid > 1
-        and raw_pid != os.getpid()
-        and raw_pid != os.getpgrp()
-        else None
-    )
-    process_group_state_certain = process_group_id is not None
-    if process_group_id is not None:
-        try:
-            observed_group = os.getpgid(process_group_id)
-            observed_session = os.getsid(process_group_id)
-        except ProcessLookupError:
-            # start_new_session establishes PGID == PID before exec. A very short
-            # command can exit before this observation, while its exact group ID
-            # remains safe to query for descendants.
-            observed_group = process_group_id
-            observed_session = process_group_id
-        except (OSError, ValueError):
-            process_group_state_certain = False
-        else:
-            if (
-                observed_group != process_group_id
-                or observed_session != process_group_id
-            ):
-                process_group_state_certain = False
+    membership_certain = process_group_anchor_preserved
+    leader_observation_certain = process_group_anchor_preserved
+    leader_exit_observed = False
+    membership_event_recorded = False
+    final_leader_only_snapshots = 0
+    process_group_empty = False
+    buffers_frozen = False
+    frozen_stdout = b""
+    frozen_stderr = b""
 
     def close_input() -> None:
         if input_stream is None:
@@ -1954,208 +2218,247 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         except (BrokenPipeError, OSError, ValueError):
             stdin_write_error.set()
 
-    def poll_process() -> object:
-        nonlocal supervision_error
-        try:
-            return process.poll()
-        except Exception:
+    def observe_leader_exit() -> bool:
+        nonlocal leader_exit_observed, leader_observation_certain
+        nonlocal process_group_anchor_preserved, supervision_error
+        nonlocal post_reap_group_access
+        if leader_reaped:
+            post_reap_group_access = True
+            process_group_anchor_preserved = False
             supervision_error = True
-            return None
-
-    def group_present() -> bool | None:
-        nonlocal process_group_observed_empty, process_group_state_certain
-        if not process_group_state_certain or process_group_id is None:
-            return None
-        if process_group_observed_empty:
             return False
-        if process_group_id <= 1 or process_group_id in {os.getpid(), os.getpgrp()}:
-            process_group_state_certain = False
-            return None
-        if process.returncode is not None:
-            try:
-                os.getpgid(process_group_id)
-            except ProcessLookupError:
-                pass
-            except (PermissionError, OSError, ValueError):
-                process_group_state_certain = False
-                return None
-            else:
-                # Popen already reaped the original leader. Reappearance of its
-                # PID proves reuse, so the old group is gone and must not be
-                # signalled as though it were still ours.
-                process_group_observed_empty = True
-                return False
+        if leader_exit_observed:
+            return True
+        if not leader_observation_certain or process_group_id is None:
+            return False
+        if "waitid_probe" not in events:
+            events.append("waitid_probe")
         try:
-            os.killpg(process_group_id, 0)
-        except ProcessLookupError:
-            process_group_observed_empty = True
+            info = os.waitid(
+                os.P_PID,
+                process_group_id,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+        except (ChildProcessError, OSError, ValueError):
+            leader_observation_certain = False
+            process_group_anchor_preserved = False
+            supervision_error = True
             return False
-        except PermissionError:
-            if process.returncode is not None:
-                try:
-                    os.getpgid(process_group_id)
-                except ProcessLookupError:
-                    process_group_observed_empty = True
-                    return False
-                except (PermissionError, OSError, ValueError):
-                    pass
-                else:
-                    process_group_observed_empty = True
-                    return False
-            process_group_state_certain = False
-            return None
-        except (OSError, ValueError):
-            process_group_state_certain = False
-            return None
+        if info is None:
+            return False
+        if getattr(info, "si_pid", None) != process_group_id:
+            leader_observation_certain = False
+            process_group_anchor_preserved = False
+            supervision_error = True
+            return False
+        leader_exit_observed = True
+        events.append("leader_exit_observed")
         return True
 
-    def signal_group(sig: signal.Signals) -> bool:
-        nonlocal process_group_observed_empty, process_group_state_certain
-        if process_group_observed_empty:
-            return True
+    def process_group_members() -> frozenset[int] | None:
+        nonlocal descendant_detected, membership_certain
+        nonlocal membership_event_recorded, post_reap_group_access
+        nonlocal process_group_anchor_preserved
+        if leader_reaped:
+            post_reap_group_access = True
+            process_group_anchor_preserved = False
+            membership_certain = False
+            return None
         if (
-            not process_group_state_certain
+            not process_group_anchor_preserved
+            or not membership_certain
+            or process_group_id is None
+            or session_id is None
+        ):
+            return None
+        try:
+            observed = membership_provider(
+                leader_pid=process_group_id,
+                process_group_id=process_group_id,
+                session_id=session_id,
+            )
+            members = _validate_process_group_members(
+                observed,
+                leader_pid=process_group_id,
+                process_group_id=process_group_id,
+                session_id=session_id,
+                validate_kernel_identity=False,
+                max_members=MAX_PROCESS_GROUP_MEMBERS,
+            )
+        except Exception:
+            membership_certain = False
+            return None
+        if not membership_event_recorded:
+            events.append("membership_snapshot")
+            membership_event_recorded = True
+        if members != frozenset({process_group_id}):
+            descendant_detected = True
+            if "descendant_detected" not in events:
+                events.append("descendant_detected")
+        return members
+
+    def signal_group(sent_signal: signal.Signals) -> bool:
+        nonlocal membership_certain, post_reap_group_access
+        nonlocal process_group_anchor_preserved
+        if leader_reaped:
+            post_reap_group_access = True
+            process_group_anchor_preserved = False
+            membership_certain = False
+            return False
+        if (
+            not process_group_anchor_preserved
             or process_group_id is None
             or process_group_id <= 1
             or process_group_id in {os.getpid(), os.getpgrp()}
         ):
             return False
         try:
-            os.killpg(process_group_id, sig)
+            os.killpg(process_group_id, sent_signal)
         except ProcessLookupError:
-            process_group_observed_empty = True
-            return True
-        except PermissionError:
-            if process.returncode is not None:
-                try:
-                    os.getpgid(process_group_id)
-                except ProcessLookupError:
-                    process_group_observed_empty = True
-                    return True
-                except (PermissionError, OSError, ValueError):
-                    pass
-                else:
-                    process_group_observed_empty = True
-                    return True
-            process_group_state_certain = False
+            # ESRCH is admissible only if the still-waitable anchor's exact
+            # membership has concurrently become leader-only.
+            members = process_group_members()
+            return members == frozenset({process_group_id})
+        except (PermissionError, OSError, ValueError):
             return False
-        except (OSError, ValueError):
-            process_group_state_certain = False
-            return False
+        event = "signal_term" if sent_signal == signal.SIGTERM else "signal_kill"
+        if event not in events:
+            events.append(event)
         return True
 
-    def wait_for_group(deadline: float) -> bool | None:
-        while True:
-            state = group_present()
-            if state is not True or time.monotonic() >= deadline:
-                return state
-            time.sleep(0.005)
-
-    def wait_for_process(deadline: float) -> bool:
+    def wait_for_leader_exit(deadline: float) -> bool:
         while time.monotonic() < deadline:
-            if poll_process() is not None:
+            if observe_leader_exit():
                 return True
-            time.sleep(0.005)
-        return poll_process() is not None
+            if not leader_observation_certain:
+                return False
+            time.sleep(PROCESS_GROUP_POLL_INTERVAL_SECONDS)
+        return observe_leader_exit()
 
-    def terminate_direct_fallback() -> None:
+    def terminate_anchored_group() -> None:
         nonlocal cleanup_escalated, cleanup_failed, killed
-        close_input()
-        with contextlib.suppress(OSError, ProcessLookupError):
-            process.terminate()
-        if not wait_for_process(time.monotonic() + 0.25):
-            cleanup_escalated = True
-            killed = True
-            with contextlib.suppress(OSError, ProcessLookupError):
-                process.kill()
-            if not wait_for_process(time.monotonic() + 1.0):
-                cleanup_failed = True
-
-    def supervise_process_group() -> None:
-        nonlocal cleanup_attempted, cleanup_escalated, cleanup_failed
-        nonlocal descendant_detected, killed
-        cleanup_attempted = True
-        close_input()
-        if not process_group_state_certain:
-            cleanup_failed = True
-            terminate_direct_fallback()
-            return
-        state = group_present()
-        if state is None:
-            cleanup_failed = True
-            terminate_direct_fallback()
-            return
-        if state is False:
-            return
-        if poll_process() is not None:
-            descendant_detected = True
         if not signal_group(signal.SIGTERM):
             cleanup_failed = True
-            terminate_direct_fallback()
-            return
-        term_deadline = time.monotonic() + 0.25
-        while True:
-            state = group_present()
-            leader_exited = poll_process() is not None
-            if leader_exited and state is True:
-                descendant_detected = True
-            if state is not True or time.monotonic() >= term_deadline:
+        term_deadline = time.monotonic() + PROCESS_GROUP_TERM_GRACE_SECONDS
+        last_members: frozenset[int] | None = None
+        while time.monotonic() < term_deadline:
+            observe_leader_exit()
+            if membership_certain:
+                last_members = process_group_members()
+            if (
+                leader_exit_observed
+                and last_members == frozenset({process_group_id})
+            ):
                 break
-            time.sleep(0.005)
-        if state is None:
-            cleanup_failed = True
-            return
-        if state is True:
+            time.sleep(PROCESS_GROUP_POLL_INTERVAL_SECONDS)
+        observe_leader_exit()
+        if membership_certain:
+            last_members = process_group_members()
+        needs_kill = (
+            not leader_exit_observed
+            or not membership_certain
+            or last_members != frozenset({process_group_id})
+        )
+        if needs_kill:
             cleanup_escalated = True
             killed = True
             if not signal_group(signal.SIGKILL):
                 cleanup_failed = True
-                return
-            state = wait_for_group(time.monotonic() + 1.0)
-        if state is not False:
+            kill_deadline = time.monotonic() + PROCESS_GROUP_KILL_GRACE_SECONDS
+            while time.monotonic() < kill_deadline:
+                observe_leader_exit()
+                if membership_certain:
+                    last_members = process_group_members()
+                if (
+                    leader_exit_observed
+                    and last_members == frozenset({process_group_id})
+                ):
+                    break
+                time.sleep(PROCESS_GROUP_POLL_INTERVAL_SECONDS)
+            observe_leader_exit()
+            if membership_certain:
+                last_members = process_group_members()
+        if not leader_exit_observed:
+            cleanup_failed = True
+            if process_group_id is not None and not leader_reaped:
+                with contextlib.suppress(OSError, ValueError):
+                    os.kill(process_group_id, signal.SIGKILL)
+                wait_for_leader_exit(
+                    time.monotonic() + PROCESS_GROUP_KILL_GRACE_SECONDS
+                )
+        if membership_certain and last_members != frozenset({process_group_id}):
             cleanup_failed = True
 
+    def certify_stable_leader_only() -> bool:
+        nonlocal final_leader_only_snapshots
+        if not leader_exit_observed or not membership_certain:
+            return False
+        first = process_group_members()
+        if first != frozenset({process_group_id}):
+            return False
+        events.append("leader_only_snapshot")
+        final_leader_only_snapshots = 1
+        time.sleep(PROCESS_GROUP_STABLE_INTERVAL_SECONDS)
+        second = process_group_members()
+        if second != frozenset({process_group_id}):
+            return False
+        events.append("leader_only_snapshot")
+        final_leader_only_snapshots = 2
+        return True
+
     try:
-        while poll_process() is None:
+        while True:
+            if observe_leader_exit():
+                break
             if output_limited.is_set() or stdin_write_error.is_set():
+                break
+            if not leader_observation_certain:
                 break
             if time.monotonic() - started >= float(timeout):
                 timed_out = True
                 break
-            time.sleep(0.005)
+            time.sleep(PROCESS_GROUP_POLL_INTERVAL_SECONDS)
     except Exception:
         supervision_error = True
-    finally:
-        try:
-            supervise_process_group()
-        except Exception:
-            supervision_error = True
-            cleanup_failed = True
-            cleanup_attempted = True
-            if process_group_state_certain:
-                cleanup_escalated = True
-                killed = True
-                try:
-                    if signal_group(signal.SIGKILL) and wait_for_group(
-                        time.monotonic() + 1.0
-                    ) is not False:
-                        cleanup_failed = True
-                except Exception:
-                    cleanup_failed = True
-            try:
-                terminate_direct_fallback()
-            except Exception:
-                cleanup_failed = True
 
-    if not wait_for_process(time.monotonic() + 1.0):
-        cleanup_failed = True
-        terminate_direct_fallback()
-    if poll_process() is not None:
-        try:
-            process.wait(timeout=0.1)
-        except (subprocess.TimeoutExpired, TimeoutError, OSError):
-            cleanup_failed = True
+    cleanup_attempted = True
     close_input()
+    try:
+        observe_leader_exit()
+        initial_members = process_group_members()
+        if (
+            not leader_exit_observed
+            or initial_members is None
+            or initial_members != frozenset({process_group_id})
+        ):
+            terminate_anchored_group()
+        if not certify_stable_leader_only():
+            if (
+                process_group_anchor_preserved
+                and membership_certain
+                and not leader_reaped
+            ):
+                terminate_anchored_group()
+            if not certify_stable_leader_only():
+                cleanup_failed = True
+    except Exception:
+        supervision_error = True
+        cleanup_failed = True
+        if process_group_anchor_preserved and not leader_reaped:
+            cleanup_escalated = True
+            killed = True
+            with contextlib.suppress(OSError, ValueError):
+                os.killpg(process_group_id, signal.SIGKILL)
+            wait_for_leader_exit(
+                time.monotonic() + PROCESS_GROUP_KILL_GRACE_SECONDS
+            )
+
+    process_group_empty = (
+        process_group_anchor_preserved
+        and membership_certain
+        and leader_exit_observed
+        and final_leader_only_snapshots == 2
+    )
     join_deadline = time.monotonic() + 1.0
     for thread in threads:
         thread.join(timeout=max(0.0, join_deadline - time.monotonic()))
@@ -2179,16 +2482,44 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
                 stream.close()
             except (OSError, ValueError):
                 cleanup_failed = True
-    final_group_state = group_present()
-    process_group_empty = final_group_state is False
-    if final_group_state is None:
-        process_group_state_certain = False
-        cleanup_failed = True
+    if stdout_drainer_joined and stderr_drainer_joined and stdin_writer_joined:
+        events.append("drainers_joined")
     with buffer_lock:
-        stdout = bytes(buffers["stdout"]).decode("utf-8", "replace")
-        stderr = bytes(buffers["stderr"]).decode("utf-8", "replace")
+        frozen_stdout = bytes(buffers["stdout"])
+        frozen_stderr = bytes(buffers["stderr"])
+    buffers_frozen = (
+        stdout_drainer_joined and stderr_drainer_joined and stdin_writer_joined
+    )
+    if buffers_frozen:
+        events.append("buffers_frozen")
+
+    if not leader_exit_observed and process_group_id is not None:
+        cleanup_failed = True
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(process_group_id, signal.SIGKILL)
+        wait_for_leader_exit(time.monotonic() + PROCESS_GROUP_KILL_GRACE_SECONDS)
+    returncode: int | None = None
+    if leader_exit_observed or process_group_id is not None:
+        try:
+            leader_wait_count += 1
+            returncode = process.wait(
+                timeout=None if leader_exit_observed else PROCESS_GROUP_KILL_GRACE_SECONDS
+            )
+        except (ChildProcessError, OSError, subprocess.TimeoutExpired, ValueError):
+            cleanup_failed = True
+        else:
+            leader_reaped = True
+            events.append("leader_reaped")
+    else:
+        cleanup_failed = True
+
+    process_group_state_certain = (
+        process_group_anchor_preserved and membership_certain and process_group_empty
+    )
+    stdout = frozen_stdout.decode("utf-8", "replace")
+    stderr = frozen_stderr.decode("utf-8", "replace")
     return {
-        "returncode": process.returncode,
+        "returncode": returncode,
         "stdout": stdout,
         "stderr": stderr,
         "timed_out": timed_out,
@@ -2202,13 +2533,19 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         "process_group_id": process_group_id,
         "process_group_empty": process_group_empty,
         "process_group_state_certain": process_group_state_certain,
+        "process_group_anchor_preserved": process_group_anchor_preserved,
+        "membership_certain": membership_certain,
         "descendant_detected": descendant_detected,
         "cleanup_attempted": cleanup_attempted,
         "cleanup_escalated": cleanup_escalated,
         "cleanup_failed": cleanup_failed,
         "supervision_error": supervision_error,
         "killed": killed,
-        "reaped": poll_process() is not None,
+        "reaped": leader_reaped,
+        "buffers_frozen": buffers_frozen,
+        "leader_wait_count": leader_wait_count,
+        "post_reap_group_access": post_reap_group_access,
+        "process_group_events": tuple(events),
     }
 
 
@@ -3204,6 +3541,73 @@ def cleanup_private_dirs(
     return errors
 
 
+def _process_group_events_admissible(value: object) -> bool:
+    if type(value) is not tuple or not 1 <= len(value) <= 32:
+        return False
+    if any(type(event) is not str for event in value):
+        return False
+    events = tuple(value)
+    allowed = {
+        "anchor_validated",
+        "waitid_probe",
+        "leader_exit_observed",
+        "membership_snapshot",
+        "descendant_detected",
+        "signal_term",
+        "signal_kill",
+        "leader_only_snapshot",
+        "drainers_joined",
+        "buffers_frozen",
+        "leader_reaped",
+    }
+    if any(event not in allowed for event in events):
+        return False
+    if any(
+        event in events
+        for event in ("descendant_detected", "signal_term", "signal_kill")
+    ):
+        return False
+    if events[0] != "anchor_validated" or events[-1] != "leader_reaped":
+        return False
+    required_once = (
+        "anchor_validated",
+        "waitid_probe",
+        "leader_exit_observed",
+        "drainers_joined",
+        "buffers_frozen",
+        "leader_reaped",
+    )
+    if any(events.count(event) != 1 for event in required_once):
+        return False
+    if not 1 <= events.count("membership_snapshot") <= 8:
+        return False
+    if events.count("leader_only_snapshot") != 2:
+        return False
+    try:
+        anchor = events.index("anchor_validated")
+        waitid_probe = events.index("waitid_probe")
+        leader_exit = events.index("leader_exit_observed")
+        membership = events.index("membership_snapshot")
+        leader_only_first = events.index("leader_only_snapshot")
+        leader_only_second = events.index("leader_only_snapshot", leader_only_first + 1)
+        drainers = events.index("drainers_joined")
+        frozen = events.index("buffers_frozen")
+        reaped = events.index("leader_reaped")
+    except ValueError:
+        return False
+    return (
+        anchor < waitid_probe
+        and waitid_probe < leader_exit < membership
+        and membership < leader_only_first < leader_only_second
+        and leader_only_second < drainers < frozen < reaped
+        and all(
+            events.index(event) < leader_only_first
+            for event in ("signal_term", "signal_kill")
+            if event in events
+        )
+    )
+
+
 def run_isolated_role(
     plan: dict[str, object],
     *,
@@ -3319,12 +3723,19 @@ def run_isolated_role(
         "stderr_drainer_joined",
         "process_group_empty",
         "process_group_state_certain",
+        "process_group_anchor_preserved",
+        "membership_certain",
         "descendant_detected",
         "cleanup_attempted",
         "cleanup_escalated",
         "cleanup_failed",
+        "supervision_error",
         "killed",
         "reaped",
+        "buffers_frozen",
+        "leader_wait_count",
+        "post_reap_group_access",
+        "process_group_events",
     )
     process_supervision = {
         field: result.get(field) for field in supervision_fields
@@ -3334,7 +3745,11 @@ def run_isolated_role(
         "output_limited",
         "stdin_write_error",
         "descendant_detected",
+        "cleanup_escalated",
         "cleanup_failed",
+        "supervision_error",
+        "killed",
+        "post_reap_group_access",
     )
     required_true = (
         "stdin_writer_joined",
@@ -3342,10 +3757,21 @@ def run_isolated_role(
         "stderr_drainer_joined",
         "process_group_empty",
         "process_group_state_certain",
+        "process_group_anchor_preserved",
+        "membership_certain",
+        "cleanup_attempted",
+        "buffers_frozen",
+        "reaped",
     )
     if (
         any(result.get(field) is not False for field in required_false)
         or any(result.get(field) is not True for field in required_true)
+        or type(result.get("leader_wait_count")) is not int
+        or result.get("leader_wait_count") != 1
+        or not _process_group_events_admissible(
+            result.get("process_group_events")
+        )
+        or type(result.get("returncode")) is not int
         or result.get("returncode") != 0
     ):
         failed = fail(["isolated role process failed"])

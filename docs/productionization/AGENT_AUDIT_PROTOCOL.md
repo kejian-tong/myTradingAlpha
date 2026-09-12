@@ -184,17 +184,20 @@ generation, not an identity substitute for the exact signed alpha build installe
 There is no generic version-range admission. A non-Darwin default probe without equivalent
 TeamIdentifier/signature evidence remains `insufficient_evidence`.
 
-On POSIX, the launcher binds the exact session-leader PID/PGID created by `start_new_session`, verifies
-that it cannot address the launcher/test process group, and supervises that full group through every
-normal and exceptional exit path. A surviving group after direct-child exit is positive descendant
-evidence: the launcher sends SIGTERM, waits only a monotonic bounded grace period, then sends SIGKILL to
-the same still-live group even when the leader already exited. Completion requires the leader to be
-reaped, the group to be certainly empty, stdin/stdout/stderr workers to have joined, and cleanup to have
-reported no error. An observed-empty original group is latched; if the reaped leader PID reappears, it is
-treated as reuse and is never signalled as the old group. Descendant observation, an unjoined drainer, a
-nonempty or uncertain group, or cleanup
-failure makes the lane `insufficient_evidence` even if the direct child returned zero. Returned output is
-frozen only after this supervision boundary completes.
+On POSIX, the launcher immediately validates the exact session-leader identity created by
+`start_new_session` (`PID == PGID == SID`) and verifies that it cannot address the launcher/test process
+group. It observes leader exit only with `waitid(P_PID, ..., WEXITED | WNOHANG | WNOWAIT)`; `Popen.poll`,
+`wait`, and `communicate` are forbidden until group supervision is complete, so the exited leader remains
+waitable and its numeric PID/PGID cannot be reused. Exact membership comes from an in-process bounded
+Darwin `proc_listpgrppids` provider or a bounded Linux `/proc/[pid]/stat` scan. Unsupported POSIX hosts,
+truncation, malformed records, session mismatch, and uncertain membership fail closed; there is no `ps`
+fallback. Any member beyond the anchored leader is positive descendant evidence. Cleanup sends SIGTERM to
+the anchored group, waits only a monotonic bounded grace period, and sends SIGKILL when the leader or any
+descendant remains; leader exit never suppresses descendant escalation. Completion requires two stable
+leader-only membership snapshots, joined stdin/stdout/stderr workers, frozen buffers, and exactly one
+final `Popen.wait` that releases the anchor. No membership query or group signal is permitted after that
+reap. Missing anchor/order evidence, descendant observation, membership uncertainty, an unjoined drainer,
+or cleanup failure makes the lane `insufficient_evidence` even if the direct child returned zero.
 
 Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
 initial version probe through every policy/target/post-run Git query and the model shell, the launcher
@@ -304,8 +307,9 @@ anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb
 also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound correction
 `487190a -> 0ef6608`, direct-prefix correction `b0dc3e5 -> 243d95f`, current-runtime registration
 `6125464 -> ec8acdb`, and sandboxed local-command correction `8d08c74 -> 546be4a`. The current repair
-starts at test-only RED `4a39883`; the process-group repair adds test-only RED `1a77fc5`, and each exact
-GREEN head is recorded in durable PR evidence. The abandoned v2
+starts at test-only RED `4a39883`; the original process-group repair adds test-only RED `1a77fc5`, and the
+anchored no-reap repair adds test-only RED `11097c0` plus test-only evidence completion `3a29c90`. Each
+exact GREEN head is recorded in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 
