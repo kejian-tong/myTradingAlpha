@@ -358,6 +358,11 @@ def test_bundle_rejects_secret_unicode_and_binary_hazards(
         _bundle(module, values)
 
 
+def test_zero_tool_contract_source_contains_no_literal_private_key_marker() -> None:
+    marker = "-----BEGIN " + "PRIVATE KEY-----"
+    assert marker not in Path(__file__).read_text(encoding="utf-8")
+
+
 def test_fixed_canary_is_sealed_metadata_not_model_visible(tmp_path: Path) -> None:
     module = _module()
     repo = tmp_path / "repo"
