@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -103,6 +104,59 @@ def test_runtime_config_explicitly_disables_shell_and_all_mcp() -> None:
     assert "agents.enabled=false" in values
     assert "mcp_servers={}" in values
     assert all("shell_tool=true" not in value for value in values)
+
+
+def test_public_runner_and_plan_builder_have_no_injected_execution_bypass() -> None:
+    module = _module()
+    assert "process_runner" not in inspect.signature(module.run_isolated_role).parameters
+    assert "codesign_probe" not in inspect.signature(module.build_invocation_plan).parameters
+
+
+def test_supervision_admission_requires_exact_success_shape() -> None:
+    module = _module()
+    valid = {
+        "status": "completed",
+        "returncode": 0,
+        "bundle_transmitted": True,
+        "timed_out": False,
+        "output_limited": False,
+        "stdin_write_error": False,
+        "stdin_writer_joined": True,
+        "stdout_drainer_joined": True,
+        "stderr_drainer_joined": True,
+        "unexpected_descendant": False,
+        "cleanup": "clean",
+        "cleanup_escalated": False,
+        "leader_wait_count": 1,
+        "post_reap_group_access": False,
+        "handshake_events": [
+            "spawn_requested",
+            "spawned_blocked_bootstrap",
+            "ready",
+            "pid_group_validated",
+            "observation_armed",
+            "released",
+            "leader_exit_observed_wnowait",
+            "drainers_joined",
+            "buffers_frozen",
+            "reaped",
+        ],
+    }
+    assert module._supervision_is_admissible(valid) is True
+    for field, bad in (
+        ("timed_out", True),
+        ("stdout_drainer_joined", False),
+        ("unexpected_descendant", True),
+        ("leader_wait_count", 2),
+        ("cleanup", "failed_closed"),
+    ):
+        assert module._supervision_is_admissible({**valid, field: bad}) is False
+    assert (
+        module._supervision_is_admissible(
+            {**valid, "handshake_events": list(reversed(valid["handshake_events"]))}
+        )
+        is False
+    )
 
 
 def test_parser_rejects_unknown_top_level_events_and_failed_turns() -> None:

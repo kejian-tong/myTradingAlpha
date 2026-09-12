@@ -265,6 +265,8 @@ def test_bundle_is_canonical_exact_complete_and_trust_tagged(exact_repo: dict[st
         "src/AGENTS.md",
         "src/alpha.py",
     }
+    assert all("prefix_suffix_replace" in record["algorithm"] for record in diffs)
+    assert all("opcodes" in record and "diff" not in record for record in diffs)
     instructions = [record for record in records if record["kind"] == "instruction"]
     assert any(
         record["path"] == "src/AGENTS.md"
@@ -463,6 +465,44 @@ def test_trusted_context_command_is_bounded(exact_repo: dict[str, object]) -> No
         _bundle(module, exact_repo, trusted_context_records=contexts)
 
 
+def test_trusted_context_aggregate_line_count_is_bounded(
+    exact_repo: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    monkeypatch.setattr(module, "MAX_TOTAL_LINES", 6)
+    with pytest.raises(module.LauncherError, match="aggregate line"):
+        module._trusted_context(
+            _trusted_context(str(exact_repo["head"])),
+            scope_kind="harness_maintenance",
+            expected_head=str(exact_repo["head"]),
+        )
+
+
+def test_bundle_requires_root_governing_instructions_on_both_sides(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "AGENTS.md").write_text("policy\n")
+    (repo / "file.txt").write_text("base\n")
+    base = _commit(repo, "base")
+    (repo / "AGENTS.md").unlink()
+    (repo / "file.txt").write_text("head\n")
+    head = _commit(repo, "head")
+    _git(repo, "checkout", "--detach", head)
+    values = {
+        "root": repo,
+        "base": base,
+        "head": head,
+        "base_tree": _tree(repo, base),
+        "head_tree": _tree(repo, head),
+    }
+    with pytest.raises(module.LauncherError, match="root AGENTS"):
+        _bundle(module, values)
+
+
 def test_jsonl_accepts_only_lifecycle_reasoning_final_and_exact_loader_warning() -> None:
     module = _module()
     parsed = module.parse_codex_jsonl(_valid_jsonl(), role="reviewer_high")
@@ -571,6 +611,10 @@ def test_handshake_blocks_client_until_parent_arms_and_releases(tmp_path: Path) 
     assert result["leader_wait_count"] == 1
     assert result["post_reap_group_access"] is False
     assert result["unexpected_descendant"] is False
+    assert Path(
+        _fixture_plan(module, tmp_path, marker)["bootstrap_python_realpath"]
+    ).is_file()
+    assert len(_fixture_plan(module, tmp_path, marker)["bootstrap_python_sha256"]) == 64
 
 
 def test_pre_release_failure_cleans_blocked_leader_before_reap(tmp_path: Path) -> None:
