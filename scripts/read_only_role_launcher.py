@@ -28,6 +28,7 @@ import time
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 try:
@@ -44,8 +45,32 @@ MAX_TEXT_LENGTH = 512
 MAX_DIAGNOSTIC_LENGTH = 512
 MAX_ROLE_INSTRUCTIONS = 96 * 1024
 MAX_GIT_CONFIG_VALUES_BYTES = 64 * 1024
-CODEX_VERSION = "0.153.4"
 CODEX_TEAM_IDENTIFIER = "2DC432GLL2"
+DEFAULT_CODEX_VERSION = "0.154.0-alpha.6.2"
+CODEX_BINARY_REGISTRY = MappingProxyType(
+    {
+        "0.153.4": MappingProxyType(
+            {
+                "sha256": "a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629",
+                "team_identifier": CODEX_TEAM_IDENTIFIER,
+            }
+        ),
+        DEFAULT_CODEX_VERSION: MappingProxyType(
+            {
+                "sha256": "ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb",
+                "team_identifier": CODEX_TEAM_IDENTIFIER,
+            }
+        ),
+    }
+)
+_CODEX_VERSION_LINE_RE = re.compile(
+    r"\Acodex-cli (?P<version>"
+    r"(?:0|[1-9][0-9]{0,4})\."
+    r"(?:0|[1-9][0-9]{0,4})\."
+    r"(?:0|[1-9][0-9]{0,4})"
+    r"(?:-[0-9A-Za-z-]{1,32}(?:\.[0-9A-Za-z-]{1,32}){0,7})?"
+    r")\n\Z"
+)
 DOCS_MCP_URL = "https://developers.openai.com/mcp"
 DOCS_MCP_TOOLS = ("fetch_openai_doc", "search_openai_docs")
 DENY_CANARY_RELATIVE = ".codex/read-only-probe.secret"
@@ -131,6 +156,85 @@ _CAPABILITY_KEYS = (
     "shell_snapshot",
     "chronicle",
     "mcp_elicitation",
+)
+_BASE_DISABLED_FEATURES = (
+    "apps",
+    "plugins",
+    "hooks",
+    "memories",
+    "multi_agent",
+    "multi_agent_v2",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "computer_use",
+    "image_generation",
+    "in_app_browser",
+    "workspace_dependencies",
+    "remote_plugin",
+    "skill_mcp_dependency_install",
+    "tool_call_mcp_elicitation",
+    "auth_elicitation",
+    "code_mode",
+    "code_mode_only",
+    "standalone_web_search",
+    "skill_search",
+    "tool_suggest",
+    "recommended_plugins",
+    "plugin_sharing",
+    "shell_snapshot",
+    "shell_snapshot_v2",
+    "chronicle",
+    "external_agent_memory_import",
+)
+_CURRENT_ONLY_DISABLED_FEATURES = (
+    "artifact",
+    "bedrock_setup_wizard",
+    "code_mode_interrupt",
+    "code_mode_prewarm",
+    "current_time_reminder",
+    "default_mode_request_user_input",
+    "deferred_executor",
+    "deferred_tool_world_state",
+    "exec_permission_approvals",
+    "executor_capability_discovery",
+    "fast_mode",
+    "goals",
+    "guardian_approval",
+    "guardian_enhanced_node_repl_transcripts",
+    "guardian_ext",
+    "guardian_node_repl_transcript_images",
+    "guardian_reuse_parent_compaction",
+    "guardianv2",
+    "in_app_chat",
+    "in_app_dictation",
+    "in_app_local_automation",
+    "in_app_updates",
+    "network_proxy",
+    "personality",
+    "prevent_idle_sleep",
+    "psp",
+    "request_permissions_tool",
+    "runtime_metrics",
+    "secret_auth_storage",
+    "shell_tool",
+    "shell_zsh_fork",
+    "sleep_tool",
+    "terminal_visualization_instructions",
+    "unavailable_dummy_tools",
+    "use_agent_identity",
+    "view_image",
+    "worktrees",
+    "write_stdin_approval",
+)
+_DISABLED_FEATURES_BY_CODEX_VERSION = MappingProxyType(
+    {
+        "0.153.4": _BASE_DISABLED_FEATURES,
+        DEFAULT_CODEX_VERSION: (
+            *_BASE_DISABLED_FEATURES,
+            *_CURRENT_ONLY_DISABLED_FEATURES,
+        ),
+    }
 )
 _GIT_REDIRECTS = {
     "GIT_DIR",
@@ -926,12 +1030,19 @@ def _default_binary_probe(path: Path) -> dict[str, object]:
         timeout=5,
         shell=False,
     )
+    if output.returncode != 0:
+        raise LauncherError("Codex version probe failed")
     if output.stderr:
         raise LauncherError("Codex version probe emitted stderr")
-    version_output = (output.stdout or output.stderr).encode("utf-8", "replace")[:MAX_STDERR_BYTES]
-    version_text = version_output.decode("utf-8", "replace")
-    version_match = re.search(r"(?<![0-9])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9])", version_text)
-    version = version_match.group(1) if version_match else ""
+    if type(output.stdout) is not str:
+        raise LauncherError("Codex version probe output is malformed")
+    version_output = output.stdout.encode("utf-8", "replace")
+    if len(version_output) > MAX_TEXT_LENGTH:
+        raise LauncherError("Codex version probe output is oversized")
+    version_match = _CODEX_VERSION_LINE_RE.fullmatch(output.stdout)
+    if version_match is None:
+        raise LauncherError("Codex version probe output is malformed")
+    version = version_match.group("version")
     descriptor: dict[str, object] = {
         "realpath": str(path.resolve()),
         "is_regular": stat.S_ISREG(stat_result.st_mode),
@@ -1080,6 +1191,18 @@ def validate_binary(
     probe: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> list[str]:
     """Validate one explicit signed Codex executable without PATH resolution."""
+
+    if type(expected_version) is not str:
+        return ["expected Codex version is not in the reviewed binary registry"]
+    reviewed_identity = CODEX_BINARY_REGISTRY.get(expected_version)
+    if reviewed_identity is None:
+        return ["expected Codex version is not in the reviewed binary registry"]
+    if expected_version not in supported_versions:
+        return ["expected Codex version is not enabled for this invocation"]
+    if expected_sha256 != reviewed_identity["sha256"]:
+        return ["expected Codex SHA-256 differs from the reviewed binary registry"]
+    if expected_team_identifier != reviewed_identity["team_identifier"]:
+        return ["expected TeamIdentifier differs from the reviewed binary registry"]
 
     errors, _descriptor, _path = _validate_executable(
         path=path,
@@ -1364,17 +1487,11 @@ def build_invocation_plan(
         "skills.config=[]",
         "suppress_unstable_features_warning=true",
     ]
-    disabled_features = (
-        "apps", "plugins", "hooks", "memories", "multi_agent", "multi_agent_v2",
-        "browser_use", "browser_use_external", "browser_use_full_cdp_access",
-        "computer_use", "image_generation", "in_app_browser", "workspace_dependencies",
-        "remote_plugin", "skill_mcp_dependency_install", "tool_call_mcp_elicitation",
-        "auth_elicitation", "code_mode", "code_mode_only",
-        "standalone_web_search",
-        "skill_search", "tool_suggest", "recommended_plugins", "plugin_sharing",
-        "shell_snapshot", "shell_snapshot_v2", "chronicle",
-        "external_agent_memory_import",
+    disabled_features = _DISABLED_FEATURES_BY_CODEX_VERSION.get(
+        str(expected_binary_version)
     )
+    if disabled_features is None:
+        raise LauncherError("Codex feature closure is unavailable for the exact version")
     config_values.extend(f"features.{name}=false" for name in disabled_features)
     config_values.append("features.skip_host_skill_discovery=true")
     config_values.append("features.code_mode_host=true")
@@ -2796,7 +2913,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-target-sha", required=True)
     parser.add_argument("--expected-target-tree-sha", required=True)
     parser.add_argument("--codex-binary", type=Path, required=True)
-    parser.add_argument("--expected-binary-version", default=CODEX_VERSION)
+    parser.add_argument("--expected-binary-version", default=DEFAULT_CODEX_VERSION)
     parser.add_argument("--expected-binary-sha256", required=True)
     parser.add_argument("--expected-binary-team-identifier", default=CODEX_TEAM_IDENTIFIER)
     parser.add_argument("--git-binary", type=Path, required=True)
@@ -2826,7 +2943,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_binary_version=args.expected_binary_version,
             expected_binary_sha256=args.expected_binary_sha256,
             expected_binary_team_identifier=args.expected_binary_team_identifier,
-            supported_binary_versions=(CODEX_VERSION,),
+            supported_binary_versions=tuple(CODEX_BINARY_REGISTRY),
             credential_probe_path=args.credential_probe_path,
             git_binary=args.git_binary,
             expected_git_version=args.expected_git_version,

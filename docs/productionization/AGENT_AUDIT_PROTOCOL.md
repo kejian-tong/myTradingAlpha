@@ -174,8 +174,15 @@ treated as model capability evidence.
 
 The launcher runtime contract also requires bounded streaming, timeout escalation, validated toolchain
 roots, deterministic `CODEX_SANDBOX_NETWORK_DISABLED=1` state, and successful `codesign --verify` before
-binary acceptance. The reviewed binary registry is the signed macOS Codex 0.153.4 bundle; a non-Darwin
-default probe without equivalent TeamIdentifier/signature evidence remains `insufficient_evidence`.
+binary acceptance. Its reviewed exact macOS registry contains only Codex `0.153.4`, SHA-256
+`a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629`, and the currently installed
+`0.154.0-alpha.6.2`, SHA-256
+`ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb`; both require signed
+TeamIdentifier `2DC432GLL2`. The [official changelog](https://learn.chatgpt.com/docs/changelog) records the
+stable 0.154.0 release on 2026-09-09. That release is adjacent documentation evidence for the feature
+generation, not an identity substitute for the exact signed alpha build installed and exercised here.
+There is no generic version-range admission. A non-Darwin default probe without equivalent
+TeamIdentifier/signature evidence remains `insufficient_evidence`.
 
 Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
 initial version probe through every policy/target/post-run Git query and the model shell, the launcher
@@ -223,11 +230,18 @@ material and fail the lane; only the exact multiline loader diagnostic emitted a
 classified as the known nonmaterial host condition.
 
 The isolated runtime explicitly disables web search and standalone search; deprecated web-search
-feature overrides are omitted because 0.153.4 emits them as item errors. It disables skill search and
-host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots,
-Chronicle, Apps, plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP.
-The reviewed under-development warning is suppressed after these exact flags are bound so it cannot
-create a permanent item-error false stop.
+feature overrides are omitted because 0.153.4 emits them as item errors. Version-specific feature closure
+preserves that exact 0.153.4 configuration without passing newer unknown flags. For the registered
+0.154 alpha build, the actual `features list` surface is additionally closed for `worktrees`, `goals`,
+`sleep_tool`, `guardian_approval`, `fast_mode`, `in_app_local_automation`, `in_app_chat`, `in_app_updates`,
+`in_app_dictation`, `request_permissions_tool`, `exec_permission_approvals`, and the other reviewed
+current capability/discovery features bound by the launcher tests. Both versions disable skill search and
+host skill discovery, tool suggestions, recommended/plugin sharing, shell snapshots, Chronicle, Apps,
+plugins, memories, browser/computer/image surfaces, multi-agent, and unapproved MCP. Only
+`code_mode_host=true` remains enabled for the required sandboxed local command path.
+GPT-6 production routes remain disabled; this runtime compatibility registration does not change model routing.
+The reviewed under-development warning is suppressed after these exact flags are bound so it cannot create a
+permanent item-error false stop.
 `code_mode_host=true` remains enabled solely for sandboxed local commands under the same read-only
 profile; configuration closure is intent and the preflight/post-run evidence remains mandatory. Permission
 Profile filesystem `deny` controls reads but does not prevent the same executable from running: direct
@@ -264,9 +278,9 @@ test-only RED to GREEN include `2520757 -> 617a798`, exact warning corrections `
 `bc70174 -> f9589e0`, exact Docs MCP correction `df5abf9 -> e7c79e8`, isolated-home correction
 `34fe529 -> b27553f`, exact command-shape correction `6d69222 -> 05a902b`, and exact repository-Git
 anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb133`. Historical evidence
-also includes remote-credential parsing `276dd72 -> cf6fd19` and NUL/compound correction
-`487190a -> 0ef6608`. The current repair starts at test-only RED `b0dc3e5`; its exact GREEN head is recorded
-in durable PR evidence. The abandoned v2
+also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound correction
+`487190a -> 0ef6608`, and direct-prefix correction `b0dc3e5 -> 243d95f`. The current repair starts at
+test-only RED `6125464`; its exact GREEN head is recorded in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 
