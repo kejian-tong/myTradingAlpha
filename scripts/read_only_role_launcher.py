@@ -2096,7 +2096,130 @@ def _bounded_command_tokens(command: object) -> tuple[str, ...]:
     return tokens
 
 
-def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
+def _bounded_env_split_tokens(value: str) -> tuple[str, ...]:
+    """Split the conservative literal subset of macOS ``env -S`` syntax."""
+
+    if len(value.encode("utf-8")) > 16 * 1024:
+        raise LauncherError("env split-string argument is oversized")
+    if any(
+        character in "\\$#'\""
+        or (ord(character) < 0x20 and character != "\t")
+        or ord(character) > 0x7E
+        for character in value
+    ):
+        raise LauncherError("env split-string uses unsupported special semantics")
+    stripped = value.strip(" \t")
+    if not stripped:
+        return ()
+    tokens = tuple(re.split(r"[ \t]+", stripped))
+    if len(tokens) > 256:
+        raise LauncherError("env split-string expansion has too many tokens")
+    return tokens
+
+
+def _shell_redirection_flags(command: str, tokens: Sequence[str]) -> tuple[bool, ...]:
+    """Return whether each dequoted shell word starts with a real redirection."""
+
+    words: list[str] = []
+    provenance: list[tuple[bool, ...]] = []
+    current: list[str] = []
+    current_provenance: list[bool] = []
+    word_started = False
+    quote: str | None = None
+    index = 0
+
+    def finish_word() -> None:
+        nonlocal word_started
+        if not word_started:
+            return
+        words.append("".join(current))
+        provenance.append(tuple(current_provenance))
+        current.clear()
+        current_provenance.clear()
+        word_started = False
+
+    while index < len(command):
+        character = command[index]
+        if quote == "'":
+            if character == "'":
+                quote = None
+            else:
+                current.append(character)
+                current_provenance.append(False)
+            index += 1
+            continue
+        if quote == '"':
+            if character == '"':
+                quote = None
+                index += 1
+                continue
+            if character == "\\":
+                if index + 1 >= len(command):
+                    raise LauncherError("command execution shell text is malformed")
+                following = command[index + 1]
+                if following == "\n":
+                    index += 2
+                    continue
+                if following in {'"', "\\", "$", "`"}:
+                    current.append(following)
+                    current_provenance.append(False)
+                    index += 2
+                    continue
+                current.append("\\")
+                current_provenance.append(False)
+            else:
+                current.append(character)
+                current_provenance.append(False)
+            index += 1
+            continue
+        if character in " \t\r\n":
+            finish_word()
+            index += 1
+            continue
+        word_started = True
+        if character in {"'", '"'}:
+            quote = character
+            index += 1
+            continue
+        if character == "\\":
+            if index + 1 >= len(command):
+                raise LauncherError("command execution shell text is malformed")
+            current.append(command[index + 1])
+            current_provenance.append(False)
+            index += 2
+            continue
+        current.append(character)
+        current_provenance.append(True)
+        index += 1
+    if quote is not None:
+        raise LauncherError("command execution shell text is malformed")
+    finish_word()
+    if tuple(words) != tuple(tokens):
+        raise LauncherError("command shell-token provenance is ambiguous")
+
+    flags: list[bool] = []
+    for word, sources in zip(words, provenance, strict=True):
+        descriptor_end = 0
+        while descriptor_end < len(word) and word[descriptor_end].isdigit():
+            descriptor_end += 1
+        descriptor_is_unquoted = all(sources[:descriptor_end])
+        starts_descriptor_redirection = bool(
+            descriptor_is_unquoted
+            and descriptor_end < len(word)
+            and word[descriptor_end] in "<>"
+            and sources[descriptor_end]
+        )
+        starts_combined_redirection = bool(
+            len(word) >= 2
+            and word.startswith("&>")
+            and sources[0]
+            and sources[1]
+        )
+        flags.append(starts_descriptor_redirection or starts_combined_redirection)
+    return tuple(flags)
+
+
+def _bounded_shell_segments(command: str) -> tuple[str, ...]:
     if not command or len(command.encode("utf-8")) > 16 * 1024:
         raise LauncherError("shell command is invalid or oversized")
     try:
@@ -2109,28 +2232,54 @@ def _bounded_shell_segments(command: str) -> tuple[tuple[str, ...], ...]:
         raise LauncherError("shell command is malformed") from exc
     if len(tokens) > 512:
         raise LauncherError("shell command has too many tokens")
-    segments: list[tuple[str, ...]] = []
+    segments: list[str] = []
     current: list[str] = []
-    for token in tokens:
-        if (
-            token in {"&", "|"}
-            and current
-            and re.fullmatch(r"[0-9]*[<>]", current[-1])
-        ):
-            current[-1] += token
+    quote: str | None = None
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if quote is not None:
+            current.append(character)
+            if character == "\\" and quote == '"' and index + 1 < len(command):
+                current.append(command[index + 1])
+                index += 2
+                continue
+            if character == quote:
+                quote = None
+            index += 1
             continue
-        if token and all(character in ";&|\n()" for character in token):
-            for character in token:
-                if character in ";&|\n":
-                    if current:
-                        segments.append(tuple(current))
-                        current = []
-                else:
-                    current.append(character)
+        if character in {"'", '"'}:
+            quote = character
+            current.append(character)
+            index += 1
             continue
-        current.append(token)
-    if current:
-        segments.append(tuple(current))
+        if character == "\\":
+            if index + 1 >= len(command):
+                raise LauncherError("shell command is malformed")
+            current.extend((character, command[index + 1]))
+            index += 2
+            continue
+        if character in ";&|\n()":
+            is_redirection_join = bool(
+                character in "&|" and current and current[-1] in "<>"
+            ) or bool(character == "&" and index + 1 < len(command) and command[index + 1] == ">")
+            if is_redirection_join:
+                current.append(character)
+                index += 1
+                continue
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 1
+            continue
+        current.append(character)
+        index += 1
+    if quote is not None:
+        raise LauncherError("shell command is malformed")
+    segment = "".join(current).strip()
+    if segment:
+        segments.append(segment)
     if len(segments) > 128:
         raise LauncherError("shell command has too many segments")
     return tuple(segments)
@@ -2160,95 +2309,148 @@ def _consume_leading_redirection(tokens: list[str]) -> bool:
 
 
 def _command_attempts_nested_codex(
-    command: object, *, forbidden_codex_binary: str | None, _depth: int = 0
+    command: object,
+    *,
+    forbidden_codex_binary: str | None,
+    _depth: int = 0,
 ) -> bool:
     if _depth > 8:
         raise LauncherError("command observation recursion exceeds bound")
     tokens = list(_bounded_command_tokens(command))
+    token_has_shell_syntax = (
+        list(_shell_redirection_flags(command, tokens))
+        if type(command) is str
+        else [False] * len(tokens)
+    )
     redirection_count = 0
     env_split_expansions = 0
+
+    def pop_token(index: int = 0) -> str:
+        token_has_shell_syntax.pop(index)
+        return tokens.pop(index)
+
+    def consume_shell_redirection(index: int) -> bool:
+        nonlocal redirection_count
+        if not token_has_shell_syntax[index]:
+            return False
+        suffix = tokens[index:]
+        before = len(suffix)
+        if not _consume_leading_redirection(suffix):
+            return False
+        consumed = before - len(suffix)
+        tokens[index:] = suffix
+        del token_has_shell_syntax[index : index + consumed]
+        redirection_count += 1
+        if redirection_count > _MAX_LEADING_REDIRECTIONS:
+            raise LauncherError("leading shell redirection count exceeds bound")
+        return True
+
     while tokens:
-        if _consume_leading_redirection(tokens):
-            redirection_count += 1
-            if redirection_count > _MAX_LEADING_REDIRECTIONS:
-                raise LauncherError("leading shell redirection count exceeds bound")
+        if consume_shell_redirection(0):
             continue
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
-            tokens.pop(0)
+            pop_token()
             continue
         executable = Path(tokens[0]).name
         if executable == "env":
             index = 1
             expanded_split = False
+            options_active = True
             while index < len(tokens):
+                if consume_shell_redirection(index):
+                    continue
                 value = tokens[index]
-                split_value: str | None = None
-                consumed = 1
-                if value in {"-S", "--split-string"}:
-                    if index + 1 >= len(tokens) or not tokens[index + 1]:
-                        raise LauncherError("env split-string argument is missing")
-                    split_value = tokens[index + 1]
-                    consumed = 2
-                elif value.startswith("--split-string="):
-                    split_value = value.partition("=")[2]
-                elif value.startswith("-S") and len(value) > 2:
-                    split_value = value[2:]
-                if split_value is not None:
-                    env_split_expansions += 1
-                    if env_split_expansions > 8:
-                        raise LauncherError("env split-string expansion exceeds bound")
-                    tokens = [
-                        "env",
-                        *_bounded_command_tokens(split_value),
-                        *tokens[index + consumed :],
-                    ]
-                    if len(tokens) > 256 or sum(
-                        len(token.encode("utf-8")) for token in tokens
-                    ) > 16 * 1024:
-                        raise LauncherError("expanded env command exceeds bound")
-                    expanded_split = True
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", value):
+                    options_active = False
+                    index += 1
+                    continue
+                if not options_active:
                     break
-                if value == "-P":
-                    if index + 1 >= len(tokens) or not tokens[index + 1]:
-                        raise LauncherError("env utilpath argument is missing")
-                    index += 2
-                    continue
-                if value.startswith("-P") and len(value) > 2:
+                if value == "--":
+                    options_active = False
                     index += 1
                     continue
-                if value in {"-u", "--unset"}:
-                    if index + 1 >= len(tokens) or not tokens[index + 1]:
-                        raise LauncherError("env unset argument is missing")
-                    index += 2
-                    continue
-                if value.startswith("-") or re.fullmatch(
-                    r"[A-Za-z_][A-Za-z0-9_]*=.*", value
-                ):
+                if value == "-":
                     index += 1
                     continue
+                if not value.startswith("-"):
+                    break
+                if value.startswith("--"):
+                    raise LauncherError("unsupported macOS env long option")
+
+                cluster = value[1:]
+                if not cluster:
+                    raise LauncherError("env short option cluster is empty")
+                position = 0
+                while position < len(cluster) and cluster[position] in "0iv":
+                    position += 1
+                if position == len(cluster):
+                    index += 1
+                    continue
+                option = cluster[position]
+                if option not in "PSu":
+                    raise LauncherError("unknown macOS env short option")
+                attached = cluster[position + 1 :]
+                consumed = 1
+                if attached:
+                    argument = attached
+                else:
+                    while index + 1 < len(tokens) and consume_shell_redirection(
+                        index + 1
+                    ):
+                        pass
+                    if index + 1 >= len(tokens):
+                        raise LauncherError(f"env {option} option argument is missing")
+                    argument = tokens[index + 1]
+                    consumed = 2
+
+                if option == "P" and not argument:
+                    raise LauncherError("env utilpath argument is empty")
+                if option == "u" and (not argument or "=" in argument):
+                    raise LauncherError("env unset argument is invalid")
+                if option != "S":
+                    index += consumed
+                    continue
+
+                env_split_expansions += 1
+                if env_split_expansions > 8:
+                    raise LauncherError("env split-string expansion exceeds bound")
+                split_tokens = _bounded_env_split_tokens(argument)
+                remainder_index = index + consumed
+                tokens = ["env", *split_tokens, *tokens[remainder_index:]]
+                token_has_shell_syntax = [False] * (
+                    len(split_tokens) + 1
+                ) + token_has_shell_syntax[remainder_index:]
+                if len(tokens) > 256 or sum(
+                    len(token.encode("utf-8")) for token in tokens
+                ) > 16 * 1024:
+                    raise LauncherError("expanded env command exceeds bound")
+                expanded_split = True
                 break
             else:
                 tokens = []
+                token_has_shell_syntax = []
             if expanded_split:
                 continue
             if tokens and Path(tokens[0]).name == "env":
                 tokens = tokens[index:]
+                token_has_shell_syntax = token_has_shell_syntax[index:]
             continue
         if executable == "command":
             if len(tokens) >= 2 and tokens[1] in {"-v", "-V"}:
                 return False
-            tokens.pop(0)
+            pop_token()
             while tokens and tokens[0].startswith("-"):
-                tokens.pop(0)
+                pop_token()
             continue
         if executable == "exec":
-            tokens.pop(0)
+            pop_token()
             while tokens and tokens[0].startswith("-"):
-                option = tokens.pop(0)
+                option = pop_token()
                 if option == "--":
                     break
                 if option == "-a" and tokens:
-                    tokens.pop(0)
+                    pop_token()
                     continue
                 if option == "-a" or re.fullmatch(r"-[cl]+", option):
                     continue
@@ -2257,13 +2459,13 @@ def _command_attempts_nested_codex(
                 return False
             continue
         if executable == "time":
-            tokens.pop(0)
+            pop_token()
             while tokens and tokens[0].startswith("-"):
-                option = tokens.pop(0)
+                option = pop_token()
                 if option == "--":
                     break
                 if option in {"-f", "--format", "-o", "--output"} and tokens:
-                    tokens.pop(0)
+                    pop_token()
                     continue
                 if option in {"-f", "--format", "-o", "--output"}:
                     return False
@@ -2287,18 +2489,18 @@ def _command_attempts_nested_codex(
                 return False
             continue
         if executable == "nohup":
-            tokens.pop(0)
+            pop_token()
             if tokens and tokens[0] == "--":
-                tokens.pop(0)
+                pop_token()
             continue
         if executable == "nice":
-            tokens.pop(0)
+            pop_token()
             while tokens and tokens[0].startswith("-"):
-                option = tokens.pop(0)
+                option = pop_token()
                 if option == "--":
                     break
                 if option in {"-n", "--adjustment"} and tokens:
-                    tokens.pop(0)
+                    pop_token()
                     continue
                 if option in {"-n", "--adjustment"}:
                     return False
@@ -2311,14 +2513,14 @@ def _command_attempts_nested_codex(
                 return False
             continue
         if executable == "builtin":
-            tokens.pop(0)
+            pop_token()
             if tokens and tokens[0] == "--":
-                tokens.pop(0)
+                pop_token()
             if not tokens or Path(tokens[0]).name != "command":
                 return False
             continue
         if tokens[0] in {"if", "then", "else", "elif", "while", "until", "do", "!", "(", "{"}:
-            tokens.pop(0)
+            pop_token()
             continue
         break
     if not tokens:
@@ -2329,7 +2531,7 @@ def _command_attempts_nested_codex(
             if value.startswith("-") and "c" in value[1:] and index + 1 < len(tokens):
                 return any(
                     _command_attempts_nested_codex(
-                        list(segment),
+                        segment,
                         forbidden_codex_binary=forbidden_codex_binary,
                         _depth=_depth + 1,
                     )

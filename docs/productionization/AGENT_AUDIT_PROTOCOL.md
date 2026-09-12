@@ -253,9 +253,14 @@ absence of auth, config, and agent files without executing Codex. The outer host
 authentication context.
 
 The command-event parser rejects an observed direct exact-path or bare `codex` attempt, including direct
-leading assignments, `env`, macOS `env -P` with separate or attached utilpath, `env -S`/`--split-string`,
-`command codex`, and shell `-c` forms. Missing `env` option arguments and bounded split-string expansion
-fail closed. Harmless
+leading assignments, `env`, the exact bounded macOS short-option grammar (`-0iv`, argument-taking
+`-P`/`-S`/`-u`, combined or attached forms, `-`, and `--`), `command codex`, and shell `-c` forms.
+Unsupported long options, unknown short-option clusters, and missing arguments fail closed. `env -S` is
+interpreted only for a conservative literal subset: bounded printable ASCII tokens separated by spaces or
+tabs. Backslash escapes, substitution, comments, quotes, controls, non-ASCII text, and excessive recursive
+expansion are rejected rather than approximated with shell tokenization. Shell redirections observed in the
+original command text are normalized even when they occur among pre-utility env options or assignments;
+literal argv-list entries and tokens produced by `-S` are not reclassified as shell syntax. Harmless
 `command -v codex`/`command -V codex` queries and an ordinary `rg` search containing the text `codex exec`
 remain admissible. Direct shell `-c` parsing inspects every bounded simple-command segment across newline,
 sequence, conditional, and pipeline operators. The exact direct-prefix grammar unwraps bounded ordinary
