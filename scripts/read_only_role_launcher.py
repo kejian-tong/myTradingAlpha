@@ -1914,6 +1914,7 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
     cleanup_failed = False
     descendant_detected = False
     supervision_error = False
+    process_group_observed_empty = False
 
     raw_pid = getattr(process, "pid", None)
     process_group_id = (
@@ -1962,33 +1963,83 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
             return None
 
     def group_present() -> bool | None:
-        nonlocal process_group_state_certain
+        nonlocal process_group_observed_empty, process_group_state_certain
         if not process_group_state_certain or process_group_id is None:
             return None
+        if process_group_observed_empty:
+            return False
         if process_group_id <= 1 or process_group_id in {os.getpid(), os.getpgrp()}:
             process_group_state_certain = False
             return None
+        if process.returncode is not None:
+            try:
+                os.getpgid(process_group_id)
+            except ProcessLookupError:
+                pass
+            except (PermissionError, OSError, ValueError):
+                process_group_state_certain = False
+                return None
+            else:
+                # Popen already reaped the original leader. Reappearance of its
+                # PID proves reuse, so the old group is gone and must not be
+                # signalled as though it were still ours.
+                process_group_observed_empty = True
+                return False
         try:
             os.killpg(process_group_id, 0)
         except ProcessLookupError:
+            process_group_observed_empty = True
             return False
-        except (PermissionError, OSError, ValueError):
+        except PermissionError:
+            if process.returncode is not None:
+                try:
+                    os.getpgid(process_group_id)
+                except ProcessLookupError:
+                    process_group_observed_empty = True
+                    return False
+                except (PermissionError, OSError, ValueError):
+                    pass
+                else:
+                    process_group_observed_empty = True
+                    return False
+            process_group_state_certain = False
+            return None
+        except (OSError, ValueError):
             process_group_state_certain = False
             return None
         return True
 
     def signal_group(sig: signal.Signals) -> bool:
-        nonlocal process_group_state_certain
-        state = group_present()
-        if state is False:
+        nonlocal process_group_observed_empty, process_group_state_certain
+        if process_group_observed_empty:
             return True
-        if state is not True or process_group_id is None:
+        if (
+            not process_group_state_certain
+            or process_group_id is None
+            or process_group_id <= 1
+            or process_group_id in {os.getpid(), os.getpgrp()}
+        ):
             return False
         try:
             os.killpg(process_group_id, sig)
         except ProcessLookupError:
+            process_group_observed_empty = True
             return True
-        except (PermissionError, OSError, ValueError):
+        except PermissionError:
+            if process.returncode is not None:
+                try:
+                    os.getpgid(process_group_id)
+                except ProcessLookupError:
+                    process_group_observed_empty = True
+                    return True
+                except (PermissionError, OSError, ValueError):
+                    pass
+                else:
+                    process_group_observed_empty = True
+                    return True
+            process_group_state_certain = False
+            return False
+        except (OSError, ValueError):
             process_group_state_certain = False
             return False
         return True

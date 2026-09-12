@@ -190,7 +190,9 @@ normal and exceptional exit path. A surviving group after direct-child exit is p
 evidence: the launcher sends SIGTERM, waits only a monotonic bounded grace period, then sends SIGKILL to
 the same still-live group even when the leader already exited. Completion requires the leader to be
 reaped, the group to be certainly empty, stdin/stdout/stderr workers to have joined, and cleanup to have
-reported no error. Descendant observation, an unjoined drainer, a nonempty or uncertain group, or cleanup
+reported no error. An observed-empty original group is latched; if the reaped leader PID reappears, it is
+treated as reuse and is never signalled as the old group. Descendant observation, an unjoined drainer, a
+nonempty or uncertain group, or cleanup
 failure makes the lane `insufficient_evidence` even if the direct child returned zero. Returned output is
 frozen only after this supervision boundary completes.
 
