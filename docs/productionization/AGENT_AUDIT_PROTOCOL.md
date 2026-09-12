@@ -184,6 +184,16 @@ generation, not an identity substitute for the exact signed alpha build installe
 There is no generic version-range admission. A non-Darwin default probe without equivalent
 TeamIdentifier/signature evidence remains `insufficient_evidence`.
 
+On POSIX, the launcher binds the exact session-leader PID/PGID created by `start_new_session`, verifies
+that it cannot address the launcher/test process group, and supervises that full group through every
+normal and exceptional exit path. A surviving group after direct-child exit is positive descendant
+evidence: the launcher sends SIGTERM, waits only a monotonic bounded grace period, then sends SIGKILL to
+the same still-live group even when the leader already exited. Completion requires the leader to be
+reaped, the group to be certainly empty, stdin/stdout/stderr workers to have joined, and cleanup to have
+reported no error. Descendant observation, an unjoined drainer, a nonempty or uncertain group, or cleanup
+failure makes the lane `insufficient_evidence` even if the direct child returned zero. Returned output is
+frozen only after this supervision boundary completes.
+
 Pass `--git-binary` as the executable's canonical realpath, not a PATH-selected name or symlink. From the
 initial version probe through every policy/target/post-run Git query and the model shell, the launcher
 sets `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, and `GIT_CONFIG_NOSYSTEM=1`, removes
@@ -292,7 +302,8 @@ anchoring `d1065b2 -> e213507`, followed by config allowlisting `1072d1f -> 5dbb
 also includes remote-credential parsing `276dd72 -> cf6fd19`, NUL/compound correction
 `487190a -> 0ef6608`, direct-prefix correction `b0dc3e5 -> 243d95f`, current-runtime registration
 `6125464 -> ec8acdb`, and sandboxed local-command correction `8d08c74 -> 546be4a`. The current repair
-starts at test-only RED `4a39883`; its exact GREEN head is recorded in durable PR evidence. The abandoned v2
+starts at test-only RED `4a39883`; the process-group repair adds test-only RED `1a77fc5`, and each exact
+GREEN head is recorded in durable PR evidence. The abandoned v2
 proposal, inaccurate warning fixture, and combined intermediate runtime-library iterations are
 non-controlling evidence, not valid standalone RED/GREEN pairs.
 

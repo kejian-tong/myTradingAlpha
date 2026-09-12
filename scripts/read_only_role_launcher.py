@@ -11,6 +11,7 @@ authority or host attestation.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -1831,6 +1832,9 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
     output_limit = int(kwargs.get("max_output_bytes", MAX_STDOUT_BYTES))
     if type(argv) is not list or not all(type(value) is str for value in argv):
         raise LauncherError("runner argv must be a string list")
+    if kwargs.get("process_group") is not True or kwargs.get("shell") is not False:
+        raise LauncherError("runner requires an isolated process group without a shell")
+    posix_group = os.name == "posix"
     process = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -1840,27 +1844,34 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         stderr=subprocess.PIPE,
         text=False,
         shell=False,
-        start_new_session=(os.name != "nt"),
+        start_new_session=posix_group,
     )
     buffers: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+    buffer_lock = threading.Lock()
     output_limited = threading.Event()
     stdin_write_error = threading.Event()
+    stdout_drainer_error = threading.Event()
+    stderr_drainer_error = threading.Event()
     input_stream = getattr(process, "stdin", None)
     input_bytes = str(stdin).encode("utf-8")
 
-    def drain(name: str, stream: object, limit: int) -> None:
-        while True:
-            chunk = stream.read(64 * 1024)
-            if not chunk:
-                return
-            if type(chunk) is str:
-                chunk = chunk.encode("utf-8", "replace")
-            if len(buffers[name]) + len(chunk) > limit:
-                remaining = max(0, limit - len(buffers[name]))
-                buffers[name].extend(chunk[:remaining])
-                output_limited.set()
-                return
-            buffers[name].extend(chunk)
+    def drain(name: str, stream: object, limit: int, error: threading.Event) -> None:
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                if type(chunk) is str:
+                    chunk = chunk.encode("utf-8", "replace")
+                with buffer_lock:
+                    if len(buffers[name]) + len(chunk) > limit:
+                        remaining = max(0, limit - len(buffers[name]))
+                        buffers[name].extend(chunk[:remaining])
+                        output_limited.set()
+                        return
+                    buffers[name].extend(chunk)
+        except (OSError, ValueError):
+            error.set()
 
     def write_stdin() -> None:
         if input_stream is None:
@@ -1878,10 +1889,17 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
             except (BrokenPipeError, OSError, ValueError):
                 stdin_write_error.set()
 
-    threads = [
-        threading.Thread(target=drain, args=("stdout", process.stdout, output_limit), daemon=True),
-        threading.Thread(target=drain, args=("stderr", process.stderr, MAX_STDERR_BYTES), daemon=True),
-    ]
+    stdout_thread = threading.Thread(
+        target=drain,
+        args=("stdout", process.stdout, output_limit, stdout_drainer_error),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=drain,
+        args=("stderr", process.stderr, MAX_STDERR_BYTES, stderr_drainer_error),
+        daemon=True,
+    )
+    threads = [stdout_thread, stderr_thread]
     writer: threading.Thread | None = None
     if input_stream is not None:
         writer = threading.Thread(target=write_stdin, daemon=True)
@@ -1891,6 +1909,41 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         thread.start()
     timed_out = False
     killed = False
+    cleanup_attempted = False
+    cleanup_escalated = False
+    cleanup_failed = False
+    descendant_detected = False
+    supervision_error = False
+
+    raw_pid = getattr(process, "pid", None)
+    process_group_id = (
+        raw_pid
+        if posix_group
+        and type(raw_pid) is int
+        and raw_pid > 1
+        and raw_pid != os.getpid()
+        and raw_pid != os.getpgrp()
+        else None
+    )
+    process_group_state_certain = process_group_id is not None
+    if process_group_id is not None:
+        try:
+            observed_group = os.getpgid(process_group_id)
+            observed_session = os.getsid(process_group_id)
+        except ProcessLookupError:
+            # start_new_session establishes PGID == PID before exec. A very short
+            # command can exit before this observation, while its exact group ID
+            # remains safe to query for descendants.
+            observed_group = process_group_id
+            observed_session = process_group_id
+        except (OSError, ValueError):
+            process_group_state_certain = False
+        else:
+            if (
+                observed_group != process_group_id
+                or observed_session != process_group_id
+            ):
+                process_group_state_certain = False
 
     def close_input() -> None:
         if input_stream is None:
@@ -1900,47 +1953,211 @@ def _default_process_runner(**kwargs: object) -> dict[str, object]:
         except (BrokenPipeError, OSError, ValueError):
             stdin_write_error.set()
 
-    def terminate_process() -> None:
-        nonlocal killed
-        close_input()
-        if os.name != "nt" and getattr(process, "pid", None):
-            os.killpg(process.pid, signal.SIGTERM)
-        else:
-            process.terminate()
+    def poll_process() -> object:
+        nonlocal supervision_error
         try:
-            process.wait(timeout=1)
-        except (subprocess.TimeoutExpired, TimeoutError):
-            killed = True
-            if os.name != "nt" and getattr(process, "pid", None):
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-            process.wait(timeout=5)
+            return process.poll()
+        except Exception:
+            supervision_error = True
+            return None
 
-    while process.poll() is None:
-        if output_limited.is_set() or stdin_write_error.is_set():
-            terminate_process()
-            break
-        if time.monotonic() - started >= float(timeout):
-            timed_out = True
-            terminate_process()
-            break
-        time.sleep(0.005)
+    def group_present() -> bool | None:
+        nonlocal process_group_state_certain
+        if not process_group_state_certain or process_group_id is None:
+            return None
+        if process_group_id <= 1 or process_group_id in {os.getpid(), os.getpgrp()}:
+            process_group_state_certain = False
+            return None
+        try:
+            os.killpg(process_group_id, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError, ValueError):
+            process_group_state_certain = False
+            return None
+        return True
+
+    def signal_group(sig: signal.Signals) -> bool:
+        nonlocal process_group_state_certain
+        state = group_present()
+        if state is False:
+            return True
+        if state is not True or process_group_id is None:
+            return False
+        try:
+            os.killpg(process_group_id, sig)
+        except ProcessLookupError:
+            return True
+        except (PermissionError, OSError, ValueError):
+            process_group_state_certain = False
+            return False
+        return True
+
+    def wait_for_group(deadline: float) -> bool | None:
+        while True:
+            state = group_present()
+            if state is not True or time.monotonic() >= deadline:
+                return state
+            time.sleep(0.005)
+
+    def wait_for_process(deadline: float) -> bool:
+        while time.monotonic() < deadline:
+            if poll_process() is not None:
+                return True
+            time.sleep(0.005)
+        return poll_process() is not None
+
+    def terminate_direct_fallback() -> None:
+        nonlocal cleanup_escalated, cleanup_failed, killed
+        close_input()
+        with contextlib.suppress(OSError, ProcessLookupError):
+            process.terminate()
+        if not wait_for_process(time.monotonic() + 0.25):
+            cleanup_escalated = True
+            killed = True
+            with contextlib.suppress(OSError, ProcessLookupError):
+                process.kill()
+            if not wait_for_process(time.monotonic() + 1.0):
+                cleanup_failed = True
+
+    def supervise_process_group() -> None:
+        nonlocal cleanup_attempted, cleanup_escalated, cleanup_failed
+        nonlocal descendant_detected, killed
+        cleanup_attempted = True
+        close_input()
+        if not process_group_state_certain:
+            cleanup_failed = True
+            terminate_direct_fallback()
+            return
+        state = group_present()
+        if state is None:
+            cleanup_failed = True
+            terminate_direct_fallback()
+            return
+        if state is False:
+            return
+        if poll_process() is not None:
+            descendant_detected = True
+        if not signal_group(signal.SIGTERM):
+            cleanup_failed = True
+            terminate_direct_fallback()
+            return
+        term_deadline = time.monotonic() + 0.25
+        while True:
+            state = group_present()
+            leader_exited = poll_process() is not None
+            if leader_exited and state is True:
+                descendant_detected = True
+            if state is not True or time.monotonic() >= term_deadline:
+                break
+            time.sleep(0.005)
+        if state is None:
+            cleanup_failed = True
+            return
+        if state is True:
+            cleanup_escalated = True
+            killed = True
+            if not signal_group(signal.SIGKILL):
+                cleanup_failed = True
+                return
+            state = wait_for_group(time.monotonic() + 1.0)
+        if state is not False:
+            cleanup_failed = True
+
+    try:
+        while poll_process() is None:
+            if output_limited.is_set() or stdin_write_error.is_set():
+                break
+            if time.monotonic() - started >= float(timeout):
+                timed_out = True
+                break
+            time.sleep(0.005)
+    except Exception:
+        supervision_error = True
+    finally:
+        try:
+            supervise_process_group()
+        except Exception:
+            supervision_error = True
+            cleanup_failed = True
+            cleanup_attempted = True
+            if process_group_state_certain:
+                cleanup_escalated = True
+                killed = True
+                try:
+                    if signal_group(signal.SIGKILL) and wait_for_group(
+                        time.monotonic() + 1.0
+                    ) is not False:
+                        cleanup_failed = True
+                except Exception:
+                    cleanup_failed = True
+            try:
+                terminate_direct_fallback()
+            except Exception:
+                cleanup_failed = True
+
+    if not wait_for_process(time.monotonic() + 1.0):
+        cleanup_failed = True
+        terminate_direct_fallback()
+    if poll_process() is not None:
+        try:
+            process.wait(timeout=0.1)
+        except (subprocess.TimeoutExpired, TimeoutError, OSError):
+            cleanup_failed = True
     close_input()
+    join_deadline = time.monotonic() + 1.0
     for thread in threads:
-        thread.join(timeout=1)
-    if process.poll() is None:
-        process.wait(timeout=5)
+        thread.join(timeout=max(0.0, join_deadline - time.monotonic()))
+    stdout_drainer_joined = not stdout_thread.is_alive()
+    stderr_drainer_joined = not stderr_thread.is_alive()
+    stdin_writer_joined = writer is None or not writer.is_alive()
+    if not stdout_drainer_joined or not stderr_drainer_joined or not stdin_writer_joined:
+        cleanup_failed = True
+    if (
+        stdout_drainer_error.is_set()
+        or stderr_drainer_error.is_set()
+        or supervision_error
+    ):
+        cleanup_failed = True
+    for stream, joined in (
+        (getattr(process, "stdout", None), stdout_drainer_joined),
+        (getattr(process, "stderr", None), stderr_drainer_joined),
+    ):
+        if stream is not None and joined:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                cleanup_failed = True
+    final_group_state = group_present()
+    process_group_empty = final_group_state is False
+    if final_group_state is None:
+        process_group_state_certain = False
+        cleanup_failed = True
+    with buffer_lock:
+        stdout = bytes(buffers["stdout"]).decode("utf-8", "replace")
+        stderr = bytes(buffers["stderr"]).decode("utf-8", "replace")
     return {
         "returncode": process.returncode,
-        "stdout": bytes(buffers["stdout"]).decode("utf-8", "replace"),
-        "stderr": bytes(buffers["stderr"]).decode("utf-8", "replace"),
+        "stdout": stdout,
+        "stderr": stderr,
         "timed_out": timed_out,
         "output_limited": output_limited.is_set(),
         "stdin_write_error": stdin_write_error.is_set(),
-        "stdin_writer_joined": writer is None or not writer.is_alive(),
+        "stdin_writer_joined": stdin_writer_joined,
+        "stdout_drainer_joined": stdout_drainer_joined,
+        "stderr_drainer_joined": stderr_drainer_joined,
+        "stdout_drainer_error": stdout_drainer_error.is_set(),
+        "stderr_drainer_error": stderr_drainer_error.is_set(),
+        "process_group_id": process_group_id,
+        "process_group_empty": process_group_empty,
+        "process_group_state_certain": process_group_state_certain,
+        "descendant_detected": descendant_detected,
+        "cleanup_attempted": cleanup_attempted,
+        "cleanup_escalated": cleanup_escalated,
+        "cleanup_failed": cleanup_failed,
+        "supervision_error": supervision_error,
         "killed": killed,
-        "reaped": process.poll() is not None,
+        "reaped": poll_process() is not None,
     }
 
 
@@ -2830,10 +3047,11 @@ def build_redacted_manifest(
     probe_results: Mapping[str, object],
     observed_at_ms: int,
     cleanup: Mapping[str, object],
+    process_supervision: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if type(observed_at_ms) is not int or observed_at_ms < 0:
         raise LauncherError("manifest observation time is invalid")
-    return {
+    manifest = {
         "manifest_version": 1,
         "policy_head_sha": plan["policy_head_sha"],
         "policy_tree_sha": plan["policy_tree_sha"],
@@ -2860,6 +3078,9 @@ def build_redacted_manifest(
         "observed_at_ms": observed_at_ms,
         "cleanup": {"status": cleanup.get("status", "unknown")},
     }
+    if process_supervision is not None:
+        manifest["process_supervision"] = dict(process_supervision)
+    return manifest
 
 
 def _private_path_errors(paths: Sequence[Path]) -> list[str]:
@@ -3038,14 +3259,47 @@ def run_isolated_role(
         )
     except Exception as exc:
         return fail([_diagnostic(exc)])
+    supervision_fields = (
+        "timed_out",
+        "output_limited",
+        "stdin_write_error",
+        "stdin_writer_joined",
+        "stdout_drainer_joined",
+        "stderr_drainer_joined",
+        "process_group_empty",
+        "process_group_state_certain",
+        "descendant_detected",
+        "cleanup_attempted",
+        "cleanup_escalated",
+        "cleanup_failed",
+        "killed",
+        "reaped",
+    )
+    process_supervision = {
+        field: result.get(field) for field in supervision_fields
+    }
+    required_false = (
+        "timed_out",
+        "output_limited",
+        "stdin_write_error",
+        "descendant_detected",
+        "cleanup_failed",
+    )
+    required_true = (
+        "stdin_writer_joined",
+        "stdout_drainer_joined",
+        "stderr_drainer_joined",
+        "process_group_empty",
+        "process_group_state_certain",
+    )
     if (
-        result.get("timed_out") is True
-        or result.get("output_limited") is True
-        or result.get("stdin_write_error") is True
-        or result.get("stdin_writer_joined") is False
+        any(result.get(field) is not False for field in required_false)
+        or any(result.get(field) is not True for field in required_true)
         or result.get("returncode") != 0
     ):
-        return fail(["isolated role process failed"])
+        failed = fail(["isolated role process failed"])
+        failed["process_supervision"] = process_supervision
+        return failed
     stdout = result.get("stdout")
     stderr = result.get("stderr", "")
     if type(stdout) is not str or type(stderr) is not str:
@@ -3141,12 +3395,14 @@ def run_isolated_role(
         probe_results=observations,
         observed_at_ms=now,
         cleanup={"status": "clean"},
+        process_supervision=process_supervision,
     )
     return {
         "status": "completed",
         "manifest": manifest,
         "final_agent_message": parsed["final_agent_message"],
         "events": parsed["events"],
+        "process_supervision": process_supervision,
     }
 
 
