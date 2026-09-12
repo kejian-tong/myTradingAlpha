@@ -251,6 +251,23 @@ def test_forged_plain_mapping_cannot_start_even_with_validated_boolean(
     assert not marker.exists()
 
 
+def test_sealed_plan_is_recursively_immutable() -> None:
+    module = _module()
+    plan = module._ValidatedZeroToolPlan(
+        {
+            "argv": ["/trusted/client", "exec"],
+            "exact_argv": ("/trusted/client", "exec"),
+            "exec_env": {"PATH": "/trusted/bin"},
+            "config_values": ["shell_tool=false"],
+        },
+        seal=module._PLAN_SEAL,
+    )
+    with pytest.raises(TypeError):
+        plan["exec_env"]["PATH"] = "/attacker"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        plan["config_values"][0] = "shell_tool=true"  # type: ignore[index]
+
+
 def test_bounded_subprocess_stops_output_before_memory_growth() -> None:
     module = _module()
     with pytest.raises(module.LauncherError, match="output bound"):

@@ -465,6 +465,16 @@ def test_trusted_context_command_is_bounded(exact_repo: dict[str, object]) -> No
         _bundle(module, exact_repo, trusted_context_records=contexts)
 
 
+def test_red_green_ci_context_requires_exact_command(
+    exact_repo: dict[str, object],
+) -> None:
+    module = _module()
+    contexts = _trusted_context(str(exact_repo["head"]))
+    contexts[-1] = {**contexts[-1], "command": None}
+    with pytest.raises(module.LauncherError, match="command.*required"):
+        _bundle(module, exact_repo, trusted_context_records=contexts)
+
+
 def test_trusted_context_aggregate_line_count_is_bounded(
     exact_repo: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -500,6 +510,69 @@ def test_bundle_requires_root_governing_instructions_on_both_sides(
         "head_tree": _tree(repo, head),
     }
     with pytest.raises(module.LauncherError, match="root AGENTS"):
+        _bundle(module, values)
+
+
+def test_bundle_rejects_gitlink_promisor_alternates_and_oversize_file(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "AGENTS.md").write_text("policy\n")
+    base = _commit(repo, "base")
+    _git(
+        repo,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "160000," + base + ",nested-repository",
+    )
+    _git(
+        repo,
+        "-c",
+        "user.name=Harness Test",
+        "-c",
+        "user.email=harness@example.invalid",
+        "commit",
+        "-m",
+        "gitlink",
+    )
+    head = _git(repo, "rev-parse", "HEAD").decode().strip()
+    _git(repo, "checkout", "--detach", head)
+    values = {
+        "root": repo,
+        "base": base,
+        "head": head,
+        "base_tree": _tree(repo, base),
+        "head_tree": _tree(repo, head),
+    }
+    with pytest.raises(module.LauncherError, match="gitlink|mode"):
+        _bundle(module, values)
+
+    _git(repo, "checkout", "main")
+    _git(repo, "reset", "--hard", base)
+    (repo / "large.txt").write_bytes(b"bounded line\n" * ((module.MAX_FILE_BYTES // 13) + 2))
+    large_head = _commit(repo, "large")
+    _git(repo, "checkout", "--detach", large_head)
+    values.update(head=large_head, head_tree=_tree(repo, large_head))
+    with pytest.raises(module.LauncherError, match="per-file bound"):
+        _bundle(module, values)
+
+    _git(repo, "config", "remote.origin.promisor", "true")
+    with pytest.raises(module.LauncherError, match="promisor"):
+        _bundle(module, values)
+    _git(repo, "config", "--unset", "remote.origin.promisor")
+    common = Path(_git(repo, "rev-parse", "--git-common-dir").decode().strip())
+    if not common.is_absolute():
+        common = repo / common
+    alternates = common / "objects" / "info" / "alternates"
+    alternates.parent.mkdir(parents=True, exist_ok=True)
+    alternate_repo = tmp_path / "alternate.git"
+    _git(tmp_path, "init", "--bare", str(alternate_repo))
+    alternates.write_text(str(alternate_repo / "objects") + "\n")
+    with pytest.raises(module.LauncherError, match="alternates"):
         _bundle(module, values)
 
 
@@ -615,6 +688,21 @@ def test_handshake_blocks_client_until_parent_arms_and_releases(tmp_path: Path) 
     assert len(_fixture_plan(module, tmp_path, marker)["bootstrap_python_sha256"]) == 64
 
 
+def test_handshake_rejects_nonempty_private_runtime_before_release(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    marker = tmp_path / "must-not-execute-dirty-runtime"
+    plan = _fixture_plan(module, tmp_path, marker)
+    (Path(plan["cwd"]) / "unexpected").write_text("untrusted")
+    with pytest.raises(module.LauncherError, match="private runtime.*empty"):
+        module._run_preexec_handshake(
+            plan,
+            bootstrap_python=Path(sys.executable).resolve(),
+        )
+    assert not marker.exists()
+
+
 def test_pre_release_failure_cleans_blocked_leader_before_reap(tmp_path: Path) -> None:
     module = _module()
     marker = tmp_path / "must-not-execute"
@@ -645,13 +733,23 @@ def test_unexpected_original_group_descendant_is_killed_before_reap(
 ) -> None:
     module = _module()
     pid_file = tmp_path / "descendant.pid"
+    child_ready = tmp_path / "descendant.ready"
     client = Path(sys.executable).resolve()
-    child_source = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)"
+    child_source = (
+        "import pathlib,signal,time;"
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+        f"pathlib.Path({str(child_ready)!r}).write_text('ready');"
+        "time.sleep(30)"
+    )
     source = (
-        "import pathlib,subprocess,sys;"
+        "import pathlib,signal,subprocess,sys,time;"
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
         f"p=subprocess.Popen([sys.executable,'-I','-S','-c',{child_source!r}],"
         "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
-        f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid));"
+        f"ready=pathlib.Path({str(child_ready)!r});"
+        "[(time.sleep(0.005)) for _ in range(200) if not ready.exists()];"
+        "time.sleep(30)"
     )
     argv = [str(client), "-I", "-S", "-c", source]
     bootstrap_sha256 = hashlib.sha256(client.read_bytes()).hexdigest()
