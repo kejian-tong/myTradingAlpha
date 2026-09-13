@@ -195,11 +195,7 @@ _MEMORY_WATCHLIST_LIMITATION_PHRASES = (
     "higher-precedence",
     "running sessions",
     "retroactively",
-    "project configuration does not authenticate live-runtime state",
-)
-_MEMORY_WATCHLIST_FORBIDDEN_PHRASES = (
-    "enforces the live host",
-    "authenticates live runtime",
+    "project configuration does not authenticate live runtime state",
 )
 
 
@@ -214,6 +210,15 @@ def _toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _normalize_memory_watchlist_text(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
+
+
+def _contains_normalized_phrase(text: str, phrase: str) -> bool:
+    normalized_phrase = _normalize_memory_watchlist_text(phrase)
+    return f" {normalized_phrase} " in f" {text} "
+
+
 def _memory_watchlist_errors(root: Path) -> list[str]:
     path = root / _WATCHLIST_PATH
     if not path.is_file():
@@ -226,17 +231,28 @@ def _memory_watchlist_errors(root: Path) -> list[str]:
     ]
     if len(rows) != 1:
         return ["Codex Memory watchlist must contain exactly one Memory decision row"]
-    row = rows[0]
+    row = _normalize_memory_watchlist_text(rows[0])
     errors = [
         f"Codex Memory watchlist is missing limitation phrase: {phrase}"
         for phrase in _MEMORY_WATCHLIST_LIMITATION_PHRASES
-        if phrase not in row
+        if not _contains_normalized_phrase(row, phrase)
     ]
-    errors.extend(
-        f"Codex Memory watchlist must not claim host enforcement: {phrase}"
-        for phrase in _MEMORY_WATCHLIST_FORBIDDEN_PHRASES
-        if phrase in row
+    approved_clause = _normalize_memory_watchlist_text(
+        "project configuration does not authenticate live runtime state"
     )
+    matches = list(re.finditer(rf"(?<!\w){re.escape(approved_clause)}(?!\w)", row))
+    if len(matches) != 1:
+        errors.append(
+            "Codex Memory watchlist must contain exactly one approved non-authentication clause"
+        )
+    else:
+        match = matches[0]
+        residual = row[: match.start()] + row[match.end() :]
+        if re.search(r"\b(?:authenticat|enforc)\w*", residual):
+            errors.append(
+                "Codex Memory watchlist must not contain authentication or enforcement claims "
+                "outside the approved non-authentication clause"
+            )
     return errors
 
 
