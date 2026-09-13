@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from datetime import date
 from pathlib import Path
 
@@ -55,6 +56,147 @@ def _route_rows(model: str, *, count: int = 5, effort: str = "max", **kwargs) ->
         _row(model, task_id=f"t{index}", effort=effort, **kwargs)
         for index in range(1, count + 1)
     ]
+
+
+PROVENANCE = {
+    "repository_commit_sha": "a" * 40,
+    "repository_tree_sha": "b" * 40,
+    "task_manifest_sha256": "c" * 64,
+}
+
+
+def _provenance_row(
+    model: str,
+    *,
+    task_id: str = "t1",
+    task_class: str = "exploration",
+    effort: str = "max",
+    provenance: dict[str, str] | None = None,
+    **kwargs,
+) -> dict:
+    """Build a valid row whose manifest binds the frozen prompt/scope, acceptance matrix, and known findings."""
+    row = _row(model, task_id=task_id, task_class=task_class, effort=effort, **kwargs)
+    row.update(PROVENANCE if provenance is None else provenance)
+    return row
+
+
+def test_valid_enriched_record_preserves_frozen_task_provenance() -> None:
+    benchmark = _module()
+    validated = benchmark.validate(_provenance_row("gpt-5.6-luna"))
+    assert {field: validated[field] for field in PROVENANCE} == PROVENANCE
+
+
+@pytest.mark.parametrize("field", tuple(PROVENANCE))
+def test_missing_task_provenance_field_is_rejected(field: str) -> None:
+    benchmark = _module()
+    row = _provenance_row("gpt-5.6-luna")
+    del row[field]
+    with pytest.raises(ValueError, match="provenance"):
+        benchmark.validate(row)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("repository_commit_sha", "A" * 40),
+        ("repository_tree_sha", "g" * 40),
+        ("task_manifest_sha256", "c" * 63),
+    ),
+)
+def test_malformed_task_provenance_field_is_rejected(field: str, value: str) -> None:
+    benchmark = _module()
+    row = _provenance_row("gpt-5.6-luna")
+    row[field] = value
+    with pytest.raises(ValueError, match="provenance"):
+        benchmark.validate(row)
+
+
+def test_same_task_across_routes_requires_identical_provenance() -> None:
+    benchmark = _module()
+    left = _provenance_row("gpt-5.6-luna", task_id="frozen-task")
+    mismatched = dict(PROVENANCE, repository_tree_sha="d" * 40)
+    right = _provenance_row(
+        "gpt-5.6-sol", task_id="frozen-task", effort="high", provenance=mismatched
+    )
+    with pytest.raises(ValueError, match="provenance"):
+        benchmark.analyze([left, right], evaluation_date=EVAL_DATE)
+
+
+def test_analyze_exposes_validated_task_provenance_for_auditable_output() -> None:
+    benchmark = _module()
+    rows = [
+        _provenance_row("gpt-5.6-luna", task_id="frozen-task"),
+        _provenance_row("gpt-5.6-sol", task_id="frozen-task", effort="high"),
+    ]
+    result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)
+    assert result["task_provenance"]["exploration"]["frozen-task"] == PROVENANCE
+
+
+@pytest.mark.parametrize("quality", [float("nan"), float("inf"), float("-inf")])
+def test_validate_rejects_non_finite_quality_score(quality: float) -> None:
+    benchmark = _module()
+    with pytest.raises(ValueError, match="quality_score"):
+        benchmark.validate(_row("gpt-5.6-luna", quality=quality))
+
+
+@pytest.mark.parametrize("quality", [float("nan"), float("inf"), float("-inf")])
+def test_load_jsonl_rejects_json_non_finite_quality_score(tmp_path: Path, quality: float) -> None:
+    benchmark = _module()
+    row = _row("gpt-5.6-luna", quality=quality)
+    path = tmp_path / "non-finite.jsonl"
+    path.write_text(json.dumps(row, allow_nan=True) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="quality_score"):
+        benchmark.load_jsonl(path)
+
+
+def test_load_jsonl_rejects_duplicate_json_object_keys(tmp_path: Path) -> None:
+    benchmark = _module()
+    encoded = json.dumps(_row("gpt-5.6-luna"))
+    duplicate = encoded.replace(
+        '{"task_id": "t1"', '{"task_id": "t1", "task_id": "duplicate"', 1
+    )
+    path = tmp_path / "duplicate.jsonl"
+    path.write_text(duplicate + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate"):
+        benchmark.load_jsonl(path)
+
+
+_ALLOWED_MODEL_EFFORT_PAIRS = (
+    ("gpt-5.6-luna", "max"),
+    ("gpt-5.6-terra", "medium"),
+    ("gpt-5.6-terra", "high"),
+    ("gpt-5.6-terra", "xhigh"),
+    ("gpt-5.6-sol", "high"),
+    ("gpt-5.6-sol", "xhigh"),
+    ("gpt-6-astra", "xhigh"),
+)
+
+
+@pytest.mark.parametrize(("model", "effort"), _ALLOWED_MODEL_EFFORT_PAIRS)
+def test_benchmark_matrix_accepts_allowed_model_effort_pairs(model: str, effort: str) -> None:
+    benchmark = _module()
+    validated = benchmark.validate(_row(model, effort=effort))
+    assert (validated["model"], validated["effort"]) == (model, effort)
+
+
+_DISALLOWED_MODEL_EFFORT_PAIRS = (
+    ("gpt-5.6-luna", "medium"),
+    ("gpt-5.6-luna", "high"),
+    ("gpt-5.6-luna", "xhigh"),
+    ("gpt-5.6-terra", "max"),
+    ("gpt-5.6-sol", "max"),
+    ("gpt-5.6-sol", "medium"),
+    ("gpt-6-astra", "max"),
+    ("gpt-6-astra", "medium"),
+    ("gpt-6-astra", "high"),
+)
+
+
+@pytest.mark.parametrize(("model", "effort"), _DISALLOWED_MODEL_EFFORT_PAIRS)
+def test_benchmark_matrix_rejects_disallowed_model_effort_pairs(model: str, effort: str) -> None:
+    benchmark = _module()
+    with pytest.raises(ValueError, match="effort"):
+        benchmark.validate(_row(model, effort=effort))
 
 
 def test_current_luna_credit_formula() -> None:
