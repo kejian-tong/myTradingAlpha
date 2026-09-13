@@ -241,35 +241,6 @@ def _race_worker(
         queue.put(("acquired", result["lease_id"]))
 
 
-def _transition_worker(
-    script: str,
-    action: str,
-    repo: str,
-    base_sha: str,
-    identity: dict[str, str],
-    barrier: Any,
-    queue: Any,
-    checkpoint: str = "before_red",
-) -> None:
-    module = _load_module(Path(script), f"writer_lease_transition_{action}_{os.getpid()}")
-    barrier.wait()
-    try:
-        if action == "verify":
-            module.verify(
-                repo_root=Path(repo),
-                base_sha=base_sha,
-                checkpoint=checkpoint,
-                phase=f"race-{checkpoint}",
-                **identity,
-            )
-        else:
-            module.release(repo_root=Path(repo), base_sha=base_sha, **identity)
-    except BaseException as exc:  # pragma: no cover - asserted in parent process
-        queue.put(("rejected", type(exc).__name__))
-    else:
-        queue.put(("accepted", action))
-
-
 def _delayed_old_operation_worker(
     script: str,
     action: str,
@@ -279,6 +250,8 @@ def _delayed_old_operation_worker(
     ready: Any,
     proceed: Any,
     queue: Any,
+    checkpoint: str = "before_red",
+    phase: str = "delayed-old",
 ) -> None:
     module = _load_module(Path(script), f"writer_lease_delayed_{action}_{os.getpid()}")
     if hasattr(module, "_transition_guard"):
@@ -307,8 +280,8 @@ def _delayed_old_operation_worker(
             module.verify(
                 repo_root=Path(repo),
                 base_sha=base_sha,
-                checkpoint="before_red",
-                phase="delayed-old",
+                checkpoint=checkpoint,
+                phase=phase,
                 **identity,
             )
         else:
@@ -1126,33 +1099,101 @@ def test_concurrent_verifies_leave_one_valid_canonical_chain(
     identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
     identity.pop("base_sha")
     context = multiprocessing.get_context("spawn")
-    barrier = context.Barrier(2)
-    queue = context.Queue()
-    processes = [
-        context.Process(
-            target=_transition_worker,
+    ready = [context.Event(), context.Event()]
+    proceed = [context.Event(), context.Event()]
+    queues = [context.Queue(), context.Queue()]
+    checkpoints = ("before_red", "before_green")
+    processes = []
+    for index, checkpoint in enumerate(checkpoints):
+        process = context.Process(
+            target=_delayed_old_operation_worker,
             args=(
                 str(SCRIPT),
                 "verify",
                 str(primary),
                 base_sha,
                 identity,
-                barrier,
-                queue,
+                ready[index],
+                proceed[index],
+                queues[index],
                 checkpoint,
+                f"race-{checkpoint}",
             ),
         )
-        for checkpoint in ("before_red", "before_green")
-    ]
+        processes.append(process)
     for process in processes:
         process.start()
-    results = [queue.get(timeout=20) for _ in processes]
+    assert all(event.wait(timeout=20) for event in ready)
+    proceed[1].set()
+    assert queues[1].get(timeout=20)[0] == "accepted"
+    proceed[0].set()
+    assert queues[0].get(timeout=20)[0] == "rejected"
     for process in processes:
         process.join(timeout=20)
         assert process.exitcode == 0
-    assert any(status == "accepted" for status, _detail in results)
     assert lease.inspect(repo_root=primary)["status"] == "active"
     _release(lease, primary, base_sha, acquired["lease_id"])
+    raw = lease.export_evidence(
+        repo_root=primary,
+        lease_id=acquired["lease_id"],
+        **_identity(base_sha),
+    )
+    assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
+
+
+def test_verify_vs_release_rejects_stale_verify_after_both_validate_active(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
+    identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
+    identity.pop("base_sha")
+    context = multiprocessing.get_context("spawn")
+    verify_ready = context.Event()
+    release_ready = context.Event()
+    verify_proceed = context.Event()
+    release_proceed = context.Event()
+    verify_queue = context.Queue()
+    release_queue = context.Queue()
+    verify_process = context.Process(
+        target=_delayed_old_operation_worker,
+        args=(
+            str(SCRIPT),
+            "verify",
+            str(primary),
+            base_sha,
+            identity,
+            verify_ready,
+            verify_proceed,
+            verify_queue,
+        ),
+    )
+    release_process = context.Process(
+        target=_delayed_old_operation_worker,
+        args=(
+            str(SCRIPT),
+            "release",
+            str(primary),
+            base_sha,
+            identity,
+            release_ready,
+            release_proceed,
+            release_queue,
+        ),
+    )
+    verify_process.start()
+    release_process.start()
+    assert verify_ready.wait(timeout=20)
+    assert release_ready.wait(timeout=20)
+    release_proceed.set()
+    assert release_queue.get(timeout=20)[0] == "accepted"
+    release_process.join(timeout=20)
+    assert release_process.exitcode == 0
+    verify_proceed.set()
+    assert verify_queue.get(timeout=20)[0] == "rejected"
+    verify_process.join(timeout=20)
+    assert verify_process.exitcode == 0
     raw = lease.export_evidence(
         repo_root=primary,
         lease_id=acquired["lease_id"],
