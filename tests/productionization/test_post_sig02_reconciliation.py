@@ -33,15 +33,16 @@ def test_sig02_operational_state_is_post_merge_and_stopped() -> None:
 
 def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     state = STATE.read_text(encoding="utf-8")
+    harness_marker = "`harness_reconciled_through`: `HARNESS-AUD-08` / PR #73 / merge"
     required = (
         "## Current harness policy",
-        "`last_completed_harness_pr`: `HARNESS-AUD-08` / PR #73 / merge",
-        HARNESS_MERGE_SHA,
+        f"{harness_marker}\n  `{HARNESS_MERGE_SHA}`",
         PERMANENT_EXTERNAL_REVIEW_POLICY,
         "`last_reconciled_automatic_review_ruleset_id`: `23141241` (disabled; fresh recheck required)",
     )
     missing = [marker for marker in required if marker not in state]
     assert not missing, f"current Harness reconciliation is missing: {missing}"
+    assert "`last_completed_harness_pr`" not in state
     assert "Prospective harness policy" not in state
     assert "`HARNESS-V2-COLLAB-COMPAT` / PR #64 candidate" not in state
 
