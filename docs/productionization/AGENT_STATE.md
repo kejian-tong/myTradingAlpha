@@ -14,7 +14,7 @@ removed from this snapshot remains immutable in Git commits, workflow runs and P
 - `current_phase`: none active
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
   `376c9c044722ee37f3fa36691b576420e3b6253d`
-- `last_completed_harness_pr`: `HARNESS-AUD-08` / PR #73 / merge
+- `harness_reconciled_through`: `HARNESS-AUD-08` / PR #73 / merge
   `4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4`
 - `last_reconciled_automatic_review_ruleset_id`: `23141241` (disabled; fresh recheck required)
 - `next_pr_id`: `SIG-03` (informational only; not authorized by the current harness-maintenance task)
