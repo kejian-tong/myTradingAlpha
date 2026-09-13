@@ -124,10 +124,17 @@ def _github_review_boundary() -> dict:
     final_head = "2" * 40
     return {
         "schema_version": 1,
-        "pr_number": 69,
+        "pr_number": 70,
         "pr_author_login": "repository-owner",
         "head_sha": final_head,
         "captured_at": "2026-09-13T12:30:00Z",
+        "open_main_prs_page_size": 100,
+        "open_main_prs_page_count": 1,
+        "open_main_prs_total_count": 1,
+        "open_main_prs_pagination_complete": True,
+        "open_main_prs_limit_exhausted": False,
+        "open_main_prs_base_ref": "main",
+        "open_main_prs_probe_pr_number": 70,
         "review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "review_actor_login": "copilot-pull-request-reviewer[bot]",
         "review_actor_type": "Bot",
@@ -142,7 +149,7 @@ def _github_review_boundary() -> dict:
         "moved_head_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "moved_head_review_commit_sha": final_head,
         "moved_head_review_state": "DISMISSED",
-        "moved_head_review_submitted_at": "2026-09-13T12:10:00Z",
+        "moved_head_review_submitted_at": "2026-09-13T12:15:00Z",
         "negative_probe_dismissed_review_id": 910_002,
         "negative_probe_head_sha": final_head,
         "negative_probe_review_decision": "REVIEW_REQUIRED",
@@ -165,7 +172,8 @@ def _github_review_boundary() -> dict:
         "required_checks_pass": True,
         "main_ruleset_id": 20_780_950,
         "main_ruleset_preimage_updated_at": "2026-09-13T11:30:00Z",
-        "main_ruleset_postimage_updated_at": "2026-09-13T11:45:00Z",
+        "main_ruleset_preimage_captured_at": "2026-09-13T12:05:00Z",
+        "main_ruleset_postimage_updated_at": "2026-09-13T12:10:00Z",
         "main_ruleset_preimage_digest": "a" * 64,
         "main_ruleset_postimage_digest": "b" * 64,
         "main_ruleset_unchanged_preimage_digest": "f" * 64,
@@ -515,6 +523,46 @@ def test_github_review_boundary_rulesets_pagination_and_exact_types_fail_closed(
         record = _github_review_boundary()
         record[field] = value
         assert _github_boundary_errors(_boundary_raw(record)), name
+
+
+def test_github_review_boundary_open_main_pr_reconciliation_fails_closed() -> None:
+    mutations = {
+        "wrong_page_size": ("open_main_prs_page_size", 99),
+        "zero_pages": ("open_main_prs_page_count", 0),
+        "page_cap_exceeded": ("open_main_prs_page_count", 11),
+        "bool_page_count": ("open_main_prs_page_count", True),
+        "missing_probe_pr": ("open_main_prs_total_count", 0),
+        "extra_open_pr": ("open_main_prs_total_count", 2),
+        "pagination_incomplete": ("open_main_prs_pagination_complete", False),
+        "pagination_exhausted": ("open_main_prs_limit_exhausted", True),
+        "wrong_base": ("open_main_prs_base_ref", "develop"),
+        "wrong_probe_pr": ("open_main_prs_probe_pr_number", 71),
+        "bool_probe_pr": ("open_main_prs_probe_pr_number", True),
+    }
+    for name, (field, value) in mutations.items():
+        record = _github_review_boundary()
+        record[field] = value
+        assert _github_boundary_errors(_boundary_raw(record)), name
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("initial_review_submitted_at", "2026-09-13T12:11:00Z"),
+        ("moved_head_review_submitted_at", "2026-09-13T12:09:00Z"),
+    ],
+)
+def test_github_review_boundary_transition_chronology_rejects_legacy_schema(
+    field: str, value: str,
+) -> None:
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS
+    }
+    record[field] = value
+    assert _github_boundary_errors(_boundary_raw(record)), field
 
 
 def test_github_review_boundary_rejects_coordinated_actor_id_substitution() -> None:
