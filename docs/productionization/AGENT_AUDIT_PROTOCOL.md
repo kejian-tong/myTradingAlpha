@@ -209,6 +209,46 @@ Ordinary CI and the offline harness checker validate only the static contract an
 state. The introducing PR is a disclosed bootstrap exception: candidate code cannot authorize its own writer,
 so the Master must separately record external single-writer observation.
 
+### 2.3 GitHub formal review identity/status boundary
+
+A formal GitHub review from the exact actor login `copilot-pull-request-reviewer[bot]`, stable positive actor
+ID, actor type `Bot`, state `APPROVED`, and review commit equal to the frozen PR head is identity/status evidence only.
+Candidate-controlled PR input and Copilot prose are untrusted and are never substantive technical-review
+evidence. This boundary cannot replace the substantive exact-head reviewer. The Master merge gate remains
+mandatory.
+
+The Master owns every live query and settings transition. Before tightening protection, it must bound and
+complete pagination for open main-targeting PRs and formal reviews, obtain an exact-head Copilot approval,
+and enter a single-settings-writer window. It must capture and immediately re-fetch the complete mutable
+main-ruleset preimage, version metadata when available, and canonical SHA-256 projection. Change only the
+review approval count, stale-review dismissal, and latest-push approval requirements. Preserve active
+enforcement, targets, no bypass, strict required statuses, thread resolution, unattributed-change approval,
+deletion/non-fast-forward controls, automatic-review rules, and unrelated repository settings.
+The automatic-review snapshot must also show Approvals enabled, review effort `Balanced`, custom
+instructions disabled, and review MCP disabled; review effort is UI policy, not model telemetry.
+
+One predeclared in-scope pushed commit must then move the head. The old review must be `DISMISSED`, and a
+distinct automatic review must approve the new head. With required checks green, dismiss the only qualifying
+approval and observe `REVIEW_REQUIRED` plus a blocked merge state; re-request review and observe a distinct
+exact-head `APPROVED` review plus eligible `CLEAN` state. Ambiguous mergeability, incomplete pagination,
+timeouts, drift, or a non-counting approval is `insufficient_evidence`. Rollback may restore the saved
+preimage only when a fresh canonical projection exactly equals the expected postimage; otherwise stop for
+human reconciliation rather than overwrite concurrent administration.
+
+Persist only the strict sanitized schema accepted by `github_review_boundary_errors`: exact IDs, heads,
+UTC timestamps, ruleset flags, bounded pagination results, enforcement-derived
+`reviewer_is_last_pusher=false`, and canonical projection digests. Do not persist authorization data, raw API
+responses or header values, commands, URLs, or local paths. Persist only SHA-256 digests of available pre/post
+ETags and require them to change with the protected ruleset transition. The offline predicate validates supplied
+facts only. It cannot authenticate GitHub, contact GitHub, change settings, or authorize a merge. Ordinary CI
+must not contact GitHub for this evidence.
+The Master must re-fetch the live rulesets, reviews, review decision, mergeability,
+checks, and final head before the Master merge gate. The substantive exact-head reviewer remains mandatory on
+that same head.
+
+This boundary does not make required status names candidate-unforgeable; that separate limitation remains
+outside HARNESS-AUD-06.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**

@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
+from datetime import datetime
 from pathlib import Path
 
 _ROLES = {
@@ -88,6 +91,90 @@ _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers", "collaboration_controls_visible",
                 "collaboration_observation_complete", "non_master_collaboration_invoked",
                 "delegation_control_mode"}
+_GITHUB_BOUNDARY_FIELDS = {
+    "schema_version", "pr_number", "pr_author_login", "head_sha", "captured_at",
+    "open_main_prs_page_size", "open_main_prs_page_count", "open_main_prs_total_count",
+    "open_main_prs_pagination_complete", "open_main_prs_limit_exhausted",
+    "open_main_prs_base_ref", "open_main_prs_probe_pr_number",
+    "review_actor_id", "review_actor_login", "review_actor_type", "initial_head_sha",
+    "initial_review_id", "initial_review_actor_id", "initial_review_commit_sha",
+    "initial_review_state", "initial_review_submitted_at", "initial_review_pre_dismiss_state",
+    "initial_review_pre_dismiss_observed_at", "moved_head_sha",
+    "moved_head_push_observed_at", "moved_head_push_head_sha",
+    "initial_review_dismissal_trigger", "initial_review_dismissal_observed_at",
+    "initial_review_dismissal_head_sha", "moved_head_review_trigger",
+    "moved_head_review_trigger_observed_at", "moved_head_review_trigger_head_sha",
+    "moved_head_review_id", "moved_head_review_actor_id", "moved_head_review_commit_sha",
+    "moved_head_review_state", "moved_head_review_submitted_at",
+    "moved_head_review_pre_dismiss_state", "moved_head_review_pre_dismiss_observed_at",
+    "negative_probe_dismissed_review_id", "negative_probe_head_sha",
+    "negative_probe_review_decision", "negative_probe_merge_status",
+    "negative_probe_merge_eligible", "negative_probe_prerequisites_observed_at",
+    "negative_probe_required_checks_head_sha", "negative_probe_required_checks_pass",
+    "negative_probe_review_threads_resolved", "negative_probe_observed_at",
+    "final_review_rerequest_trigger", "final_review_rerequest_head_sha",
+    "final_review_rerequest_observed_at",
+    "final_review_id", "final_review_actor_id",
+    "final_review_commit_sha", "final_review_state", "final_review_submitted_at",
+    "positive_probe_head_sha", "positive_probe_review_decision", "positive_probe_merge_status",
+    "positive_probe_merge_eligible", "positive_probe_observed_at",
+    "reviewer_is_last_pusher", "reviewer_is_last_pusher_basis",
+    "controlling_review_head_sha", "controlling_review_approved", "required_checks_head_sha",
+    "required_checks_pass", "main_ruleset_id", "main_ruleset_preimage_updated_at",
+    "main_ruleset_preimage_captured_at", "main_ruleset_preimage_refetched_at",
+    "main_ruleset_postimage_updated_at", "main_ruleset_preimage_required_approvals",
+    "main_ruleset_preimage_dismiss_stale_reviews",
+    "main_ruleset_preimage_require_last_push_approval", "main_ruleset_preimage_digest",
+    "main_ruleset_preimage_refetch_digest", "main_ruleset_postimage_digest",
+    "main_ruleset_unchanged_preimage_digest", "main_ruleset_unchanged_preimage_refetch_digest",
+    "main_ruleset_unchanged_postimage_digest", "main_ruleset_preimage_etag_digest",
+    "main_ruleset_preimage_refetch_etag_digest",
+    "main_ruleset_postimage_etag_digest", "main_ruleset_active", "main_ruleset_bypass_actor_count",
+    "main_ruleset_required_statuses_strict", "main_ruleset_required_approvals",
+    "main_ruleset_dismiss_stale_reviews", "main_ruleset_require_last_push_approval",
+    "main_ruleset_require_thread_resolution", "main_ruleset_require_unattributed_approval",
+    "auto_review_ruleset_id", "auto_review_ruleset_updated_at", "auto_review_ruleset_digest",
+    "auto_review_ruleset_active", "auto_review_ruleset_bypass_actor_count", "auto_review_on_push",
+    "auto_review_custom_instructions_enabled", "auto_review_mcp_enabled", "auto_review_effort",
+    "auto_review_approvals_enabled", "reviews_page_size", "reviews_page_count",
+    "reviews_total_count", "reviews_pagination_complete", "reviews_limit_exhausted",
+}
+_GITHUB_BOUNDARY_SHA_FIELDS = (
+    "head_sha", "initial_head_sha", "initial_review_commit_sha", "moved_head_sha",
+    "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
+    "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
+    "negative_probe_head_sha", "negative_probe_required_checks_head_sha",
+    "final_review_rerequest_head_sha", "final_review_commit_sha", "positive_probe_head_sha",
+    "controlling_review_head_sha", "required_checks_head_sha",
+)
+_GITHUB_BOUNDARY_DIGEST_FIELDS = (
+    "main_ruleset_preimage_digest", "main_ruleset_preimage_refetch_digest",
+    "main_ruleset_postimage_digest", "main_ruleset_unchanged_preimage_digest",
+    "main_ruleset_unchanged_preimage_refetch_digest", "main_ruleset_unchanged_postimage_digest",
+    "main_ruleset_preimage_etag_digest", "main_ruleset_preimage_refetch_etag_digest",
+    "main_ruleset_postimage_etag_digest",
+    "auto_review_ruleset_digest",
+)
+_GITHUB_BOUNDARY_TIME_FIELDS = (
+    "captured_at", "initial_review_submitted_at", "initial_review_pre_dismiss_observed_at",
+    "moved_head_push_observed_at", "initial_review_dismissal_observed_at",
+    "moved_head_review_trigger_observed_at", "moved_head_review_submitted_at",
+    "moved_head_review_pre_dismiss_observed_at",
+    "negative_probe_prerequisites_observed_at", "negative_probe_observed_at",
+    "final_review_rerequest_observed_at", "final_review_submitted_at",
+    "positive_probe_observed_at",
+    "main_ruleset_preimage_updated_at",
+    "main_ruleset_preimage_captured_at", "main_ruleset_preimage_refetched_at",
+    "main_ruleset_postimage_updated_at",
+    "auto_review_ruleset_updated_at",
+)
+_GITHUB_BOUNDARY_POSITIVE_IDS = (
+    "pr_number", "open_main_prs_probe_pr_number", "review_actor_id",
+    "initial_review_id", "initial_review_actor_id",
+    "moved_head_review_id", "moved_head_review_actor_id", "negative_probe_dismissed_review_id",
+    "final_review_id", "final_review_actor_id", "main_ruleset_id", "auto_review_ruleset_id",
+)
+_COPILOT_REVIEW_ACTOR_ID = 175_728_472
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _TELEMETRY_CLEANUP_HOOK = "SessionEnd"
@@ -425,10 +512,305 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    if type(value) is not str or re.fullmatch(
+        r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+        r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,6})?Z",
+        value,
+    ) is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+    return parsed if parsed.utcoffset().total_seconds() == 0 else None
+
+
+def _json_nesting_exceeds(raw: bytes, limit: int = 128) -> bool:
+    depth = 0
+    quoted = False
+    escaped = False
+    for byte in raw:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (91, 123):
+            depth += 1
+            if depth > limit:
+                return True
+        elif byte in (93, 125):
+            depth -= 1
+    return False
+
+
+def github_review_boundary_errors(raw: bytes) -> list[str]:
+    """Check sanitized supplied facts; never authenticate GitHub or authorize merge."""
+    if type(raw) is not bytes or not raw or len(raw) > 65_536 or _json_nesting_exceeds(raw):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
+    try:
+        record = json.loads(raw, object_pairs_hook=_unique_object)
+    except (ValueError, UnicodeError, RecursionError):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
+    if type(record) is not dict or set(record) != _GITHUB_BOUNDARY_FIELDS:
+        return ["missing or unknown GitHub review-boundary fields; insufficient_evidence"]
+    try:
+        canonical = json.dumps(
+            record, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")
+    except (RecursionError, UnicodeError):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
+    if raw != canonical:
+        return ["non-canonical GitHub review-boundary evidence; insufficient_evidence"]
+
+    errors = []
+    if record["schema_version"] != 1 or type(record["schema_version"]) is not int:
+        errors.append("invalid GitHub review-boundary schema version")
+    if any(type(record[field]) is not int or record[field] <= 0
+           for field in _GITHUB_BOUNDARY_POSITIVE_IDS):
+        errors.append("invalid GitHub identity or object ID")
+    if any(type(record[field]) is not str or re.fullmatch(r"[0-9a-f]{40}", record[field]) is None
+           for field in _GITHUB_BOUNDARY_SHA_FIELDS):
+        errors.append("invalid GitHub review-boundary commit SHA")
+    if any(type(record[field]) is not str or re.fullmatch(r"[0-9a-f]{64}", record[field]) is None
+           for field in _GITHUB_BOUNDARY_DIGEST_FIELDS):
+        errors.append("invalid sanitized ruleset projection digest")
+    parsed_times = {field: _parse_utc_timestamp(record[field]) for field in _GITHUB_BOUNDARY_TIME_FIELDS}
+    if any(value is None for value in parsed_times.values()):
+        errors.append("invalid GitHub review-boundary UTC timestamp")
+    else:
+        captured = parsed_times["captured_at"]
+        if not (
+            parsed_times["auto_review_ruleset_updated_at"]
+            < parsed_times["initial_review_submitted_at"]
+            <= parsed_times["initial_review_pre_dismiss_observed_at"]
+            < parsed_times["main_ruleset_preimage_captured_at"]
+            < parsed_times["main_ruleset_preimage_refetched_at"]
+            < parsed_times["main_ruleset_postimage_updated_at"]
+            < parsed_times["moved_head_push_observed_at"]
+            < parsed_times["moved_head_review_submitted_at"]
+            <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
+            < parsed_times["negative_probe_prerequisites_observed_at"]
+            <= parsed_times["negative_probe_observed_at"]
+            < parsed_times["final_review_rerequest_observed_at"]
+            <= parsed_times["final_review_submitted_at"]
+            <= parsed_times["positive_probe_observed_at"]
+            <= captured
+        ):
+            errors.append("GitHub review/ruleset transition provenance is not strictly ordered")
+        if any(
+            not (
+                parsed_times["moved_head_push_observed_at"]
+                <= parsed_times[field]
+                <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
+            )
+            for field in (
+                "initial_review_dismissal_observed_at",
+                "moved_head_review_trigger_observed_at",
+            )
+        ):
+            errors.append("push-trigger observation is outside the moved-review transition")
+        if parsed_times["main_ruleset_preimage_updated_at"] > parsed_times["main_ruleset_preimage_captured_at"]:
+            errors.append("main ruleset preimage capture precedes its source update")
+
+    if (
+        type(record["open_main_prs_page_size"]) is not int
+        or record["open_main_prs_page_size"] != 100
+        or type(record["open_main_prs_page_count"]) is not int
+        or not 1 <= record["open_main_prs_page_count"] <= 10
+        or type(record["open_main_prs_total_count"]) is not int
+        or record["open_main_prs_total_count"] != 1
+        or record["open_main_prs_pagination_complete"] is not True
+        or record["open_main_prs_limit_exhausted"] is not False
+        or record["open_main_prs_base_ref"] != "main"
+        or record["open_main_prs_probe_pr_number"] != record["pr_number"]
+    ):
+        errors.append("open main-targeting PR reconciliation is incomplete or ambiguous")
+
+    if (
+        type(record["pr_author_login"]) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", record["pr_author_login"]) is None
+        or record["pr_author_login"] == record["review_actor_login"]
+    ):
+        errors.append("invalid or non-independent PR author identity")
+    if (
+        record["review_actor_login"] != "copilot-pull-request-reviewer[bot]"
+        or record["review_actor_type"] != "Bot"
+        or record["review_actor_id"] != _COPILOT_REVIEW_ACTOR_ID
+    ):
+        errors.append("invalid formal review actor identity")
+    if any(
+        record[field] != record["review_actor_id"]
+        for field in ("initial_review_actor_id", "moved_head_review_actor_id", "final_review_actor_id")
+    ):
+        errors.append("review actor ID changed across probe reviews")
+
+    head = record["head_sha"]
+    if (
+        record["initial_head_sha"] == head
+        or record["initial_review_commit_sha"] != record["initial_head_sha"]
+        or any(
+            record[field] != head
+            for field in (
+                "moved_head_sha", "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
+                "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
+                "negative_probe_head_sha", "negative_probe_required_checks_head_sha",
+                "final_review_rerequest_head_sha", "final_review_commit_sha",
+                "positive_probe_head_sha",
+                "controlling_review_head_sha",
+                "required_checks_head_sha",
+            )
+        )
+    ):
+        errors.append("stale or mismatched GitHub review-boundary head")
+    if (
+        record["initial_review_dismissal_trigger"] != "ruleset_stale_on_push"
+        or record["moved_head_review_trigger"] != "copilot_ruleset_review_on_push"
+    ):
+        errors.append("review transition is not ruleset push-triggered")
+    if record["final_review_rerequest_trigger"] != "master_explicit_copilot_rerequest":
+        errors.append("final Copilot approval lacks explicit Master re-request provenance")
+    review_ids = (
+        record["initial_review_id"], record["moved_head_review_id"], record["final_review_id"],
+    )
+    if any(type(review_id) is not int or review_id <= 0 for review_id in review_ids):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
+    if len(set(review_ids)) != len(review_ids):
+        errors.append("probe review IDs are not distinct")
+    if (
+        record["initial_review_state"] != "DISMISSED"
+        or record["initial_review_pre_dismiss_state"] != "APPROVED"
+        or record["moved_head_review_state"] != "DISMISSED"
+        or record["moved_head_review_pre_dismiss_state"] != "APPROVED"
+        or record["negative_probe_dismissed_review_id"] != record["moved_head_review_id"]
+        or record["final_review_state"] != "APPROVED"
+    ):
+        errors.append("invalid stale or final formal review state")
+    if (
+        record["negative_probe_review_decision"] != "REVIEW_REQUIRED"
+        or record["negative_probe_merge_status"] != "BLOCKED"
+        or record["negative_probe_merge_eligible"] is not False
+        or record["negative_probe_required_checks_pass"] is not True
+        or record["negative_probe_review_threads_resolved"] is not True
+        or record["positive_probe_review_decision"] != "APPROVED"
+        or record["positive_probe_merge_status"] != "CLEAN"
+        or record["positive_probe_merge_eligible"] is not True
+    ):
+        errors.append("negative/positive GitHub enforcement probe is incomplete")
+    if (
+        record["reviewer_is_last_pusher"] is not False
+        or record["reviewer_is_last_pusher_basis"] != "github_ruleset_evaluation"
+    ):
+        errors.append("reviewer/pusher distinction is not enforcement-derived")
+    if record["controlling_review_approved"] is not True or record["required_checks_pass"] is not True:
+        errors.append("substantive review or required checks are not exact-head PASS")
+
+    if record["main_ruleset_id"] != 20_780_950 or record["auto_review_ruleset_id"] != 23_141_241:
+        errors.append("unexpected GitHub ruleset identity")
+    main_expected = {
+        "main_ruleset_preimage_required_approvals": 0,
+        "main_ruleset_preimage_dismiss_stale_reviews": False,
+        "main_ruleset_preimage_require_last_push_approval": False,
+        "main_ruleset_active": True,
+        "main_ruleset_bypass_actor_count": 0,
+        "main_ruleset_required_statuses_strict": True,
+        "main_ruleset_required_approvals": 1,
+        "main_ruleset_dismiss_stale_reviews": True,
+        "main_ruleset_require_last_push_approval": True,
+        "main_ruleset_require_thread_resolution": True,
+        "main_ruleset_require_unattributed_approval": True,
+    }
+    auto_expected = {
+        "auto_review_ruleset_active": True,
+        "auto_review_ruleset_bypass_actor_count": 0,
+        "auto_review_on_push": True,
+        "auto_review_custom_instructions_enabled": False,
+        "auto_review_mcp_enabled": False,
+        "auto_review_effort": "Balanced",
+        "auto_review_approvals_enabled": True,
+    }
+    if any(type(record[field]) is not type(expected) or record[field] != expected
+           for expected_map in (main_expected, auto_expected)
+           for field, expected in expected_map.items()):
+        errors.append("GitHub ruleset or automatic-review policy differs")
+    if record["main_ruleset_preimage_digest"] == record["main_ruleset_postimage_digest"]:
+        errors.append("main ruleset transition projection did not change")
+    if (
+        record["main_ruleset_preimage_digest"] != record["main_ruleset_preimage_refetch_digest"]
+        or record["main_ruleset_unchanged_preimage_digest"]
+        != record["main_ruleset_unchanged_preimage_refetch_digest"]
+        or record["main_ruleset_preimage_etag_digest"]
+        != record["main_ruleset_preimage_refetch_etag_digest"]
+    ):
+        errors.append("main ruleset preimage refetch drifted")
+    if (
+        record["main_ruleset_unchanged_preimage_digest"]
+        != record["main_ruleset_unchanged_postimage_digest"]
+    ):
+        errors.append("main ruleset unchanged projection drifted")
+    if record["main_ruleset_preimage_etag_digest"] == record["main_ruleset_postimage_etag_digest"]:
+        errors.append("main ruleset sanitized ETag evidence did not change")
+
+    if (
+        type(record["reviews_page_size"]) is not int
+        or record["reviews_page_size"] != 100
+        or type(record["reviews_page_count"]) is not int
+        or not 1 <= record["reviews_page_count"] <= 10
+        or type(record["reviews_total_count"]) is not int
+        or not 3 <= record["reviews_total_count"] <= 1_000
+        or record["reviews_total_count"] > record["reviews_page_count"] * 100
+        or record["reviews_pagination_complete"] is not True
+        or record["reviews_limit_exhausted"] is not False
+    ):
+        errors.append("review pagination is incomplete, invalid, or exhausted")
+    return errors
+
+
+def github_review_boundary_file_errors(path: Path) -> list[str]:
+    """Read at most 64 KiB from one regular no-follow file, then validate it offline."""
+    required_flags = ("O_NOFOLLOW", "O_NONBLOCK")
+    if not isinstance(path, Path) or any(not hasattr(os, name) for name in required_flags):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("not a regular evidence file")
+            chunks = []
+            remaining = 65_537
+            while remaining:
+                chunk = os.read(descriptor, min(8_192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            if len(raw) > 65_536:
+                raise ValueError("evidence limit exceeded")
+        finally:
+            os.close(descriptor)
+    except (OSError, ValueError):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
+    return github_review_boundary_errors(raw)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd())
     parser.add_argument("--gate", type=Path, help="optional offline evidence JSON; never executes a merge")
+    parser.add_argument(
+        "--github-review-boundary",
+        type=Path,
+        help="optional sanitized offline GitHub identity/status evidence; never authenticates GitHub",
+    )
     args = parser.parse_args()
     errors = configuration_errors(args.root.resolve())
     if args.gate is not None:
@@ -439,6 +821,8 @@ def main() -> int:
             errors.extend(gate_errors(json.loads(raw, object_pairs_hook=_unique_object)))
         except (OSError, ValueError, UnicodeError) as exc:
             errors.append(f"invalid gate evidence: {exc}")
+    if args.github_review_boundary is not None:
+        errors.extend(github_review_boundary_file_errors(args.github_review_boundary))
     for error in errors:
         print(error)
     if not errors:
