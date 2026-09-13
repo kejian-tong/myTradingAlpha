@@ -40,6 +40,8 @@ USD_RATES = {
 
 _MODELS = frozenset(CREDIT_RATES)
 _TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens")
+MAX_SIGNED_INT = 2**63 - 1
+_NONNEGATIVE_INTEGER_FIELDS = ("missed_blocker_high", "duration_ms", "retries")
 _PROVENANCE_FIELDS = (
     "repository_commit_sha",
     "repository_tree_sha",
@@ -63,7 +65,10 @@ _OPTIONAL = set(_TOKEN_FIELDS)
 def _number(value: object, *, name: str) -> float:
     if type(value) not in (int, float) or isinstance(value, bool):
         raise ValueError(f"{name} must be numeric")
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be finite") from exc
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite")
     if result < 0:
@@ -99,9 +104,13 @@ def validate(record: object) -> dict:
     for key in ("acceptance_pass", "safety_gate_pass"):
         if type(record[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
-    for key in ("missed_blocker_high", "duration_ms", "retries"):
-        if type(record[key]) is not int or isinstance(record[key], bool) or record[key] < 0:
-            raise ValueError(f"{key} must be a non-negative integer")
+    for key in _NONNEGATIVE_INTEGER_FIELDS:
+        if (
+            type(record[key]) is not int
+            or isinstance(record[key], bool)
+            or not 0 <= record[key] <= MAX_SIGNED_INT
+        ):
+            raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
     quality = _number(record["quality_score"], name="quality_score")
     if quality > 100:
         raise ValueError("quality_score must be <= 100")
@@ -110,8 +119,12 @@ def validate(record: object) -> dict:
         raise ValueError("token observations must provide input/cached/output together")
     if all(present_tokens):
         for key in _TOKEN_FIELDS:
-            if type(record[key]) is not int or isinstance(record[key], bool) or record[key] < 0:
-                raise ValueError(f"{key} must be a non-negative integer")
+            if (
+                type(record[key]) is not int
+                or isinstance(record[key], bool)
+                or not 0 <= record[key] <= MAX_SIGNED_INT
+            ):
+                raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
     return dict(record)
 
 

@@ -201,6 +201,10 @@ Each JSONL row contains:
 - measured `duration_ms` and `retries`;
 - optionally, all three observed `input_tokens`, `cached_input_tokens`, and `output_tokens`.
 
+All nonnegative integer measurements use the inclusive signed 64-bit range `0..2**63 - 1` to bound
+input arithmetic and serialized benchmark economics. This is an input-safety/economics bound, not a
+claim about runtime limits or model behavior.
+
 Use one row per route/task identity. A failed end-to-end task run remains in the dataset with its observed
 duration, retries and token consumption. The benchmark output reports reliability, pairing, freshness,
 per-route aggregates and a task-class Pareto frontier when comparison is actually valid; it never grants
