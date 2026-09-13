@@ -93,6 +93,9 @@ _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "delegation_control_mode"}
 _GITHUB_BOUNDARY_FIELDS = {
     "schema_version", "pr_number", "pr_author_login", "head_sha", "captured_at",
+    "open_main_prs_page_size", "open_main_prs_page_count", "open_main_prs_total_count",
+    "open_main_prs_pagination_complete", "open_main_prs_limit_exhausted",
+    "open_main_prs_base_ref", "open_main_prs_probe_pr_number",
     "review_actor_id", "review_actor_login", "review_actor_type", "initial_head_sha",
     "initial_review_id", "initial_review_actor_id", "initial_review_commit_sha",
     "initial_review_state", "initial_review_submitted_at", "moved_head_sha",
@@ -106,7 +109,8 @@ _GITHUB_BOUNDARY_FIELDS = {
     "positive_probe_merge_eligible", "reviewer_is_last_pusher", "reviewer_is_last_pusher_basis",
     "controlling_review_head_sha", "controlling_review_approved", "required_checks_head_sha",
     "required_checks_pass", "main_ruleset_id", "main_ruleset_preimage_updated_at",
-    "main_ruleset_postimage_updated_at", "main_ruleset_preimage_digest",
+    "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
+    "main_ruleset_preimage_digest",
     "main_ruleset_postimage_digest", "main_ruleset_unchanged_preimage_digest",
     "main_ruleset_unchanged_postimage_digest", "main_ruleset_preimage_etag_digest",
     "main_ruleset_postimage_etag_digest", "main_ruleset_active", "main_ruleset_bypass_actor_count",
@@ -133,10 +137,12 @@ _GITHUB_BOUNDARY_DIGEST_FIELDS = (
 _GITHUB_BOUNDARY_TIME_FIELDS = (
     "captured_at", "initial_review_submitted_at", "moved_head_review_submitted_at",
     "final_review_submitted_at", "main_ruleset_preimage_updated_at",
-    "main_ruleset_postimage_updated_at", "auto_review_ruleset_updated_at",
+    "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
+    "auto_review_ruleset_updated_at",
 )
 _GITHUB_BOUNDARY_POSITIVE_IDS = (
-    "pr_number", "review_actor_id", "initial_review_id", "initial_review_actor_id",
+    "pr_number", "open_main_prs_probe_pr_number", "review_actor_id",
+    "initial_review_id", "initial_review_actor_id",
     "moved_head_review_id", "moved_head_review_actor_id", "negative_probe_dismissed_review_id",
     "final_review_id", "final_review_actor_id", "main_ruleset_id", "auto_review_ruleset_id",
 )
@@ -524,19 +530,31 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
     else:
         captured = parsed_times["captured_at"]
         if not (
-            parsed_times["initial_review_submitted_at"]
+            parsed_times["auto_review_ruleset_updated_at"]
+            < parsed_times["initial_review_submitted_at"]
+            < parsed_times["main_ruleset_preimage_captured_at"]
+            < parsed_times["main_ruleset_postimage_updated_at"]
             < parsed_times["moved_head_review_submitted_at"]
             < parsed_times["final_review_submitted_at"]
             <= captured
         ):
-            errors.append("review timestamp provenance is not strictly ordered")
-        if not (
-            parsed_times["main_ruleset_preimage_updated_at"]
-            < parsed_times["main_ruleset_postimage_updated_at"]
-            <= captured
-            and parsed_times["auto_review_ruleset_updated_at"] <= captured
-        ):
-            errors.append("ruleset timestamp provenance is invalid")
+            errors.append("GitHub review/ruleset transition provenance is not strictly ordered")
+        if parsed_times["main_ruleset_preimage_updated_at"] > parsed_times["main_ruleset_preimage_captured_at"]:
+            errors.append("main ruleset preimage capture precedes its source update")
+
+    if (
+        type(record["open_main_prs_page_size"]) is not int
+        or record["open_main_prs_page_size"] != 100
+        or type(record["open_main_prs_page_count"]) is not int
+        or not 1 <= record["open_main_prs_page_count"] <= 10
+        or type(record["open_main_prs_total_count"]) is not int
+        or record["open_main_prs_total_count"] != 1
+        or record["open_main_prs_pagination_complete"] is not True
+        or record["open_main_prs_limit_exhausted"] is not False
+        or record["open_main_prs_base_ref"] != "main"
+        or record["open_main_prs_probe_pr_number"] != record["pr_number"]
+    ):
+        errors.append("open main-targeting PR reconciliation is incomplete or ambiguous")
 
     if (
         type(record["pr_author_login"]) is not str
