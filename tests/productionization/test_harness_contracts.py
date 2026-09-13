@@ -738,6 +738,57 @@ def test_github_review_boundary_normalizes_deep_json_across_all_entrypoints(tmp_
     assert not failures, failures
 
 
+@pytest.mark.parametrize("field", ["initial_review_id", "moved_head_review_id", "final_review_id"])
+@pytest.mark.parametrize(
+    ("kind", "hostile_value"),
+    [
+        ("list", ["HOSTILE_REVIEW_ID_VALUE"]),
+        ("object", {"HOSTILE_REVIEW_ID_VALUE": "must-not-leak"}),
+    ],
+)
+def test_github_review_boundary_normalizes_unhashable_review_ids_across_all_entrypoints(
+    tmp_path: Path, field: str, kind: str, hostile_value: object,
+) -> None:
+    checker = _checker()
+    record = _github_review_boundary()
+    record[field] = hostile_value
+    raw = _boundary_raw(record)
+    evidence = tmp_path / f"unhashable-{field}-{kind}.json"
+    evidence.write_bytes(raw)
+    failures = []
+
+    for entrypoint, call in (
+        ("raw", lambda: checker.github_review_boundary_errors(raw)),
+        ("file", lambda: checker.github_review_boundary_file_errors(evidence)),
+    ):
+        try:
+            errors = call()
+        except TypeError:
+            errors = "TypeError"
+        if errors != _GENERIC_GITHUB_BOUNDARY_ERROR:
+            failures.append((entrypoint, errors))
+
+    cli = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_agent_harness.py"),
+         "--github-review-boundary", str(evidence)],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if (
+        cli.returncode != 1
+        or cli.stdout.strip() != _GENERIC_GITHUB_BOUNDARY_ERROR[0]
+        or "TypeError" in cli.stdout
+        or "Traceback" in cli.stdout
+        or "HOSTILE_REVIEW_ID_VALUE" in cli.stdout
+        or str(evidence) in cli.stdout
+    ):
+        failures.append(("cli", cli.returncode, cli.stdout))
+    assert not failures, failures
+
+
 def test_github_review_boundary_cli_input_is_bounded_regular_and_no_follow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
