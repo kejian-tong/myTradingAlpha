@@ -80,6 +80,11 @@ _PREIMAGE_NEGATIVE_EVIDENCE_FIELDS = (
     "negative_probe_required_checks_pass",
     "negative_probe_review_threads_resolved",
 )
+_FINAL_REREQUEST_EVIDENCE_FIELDS = (
+    "final_review_rerequest_trigger",
+    "final_review_rerequest_head_sha",
+    "final_review_rerequest_observed_at",
+)
 
 
 def _role_path(root: Path, role: str) -> Path:
@@ -206,6 +211,9 @@ def _github_review_boundary() -> dict:
         "negative_probe_required_checks_pass": True,
         "negative_probe_review_threads_resolved": True,
         "negative_probe_observed_at": "2026-09-13T12:17:00Z",
+        "final_review_rerequest_trigger": "master_explicit_copilot_rerequest",
+        "final_review_rerequest_head_sha": final_head,
+        "final_review_rerequest_observed_at": "2026-09-13T12:18:00Z",
         "final_review_id": 910_003,
         "final_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "final_review_commit_sha": final_head,
@@ -782,6 +790,35 @@ def test_github_review_boundary_preimage_refetch_and_negative_probe_fail_closed(
     assert _github_boundary_errors(_boundary_raw(coordinated_refetch)), "coordinated refetch drift"
 
     for field in _PREIMAGE_NEGATIVE_EVIDENCE_FIELDS:
+        record = _github_review_boundary()
+        del record[field]
+        assert _github_boundary_errors(_boundary_raw(record)), f"missing {field}"
+
+
+def test_github_review_boundary_rejects_missing_final_rerequest_in_legacy_schema() -> None:
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS and key not in _FINAL_REREQUEST_EVIDENCE_FIELDS
+    }
+    assert _github_boundary_errors(_boundary_raw(record)), "final approval requires explicit re-request"
+
+
+def test_github_review_boundary_final_rerequest_fails_closed() -> None:
+    mutations = {
+        "manual_trigger": ("final_review_rerequest_trigger", "manual_review_request"),
+        "wrong_head": ("final_review_rerequest_head_sha", "1" * 40),
+        "not_after_negative": ("final_review_rerequest_observed_at", "2026-09-13T12:17:00Z"),
+        "after_final_review": ("final_review_rerequest_observed_at", "2026-09-13T12:20:01Z"),
+        "non_utc_time": ("final_review_rerequest_observed_at", "2026-09-13T12:18:00+00:00"),
+    }
+    for name, (field, value) in mutations.items():
+        record = _github_review_boundary()
+        record[field] = value
+        assert _github_boundary_errors(_boundary_raw(record)), name
+
+    for field in _FINAL_REREQUEST_EVIDENCE_FIELDS:
         record = _github_review_boundary()
         del record[field]
         assert _github_boundary_errors(_boundary_raw(record)), f"missing {field}"
