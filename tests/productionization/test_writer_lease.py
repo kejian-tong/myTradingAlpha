@@ -908,6 +908,105 @@ def test_event_capacity_supports_productionization_horizon_and_fails_closed(
     assert lease.inspect(repo_root=primary)["status"] == "active"
 
 
+def test_lifecycle_requires_writer_start_and_monotonic_applicable_checkpoints(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    with pytest.raises(lease.WriterLeaseError):
+        _verify(
+            lease,
+            primary,
+            base_sha,
+            acquired["lease_id"],
+            checkpoint="before_push",
+        )
+    started = _verify(lease, primary, base_sha, acquired["lease_id"])
+    green = _verify(
+        lease,
+        primary,
+        base_sha,
+        acquired["lease_id"],
+        checkpoint="before_green",
+        phase="green",
+    )
+    retried = _verify(
+        lease,
+        primary,
+        base_sha,
+        acquired["lease_id"],
+        checkpoint="before_green",
+        phase="green",
+    )
+    assert retried == green
+    assert started["sequence"] < green["sequence"]
+    with pytest.raises(lease.WriterLeaseError):
+        _verify(
+            lease,
+            primary,
+            base_sha,
+            acquired["lease_id"],
+            checkpoint="before_red",
+        )
+    assert len(list((_state_dir(common) / "events").glob("*.json"))) == 3
+
+
+def test_release_requires_writer_start(lease: ModuleType, tmp_path: Path) -> None:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    with pytest.raises(lease.WriterLeaseError):
+        _release(lease, primary, base_sha, acquired["lease_id"])
+    assert lease.inspect(repo_root=primary)["status"] == "active"
+
+
+def test_archived_lease_capacity_fails_before_active_or_completed_lane_mutation(
+    lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    production_limit = getattr(lease, "MAX_ARCHIVED_LEASES", None)
+    assert production_limit is None or (
+        type(production_limit) is int and 47 <= production_limit <= 128
+    )
+    monkeypatch.setattr(lease, "MAX_ARCHIVED_LEASES", 1, raising=False)
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    for index in range(2):
+        identity = {
+            "pr_id": f"HARNESS-AUD-{index + 5:02d}",
+            "owner_ref": f"{index + 1:064x}",
+            "session_ref": f"{index + 101:064x}",
+        }
+        acquired = _acquire(lease, primary, base_sha, **identity)
+        _verify(lease, primary, base_sha, acquired["lease_id"], **identity)
+        _release(lease, primary, base_sha, acquired["lease_id"], **identity)
+
+    state = _state_dir(common)
+    before = {
+        path.relative_to(state).as_posix(): (
+            stat.S_IMODE(path.stat().st_mode),
+            path.read_bytes() if path.is_file() else None,
+        )
+        for path in state.rglob("*")
+    }
+    assert not (state / "active.json").exists()
+    with pytest.raises(lease.WriterLeaseError):
+        _acquire(
+            lease,
+            primary,
+            base_sha,
+            pr_id="HARNESS-AUD-07",
+            owner_ref="3" * 64,
+            session_ref="6" * 64,
+        )
+    after = {
+        path.relative_to(state).as_posix(): (
+            stat.S_IMODE(path.stat().st_mode),
+            path.read_bytes() if path.is_file() else None,
+        )
+        for path in state.rglob("*")
+    }
+    assert after == before
+    assert not (state / "active.json").exists()
+
+
 def test_timestamps_are_not_validity_and_release_has_no_forgeable_stopped_proof(
     lease: ModuleType, tmp_path: Path
 ) -> None:
@@ -1003,6 +1102,7 @@ def test_checkpoint_is_cooperative_evidence_not_identity_or_order_attestation(
 ) -> None:
     primary, _linked, base_sha, _common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
     evidence = _verify(
         lease,
         primary,
