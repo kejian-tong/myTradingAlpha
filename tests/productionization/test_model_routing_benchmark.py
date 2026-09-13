@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from datetime import date
@@ -9,6 +10,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 EVAL_DATE = date(2026, 9, 7)
+PROVENANCE_FIELDS = (
+    "repository_commit_sha",
+    "repository_tree_sha",
+    "task_manifest_sha256",
+)
 
 
 def _module():
@@ -46,23 +52,36 @@ def _row(
         "duration_ms": duration,
         "retries": retries,
     }
+    row.update(_task_provenance(task_class, task_id))
     if tokens:
         row.update(input_tokens=100_000, cached_input_tokens=20_000, output_tokens=10_000)
     return row
 
 
-def _route_rows(model: str, *, count: int = 5, effort: str = "max", **kwargs) -> list[dict]:
+def _route_rows(model: str, *, count: int = 5, effort: str | None = None, **kwargs) -> list[dict]:
+    if effort is None:
+        effort = {
+            "gpt-5.6-luna": "max",
+            "gpt-5.6-terra": "medium",
+            "gpt-5.6-sol": "high",
+            "gpt-6-astra": "xhigh",
+        }[model]
     return [
         _row(model, task_id=f"t{index}", effort=effort, **kwargs)
         for index in range(1, count + 1)
     ]
 
 
-PROVENANCE = {
-    "repository_commit_sha": "a" * 40,
-    "repository_tree_sha": "b" * 40,
-    "task_manifest_sha256": "c" * 64,
-}
+def _task_provenance(task_class: str, task_id: str) -> dict[str, str]:
+    """Derive deterministic evidence from the pair whose frozen manifest binds prompt/scope,
+    acceptance matrix, and known findings.
+    """
+    seed = f"{task_class}\0{task_id}".encode()
+    return {
+        "repository_commit_sha": hashlib.sha1(seed).hexdigest(),
+        "repository_tree_sha": hashlib.sha1(b"tree\0" + seed).hexdigest(),
+        "task_manifest_sha256": hashlib.sha256(b"manifest\0" + seed).hexdigest(),
+    }
 
 
 def _provenance_row(
@@ -74,19 +93,23 @@ def _provenance_row(
     provenance: dict[str, str] | None = None,
     **kwargs,
 ) -> dict:
-    """Build a valid row whose manifest binds the frozen prompt/scope, acceptance matrix, and known findings."""
+    """Build a row with pair-derived provenance; the manifest binds prompt/scope, acceptance matrix,
+    and known findings.
+    """
     row = _row(model, task_id=task_id, task_class=task_class, effort=effort, **kwargs)
-    row.update(PROVENANCE if provenance is None else provenance)
+    if provenance is not None:
+        row.update(provenance)
     return row
 
 
 def test_valid_enriched_record_preserves_frozen_task_provenance() -> None:
     benchmark = _module()
     validated = benchmark.validate(_provenance_row("gpt-5.6-luna"))
-    assert {field: validated[field] for field in PROVENANCE} == PROVENANCE
+    expected = _task_provenance("exploration", "t1")
+    assert {field: validated[field] for field in expected} == expected
 
 
-@pytest.mark.parametrize("field", tuple(PROVENANCE))
+@pytest.mark.parametrize("field", PROVENANCE_FIELDS)
 def test_missing_task_provenance_field_is_rejected(field: str) -> None:
     benchmark = _module()
     row = _provenance_row("gpt-5.6-luna")
@@ -114,7 +137,7 @@ def test_malformed_task_provenance_field_is_rejected(field: str, value: str) -> 
 def test_same_task_across_routes_requires_identical_provenance() -> None:
     benchmark = _module()
     left = _provenance_row("gpt-5.6-luna", task_id="frozen-task")
-    mismatched = dict(PROVENANCE, repository_tree_sha="d" * 40)
+    mismatched = dict(_task_provenance("exploration", "frozen-task"), repository_tree_sha="d" * 40)
     right = _provenance_row(
         "gpt-5.6-sol", task_id="frozen-task", effort="high", provenance=mismatched
     )
@@ -129,7 +152,9 @@ def test_analyze_exposes_validated_task_provenance_for_auditable_output() -> Non
         _provenance_row("gpt-5.6-sol", task_id="frozen-task", effort="high"),
     ]
     result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)
-    assert result["task_provenance"]["exploration"]["frozen-task"] == PROVENANCE
+    assert result["task_provenance"]["exploration"]["frozen-task"] == _task_provenance(
+        "exploration", "frozen-task"
+    )
 
 
 @pytest.mark.parametrize("quality", [float("nan"), float("inf"), float("-inf")])
@@ -230,7 +255,7 @@ def test_reliability_gate_counts_failed_runs_instead_of_survivorship_filtering()
     assert luna_summary["reliability_eligible"] is False
     assert "acceptance_rate_below_floor" in luna_summary["reliability_reasons"]
     assert result["comparison_status"] == "complete"
-    assert result["pareto_frontier"] == [{"model": "gpt-5.6-terra", "effort": "max"}]
+    assert result["pareto_frontier"] == [{"model": "gpt-5.6-terra", "effort": "medium"}]
 
 
 def test_safety_failure_and_missed_blocker_are_hard_route_ineligibility() -> None:
@@ -246,7 +271,7 @@ def test_safety_failure_and_missed_blocker_are_hard_route_ineligibility() -> Non
     assert summary["missed_blocker_high_total"] == 1
     assert summary["reliability_eligible"] is False
     assert {"safety_failure", "missed_blocker_high"} <= set(summary["reliability_reasons"])
-    assert result["pareto_frontier"] == [{"model": "gpt-5.6-terra", "effort": "max"}]
+    assert result["pareto_frontier"] == [{"model": "gpt-5.6-terra", "effort": "medium"}]
 
 
 def test_generalized_pairing_rejects_different_task_sets() -> None:
@@ -259,7 +284,7 @@ def test_generalized_pairing_rejects_different_task_sets() -> None:
     pairing = result["comparison_pairing"]
     assert pairing["pairing_complete"] is False
     assert pairing["missing_task_ids"]["gpt-5.6-luna|max"] == ["different-task"]
-    assert pairing["missing_task_ids"]["gpt-5.6-terra|max"] == ["t5"]
+    assert pairing["missing_task_ids"]["gpt-5.6-terra|medium"] == ["t5"]
     assert result["comparison_status"] == "incomplete_pairing"
     assert result["pareto_frontier"] == []
 
