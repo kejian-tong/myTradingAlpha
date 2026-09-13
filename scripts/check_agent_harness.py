@@ -182,6 +182,25 @@ _PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 _OPENAI_DOCS_MCP_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+_MEMORY_WATCHLIST_LIMITATION_PHRASES = (
+    "explicitly disabled",
+    "watch-only",
+    "prospective",
+    "trusted project",
+    "fresh session",
+    "configuration intent",
+    "cli",
+    "--enable",
+    "higher-precedence",
+    "running sessions",
+    "retroactively",
+    "live-runtime",
+    "authenticate",
+)
+_MEMORY_WATCHLIST_FORBIDDEN_PHRASES = (
+    "enforces the live host",
+    "authenticates live runtime",
+)
 
 
 def _toml(path: Path) -> dict:
@@ -193,6 +212,32 @@ def _toml(path: Path) -> dict:
         except ModuleNotFoundError as exc:
             raise ValueError("TOML parser unavailable; use Python 3.11+ or locked dev") from exc
     return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _memory_watchlist_errors(root: Path) -> list[str]:
+    path = root / _WATCHLIST_PATH
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8")
+    rows = [
+        line.strip().lower()
+        for line in text.splitlines()
+        if line.strip().lower().startswith("| codex memories (")
+    ]
+    if len(rows) != 1:
+        return ["Codex Memory watchlist must contain exactly one Memory decision row"]
+    row = rows[0]
+    errors = [
+        f"Codex Memory watchlist is missing limitation phrase: {phrase}"
+        for phrase in _MEMORY_WATCHLIST_LIMITATION_PHRASES
+        if phrase not in row
+    ]
+    errors.extend(
+        f"Codex Memory watchlist must not claim host enforcement: {phrase}"
+        for phrase in _MEMORY_WATCHLIST_FORBIDDEN_PHRASES
+        if phrase in row
+    )
+    return errors
 
 
 def _single_hook_handler(event_map: dict, event: str, errors: list[str]) -> tuple[dict, dict] | None:
@@ -314,10 +359,14 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
     if "default_permissions" in config or "permissions" in config:
         errors.append("Codex Permission Profiles are watch-only while sandbox_mode isolation is active")
     features = config.get("features")
-    if isinstance(features, dict) and features.get("memories") not in (None, False):
-        errors.append("Codex Memories are watch-only for this auditable repository harness")
+    if type(features) is not dict or features.get("memories") is not False:
+        errors.append(
+            "Codex Memories are watch-only; configuration intent must set features.memories = false exactly; "
+            "CLI and host runtime controls remain outside this checker"
+        )
     if "memories" in config:
         errors.append("Codex Memories configuration is watch-only for this repository")
+    errors.extend(_memory_watchlist_errors(root))
     if "otel" in config:
         errors.append("Codex OpenTelemetry exporters require a separate reviewed adoption PR")
     if "plugins" in config:

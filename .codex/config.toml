@@ -106,3 +106,4 @@ max_concurrent_threads_per_session = 6
 
 [features]
 apps = false
+memories = false
