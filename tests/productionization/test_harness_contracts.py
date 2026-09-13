@@ -67,6 +67,19 @@ _AUTOMATIC_REVIEW_TRANSITION_FIELDS = (
     "moved_head_review_trigger_observed_at",
     "moved_head_review_trigger_head_sha",
 )
+_PREIMAGE_NEGATIVE_EVIDENCE_FIELDS = (
+    "main_ruleset_preimage_required_approvals",
+    "main_ruleset_preimage_dismiss_stale_reviews",
+    "main_ruleset_preimage_require_last_push_approval",
+    "main_ruleset_preimage_refetched_at",
+    "main_ruleset_preimage_refetch_digest",
+    "main_ruleset_unchanged_preimage_refetch_digest",
+    "main_ruleset_preimage_refetch_etag_digest",
+    "negative_probe_prerequisites_observed_at",
+    "negative_probe_required_checks_head_sha",
+    "negative_probe_required_checks_pass",
+    "negative_probe_review_threads_resolved",
+)
 
 
 def _role_path(root: Path, role: str) -> Path:
@@ -188,6 +201,10 @@ def _github_review_boundary() -> dict:
         "negative_probe_review_decision": "REVIEW_REQUIRED",
         "negative_probe_merge_status": "BLOCKED",
         "negative_probe_merge_eligible": False,
+        "negative_probe_prerequisites_observed_at": "2026-09-13T12:16:30Z",
+        "negative_probe_required_checks_head_sha": final_head,
+        "negative_probe_required_checks_pass": True,
+        "negative_probe_review_threads_resolved": True,
         "negative_probe_observed_at": "2026-09-13T12:17:00Z",
         "final_review_id": 910_003,
         "final_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
@@ -208,12 +225,19 @@ def _github_review_boundary() -> dict:
         "main_ruleset_id": 20_780_950,
         "main_ruleset_preimage_updated_at": "2026-09-13T11:30:00Z",
         "main_ruleset_preimage_captured_at": "2026-09-13T12:05:00Z",
+        "main_ruleset_preimage_refetched_at": "2026-09-13T12:06:00Z",
         "main_ruleset_postimage_updated_at": "2026-09-13T12:10:00Z",
+        "main_ruleset_preimage_required_approvals": 0,
+        "main_ruleset_preimage_dismiss_stale_reviews": False,
+        "main_ruleset_preimage_require_last_push_approval": False,
         "main_ruleset_preimage_digest": "a" * 64,
+        "main_ruleset_preimage_refetch_digest": "a" * 64,
         "main_ruleset_postimage_digest": "b" * 64,
         "main_ruleset_unchanged_preimage_digest": "f" * 64,
+        "main_ruleset_unchanged_preimage_refetch_digest": "f" * 64,
         "main_ruleset_unchanged_postimage_digest": "f" * 64,
         "main_ruleset_preimage_etag_digest": "d" * 64,
+        "main_ruleset_preimage_refetch_etag_digest": "d" * 64,
         "main_ruleset_postimage_etag_digest": "e" * 64,
         "main_ruleset_active": True,
         "main_ruleset_bypass_actor_count": 0,
@@ -690,10 +714,77 @@ def test_github_review_boundary_automatic_transition_fails_closed() -> None:
 
 
 def test_github_review_boundary_does_not_invent_trigger_observation_order() -> None:
-    record = _github_review_boundary()
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS
+    }
     record["initial_review_dismissal_observed_at"] = "2026-09-13T12:13:00Z"
     record["moved_head_review_trigger_observed_at"] = "2026-09-13T12:12:00Z"
     assert _github_boundary_errors(_boundary_raw(record)) == []
+
+
+def test_github_review_boundary_rejects_missing_preimage_and_negative_probe_evidence() -> None:
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS and key not in _PREIMAGE_NEGATIVE_EVIDENCE_FIELDS
+    }
+    assert _github_boundary_errors(_boundary_raw(record)), "preimage/refetch and negative proof are mandatory"
+
+
+def test_github_review_boundary_preimage_refetch_and_negative_probe_fail_closed() -> None:
+    mutations = {
+        "preimage_approvals_already_enabled": ("main_ruleset_preimage_required_approvals", 1),
+        "preimage_approvals_bool": ("main_ruleset_preimage_required_approvals", False),
+        "preimage_stale_already_enabled": ("main_ruleset_preimage_dismiss_stale_reviews", True),
+        "preimage_last_push_already_enabled": (
+            "main_ruleset_preimage_require_last_push_approval", True,
+        ),
+        "refetch_whole_drift": ("main_ruleset_preimage_refetch_digest", "0" * 64),
+        "refetch_unchanged_drift": (
+            "main_ruleset_unchanged_preimage_refetch_digest", "1" * 64,
+        ),
+        "refetch_etag_drift": ("main_ruleset_preimage_refetch_etag_digest", "2" * 64),
+        "refetch_not_after_capture": ("main_ruleset_preimage_refetched_at", "2026-09-13T12:05:00Z"),
+        "refetch_after_postimage": ("main_ruleset_preimage_refetched_at", "2026-09-13T12:10:01Z"),
+        "negative_checks_wrong_head": ("negative_probe_required_checks_head_sha", "1" * 40),
+        "negative_checks_failed": ("negative_probe_required_checks_pass", False),
+        "negative_threads_unresolved": ("negative_probe_review_threads_resolved", False),
+        "negative_prerequisites_too_early": (
+            "negative_probe_prerequisites_observed_at", "2026-09-13T12:16:00Z",
+        ),
+        "negative_prerequisites_too_late": (
+            "negative_probe_prerequisites_observed_at", "2026-09-13T12:17:01Z",
+        ),
+    }
+    for name, (field, value) in mutations.items():
+        record = _github_review_boundary()
+        record[field] = value
+        assert _github_boundary_errors(_boundary_raw(record)), name
+
+    coordinated_preimage = _github_review_boundary()
+    coordinated_preimage.update({
+        "main_ruleset_preimage_required_approvals": 1,
+        "main_ruleset_preimage_dismiss_stale_reviews": True,
+        "main_ruleset_preimage_require_last_push_approval": True,
+    })
+    assert _github_boundary_errors(_boundary_raw(coordinated_preimage)), "coordinated preimage substitution"
+
+    coordinated_refetch = _github_review_boundary()
+    coordinated_refetch.update({
+        "main_ruleset_preimage_refetch_digest": "0" * 64,
+        "main_ruleset_unchanged_preimage_refetch_digest": "1" * 64,
+        "main_ruleset_preimage_refetch_etag_digest": "2" * 64,
+    })
+    assert _github_boundary_errors(_boundary_raw(coordinated_refetch)), "coordinated refetch drift"
+
+    for field in _PREIMAGE_NEGATIVE_EVIDENCE_FIELDS:
+        record = _github_review_boundary()
+        del record[field]
+        assert _github_boundary_errors(_boundary_raw(record)), f"missing {field}"
 
 
 def test_github_review_boundary_rejects_coordinated_actor_id_substitution() -> None:
