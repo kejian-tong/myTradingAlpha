@@ -107,7 +107,8 @@ _GITHUB_BOUNDARY_FIELDS = {
     "controlling_review_head_sha", "controlling_review_approved", "required_checks_head_sha",
     "required_checks_pass", "main_ruleset_id", "main_ruleset_preimage_updated_at",
     "main_ruleset_postimage_updated_at", "main_ruleset_preimage_digest",
-    "main_ruleset_postimage_digest", "main_ruleset_preimage_etag_digest",
+    "main_ruleset_postimage_digest", "main_ruleset_unchanged_preimage_digest",
+    "main_ruleset_unchanged_postimage_digest", "main_ruleset_preimage_etag_digest",
     "main_ruleset_postimage_etag_digest", "main_ruleset_active", "main_ruleset_bypass_actor_count",
     "main_ruleset_required_statuses_strict", "main_ruleset_required_approvals",
     "main_ruleset_dismiss_stale_reviews", "main_ruleset_require_last_push_approval",
@@ -125,6 +126,7 @@ _GITHUB_BOUNDARY_SHA_FIELDS = (
 )
 _GITHUB_BOUNDARY_DIGEST_FIELDS = (
     "main_ruleset_preimage_digest", "main_ruleset_postimage_digest",
+    "main_ruleset_unchanged_preimage_digest", "main_ruleset_unchanged_postimage_digest",
     "main_ruleset_preimage_etag_digest", "main_ruleset_postimage_etag_digest",
     "auto_review_ruleset_digest",
 )
@@ -138,6 +140,7 @@ _GITHUB_BOUNDARY_POSITIVE_IDS = (
     "moved_head_review_id", "moved_head_review_actor_id", "negative_probe_dismissed_review_id",
     "final_review_id", "final_review_actor_id", "main_ruleset_id", "auto_review_ruleset_id",
 )
+_COPILOT_REVIEW_ACTOR_ID = 175_728_472
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _TELEMETRY_CLEANUP_HOOK = "SessionEnd"
@@ -544,6 +547,7 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
     if (
         record["review_actor_login"] != "copilot-pull-request-reviewer[bot]"
         or record["review_actor_type"] != "Bot"
+        or record["review_actor_id"] != _COPILOT_REVIEW_ACTOR_ID
     ):
         errors.append("invalid formal review actor identity")
     if any(
@@ -622,6 +626,11 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         errors.append("GitHub ruleset or automatic-review policy differs")
     if record["main_ruleset_preimage_digest"] == record["main_ruleset_postimage_digest"]:
         errors.append("main ruleset transition projection did not change")
+    if (
+        record["main_ruleset_unchanged_preimage_digest"]
+        != record["main_ruleset_unchanged_postimage_digest"]
+    ):
+        errors.append("main ruleset unchanged projection drifted")
     if record["main_ruleset_preimage_etag_digest"] == record["main_ruleset_postimage_etag_digest"]:
         errors.append("main ruleset sanitized ETag evidence did not change")
 
