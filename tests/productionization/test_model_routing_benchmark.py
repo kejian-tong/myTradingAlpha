@@ -174,6 +174,43 @@ def test_load_jsonl_rejects_json_non_finite_quality_score(tmp_path: Path, qualit
         benchmark.load_jsonl(path)
 
 
+def test_huge_integer_quality_score_raises_value_error() -> None:
+    benchmark = _module()
+    with pytest.raises(ValueError, match="quality_score"):
+        benchmark.validate(_row("gpt-5.6-luna", quality=2**1024))
+
+
+_INTEGER_BOUND_FIELDS = (
+    "missed_blocker_high",
+    "duration_ms",
+    "retries",
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+)
+
+
+@pytest.mark.parametrize("field", _INTEGER_BOUND_FIELDS)
+def test_nonnegative_integer_fields_bound_to_signed_64_bit(field: str) -> None:
+    benchmark = _module()
+    row = _row("gpt-5.6-luna")
+    row[field] = 2**63 - 1
+    assert benchmark.validate(row)[field] == 2**63 - 1
+    row[field] = 2**63
+    with pytest.raises(ValueError, match=field):
+        benchmark.validate(row)
+
+
+def test_load_jsonl_rejects_oversized_integer_with_line_context(tmp_path: Path) -> None:
+    benchmark = _module()
+    row = _row("gpt-5.6-luna")
+    row["duration_ms"] = 2**63
+    path = tmp_path / "oversized-integer.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="line 1"):
+        benchmark.load_jsonl(path)
+
+
 def test_load_jsonl_rejects_duplicate_json_object_keys(tmp_path: Path) -> None:
     benchmark = _module()
     encoded = json.dumps(_row("gpt-5.6-luna"))
