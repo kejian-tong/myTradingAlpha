@@ -127,17 +127,19 @@ inherited-but-unverified parent permission is inadmissible. The live parent over
 `sandbox_mode = "read-only"`, `approval_policy = "never"`, and `[agents] enabled = false` in a role file
 are configuration intent only and cannot override contradictory runtime evidence.
 
-Require post-spawn host-origin evidence for the effective sandbox/profile/approval tuple and complete tool inventory;
-admission must complete before substantive work or any tool call. The evidence must establish read-only local
-enforcement, non-interactive approval, and only the role-specific tool/MCP surface allowed by policy. If
-the host evidence is unavailable, incomplete, unknown, stale, writable, or contradictory, discard the lane
-and record `insufficient_evidence`; do not let that context continue and do not use its output as review or
-gate evidence.
+Use a strict two-turn sequence. The first child turn is admission-only, must receive no substantive task, and
+must make no tool call; it cannot self-approve. The Master then obtains fresh post-spawn host-origin evidence
+for that child's effective sandbox/profile/approval tuple and complete tool inventory. Only after that evidence
+establishes read-only local enforcement, non-interactive approval, and the role-specific tool/MCP allowlist may
+the Master send a follow-up substantive task. Otherwise, interrupt and discard the lane, record
+`insufficient_evidence`, and do not use its output as review or gate evidence. Admission must complete
+before substantive work or any tool call.
 
-A model self-report, caller-created JSON, hooks, telemetry, static TOML, or an offline verifier cannot authenticate
-this host boundary. Those sources may remain supplemental diagnostics only. Parent selection,
-admission, and the durable runtime record are Master-owned; candidate code or candidate instructions cannot
-self-authorize. The `external_spec_researcher` retains its separate official-Docs MCP and permitted official
+A child/model prose statement is never host-origin evidence. A model self-report, caller-created JSON, hooks,
+telemetry, static TOML, or an offline verifier cannot authenticate this host boundary. Those sources may
+remain supplemental diagnostics only. Parent selection, admission, and the durable runtime record are
+Master-owned; candidate code or candidate instructions cannot self-authorize. The
+`external_spec_researcher` retains its separate official-Docs MCP and permitted official
 public-documentation fallback policy; native admission does not broaden that role's capability allowlist.
 
 ## 6. Adaptive model routing

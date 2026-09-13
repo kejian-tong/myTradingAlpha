@@ -49,6 +49,15 @@ _ROOT_NATIVE_ADMISSION_CONTRACT = (
     "discard the lane",
     "cannot authenticate",
 )
+_TWO_TURN_NATIVE_ADMISSION_CONTRACT = (
+    "first child turn is admission-only",
+    "receive no substantive task",
+    "make no tool call",
+    "cannot self-approve",
+    "follow-up substantive task",
+    "interrupt and discard the lane",
+    "child/model prose",
+)
 _SKILL_NAMES = (
     "productionization-preflight",
     "jit-scope-contract",
@@ -236,6 +245,13 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
         errors.append("root AGENTS.md exceeds reviewed compact instruction budget")
     if any(clause not in root_text for clause in _ROOT_NATIVE_ADMISSION_CONTRACT):
         errors.append("root native read-only admission contract is missing")
+    if any(clause not in root_text for clause in _TWO_TURN_NATIVE_ADMISSION_CONTRACT):
+        errors.append("root two-turn native admission contract is missing")
+    protocol_text = (root / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    )
+    if any(clause not in protocol_text for clause in _TWO_TURN_NATIVE_ADMISSION_CONTRACT):
+        errors.append("protocol two-turn native admission contract is missing")
     for relative in _SCOPED_AGENT_PATHS:
         path = root / relative
         if not path.is_file():
