@@ -629,6 +629,8 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
     review_ids = (
         record["initial_review_id"], record["moved_head_review_id"], record["final_review_id"],
     )
+    if any(type(review_id) is not int or review_id <= 0 for review_id in review_ids):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
     if len(set(review_ids)) != len(review_ids):
         errors.append("probe review IDs are not distinct")
     if (
