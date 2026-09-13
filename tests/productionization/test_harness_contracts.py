@@ -288,6 +288,35 @@ def test_current_configuration_is_consistent() -> None:
     assert _checker().configuration_errors(ROOT) == []
 
 
+def test_external_review_and_coding_agents_are_permanently_disabled() -> None:
+    root_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert (
+        "GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used."
+        in root_text
+    )
+
+    for relative in (
+        ".agents/skills/merge-gate/SKILL.md",
+        "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
+        "scripts/check_agent_harness.py",
+    ):
+        assert "copilot" not in (ROOT / relative).read_text(encoding="utf-8").lower()
+
+    checker = _checker()
+    assert not hasattr(checker, "github_review_boundary_errors")
+    assert not hasattr(checker, "github_review_boundary_file_errors")
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_agent_harness.py"), "--help"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout
+    assert "--github-review-boundary" not in result.stdout
+
+
 @pytest.mark.parametrize("event", ["session-start", "stop"])
 def test_hook_guard_passes_in_current_checkout(event: str) -> None:
     result = subprocess.run(
