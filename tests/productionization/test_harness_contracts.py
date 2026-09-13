@@ -34,7 +34,15 @@ _COLLABORATION_EVIDENCE_FIELDS = (
 _COLLABORATION_INSTRUCTION_CONTRACT = (
     "Collaboration-control visibility alone is non-blocking.",
     "Do not invoke collaboration controls or delegate nested work.",
-    "Any attempted or completed nested delegation is a blocking violation.",
+    "Any attempted or completed nested delegation is a blocking policy violation.",
+)
+_DELEGATION_POLICY_SURFACES = (
+    Path("AGENTS.md"),
+    Path(".codex/config.toml"),
+    Path("docs/productionization/AGENT_AUDIT_PROTOCOL.md"),
+    Path("docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md"),
+    Path("docs/productionization/CODEX_HOOKS.md"),
+    Path("docs/productionization/CODEX_FEATURE_WATCHLIST.md"),
 )
 
 
@@ -172,6 +180,25 @@ def test_every_non_master_role_has_uniform_collaboration_instruction_contract() 
             assert clause in instructions, f"{role} is missing collaboration contract: {clause}"
 
 
+def test_delegation_policy_is_explicitly_behavioral_on_each_harness_surface() -> None:
+    missing = [
+        str(path)
+        for path in _DELEGATION_POLICY_SURFACES
+        if "behavioral policy" not in (ROOT / path).read_text(encoding="utf-8").lower()
+    ]
+    assert not missing, f"delegation surfaces must identify behavioral policy: {missing}"
+
+
+def test_pretooluse_does_not_claim_agent_identity_enforcement() -> None:
+    hooks = json.loads((ROOT / ".codex/hooks.json").read_text(encoding="utf-8"))
+    pretool_entries = hooks["hooks"]["PreToolUse"]
+    assert all(entry.get("matcher") != "Agent" for entry in pretool_entries)
+
+    hook_policy = (ROOT / "docs/productionization/CODEX_HOOKS.md").read_text(encoding="utf-8").lower()
+    for term in ("agent", "pretooluse", "caller", "identity", "specialized", "opt out", "global deny", "master"):
+        assert term in hook_policy, f"hook policy must document why Agent PreToolUse is not enforcement: {term}"
+
+
 @pytest.mark.parametrize("role", _NON_MASTER_ROLES)
 def test_missing_collaboration_policy_from_each_role_is_rejected(tmp_path: Path, role: str) -> None:
     fixture = _copy_harness_fixture(tmp_path)
@@ -183,6 +210,23 @@ def test_missing_collaboration_policy_from_each_role_is_rejected(tmp_path: Path,
 
 def test_complete_exact_version_record_passes_predicate_only() -> None:
     assert _checker().gate_errors(_gate()) == []
+
+
+def test_gate_requires_explicit_behavioral_delegation_control_mode() -> None:
+    record = _gate()
+    record["delegation_control_mode"] = "behavioral_policy"
+    assert _checker().gate_errors(record) == []
+
+
+def test_gate_rejects_missing_delegation_control_mode() -> None:
+    assert _checker().gate_errors(_gate())
+
+
+@pytest.mark.parametrize("mode", ["host_enforced", "unknown", "", None])
+def test_gate_rejects_non_behavioral_delegation_control_modes(mode: object) -> None:
+    record = _gate()
+    record["delegation_control_mode"] = mode
+    assert _checker().gate_errors(record)
 
 
 @pytest.mark.parametrize("visible", [False, True])
