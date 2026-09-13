@@ -60,7 +60,7 @@ def _replace_memory_watchlist_row(text: str, replacement: str) -> str:
 _GOOD_MEMORY_WATCHLIST_ROW = (
     "| Codex Memories (`features.memories`) | explicitly disabled / watch-only | "
     "`features.memories = false` is prospective configuration intent for a trusted project and fresh "
-    "session; the CLI `--enable` flag remains a higher-precedence override; it does not retroactively "
+    "session; the CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not retroactively "
     "change running sessions; project configuration does not authenticate live-runtime state | "
     "adoption requires a separate reviewed harness PR |"
 )
@@ -166,6 +166,7 @@ def test_memory_watchlist_documents_explicit_disablement_and_runtime_limits() ->
         "fresh session",
         "configuration intent",
         "cli",
+        "--config",
         "--enable",
         "higher-precedence",
         "running sessions",
@@ -193,6 +194,24 @@ def test_checker_rejects_memory_watchlist_host_enforcement_claim(tmp_path: Path)
     path.write_text(_replace_memory_watchlist_row(original, hostile_row), encoding="utf-8")
     errors = checker.configuration_errors(fixture)
     assert any("memory" in error.lower() and "watch" in error.lower() for error in errors), errors
+
+
+def test_checker_rejects_memory_watchlist_missing_cli_config_override(tmp_path: Path) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(
+        _replace_memory_watchlist_row(original, _GOOD_MEMORY_WATCHLIST_ROW), encoding="utf-8"
+    )
+    assert checker.configuration_errors(fixture) == []
+
+    missing_config_row = _GOOD_MEMORY_WATCHLIST_ROW.replace("`--config`/", "")
+    path.write_text(
+        _replace_memory_watchlist_row(original, missing_config_row), encoding="utf-8"
+    )
+    errors = checker.configuration_errors(fixture)
+    assert any("memory" in error.lower() and "config" in error.lower() for error in errors), errors
 
 
 def test_telemetry_documents_trusted_role_and_config_path() -> None:
