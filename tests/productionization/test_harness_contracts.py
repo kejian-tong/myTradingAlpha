@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -166,6 +167,8 @@ def _github_review_boundary() -> dict:
         "main_ruleset_postimage_updated_at": "2026-09-13T11:45:00Z",
         "main_ruleset_preimage_digest": "a" * 64,
         "main_ruleset_postimage_digest": "b" * 64,
+        "main_ruleset_preimage_etag_digest": "d" * 64,
+        "main_ruleset_postimage_etag_digest": "e" * 64,
         "main_ruleset_active": True,
         "main_ruleset_bypass_actor_count": 0,
         "main_ruleset_required_statuses_strict": True,
@@ -182,7 +185,7 @@ def _github_review_boundary() -> dict:
         "auto_review_on_push": True,
         "auto_review_custom_instructions_enabled": False,
         "auto_review_mcp_enabled": False,
-        "auto_review_model": "Balanced",
+        "auto_review_effort": "Balanced",
         "auto_review_approvals_enabled": True,
         "reviews_page_size": 100,
         "reviews_page_count": 1,
@@ -477,7 +480,7 @@ def test_github_review_boundary_rulesets_pagination_and_exact_types_fail_closed(
         "auto_review_on_push_disabled": ("auto_review_on_push", False),
         "custom_instructions_enabled": ("auto_review_custom_instructions_enabled", True),
         "mcp_enabled": ("auto_review_mcp_enabled", True),
-        "wrong_model": ("auto_review_model", "High"),
+        "wrong_effort": ("auto_review_effort", "High"),
         "auto_approvals_disabled": ("auto_review_approvals_enabled", False),
         "wrong_page_size": ("reviews_page_size", 99),
         "page_cap_exceeded": ("reviews_page_count", 11),
@@ -491,6 +494,7 @@ def test_github_review_boundary_rulesets_pagination_and_exact_types_fail_closed(
         "bool_ruleset_id": ("main_ruleset_id", True),
         "integer_boolean": ("required_checks_pass", 1),
         "non_utc_timestamp": ("captured_at", "2026-09-13T12:30:00-05:00"),
+        "invalid_calendar_date": ("captured_at", "2026-02-31T12:30:00Z"),
         "non_utc_initial_review": ("initial_review_submitted_at", "2026-09-13T12:00:00+00:00"),
         "non_utc_moved_review": ("moved_head_review_submitted_at", "2026-09-13T12:10:00+00:00"),
         "non_utc_final_review": ("final_review_submitted_at", "2026-09-13T12:20:00+00:00"),
@@ -498,6 +502,10 @@ def test_github_review_boundary_rulesets_pagination_and_exact_types_fail_closed(
         "short_digest": ("main_ruleset_postimage_digest", "b" * 63),
         "uppercase_digest": ("auto_review_ruleset_digest", "C" * 64),
         "unchanged_main_projection": ("main_ruleset_postimage_digest", "a" * 64),
+        "unchanged_main_etag": ("main_ruleset_postimage_etag_digest", "d" * 64),
+        "review_time_regression": ("moved_head_review_submitted_at", "2026-09-13T11:59:59Z"),
+        "review_after_capture": ("final_review_submitted_at", "2026-09-13T12:31:00Z"),
+        "ruleset_time_regression": ("main_ruleset_postimage_updated_at", "2026-09-13T11:29:59Z"),
     }
     for name, (field, value) in mutations.items():
         record = _github_review_boundary()
@@ -520,12 +528,60 @@ def test_github_review_boundary_rejects_ambiguous_or_unsanitized_input() -> None
     duplicate = canonical.replace('"schema_version":1', '"schema_version":1,"schema_version":1', 1)
     assert _github_boundary_errors(duplicate.encode("utf-8"))
 
+    noncanonical = json.dumps(record, indent=2).encode("ascii")
+    assert _github_boundary_errors(noncanonical)
+
     assert _github_boundary_errors(b"{" + b" " * 65_536 + b"}")
 
     for forbidden in ("authorization_token", "filesystem_path", "raw_response"):
         unsanitized = dict(record)
         unsanitized[forbidden] = "must never be persisted"
         assert _github_boundary_errors(_boundary_raw(unsanitized)), forbidden
+
+
+def test_github_review_boundary_cli_input_is_bounded_regular_and_no_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checker = _checker()
+    validator = getattr(checker, "github_review_boundary_file_errors", None)
+    assert validator is not None, "missing bounded GitHub review-boundary file reader"
+
+    evidence = tmp_path / "boundary.json"
+    evidence.write_bytes(_boundary_raw(_github_review_boundary()))
+    cli = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_agent_harness.py"),
+         "--github-review-boundary", str(evidence)],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert cli.returncode == 0, cli.stdout
+    assert "offline consistency only" in cli.stdout
+
+    observed_flags = []
+    real_open = checker.os.open
+
+    def observe_open(path: object, flags: int) -> int:
+        observed_flags.append(flags)
+        return real_open(path, flags)
+
+    monkeypatch.setattr(checker.os, "open", observe_open)
+    assert validator(evidence) == []
+    assert observed_flags and observed_flags[0] & checker.os.O_NOFOLLOW
+
+    symlink = tmp_path / "boundary-link.json"
+    symlink.symlink_to(evidence)
+    assert validator(symlink)
+
+    fifo = tmp_path / "boundary.fifo"
+    os.mkfifo(fifo)
+    assert validator(fifo)
+
+    oversized = tmp_path / "boundary-oversized.json"
+    oversized.write_bytes(b" " * 65_537)
+    assert validator(oversized)
 
 
 def test_github_review_boundary_policy_is_status_only_not_merge_authority() -> None:
