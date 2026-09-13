@@ -98,15 +98,19 @@ _GITHUB_BOUNDARY_FIELDS = {
     "open_main_prs_base_ref", "open_main_prs_probe_pr_number",
     "review_actor_id", "review_actor_login", "review_actor_type", "initial_head_sha",
     "initial_review_id", "initial_review_actor_id", "initial_review_commit_sha",
-    "initial_review_state", "initial_review_submitted_at", "moved_head_sha",
+    "initial_review_state", "initial_review_submitted_at", "initial_review_pre_dismiss_state",
+    "initial_review_pre_dismiss_observed_at", "moved_head_sha",
     "moved_head_review_id", "moved_head_review_actor_id", "moved_head_review_commit_sha",
     "moved_head_review_state", "moved_head_review_submitted_at",
+    "moved_head_review_pre_dismiss_state", "moved_head_review_pre_dismiss_observed_at",
     "negative_probe_dismissed_review_id", "negative_probe_head_sha",
     "negative_probe_review_decision", "negative_probe_merge_status",
-    "negative_probe_merge_eligible", "final_review_id", "final_review_actor_id",
+    "negative_probe_merge_eligible", "negative_probe_observed_at",
+    "final_review_id", "final_review_actor_id",
     "final_review_commit_sha", "final_review_state", "final_review_submitted_at",
     "positive_probe_head_sha", "positive_probe_review_decision", "positive_probe_merge_status",
-    "positive_probe_merge_eligible", "reviewer_is_last_pusher", "reviewer_is_last_pusher_basis",
+    "positive_probe_merge_eligible", "positive_probe_observed_at",
+    "reviewer_is_last_pusher", "reviewer_is_last_pusher_basis",
     "controlling_review_head_sha", "controlling_review_approved", "required_checks_head_sha",
     "required_checks_pass", "main_ruleset_id", "main_ruleset_preimage_updated_at",
     "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
@@ -135,8 +139,10 @@ _GITHUB_BOUNDARY_DIGEST_FIELDS = (
     "auto_review_ruleset_digest",
 )
 _GITHUB_BOUNDARY_TIME_FIELDS = (
-    "captured_at", "initial_review_submitted_at", "moved_head_review_submitted_at",
-    "final_review_submitted_at", "main_ruleset_preimage_updated_at",
+    "captured_at", "initial_review_submitted_at", "initial_review_pre_dismiss_observed_at",
+    "moved_head_review_submitted_at", "moved_head_review_pre_dismiss_observed_at",
+    "negative_probe_observed_at", "final_review_submitted_at", "positive_probe_observed_at",
+    "main_ruleset_preimage_updated_at",
     "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
     "auto_review_ruleset_updated_at",
 )
@@ -498,17 +504,45 @@ def _parse_utc_timestamp(value: object) -> datetime | None:
     return parsed if parsed.utcoffset().total_seconds() == 0 else None
 
 
+def _json_nesting_exceeds(raw: bytes, limit: int = 128) -> bool:
+    depth = 0
+    quoted = False
+    escaped = False
+    for byte in raw:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (91, 123):
+            depth += 1
+            if depth > limit:
+                return True
+        elif byte in (93, 125):
+            depth -= 1
+    return False
+
+
 def github_review_boundary_errors(raw: bytes) -> list[str]:
     """Check sanitized supplied facts; never authenticate GitHub or authorize merge."""
-    if type(raw) is not bytes or not raw or len(raw) > 65_536:
+    if type(raw) is not bytes or not raw or len(raw) > 65_536 or _json_nesting_exceeds(raw):
         return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
     try:
         record = json.loads(raw, object_pairs_hook=_unique_object)
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
     if type(record) is not dict or set(record) != _GITHUB_BOUNDARY_FIELDS:
         return ["missing or unknown GitHub review-boundary fields; insufficient_evidence"]
-    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    try:
+        canonical = json.dumps(
+            record, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")
+    except (RecursionError, UnicodeError):
+        return ["invalid GitHub review-boundary evidence; insufficient_evidence"]
     if raw != canonical:
         return ["non-canonical GitHub review-boundary evidence; insufficient_evidence"]
 
@@ -532,10 +566,14 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         if not (
             parsed_times["auto_review_ruleset_updated_at"]
             < parsed_times["initial_review_submitted_at"]
+            <= parsed_times["initial_review_pre_dismiss_observed_at"]
             < parsed_times["main_ruleset_preimage_captured_at"]
             < parsed_times["main_ruleset_postimage_updated_at"]
             < parsed_times["moved_head_review_submitted_at"]
+            <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
+            < parsed_times["negative_probe_observed_at"]
             < parsed_times["final_review_submitted_at"]
+            <= parsed_times["positive_probe_observed_at"]
             <= captured
         ):
             errors.append("GitHub review/ruleset transition provenance is not strictly ordered")
@@ -595,7 +633,9 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         errors.append("probe review IDs are not distinct")
     if (
         record["initial_review_state"] != "DISMISSED"
+        or record["initial_review_pre_dismiss_state"] != "APPROVED"
         or record["moved_head_review_state"] != "DISMISSED"
+        or record["moved_head_review_pre_dismiss_state"] != "APPROVED"
         or record["negative_probe_dismissed_review_id"] != record["moved_head_review_id"]
         or record["final_review_state"] != "APPROVED"
     ):
