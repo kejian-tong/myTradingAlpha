@@ -65,6 +65,12 @@ _SKILL_NAMES = (
     "tdd-red-green-evidence",
     "exact-head-review",
     "merge-gate",
+    "writer-lease",
+)
+_WRITER_LEASE_STATIC_SURFACES = (
+    "scripts/writer_lease.py",
+    "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
+    ".agents/skills/writer-lease/SKILL.md",
 )
 _ORDER = tuple(
     f"{prefix}-{number:02d}"
@@ -273,6 +279,9 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
             errors.append(f"missing skill description: {name}")
         if name not in root_text:
             errors.append(f"root AGENTS.md does not advertise repo skill: {name}")
+    for relative in _WRITER_LEASE_STATIC_SURFACES:
+        if not (root / relative).is_file():
+            errors.append(f"missing writer lease static surface: {relative}")
     if "`astra_canary`" not in root_text or "GPT-6 production routes remain disabled" not in root_text:
         errors.append("root Astra canary policy is missing or activates GPT-6 production routing")
     watchlist = root / _WATCHLIST_PATH

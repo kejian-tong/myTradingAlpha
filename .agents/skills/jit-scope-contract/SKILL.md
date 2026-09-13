@@ -31,6 +31,8 @@ Create a durable contract tied to the exact current base SHA with:
 - the complete preflight `risk_profile` using the reviewed seven tags;
 - whether adversarial boundary preflight was mandatory and, when required, the exact base SHA and
   `boundary_reviewer` evidence used;
+- the writer-lease identity plan, required lifecycle checkpoints, evidence/export binding, and any explicit
+  bootstrap limitation;
 - for every true risk tag, an adversarial contract matrix entry mapping concrete attack/failure cases ->
   invariant -> RED/validation evidence -> expected closure verdict.
 

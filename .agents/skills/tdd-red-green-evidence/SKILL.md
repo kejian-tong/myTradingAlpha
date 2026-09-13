@@ -7,6 +7,15 @@ description: Produce auditable RED to GREEN to REFACTOR evidence for one myTradi
 
 Use for executable roadmap behavior after the JIT contract is durable.
 
+## Writer lease
+
+For a fresh implementation or repair lane, the Master acquires the repository-global lease before the writer
+starts. The writer uses only the Master-issued tuple and records applicable `writer_start`, `before_red`,
+`before_green`, `before_commit`, and `before_push` checkpoints. The writer never acquires or releases the
+lease. After independent host observation establishes that the writer stopped, the Master releases and
+exports the canonical evidence. Checkpoints are cooperative declarations, not runtime identity or order
+attestation; any mismatch or ambiguous transition fails closed.
+
 ## RED
 
 1. Add only the smallest focused tests, fixtures, or deterministic test harness needed to express the

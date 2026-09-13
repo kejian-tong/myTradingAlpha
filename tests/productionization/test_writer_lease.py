@@ -743,8 +743,10 @@ def test_acquire_rejects_path_digest_case_and_size_attacks_without_reflection(
 ) -> None:
     primary, _linked, base_sha, _common = _repository(tmp_path)
     canary = f"SECRET-{hostile}-CANARY"
+    identity = _identity(base_sha)
+    identity[field] = canary
     with pytest.raises(lease.WriterLeaseError) as exc_info:
-        _acquire(lease, primary, base_sha, **{field: canary})
+        lease.acquire(repo_root=primary, **identity)
     captured = capsys.readouterr()
     combined = f"{exc_info.value}\n{captured.out}\n{captured.err}"
     assert canary not in combined

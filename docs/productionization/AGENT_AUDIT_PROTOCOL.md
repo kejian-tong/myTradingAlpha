@@ -185,6 +185,27 @@ route/loading contradictions; tool
 visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
 events, spawn agents, contact GitHub, write files, or merge a PR.
 
+### 2.2 Repository-global writer lease
+
+Every fresh implementation or repair writer must follow `.agents/skills/writer-lease/SKILL.md` after
+`scripts/writer_lease.py` is available on refreshed trusted `main`. The Master acquires the fixed
+Git-common-dir lease before the writer starts, retains the exact PR/base/role and pseudonymous owner/session
+references plus generated lease ID, and requires cooperative verification at applicable writer, RED, GREEN,
+commit, and push boundaries. The writer must never acquire or release its own lease.
+
+Release is permitted only after the Master obtains independent host observation that the writer stopped.
+The helper cannot authenticate that prerequisite, a runtime identity, or real-world checkpoint order. Its
+canonical bounded event chain is structural evidence that must be exported, validated, digest-bound, and
+reconciled with host and Git evidence during exact-head review and the Master merge gate. Any conflicting,
+partial, malformed, unsafe, exhausted, or ambiguous state fails closed. There is no candidate-controlled
+stale-state transition; manual quarantine requires prior independent stopped-state evidence.
+
+The lease is a cooperative guard among harness-compliant writers sharing a Git common directory. It is not
+a security boundary against a malicious same-user process capable of rewriting repository metadata.
+Ordinary CI and the offline harness checker validate only the static contract and must not consult live lease
+state. The introducing PR is a disclosed bootstrap exception: candidate code cannot authorize its own writer,
+so the Master must separately record external single-writer observation.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**

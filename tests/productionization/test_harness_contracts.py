@@ -68,6 +68,7 @@ def _copy_harness_fixture(tmp_path: Path) -> Path:
         "codex_hook_guard.py",
         "codex_telemetry_hook.py",
         "codex_pretool_guard.py",
+        "writer_lease.py",
     )
     (tmp_path / "scripts").mkdir()
     for name in scripts:

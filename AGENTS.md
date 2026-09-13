@@ -64,7 +64,8 @@ For productionization workflow procedures, use the repo skills under `.agents/sk
 - `jit-scope-contract`;
 - `tdd-red-green-evidence`;
 - `exact-head-review`;
-- `merge-gate`.
+- `merge-gate`;
+- `writer-lease`.
 
 Skills describe how to execute repeatable procedures; they never override the invariants or authority in
 this file or scoped `AGENTS.md` files.
@@ -110,6 +111,14 @@ Use hybrid concurrency:
 
 The project concurrency guardrail is six open spawned threads. Six is burst headroom, not a target.
 Do not spawn redundant agents merely to fill capacity.
+
+For every fresh implementation or repair writer after the lease helper is available on refreshed trusted
+`main`, the Master must use the `writer-lease` skill. Acquire the repository-global lease before starting
+the writer, require cooperative checkpoints at applicable RED/GREEN/commit/push boundaries, and release it
+only after independent host observation establishes that the writer stopped. The candidate and writer cannot
+self-authorize acquisition or release. Persist bounded canonical lease evidence for review and the merge gate;
+any missing, malformed, mismatched, exhausted, partial, or ambiguous state fails closed. This is cooperative
+one-writer evidence, not authenticated runtime identity or protection from a malicious same-user process.
 
 Named specialist roles:
 
