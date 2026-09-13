@@ -45,6 +45,7 @@ _DELEGATION_POLICY_SURFACES = (
     Path("docs/productionization/CODEX_HOOKS.md"),
     Path("docs/productionization/CODEX_FEATURE_WATCHLIST.md"),
 )
+_COPILOT_REVIEW_ACTOR_ID = 175_728_472
 
 
 def _role_path(root: Path, role: str) -> Path:
@@ -127,18 +128,18 @@ def _github_review_boundary() -> dict:
         "pr_author_login": "repository-owner",
         "head_sha": final_head,
         "captured_at": "2026-09-13T12:30:00Z",
-        "review_actor_id": 173_030_881,
+        "review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "review_actor_login": "copilot-pull-request-reviewer[bot]",
         "review_actor_type": "Bot",
         "initial_head_sha": initial_head,
         "initial_review_id": 910_001,
-        "initial_review_actor_id": 173_030_881,
+        "initial_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "initial_review_commit_sha": initial_head,
         "initial_review_state": "DISMISSED",
         "initial_review_submitted_at": "2026-09-13T12:00:00Z",
         "moved_head_sha": final_head,
         "moved_head_review_id": 910_002,
-        "moved_head_review_actor_id": 173_030_881,
+        "moved_head_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "moved_head_review_commit_sha": final_head,
         "moved_head_review_state": "DISMISSED",
         "moved_head_review_submitted_at": "2026-09-13T12:10:00Z",
@@ -148,7 +149,7 @@ def _github_review_boundary() -> dict:
         "negative_probe_merge_status": "BLOCKED",
         "negative_probe_merge_eligible": False,
         "final_review_id": 910_003,
-        "final_review_actor_id": 173_030_881,
+        "final_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "final_review_commit_sha": final_head,
         "final_review_state": "APPROVED",
         "final_review_submitted_at": "2026-09-13T12:20:00Z",
@@ -167,6 +168,8 @@ def _github_review_boundary() -> dict:
         "main_ruleset_postimage_updated_at": "2026-09-13T11:45:00Z",
         "main_ruleset_preimage_digest": "a" * 64,
         "main_ruleset_postimage_digest": "b" * 64,
+        "main_ruleset_unchanged_preimage_digest": "f" * 64,
+        "main_ruleset_unchanged_postimage_digest": "f" * 64,
         "main_ruleset_preimage_etag_digest": "d" * 64,
         "main_ruleset_postimage_etag_digest": "e" * 64,
         "main_ruleset_active": True,
@@ -431,9 +434,9 @@ def test_github_review_boundary_identity_status_and_exact_head_fail_closed() -> 
         "actor_login": ("review_actor_login", "copilot-pull-request-reviewer[bot].attacker"),
         "actor_type": ("review_actor_type", "User"),
         "actor_id": ("review_actor_id", 0),
-        "initial_actor_changed": ("initial_review_actor_id", 173_030_882),
-        "moved_actor_changed": ("moved_head_review_actor_id", 173_030_882),
-        "final_actor_changed": ("final_review_actor_id", 173_030_882),
+        "initial_actor_changed": ("initial_review_actor_id", _COPILOT_REVIEW_ACTOR_ID + 1),
+        "moved_actor_changed": ("moved_head_review_actor_id", _COPILOT_REVIEW_ACTOR_ID + 1),
+        "final_actor_changed": ("final_review_actor_id", _COPILOT_REVIEW_ACTOR_ID + 1),
         "author_matches_actor": ("pr_author_login", "copilot-pull-request-reviewer[bot]"),
         "initial_head_not_bound": ("initial_review_commit_sha", "3" * 40),
         "moved_head_not_changed": ("initial_head_sha", "2" * 40),
@@ -502,6 +505,7 @@ def test_github_review_boundary_rulesets_pagination_and_exact_types_fail_closed(
         "short_digest": ("main_ruleset_postimage_digest", "b" * 63),
         "uppercase_digest": ("auto_review_ruleset_digest", "C" * 64),
         "unchanged_main_projection": ("main_ruleset_postimage_digest", "a" * 64),
+        "unchanged_projection_drift": ("main_ruleset_unchanged_postimage_digest", "0" * 64),
         "unchanged_main_etag": ("main_ruleset_postimage_etag_digest", "d" * 64),
         "review_time_regression": ("moved_head_review_submitted_at", "2026-09-13T11:59:59Z"),
         "review_after_capture": ("final_review_submitted_at", "2026-09-13T12:31:00Z"),
@@ -511,6 +515,36 @@ def test_github_review_boundary_rulesets_pagination_and_exact_types_fail_closed(
         record = _github_review_boundary()
         record[field] = value
         assert _github_boundary_errors(_boundary_raw(record)), name
+
+
+def test_github_review_boundary_rejects_coordinated_actor_id_substitution() -> None:
+    checker = _checker()
+    record = {
+        key: value
+        for key, value in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS
+    }
+    substituted = _COPILOT_REVIEW_ACTOR_ID + 1
+    for field in (
+        "review_actor_id",
+        "initial_review_actor_id",
+        "moved_head_review_actor_id",
+        "final_review_actor_id",
+    ):
+        record[field] = substituted
+    assert _github_boundary_errors(_boundary_raw(record)), "stable actor ID must be fixed, not merely equal"
+
+
+def test_github_review_boundary_explicit_probe_heads_remain_exact_head_bound() -> None:
+    checker = _checker()
+    for field in ("moved_head_sha", "negative_probe_head_sha", "positive_probe_head_sha"):
+        record = {
+            key: value
+            for key, value in _github_review_boundary().items()
+            if key in checker._GITHUB_BOUNDARY_FIELDS
+        }
+        record[field] = "3" * 40
+        assert _github_boundary_errors(_boundary_raw(record)), field
 
 
 def test_github_review_boundary_rejects_ambiguous_or_unsanitized_input() -> None:
