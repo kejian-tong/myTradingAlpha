@@ -23,16 +23,9 @@ MAX_CONFIG_PATH_LENGTH = 256
 MAX_TOOL_COUNT = 256
 MAX_TOOL_NAME_LENGTH = 256
 _EXTERNAL_SPEC_ROLE = "external_spec_researcher"
-_ZERO_TOOL_ROLES = frozenset(
-    {
-        "reviewer_high",
-        "reviewer_xhigh",
-        "code_explorer",
-        "test_auditor",
-        "boundary_reviewer",
-        "astra_canary",
-    }
-)
+_EXTERNAL_SPEC_MCP_SERVER = "openaiDeveloperDocs"
+_OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
+_REVIEWED_EXTERNAL_SPEC_TOOLS = ("fetch_openai_doc", "search_openai_docs")
 
 REQUIRED_FIELDS = frozenset(
     {
@@ -71,9 +64,13 @@ _SAFE_TOOL_RE = re.compile(r"[A-Za-z0-9_.:/_-]+\Z")
 _REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 )
-_SANDBOX_MODES = frozenset({"disabled", "read-only", "workspace-write", "danger-full-access"})
+_SANDBOX_MODES = frozenset(
+    {"disabled", "read-only", "workspace-write", "danger-full-access"}
+)
 _PERMISSION_SYSTEMS = frozenset({"legacy_sandbox", "permission_profile"})
-_PERMISSION_PROFILES = frozenset({"disabled", ":read-only", ":workspace", ":danger-full-access"})
+_PERMISSION_PROFILES = frozenset(
+    {"disabled", ":read-only", ":workspace", ":danger-full-access"}
+)
 _APPROVAL_POLICIES = frozenset({"untrusted", "on-failure", "on-request", "never"})
 _MULTI_AGENT_VERSIONS = frozenset({"v1", "v2"})
 
@@ -186,7 +183,9 @@ def _local_enforcement_is_read_only(receipt: Mapping[str, object]) -> bool:
 
 
 def _git_environment() -> dict[str, str]:
-    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    environment = {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
     environment.update(
         GIT_NO_LAZY_FETCH="1",
         GIT_NO_REPLACE_OBJECTS="1",
@@ -268,7 +267,8 @@ def _repository_is_partial_or_promisor(root: Path) -> bool:
         raise ValueError("local promisor configuration lookup failed")
     truthy = {"1", "on", "true", "yes"}
     return any(
-        line.rpartition(" ")[2].strip().lower() in truthy for line in promisors.stdout.splitlines()
+        line.rpartition(" ")[2].strip().lower() in truthy
+        for line in promisors.stdout.splitlines()
     )
 
 
@@ -304,12 +304,48 @@ def _validate_role_mcp_intent(
     role: str,
     configured: dict[str, Any],
 ) -> tuple[list[str], frozenset[str]]:
-    """Reject MCP for every role; the external-spec lane is unavailable."""
-    if "mcp_servers" in configured:
-        return ["read-only role must not declare mcp_servers"], frozenset()
-    if role == _EXTERNAL_SPEC_ROLE:
-        return ["external_spec_researcher has no admissible runtime receipt"], frozenset()
-    return [], frozenset()
+    """Validate exact role MCP intent and return its canonical admitted tools."""
+    if role != _EXTERNAL_SPEC_ROLE:
+        if "mcp_servers" in configured:
+            return ["ordinary role must not declare mcp_servers"], frozenset()
+        return [], frozenset()
+
+    mcp_servers = configured.get("mcp_servers")
+    if type(mcp_servers) is not dict:
+        return ["external_spec_researcher must declare exactly one MCP server"], frozenset()
+    if set(mcp_servers) != {_EXTERNAL_SPEC_MCP_SERVER}:
+        return ["external_spec_researcher MCP server identity is not the reviewed server"], frozenset()
+    server = mcp_servers.get(_EXTERNAL_SPEC_MCP_SERVER)
+    if type(server) is not dict:
+        return ["external_spec_researcher MCP server configuration must be an object"], frozenset()
+    if set(server) != {"url", "enabled_tools"}:
+        return ["external_spec_researcher MCP server fields differ from reviewed intent"], frozenset()
+
+    errors = _text(server.get("url"), "OpenAI Docs MCP url", maximum=MAX_TEXT_LENGTH)
+    if server.get("url") != _OPENAI_DOCS_MCP_URL:
+        errors.append("OpenAI Docs MCP endpoint differs from reviewed intent")
+
+    enabled_tools = server.get("enabled_tools")
+    if type(enabled_tools) is not list:
+        errors.append("OpenAI Docs MCP enabled_tools must be a list")
+        return errors, frozenset()
+    if len(enabled_tools) > MAX_TOOL_COUNT:
+        errors.append("OpenAI Docs MCP enabled_tools exceeds the bounded count")
+        return errors, frozenset()
+    for tool in enabled_tools:
+        errors.extend(_text(tool, "OpenAI Docs MCP tool", maximum=MAX_TOOL_NAME_LENGTH))
+        if type(tool) is str and _SAFE_TOOL_RE.fullmatch(tool) is None:
+            errors.append("OpenAI Docs MCP tool contains an invalid identifier")
+    if enabled_tools != list(_REVIEWED_EXTERNAL_SPEC_TOOLS):
+        errors.append("OpenAI Docs MCP enabled_tools differ from reviewed intent")
+    if errors:
+        return errors, frozenset()
+    return (
+        [],
+        frozenset(
+            f"mcp__{_EXTERNAL_SPEC_MCP_SERVER}__{tool}" for tool in enabled_tools
+        ),
+    )
 
 
 def _decode_receipt(value: object) -> tuple[object, list[str]]:
@@ -391,9 +427,7 @@ def _validate_values(
         errors.append("role has an invalid identifier")
 
     errors.extend(_text(receipt["runtime_version"], "runtime_version"))
-    errors.extend(
-        _enum(receipt["multi_agent_version"], "multi_agent_version", _MULTI_AGENT_VERSIONS)
-    )
+    errors.extend(_enum(receipt["multi_agent_version"], "multi_agent_version", _MULTI_AGENT_VERSIONS))
     errors.extend(_text(receipt["config_path"], "config_path", maximum=MAX_CONFIG_PATH_LENGTH))
 
     errors.extend(_text(receipt["model"], "model"))
@@ -405,8 +439,12 @@ def _validate_values(
             errors.append(f"{field} must be a lowercase commit/tree SHA")
 
     errors.extend(_enum(receipt["sandbox_mode"], "sandbox_mode", _SANDBOX_MODES))
-    errors.extend(_enum(receipt["permission_system"], "permission_system", _PERMISSION_SYSTEMS))
-    errors.extend(_enum(receipt["permission_profile"], "permission_profile", _PERMISSION_PROFILES))
+    errors.extend(
+        _enum(receipt["permission_system"], "permission_system", _PERMISSION_SYSTEMS)
+    )
+    errors.extend(
+        _enum(receipt["permission_profile"], "permission_profile", _PERMISSION_PROFILES)
+    )
     errors.extend(_enum(receipt["approval_policy"], "approval_policy", _APPROVAL_POLICIES))
 
     if receipt["permission_system"] == "legacy_sandbox":
@@ -431,8 +469,6 @@ def _validate_values(
     elif len(names) > MAX_TOOL_COUNT:
         errors.append("tool_names exceeds the bounded count")
     else:
-        if trusted_role in _ZERO_TOOL_ROLES and names:
-            errors.append("zero-tool role exposed one or more tools")
         for name in names:
             if type(name) is not str or not name or len(name) > MAX_TOOL_NAME_LENGTH:
                 errors.append("tool_names must contain bounded non-empty strings")
@@ -447,10 +483,9 @@ def _validate_values(
             elif name in _SANDBOX_GOVERNED_TOOLS:
                 if not _local_enforcement_is_read_only(receipt):
                     errors.append("local mutation tool lacks read-only enforcement")
-            elif (
-                name in _READ_ONLY_LOCAL_TOOLS
-                or name in _READ_ONLY_OBSERVATION_TOOLS
-                or (trusted_role == _EXTERNAL_SPEC_ROLE and name in allowed_mcp_tools)
+            elif name in _READ_ONLY_LOCAL_TOOLS or name in _READ_ONLY_OBSERVATION_TOOLS or (
+                trusted_role == _EXTERNAL_SPEC_ROLE
+                and name in allowed_mcp_tools
             ):
                 pass
             else:
@@ -548,9 +583,7 @@ def _validate_repository_binding(
             "--verify",
             f"{expected_base_sha}^{{commit}}",
         )
-        expected_tree = _git(
-            resolved_root, "rev-parse", "--verify", f"{expected_head_sha}^{{tree}}"
-        )
+        expected_tree = _git(resolved_root, "rev-parse", "--verify", f"{expected_head_sha}^{{tree}}")
         base_is_ancestor = _git_is_ancestor(
             resolved_root,
             expected_base_sha,

@@ -33,6 +33,13 @@ that the runtime exposed or successfully called the MCP. Project Apps are explic
 but global, installed-plugin, and managed runtime policy remain outside this repository configuration's
 authority.
 
+For every read-only role, the Master must start from a fresh host-enforced read-only parent; live parent
+overrides control and the role TOML remains configuration intent. Before substantive work or any tool call,
+require post-spawn host-origin evidence of the effective child boundary and complete tool inventory under
+root AGENTS.md. This configuration, model self-report, hooks, telemetry, caller evidence, and offline
+validators cannot authenticate that runtime boundary; missing or contradictory host evidence is
+`insufficient_evidence` and the lane must be discarded.
+
 The astra_canary uses GPT-6 Astra / xhigh in a read-only, no-child, no-MCP shadow context for closed
 historical or immutable replay tasks only. It may not implement, repair, control-review, merge, or act as
 Master for an active PR. Adding this canary does not activate a GPT-6 production route. GPT-6 production
@@ -64,15 +71,6 @@ non-master role must load `[agents] enabled = false`; a GPT-5.6 Sol Multi-Agent 
 expose collaboration controls. Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking violation.
-
-For every ordinary read-only lane, invoke `scripts/read_only_role_launcher.py` with its canonical exact-object
-static review bundle and zero-tool runtime. The model receives no shell, file, MCP, Apps, web, browser,
-computer, image, collaboration, permission, approval, discovery, or mutation tool. The launcher requires a
-same-PID `READY` / `RELEASE` bootstrap before the exact signed client can receive candidate bytes. Missing
-context, unsafe objects, runtime/tool contradictions, or post-run drift return `insufficient_evidence`; there
-is no shell fallback. `external_spec_researcher` is unavailable through this launcher until its separate
-remote isolation boundary is proven, and candidate bundles are never sent to that lane.
-
 Record complete runtime observation and stop on an actual non-master invocation attempt; retain
 `telemetry_conflict` for separate route/loading contradictions.
 

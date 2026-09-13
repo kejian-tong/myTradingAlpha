@@ -10,11 +10,11 @@ and exact-head validation; it must not arrive incidentally inside a product-road
 | Capability | Current status | Why | Earliest reconsideration trigger |
 | --- | --- | --- | --- |
 | project-local `.codex/rules/*.rules` | watch only | Codex Rules are experimental and can change; the current sandbox, master-only delegation, hooks and GitHub gates already constrain execution | Rules become stable enough for a small command-policy pilot with `codex execpolicy check` regression cases |
-| Permission Profiles (`default_permissions` / `[permissions]`) | global migration watch only | Permission Profiles are Beta and do not compose with the current `sandbox_mode`-based agent isolation; ordinary read-only lanes instead use a zero-tool static bundle with no local command dispatch | permission profiles mature and a separate pilot proves equivalent or stronger isolation before any migration |
+| Permission Profiles (`default_permissions` / `[permissions]`) | watch only | Permission Profiles are Beta and do not compose with the current `sandbox_mode`-based agent isolation; loaded `sandbox_mode` causes Codex to use the older sandbox system | permission profiles mature and a separate read-only-role pilot proves equivalent or stronger isolation before any migration |
 | project Apps (`features.apps`) | explicitly disabled | productionization sessions do not need Codex Apps; the project setting records configuration intent without claiming control over global, installed-plugin, or managed runtime Apps | a separate reviewed pilot defines the required runtime capability receipt and verifies the actual App surface in a fresh session |
 | Codex Memories (`features.memories`) | off / watch only | this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable recovery; hidden/local learned state must not become execution authority | a future design proves deterministic export/audit/recovery semantics and demonstrates clear value beyond `AGENT_STATE.md`, PR evidence and scoped instructions |
 | OpenTelemetry exporters (`[otel]`) | watch only | current narrow Git-common-dir telemetry captures the routing/concurrency evidence this single repository needs without exporting prompts or broad runtime traces | multi-repo/team observability creates a concrete backend, retention, privacy and access-control requirement |
-| repo-level Codex plugin configuration (`[plugins]`) | watch only | the harness is currently project-specific and already has repo Skills; plugin packaging adds distribution/governance surface without current reuse benefit | the harness is deliberately reused across multiple repositories or teams and plugin packaging has a defined owner/versioning policy |
+| repo-level Codex plugin configuration (`[plugins]`) | watch only | the harness is currently project-specific and already has repo Skills plus role-scoped MCP configuration intent; plugin packaging adds distribution/governance surface without current reuse benefit | the harness is deliberately reused across multiple repositories or teams and plugin packaging has a defined owner/versioning policy |
 
 Official maturity/compatibility facts are mutable external facts. Re-check current OpenAI Codex
 documentation before an adoption proposal; this file records the reviewed decision, not a claim that a
@@ -33,17 +33,12 @@ configuration when it detects any of these unapproved adoption surfaces or bound
 - a top-level `[otel]` table;
 - a top-level `[plugins]` table.
 
-The zero-tool static launcher does not configure a Permission Profile and does not add
-`default_permissions` to `.codex/config.toml`. Its boundary is the exact runtime's proven absence of a
-model local-command tool plus canonical prompt-only candidate delivery, exact signed-client identity,
-and pre-exec handshake/runtime observation.
-
-No repository role declares an MCP server. `external_spec_researcher` fails before model start until a
-separate reviewed remote-isolation design exists, and it never receives candidate bundles. These checks
-describe checked-in configuration intent only. The guard does not claim to inspect or control a user's
-global Codex layer, organization-managed requirements, installed plugins, or other Apps. If external
-managed policy conflicts with the project harness, record the runtime conflict rather than claiming the
-project configuration enforced something it cannot observe.
+The external specification role has an exact role-scoped OpenAI Developer Docs MCP declaration with two
+allowed tool names; ordinary roles declare no external MCP server. These checks describe checked-in
+configuration intent only. The guard does not claim to inspect or control a user's global Codex layer,
+organization-managed requirements, inherited runtime tools, installed ChatGPT plugins, or other Apps
+outside this repository. If external managed policy conflicts with the project harness, record the
+runtime conflict rather than claiming the project configuration enforced something it cannot observe.
 
 ## Adoption protocol
 

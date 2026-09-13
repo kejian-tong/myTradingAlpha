@@ -13,19 +13,6 @@ declared effective capabilities, but it cannot authenticate the host runtime, va
 or parse Codex transcripts. A passing receipt therefore never upgrades an unobserved hook event or a
 claimed model/sandbox/tool route into authenticated evidence.
 
-Ordinary read-only lanes default to `scripts/read_only_role_launcher.py`, a Master-owned top-level static
-review over one canonical exact-object bundle. The exact version-specific runtime sets `shell_tool=false`
-and closes MCP, Apps, web, browser, computer, image, collaboration, discovery, permission, approval, and
-mutation surfaces. A validated bootstrap emits `READY`; the parent verifies `PID == PGID == SID`, arms
-observation, and sends `RELEASE` before the same PID executes the exact signed client and receives candidate
-bytes. Telemetry cannot replace bundle completeness, the exact transmitted-prompt digest, zero tool-event
-counts, handshake ordering, bounded WNOWAIT supervision, cleanup, or post-run exact-head verification.
-
-Schema-v1 receipts remain historical structural supplemental evidence. They do not authenticate current
-runtime behavior and are never admissible for `external_spec_researcher`, which fails before model start
-until a separate reviewed MCP isolation boundary exists. No model self-report, JSONL, hook, telemetry, or
-candidate manifest authorizes review or merge.
-
 Receipts must use `schema_version=1` and `evidence_source=host_runtime`, lowercase SHA-256 digest
 references, exact PR/role/config identity, model/effort, an explicit legacy-sandbox or permission-profile
 system, sandbox/profile/approval values, and a complete sorted unique bounded tool inventory. The caller
@@ -35,12 +22,18 @@ base ancestry, checked-out expected head, matching head tree, and role TOML load
 Partial/promisor repositories reject before object lookup so verification cannot trigger a lazy fetch. It
 rejects unknown or duplicate fields, oversized or invalid Unicode input, role/model/effort drift,
 ambiguous or non-read-only local enforcement for a configured read-only role, collaboration controls,
-high-capability function gateways, and every external App/MCP/connector tool. The external-spec role has
-no admissible runtime receipt. Canonical bare and namespaced mutation/delegation aliases receive the same
-rejection; a receipt never substitutes for the zero-tool launcher event count.
+high-capability function gateways, and external App/MCP/connector tools outside a narrow reviewed
+read-only allowlist. Canonical bare and namespaced mutation/delegation aliases receive the same rejection;
+read-only `list_agents` and `wait_agent` observation controls may remain visible.
 Diagnostic output does not echo untrusted receipt keys or values. The verifier performs no network or
 write operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
 evidence, with independent runtime observation and the normal review/CI/merge gates still required.
+
+Native read-only admission depends on fresh host-origin evidence captured before substantive child work or
+any tool call: the effective sandbox/profile/approval tuple and complete tool inventory. Lifecycle hooks,
+this telemetry stream, model reports, caller JSON, static configuration, and the offline receipt verifier
+cannot authenticate that boundary. Missing or contradictory host evidence discards the lane with
+`insufficient_evidence`; telemetry cannot repair or override the failed admission.
 
 ## Storage and exact-head safety
 

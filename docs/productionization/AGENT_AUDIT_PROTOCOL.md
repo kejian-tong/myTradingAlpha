@@ -62,11 +62,18 @@ disabled and an active built-in profile; the official built-in read-only identit
 `disabled` never means read-only. Local `exec_command`, `write_stdin`, and `apply_patch` exposure is
 admissible only when the declared effective local enforcement is read-only. Local permission enforcement
 does not govern Apps, connectors, MCP servers, browsers, or collaboration controls. The receipt verifier
-therefore rejects every declared tool for an ordinary zero-tool role and rejects every runtime receipt for
-`external_spec_researcher`. It also rejects Codex App, GitHub, Gmail, Sites, unknown, mutation, gateway,
-and collaboration surfaces. The project configuration is intent only; it does not inspect or deny a user's
-global layer, installed plugins, organization-managed policy, or other runtime surfaces. An explicitly
-authorized official-documentation fallback must record `insufficient_evidence` for the unavailable MCP lane.
+therefore rejects every `mcp__` tool for ordinary roles and admits only the exact
+`mcp__openaiDeveloperDocs__fetch_openai_doc` and
+`mcp__openaiDeveloperDocs__search_openai_docs` names for `external_spec_researcher`. It rejects all
+Codex App, GitHub, Gmail, Sites, unknown, and mutation MCP names. High-capability function gateways and
+canonical mutation/delegation collaboration-control aliases are always rejected. Read-only `list_agents`
+and `wait_agent` observation controls may remain visible, but visibility is not runtime authentication.
+The project Apps/MCP declarations are configuration intent; they do not inspect or deny inherited/global
+Apps, installed plugins, organization-managed policy, or other runtime surfaces.
+
+An authorized official web/browser fallback does not satisfy the narrow OpenAI Developer Docs MCP receipt.
+Record the fallback limitation and `insufficient_evidence` for MCP-backed verification when that fallback
+is used.
 
 For example:
 
@@ -85,6 +92,28 @@ The verifier performs no network, file-write, transcript, or runtime-control ope
 must remain supplemental evidence and cannot replace complete runtime observation, independent review,
 required CI, or the Master merge gate. A missing or contradictory receipt remains `insufficient_evidence`
 at any gate that requires authenticated runtime evidence; no caller may upgrade this structural result.
+
+### 1.2 Native parent admission for read-only roles
+
+The repository does not implement a launcher, sandbox, or attestation service. For each read-only role, the
+Master must first establish a fresh host-enforced read-only parent turn/session. The live parent override is
+controlling. A role's `sandbox_mode = "read-only"`, `approval_policy = "never"`, and disabled child-agent
+setting are checked-in intent, not proof of the effective parent or child boundary.
+
+Immediately after spawn and before substantive work or any tool call, the Master must require host-origin
+evidence that identifies the effective child sandbox or permission profile, approval policy, and complete
+tool inventory. Admit the lane only when that evidence is fresh, internally consistent, read-only for local
+access, non-interactive for approvals, and matches the role-specific MCP/tool allowlist. Writable,
+unrestricted, disabled, missing, unknown, stale, inherited-but-unverified, or contradictory evidence means
+discard the lane and record `insufficient_evidence`.
+
+Model prose, caller-created JSON, repository hooks, telemetry, static TOML, and the offline schema-v1
+receipt verifier cannot authenticate a host-origin fact. They may help detect contradictions but cannot
+upgrade missing host evidence. The Master owns admission and its durable record; a candidate, child, hook,
+or verifier cannot self-authorize review or merge. For PR #67 bootstrap review, use a fresh native
+host-read-only profile sourced from protected `main`, not candidate code. The existing
+`external_spec_researcher` Docs MCP/fallback contract remains unchanged and still requires its own observed
+capability evidence.
 
 ## 2. Required named roles
 
@@ -150,123 +179,6 @@ closed. `telemetry_conflict` remains separate blocking evidence for route/loadin
 visibility alone must not set it. The validator checks supplied facts only and cannot authenticate runtime
 events, spawn agents, contact GitHub, write files, or merge a PR.
 
-### 2.2 Current-runtime zero-tool static review launcher
-
-The default path for `reviewer_high`, `reviewer_xhigh`, `code_explorer`, `test_auditor`,
-`boundary_reviewer`, and `astra_canary` is `scripts/read_only_role_launcher.py`. It is a
-Master-owned top-level static review invocation, not an in-process child, a named-agent loaded claim,
-or a shell-capable repository session. The model receives one complete canonical exact-object bundle
-and no model-accessible tool. A successful lane remains review evidence only; candidate code, candidate
-instructions, reviewer output, and the launcher manifest never authorize merge.
-
-#### Exact-object and trusted-context boundary
-
-Before starting a model, the launcher receives explicit full protected policy, base, head, and tree
-object IDs. It verifies commit/tree types, ancestry, a clean detached candidate, and the clean protected
-policy checkout once; bundle construction uses only those exact immutable IDs and never rereads a
-mutable branch name. The caller must provide the canonical realpath and exact identity of the reviewed
-Git executable. Git runs with global/system config, replacement objects, lazy fetch, optional locks,
-terminal prompts, external diff/textconv, filters, hooks, pager, rename heuristics, submodule recursion,
-and all network protocols disabled. Replace refs, alternates, partial/promisor repositories, unreviewed
-repository config, missing objects, stderr, excessive subprocesses, and excessive output fail closed.
-
-The canonical, versioned, domain-separated JSON is built in memory once. Its exact bytes are hashed and
-those same bytes are appended once to the protected-role prompt. Records have deterministic IDs and
-contain:
-
-- policy/base/head/tree identity and disabled-rename semantics;
-- every changed path, old/new mode, and old/new blob ID;
-- a deterministic complete per-path line-opcode diff generated from exact object bytes, with full
-  base/head content records as its immutable operands;
-- the full exact base and head UTF-8 text for every changed file, including explicit absent sides;
-- every applicable root/scoped `AGENTS.md` from base and head as separate tagged records; and
-- explicit Master-supplied JIT, roadmap/phase context, RED, GREEN, and exact-head CI evidence with
-  producer, bound head, command, status, output digest, timestamp, and content provenance.
-
-Base instructions are tagged `trusted_base`; candidate/head instructions, code, diffs, and claims are
-tagged `untrusted_candidate`; Master evidence is tagged `trusted_master_supplied`. Protected role
-policy stays outside the candidate bundle. A roadmap lane must include the assigned row and complete
-relevant DESIGN/IMPLEMENTATION/JIT inputs. A Harness maintenance lane must explicitly mark roadmap row,
-phase DESIGN, and phase IMPLEMENTATION not applicable with a reason. Findings and the final verdict
-must cite bundle record IDs, paths, and base/head blob IDs.
-
-The launcher preserves source bytes without Unicode normalization. It rejects absolute, option-like,
-escaping, invalid-UTF-8, overlong, control-bearing, or bidi-bearing paths; symlink, gitlink, binary,
-missing, or unsafe-mode objects; invalid UTF-8, NUL, ANSI, C0 controls except tab/LF/valid CRLF, bidi
-controls, pathological lines, and reviewed credential/private-key patterns. The fixed
-`.codex/read-only-probe.secret` is verified against its harmless exact bytes and represented only by
-sealed digest/length/mode metadata; its contents never enter the prompt. Any other secret-like changed
-path fails closed.
-
-Hard limits are 1 MiB final bundle, 250,000 estimated input tokens with 22,000 output tokens reserved,
-256 changed paths/files, 1,024 records, 256 KiB per file, 50,000 aggregate lines, 16 KiB per line,
-512 path bytes, 32 trusted-context records, 512 KiB supplied trusted context, 32 Git subprocesses per
-reader, and bounded Git/runtime stdout/stderr/time. Oversize or incomplete review material returns
-`insufficient_evidence`; the fallback is a separately reviewed split or human review, never shell mode.
-
-#### Zero-tool runtime and event admission
-
-For the exact reviewed Codex versions, ordinary roles set `shell_tool=false`,
-`agents.enabled=false`, and no MCP servers. Apps, plugins, hooks, memories, web/search, browser,
-computer, image, worktrees, goals, automation, permission/approval tools, discovery, collaboration,
-skills discovery, and mutation surfaces remain disabled. `code_mode_host=true` is retained only because
-the current client requires the host to initialize; the exact current hostile probe established that
-`shell_tool=false` registers no local command tool. This is version-specific closure, not a generic
-future-runtime claim. The signed Codex executable, its exact SHA-256, and TeamIdentifier `2DC432GLL2`
-are an explicit trusted boundary. Binary validation hashes and verifies the signature without executing
-Codex before the handshake.
-
-Ordinary-role JSONL admits only the single thread/turn lifecycle, bounded reasoning lifecycle, one final
-agent message, and the exact known malformed-agent loader diagnostic. Every command execution, MCP call,
-file change, plan update, tool, web, collaboration, unknown item/event, nonzero command/MCP/tool count,
-failed turn, warning, malformed lifecycle, or unadmitted stderr is blocking. The former direct-shell
-grammar and post-run direct-Codex parser have no security or gate authority and no fallback path.
-
-`external_spec_researcher` is unavailable through this launcher. It returns
-`insufficient_evidence` before model start, does not build or transmit a candidate bundle, and records
-that a Master-owned official OpenAI documentation fallback is a limited alternative only when the parent
-task explicitly permits it. A future MCP lane requires a separate reviewed isolation design; this PR does
-not add an MCP server.
-
-#### Same-PID pre-exec handshake and supervision
-
-The launcher starts a validated Python bootstrap with `-I -S`, scrubbed Python import environment,
-`start_new_session=True`, and private close-on-exec READY/release pipes. The trusted bootstrap imports
-only the standard `os` and `sys` modules, emits `READY:<pid>`, and blocks before exact-client exec or
-candidate-prompt transmission. The parent verifies `PID == PGID == SID`, confirms leader-only original
-group membership, starts bounded stdout/stderr observation, and records `observation_armed` before
-sending `RELEASE`. The bootstrap closes handshake descriptors and `execve` replaces it with the exact
-registered Codex argv in place, preserving PID/group/session. Only then does the parent write the
-immutable prompt bytes.
-
-A failure before RELEASE kills the still-blocked trusted leader/group before its single reap; no
-candidate/model-capable descendant can exist at that point. After release, the supervisor uses
-`waitid(P_PID, ..., WEXITED | WNOHANG | WNOWAIT)`, bounded drainers, timeout escalation, and original
-group membership snapshots. Any unexpected descendant is positive blocking evidence. The supervisor
-freezes buffers and performs exactly one final wait/reap; it never queries or signals the numeric group
-after reap. This is deliberately a bounded exact-client supervision contract, not a claim that userland
-process groups contain arbitrary shell processes or descendants that call `setsid()`.
-
-#### Manifest, freshness, and bootstrap
-
-Manifest v2 binds protected policy/base/head/tree, role/config/model/effort, exact Codex and Git
-identities, bundle byte length/digest/record IDs, exact transmitted-prompt digest, event/output digests,
-zero command/MCP/tool counts, READY/validation/arm/RELEASE/exit/reap ordering, cleanup, Master ownership,
-complete no-delegation observation, and quarantine references. Any commit invalidates the bundle,
-runtime evidence, review, and CI.
-
-Schema-v1 capability receipts remain historical structural supplemental evidence and do not authenticate
-runtime behavior. PR #67 is a bootstrap exception because its protected base predates this architecture:
-the controlling review must use a fresh Master-owned external zero-tool profile and cannot use candidate
-code to authorize itself. Historical shell-capable/non-master smokes remain quarantined and immutable.
-
-The exact signed registry currently contains Codex `0.153.4`
-(`a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629`) and
-`0.154.0-alpha.6.2`
-(`ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb`), both with
-TeamIdentifier `2DC432GLL2`. A future version requires a reviewed exact registration and fresh hostile
-zero-tool evidence. Supporting-tool identity beyond the exact Git/Codex boundary remains a separately
-bounded later issue; it does not permit a shell fallback here.
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**
@@ -351,11 +263,6 @@ The independent reviewer must verify that:
 - when feasible, the focused RED command is rerun at the RED commit in an isolated worktree or equivalent
   non-destructive checkout;
 - the production implementation appears only after the RED commit.
-
-For the current-runtime launcher, the PR evidence must also bind the explicit `--git-binary`,
-`--expected-git-version`, and `--expected-git-sha256` values, plus the exact RED lineage. A repair RED is
-test-only and must precede its repair GREEN; a prior rejected GREEN or receipt proposal cannot substitute
-for the current launcher contract.
 
 If the claimed RED evidence cannot be independently established, mark the TDD evidence
 `insufficient_evidence` and block the merge until corrected.

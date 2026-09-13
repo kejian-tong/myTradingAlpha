@@ -119,22 +119,26 @@ Specialists add evidence; they never replace the controlling independent reviewe
 The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
 immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
 
-### 5.1 Current-runtime read-only invocation
+### 5.1 Native read-only admission
 
-Use `scripts/read_only_role_launcher.py` for every ordinary read-only lane. The Master constructs one
-canonical exact-object static review bundle from a protected base and detached exact candidate head, then
-invokes the role with `shell_tool=false` and no model-accessible command, MCP, Apps, web, browser, computer,
-image, collaboration, permission, approval, discovery, or mutation tool. `code_mode_host=true` remains only
-for the exact current client startup contract and does not register a local command tool.
+Before spawning any reviewer, auditor, explorer, external-spec researcher, or canary, the Master must use
+a fresh host-enforced read-only parent. A writable, unrestricted, disabled, unknown, stale, or merely
+inherited-but-unverified parent permission is inadmissible. The live parent overrides are controlling;
+`sandbox_mode = "read-only"`, `approval_policy = "never"`, and `[agents] enabled = false` in a role file
+are configuration intent only and cannot override contradictory runtime evidence.
 
-The launcher uses a validated isolated Python bootstrap that emits `READY` and blocks on a private release
-pipe. The parent validates `PID == PGID == SID`, arms observation, then sends `RELEASE`; the bootstrap
-executes the exact signed Codex client in place and only then receives the immutable prompt bytes. Any tool
-event, incomplete context, unsafe object, bound violation, handshake/supervision contradiction, or exact-head
-drift returns `insufficient_evidence`. There is no shell fallback or claim of arbitrary process-tree
-containment. `external_spec_researcher` is unavailable through this launcher until a separate reviewed MCP
-isolation design exists; the Master may use an explicitly authorized official-documentation fallback while
-recording the limitation, and candidate bundles are never sent to that lane.
+Require post-spawn host-origin evidence for the effective sandbox/profile/approval tuple and complete tool inventory;
+admission must complete before substantive work or any tool call. The evidence must establish read-only local
+enforcement, non-interactive approval, and only the role-specific tool/MCP surface allowed by policy. If
+the host evidence is unavailable, incomplete, unknown, stale, writable, or contradictory, discard the lane
+and record `insufficient_evidence`; do not let that context continue and do not use its output as review or
+gate evidence.
+
+A model self-report, caller-created JSON, hooks, telemetry, static TOML, or an offline verifier cannot authenticate
+this host boundary. Those sources may remain supplemental diagnostics only. Parent selection,
+admission, and the durable runtime record are Master-owned; candidate code or candidate instructions cannot
+self-authorize. The `external_spec_researcher` retains its separate official-Docs MCP and permitted official
+public-documentation fallback policy; native admission does not broaden that role's capability allowlist.
 
 ## 6. Adaptive model routing
 
@@ -188,14 +192,9 @@ A config file expresses configured intent; it is not proof that a named role act
 requested route, configured route, successfully loaded named-role configured actual, and any independent
 runtime telemetry. Conflicting telemetry must be resolved before claiming a route.
 
-For required read-only review lanes, the protected-policy zero-tool static invocation is an admissible
-role-evidence category. It truthfully records `named_agent_loaded=false`; it is not a child configured-actual
-claim. Its manifest binds the protected role/config/model/effort, base/head/tree, exact binary/Git identities,
-canonical bundle and transmitted-prompt digests, zero tool counts, handshake order, cleanup, and Master
-ownership. Writer roles still require their named-agent route. If the required static context or route cannot
-be established, record `insufficient_evidence` and stop rather than substituting a shell-capable or generic
-lane. PR #67 remains external-profile-only for bootstrap review because its protected base predates the
-launcher. An unavailable optional `astra_canary` blocks only that comparison and never weakens the active Sol
+If a required named role cannot be loaded, record `insufficient_evidence` and stop the affected merge gate.
+Do not silently substitute a generic worker or different model and claim the intended route. An unavailable
+optional `astra_canary` blocks only that canary comparison; it never weakens or replaces the active Sol
 production route.
 
 Routing/config/hook changes apply prospectively after merge, refreshed checkout, and fresh session/agent
