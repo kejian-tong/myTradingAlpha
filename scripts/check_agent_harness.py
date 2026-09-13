@@ -112,6 +112,8 @@ _GITHUB_BOUNDARY_FIELDS = {
     "negative_probe_merge_eligible", "negative_probe_prerequisites_observed_at",
     "negative_probe_required_checks_head_sha", "negative_probe_required_checks_pass",
     "negative_probe_review_threads_resolved", "negative_probe_observed_at",
+    "final_review_rerequest_trigger", "final_review_rerequest_head_sha",
+    "final_review_rerequest_observed_at",
     "final_review_id", "final_review_actor_id",
     "final_review_commit_sha", "final_review_state", "final_review_submitted_at",
     "positive_probe_head_sha", "positive_probe_review_decision", "positive_probe_merge_status",
@@ -142,7 +144,7 @@ _GITHUB_BOUNDARY_SHA_FIELDS = (
     "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
     "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
     "negative_probe_head_sha", "negative_probe_required_checks_head_sha",
-    "final_review_commit_sha", "positive_probe_head_sha",
+    "final_review_rerequest_head_sha", "final_review_commit_sha", "positive_probe_head_sha",
     "controlling_review_head_sha", "required_checks_head_sha",
 )
 _GITHUB_BOUNDARY_DIGEST_FIELDS = (
@@ -159,7 +161,8 @@ _GITHUB_BOUNDARY_TIME_FIELDS = (
     "moved_head_review_trigger_observed_at", "moved_head_review_submitted_at",
     "moved_head_review_pre_dismiss_observed_at",
     "negative_probe_prerequisites_observed_at", "negative_probe_observed_at",
-    "final_review_submitted_at", "positive_probe_observed_at",
+    "final_review_rerequest_observed_at", "final_review_submitted_at",
+    "positive_probe_observed_at",
     "main_ruleset_preimage_updated_at",
     "main_ruleset_preimage_captured_at", "main_ruleset_preimage_refetched_at",
     "main_ruleset_postimage_updated_at",
@@ -594,7 +597,8 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
             <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
             < parsed_times["negative_probe_prerequisites_observed_at"]
             <= parsed_times["negative_probe_observed_at"]
-            < parsed_times["final_review_submitted_at"]
+            < parsed_times["final_review_rerequest_observed_at"]
+            <= parsed_times["final_review_submitted_at"]
             <= parsed_times["positive_probe_observed_at"]
             <= captured
         ):
@@ -656,7 +660,8 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
                 "moved_head_sha", "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
                 "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
                 "negative_probe_head_sha", "negative_probe_required_checks_head_sha",
-                "final_review_commit_sha", "positive_probe_head_sha",
+                "final_review_rerequest_head_sha", "final_review_commit_sha",
+                "positive_probe_head_sha",
                 "controlling_review_head_sha",
                 "required_checks_head_sha",
             )
@@ -668,6 +673,8 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         or record["moved_head_review_trigger"] != "copilot_ruleset_review_on_push"
     ):
         errors.append("review transition is not ruleset push-triggered")
+    if record["final_review_rerequest_trigger"] != "master_explicit_copilot_rerequest":
+        errors.append("final Copilot approval lacks explicit Master re-request provenance")
     review_ids = (
         record["initial_review_id"], record["moved_head_review_id"], record["final_review_id"],
     )
