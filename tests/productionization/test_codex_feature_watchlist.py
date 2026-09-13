@@ -59,9 +59,11 @@ def _replace_memory_watchlist_row(text: str, replacement: str) -> str:
 
 _GOOD_MEMORY_WATCHLIST_ROW = (
     "| Codex Memories (`features.memories`) | explicitly disabled / watch-only | "
-    "`features.memories = false` is prospective configuration intent for a trusted project and fresh "
-    "session; the CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not retroactively "
-    "change running sessions; project configuration does not authenticate live-runtime state | "
+    "this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable recovery; "
+    "`features.memories = false` is prospective configuration intent for a fresh session in a trusted project, "
+    "while CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not retroactively "
+    "change running sessions; project configuration does not authenticate live-runtime state; "
+    "hidden/local learned state must not become execution authority | "
     "adoption requires a separate reviewed harness PR |"
 )
 
@@ -188,8 +190,8 @@ def test_checker_rejects_memory_watchlist_host_enforcement_claim(tmp_path: Path)
     assert checker.configuration_errors(fixture) == []
 
     hostile_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(
-        "project configuration does not authenticate live-runtime state",
-        "project configuration enforces the live host runtime",
+        "project configuration does not authenticate live-runtime state;",
+        "project configuration enforces the live host runtime;",
     )
     path.write_text(_replace_memory_watchlist_row(original, hostile_row), encoding="utf-8")
     errors = checker.configuration_errors(fixture)
@@ -207,8 +209,8 @@ def test_checker_rejects_memory_watchlist_missing_authentication_negation(tmp_pa
     assert checker.configuration_errors(fixture) == []
 
     hostile_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(
-        "project configuration does not authenticate live-runtime state",
-        "project configuration does authenticate live-runtime state",
+        "project configuration does not authenticate live-runtime state;",
+        "project configuration does authenticate live-runtime state;",
     )
     path.write_text(_replace_memory_watchlist_row(original, hostile_row), encoding="utf-8")
     errors = checker.configuration_errors(fixture)
@@ -226,9 +228,9 @@ def test_checker_rejects_memory_watchlist_contradictory_authentication_claim(tmp
     assert checker.configuration_errors(fixture) == []
 
     contradictory_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(
-        "project configuration does not authenticate live-runtime state |",
+        "project configuration does not authenticate live-runtime state; hidden/local learned state",
         "project configuration does not authenticate live-runtime state; "
-        "Project configuration authenticates live-runtime state. |",
+        "Project configuration authenticates live-runtime state.; hidden/local learned state",
     )
     path.write_text(_replace_memory_watchlist_row(original, contradictory_row), encoding="utf-8")
     errors = checker.configuration_errors(fixture)
