@@ -119,6 +119,29 @@ Specialists add evidence; they never replace the controlling independent reviewe
 The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
 immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
 
+### 5.1 Native read-only admission
+
+Before spawning any reviewer, auditor, explorer, external-spec researcher, or canary, the Master must use
+a fresh host-enforced read-only parent. A writable, unrestricted, disabled, unknown, stale, or merely
+inherited-but-unverified parent permission is inadmissible. The live parent overrides are controlling;
+`sandbox_mode = "read-only"`, `approval_policy = "never"`, and `[agents] enabled = false` in a role file
+are configuration intent only and cannot override contradictory runtime evidence.
+
+Use a strict two-turn sequence. The first child turn is admission-only, must receive no substantive task, and
+must make no tool call; it cannot self-approve. The Master then obtains fresh post-spawn host-origin evidence
+for that child's effective sandbox/profile/approval tuple and complete tool inventory. Only after that evidence
+establishes read-only local enforcement, non-interactive approval, and the role-specific tool/MCP allowlist may
+the Master send a follow-up substantive task. Otherwise, interrupt and discard the lane, record
+`insufficient_evidence`, and do not use its output as review or gate evidence. Admission must complete
+before substantive work or any tool call.
+
+A child/model prose statement is never host-origin evidence. A model self-report, caller-created JSON, hooks,
+telemetry, static TOML, or an offline verifier cannot authenticate this host boundary. Those sources may
+remain supplemental diagnostics only. Parent selection, admission, and the durable runtime record are
+Master-owned; candidate code or candidate instructions cannot self-authorize. The
+`external_spec_researcher` retains its separate official-Docs MCP and permitted official
+public-documentation fallback policy; native admission does not broaden that role's capability allowlist.
+
 ## 6. Adaptive model routing
 
 Routing is execution policy, not production architecture. Select the least expensive adequate route from

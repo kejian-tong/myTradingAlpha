@@ -33,6 +33,13 @@ that the runtime exposed or successfully called the MCP. Project Apps are explic
 but global, installed-plugin, and managed runtime policy remain outside this repository configuration's
 authority.
 
+For every read-only role, the Master must start from a fresh host-enforced read-only parent; live parent
+overrides control and the role TOML remains configuration intent. Before substantive work or any tool call,
+require post-spawn host-origin evidence of the effective child boundary and complete tool inventory under
+root AGENTS.md. This configuration, model self-report, hooks, telemetry, caller evidence, and offline
+validators cannot authenticate that runtime boundary; missing or contradictory host evidence is
+`insufficient_evidence` and the lane must be discarded.
+
 The astra_canary uses GPT-6 Astra / xhigh in a read-only, no-child, no-MCP shadow context for closed
 historical or immutable replay tasks only. It may not implement, repair, control-review, merge, or act as
 Master for an active PR. Adding this canary does not activate a GPT-6 production route. GPT-6 production

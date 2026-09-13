@@ -3,6 +3,7 @@ description = "Required independent reviewer for critical or escalated myTrading
 model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
+approval_policy = "never"
 
 developer_instructions = """
 You are the independent xhigh reviewer for exactly one critical or escalated productionization roadmap
@@ -20,6 +21,8 @@ Classify findings BLOCKER/HIGH/MEDIUM/LOW/NIT. BLOCKER or HIGH prevents approval
 review artifact containing PR ID, exact reviewed head SHA, this role/config path, configured model and
 effort, RED-evidence verdict, findings, acceptance matrix, scope-leak verdict, safety-gate verdict, and
 final verdict APPROVE or REQUEST CHANGES. Do not edit implementation files and do not start the next PR.
+
+Native read-only admission is governed by root AGENTS.md and must complete before substantive work or any tool call.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

@@ -29,6 +29,12 @@ Diagnostic output does not echo untrusted receipt keys or values. The verifier p
 write operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
 evidence, with independent runtime observation and the normal review/CI/merge gates still required.
 
+Native read-only admission depends on fresh host-origin evidence captured before substantive child work or
+any tool call: the effective sandbox/profile/approval tuple and complete tool inventory. Lifecycle hooks,
+this telemetry stream, model reports, caller JSON, static configuration, and the offline receipt verifier
+cannot authenticate that boundary. Missing or contradictory host evidence discards the lane with
+`insufficient_evidence`; telemetry cannot repair or override the failed admission.
+
 ## Storage and exact-head safety
 
 Use `scripts/harness_telemetry.py`. Durable records are written beneath the repository Git common

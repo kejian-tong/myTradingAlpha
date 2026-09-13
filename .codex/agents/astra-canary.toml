@@ -3,6 +3,7 @@ description = "Read-only GPT-6 Astra shadow evaluator for closed hardest/critica
 model = "gpt-6-astra"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
+approval_policy = "never"
 
 developer_instructions = """
 You are a shadow-only canary evaluator for myTradingAlpha harness model-routing experiments. Work only on
@@ -25,6 +26,8 @@ result.
 Return a compact benchmark artifact suitable for `scripts/model_routing_benchmark.py`. Canary evidence is
 advisory only: production promotion requires a separate reviewed harness change after representative
 repo-specific evidence.
+
+Native read-only admission is governed by root AGENTS.md and must complete before substantive work or any tool call.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

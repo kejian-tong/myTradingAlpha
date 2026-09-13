@@ -93,6 +93,28 @@ must remain supplemental evidence and cannot replace complete runtime observatio
 required CI, or the Master merge gate. A missing or contradictory receipt remains `insufficient_evidence`
 at any gate that requires authenticated runtime evidence; no caller may upgrade this structural result.
 
+### 1.2 Native parent admission for read-only roles
+
+The repository does not implement a launcher, sandbox, or attestation service. For each read-only role, the
+Master must first establish a fresh host-enforced read-only parent turn/session. The live parent override is
+controlling. A role's `sandbox_mode = "read-only"`, `approval_policy = "never"`, and disabled child-agent
+setting are checked-in intent, not proof of the effective parent or child boundary.
+
+Use a strict two-turn sequence. The first child turn is admission-only, must receive no substantive task, and
+must make no tool call; it cannot self-approve. The Master then obtains fresh host-origin evidence identifying
+that child's effective sandbox or permission profile, approval policy, and complete tool inventory. Only after
+the evidence is fresh, internally consistent, read-only for local access, non-interactive for approvals, and
+matches the role-specific MCP/tool allowlist may the Master send a follow-up substantive task. Otherwise,
+interrupt and discard the lane and record `insufficient_evidence`.
+
+A child/model prose statement is never host-origin evidence. Caller-created JSON, repository hooks, telemetry,
+static TOML, and the offline schema-v1 receipt verifier also cannot authenticate a host-origin fact. They may
+help detect contradictions but cannot upgrade missing host evidence. The Master owns admission and its durable
+record; a candidate, child, hook, or verifier cannot self-authorize review or merge. For PR #67 bootstrap
+review, use a fresh native host-read-only profile sourced from protected `main`, not candidate code. The
+existing `external_spec_researcher` Docs MCP/fallback contract remains unchanged and still requires its own
+observed capability evidence.
+
 ## 2. Required named roles
 
 | Complexity | Implementer | Independent reviewer | Configured route |

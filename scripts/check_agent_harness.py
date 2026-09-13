@@ -2,6 +2,7 @@
 
 A passing predicate checks supplied facts, not their authenticity. The Master must
 obtain authorization, role loading, reviews and CI from independent trusted evidence.
+This checker cannot authenticate host-origin runtime evidence.
 This program never spawns an agent, writes a file, contacts GitHub, or merges a PR.
 """
 
@@ -34,6 +35,28 @@ _COLLABORATION_INSTRUCTION_CONTRACT = (
     "Collaboration-control visibility alone is non-blocking.",
     "Do not invoke collaboration controls or delegate nested work.",
     "Any attempted or completed nested delegation is a blocking violation.",
+)
+_READ_ONLY_ADMISSION_MARKER = (
+    "Native read-only admission is governed by root AGENTS.md and must complete before "
+    "substantive work or any tool call."
+)
+_ROOT_NATIVE_ADMISSION_CONTRACT = (
+    "fresh host-enforced read-only parent",
+    "live parent overrides are controlling",
+    "post-spawn host-origin evidence",
+    "effective sandbox/profile/approval tuple",
+    "complete tool inventory",
+    "discard the lane",
+    "cannot authenticate",
+)
+_TWO_TURN_NATIVE_ADMISSION_CONTRACT = (
+    "first child turn is admission-only",
+    "receive no substantive task",
+    "make no tool call",
+    "cannot self-approve",
+    "follow-up substantive task",
+    "interrupt and discard the lane",
+    "child/model prose",
 )
 _SKILL_NAMES = (
     "productionization-preflight",
@@ -220,6 +243,15 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
     root_text = root_agents.read_text(encoding="utf-8")
     if len(root_text.encode("utf-8")) > 18_000:
         errors.append("root AGENTS.md exceeds reviewed compact instruction budget")
+    if any(clause not in root_text for clause in _ROOT_NATIVE_ADMISSION_CONTRACT):
+        errors.append("root native read-only admission contract is missing")
+    if any(clause not in root_text for clause in _TWO_TURN_NATIVE_ADMISSION_CONTRACT):
+        errors.append("root two-turn native admission contract is missing")
+    protocol_text = (root / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
+        encoding="utf-8"
+    )
+    if any(clause not in protocol_text for clause in _TWO_TURN_NATIVE_ADMISSION_CONTRACT):
+        errors.append("protocol two-turn native admission contract is missing")
     for relative in _SCOPED_AGENT_PATHS:
         path = root / relative
         if not path.is_file():
@@ -275,6 +307,8 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append(f"{name} must not declare role-level features or override project Apps")
             if readonly and role.get("sandbox_mode") != "read-only":
                 errors.append(f"{name} must request read-only mode")
+            if readonly and role.get("approval_policy") != "never":
+                errors.append(f"{name} read-only approval policy intent must be never")
             mcp_servers = role.get("mcp_servers")
             if name == "external_spec_researcher":
                 expected_mcp = {
@@ -292,6 +326,11 @@ def configuration_errors(root: Path) -> list[str]:
                 clause not in instructions for clause in _COLLABORATION_INSTRUCTION_CONTRACT
             ):
                 errors.append(f"{name} collaboration instruction contract is missing")
+            if readonly and (
+                type(instructions) is not str
+                or _READ_ONLY_ADMISSION_MARKER not in instructions
+            ):
+                errors.append(f"{name} native read-only admission intent is missing")
             if name == "normal_implementer" and (
                 type(instructions) is not str or "normal/high/critical" not in instructions
             ):
