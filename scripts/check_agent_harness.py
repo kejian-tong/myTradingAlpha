@@ -195,8 +195,7 @@ _MEMORY_WATCHLIST_LIMITATION_PHRASES = (
     "higher-precedence",
     "running sessions",
     "retroactively",
-    "live-runtime",
-    "authenticate",
+    "project configuration does not authenticate live-runtime state",
 )
 _MEMORY_WATCHLIST_FORBIDDEN_PHRASES = (
     "enforces the live host",
