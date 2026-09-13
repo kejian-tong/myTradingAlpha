@@ -7,13 +7,16 @@ removed from this snapshot remains immutable in Git commits, workflow runs and P
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `6ed694fd6c31af3adc5be6d2ee85d85f54aa408f`
-- `last_reconciled_main_tree`: `070179c0e8350e46bad899c0eb3291f9f07fb0cc`
+- `last_reconciled_main_sha`: `4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4`
+- `last_reconciled_main_tree`: `26d229efd92a3ba6dee6832d2e7e7c123f6573fb`
 - `roadmap_status`: `sig_02_merged_stopped`
 - `current_pr_id`: none
 - `current_phase`: none active
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
   `376c9c044722ee37f3fa36691b576420e3b6253d`
+- `harness_reconciled_through`: `HARNESS-AUD-08` / PR #73 / merge
+  `4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4`
+- `last_reconciled_automatic_review_ruleset_id`: `23141241` (disabled; fresh recheck required)
 - `next_pr_id`: `SIG-03` (informational only; not authorized by the current harness-maintenance task)
 - `stop_after_pr_id`: `SIG-02` (completed historical stop boundary)
 - `autonomy_mode`: disabled for roadmap implementation after SIG-02 completion
@@ -70,19 +73,21 @@ redaction, canonicalization and bounded-work defects. Future high/critical work 
 to shift adversarial boundary analysis earlier during preflight/JIT rather than treating those findings as
 a reason to weaken review.
 
-## Prospective harness policy
+## Current harness policy
 
-`HARNESS-V2-COLLAB-COMPAT` / PR #64 candidate is the bounded execution-harness maintenance change based on
-reconciled main `6ed694fd6c31af3adc5be6d2ee85d85f54aa408f` and tree
-`070179c0e8350e46bad899c0eb3291f9f07fb0cc`. It does not start SIG-03 or any later roadmap slice.
+Merged Harness maintenance PRs #64–#69, #72 and #73 define the current operating boundary. Collaboration
+control visibility in a non-master V2 child is informational only; an actual invocation or completed nested
+delegation blocks progression. Runtime capability receipts, capability isolation and native read-only
+admission remain required, and the Master remains the only role permitted to delegate. The cooperative
+repository-global writer lease is active policy for every fresh implementation or repair writer.
 
-After this policy is merged and a fresh session loads the checkout, collaboration-control visibility in a
-non-master V2 child is informational only. The Master remains the only role permitted to invoke controls or
-delegate work; any attempted or completed nested delegation, including a runtime-denied/no-op attempt,
-blocks progression. All ten non-master roles retain `[agents] enabled = false` and the uniform
-no-invocation instruction contract. The offline gate requires complete strict boolean evidence and retains
-`telemetry_conflict` as separate blocking evidence. This prospective policy does not rewrite the expired
-SIG-02-only exception recorded above or relabel its historical evidence.
+Codex Memories and project Apps are explicitly disabled as checked-in configuration intent. These settings
+apply prospectively to fresh sessions in trusted projects; CLI/configuration overrides, host evidence and
+already-running sessions remain controlling, and checked-in intent does not authenticate live runtime state.
+GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used. The automatic-review
+ruleset `23141241` was observed disabled at the last reconciliation; GitHub/current `main` remains authoritative,
+so it must be freshly rechecked before relying on that fact. PR #70's optional review-boundary machinery was
+removed by PR #73; PR #71 was closed without merge and is not an active recovery target.
 
 ## State and recovery policy
 
