@@ -42,12 +42,18 @@ The destructive-command guard consumes the documented `PreToolUse` event, requir
 and inspects only `tool_input.command`. On a direct match it returns the documented
 `hookSpecificOutput.permissionDecision = "deny"` shape with a reason.
 
+The documented `PreToolUse` event may match `spawn_agent` through the `Agent` alias, but its input does
+not provide an authenticated caller role or agent identity. Specialized paths may opt out of the default
+hook path, and project hook trust may be absent. A global deny for the `Agent` path would also block
+authorized Master orchestration. Master-only delegation is therefore a behavioral policy, not repo-level
+host identity enforcement; no `Agent` `PreToolUse` matcher or handler is installed here.
+
 The parser is intentionally conservative about what it claims to understand. It shell-tokenizes direct
 top-level command segments so quoted text such as `echo "git reset --hard"` is not mistaken for an
 executed Git command. It recognizes ordinary environment/sudo prefixes, but it does **not** claim to
 recursively interpret nested shells, generated scripts, hosted tools, aliases/functions, or every
 possible destructive operation. Unsupported coverage remains governed by the existing sandbox,
-Master-only authority, one-writer policy, human gates and GitHub protection. Do not broaden the matcher
+Master-only behavioral policy, one-writer policy, human gates and GitHub protection. Do not broaden the matcher
 or deny patterns casually; false-positive command blocking is itself a Harness reliability risk.
 
 Malformed input for the matched Bash event fails closed with a deny response because the guard cannot

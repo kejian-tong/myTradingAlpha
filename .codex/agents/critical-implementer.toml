@@ -23,7 +23,7 @@ return `insufficient_evidence` rather than weakening a gate.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
-Any attempted or completed nested delegation is a blocking violation.
+Any attempted or completed nested delegation is a blocking policy violation.
 """
 
 [agents]

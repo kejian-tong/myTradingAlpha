@@ -3,6 +3,7 @@
 A passing predicate checks supplied facts, not their authenticity. The Master must
 obtain authorization, role loading, reviews and CI from independent trusted evidence.
 This checker cannot authenticate host-origin runtime evidence.
+Master-only delegation is a behavioral policy declaration, not repo-level host identity enforcement.
 This program never spawns an agent, writes a file, contacts GitHub, or merges a PR.
 """
 
@@ -34,7 +35,7 @@ _SCOPED_AGENT_PATHS = (
 _COLLABORATION_INSTRUCTION_CONTRACT = (
     "Collaboration-control visibility alone is non-blocking.",
     "Do not invoke collaboration controls or delegate nested work.",
-    "Any attempted or completed nested delegation is a blocking violation.",
+    "Any attempted or completed nested delegation is a blocking policy violation.",
 )
 _READ_ONLY_ADMISSION_MARKER = (
     "Native read-only admission is governed by root AGENTS.md and must complete before "
@@ -79,7 +80,8 @@ _TEXT_FIELDS = ("operation", "session_id", "authorized_session_id", "pr_id", "st
                 "implementer_context", "reviewer_context")
 _GATE_FIELDS = {*_HASH_FIELDS, *_TRUE_FIELDS, *_FALSE_FIELDS, *_TEXT_FIELDS,
                 "authorized_operations", "active_writers", "collaboration_controls_visible",
-                "collaboration_observation_complete", "non_master_collaboration_invoked"}
+                "collaboration_observation_complete", "non_master_collaboration_invoked",
+                "delegation_control_mode"}
 _GUARD_HOOKS = {"SessionStart": "session-start", "Stop": "stop"}
 _TELEMETRY_HOOKS = {"SubagentStart", "SubagentStop", "PostCompact"}
 _TELEMETRY_CLEANUP_HOOK = "SessionEnd"
@@ -356,7 +358,7 @@ def configuration_errors(root: Path) -> list[str]:
 def gate_errors(record: object) -> list[str]:
     """Validate an offline merge-candidate record; PASS is not permission to merge."""
     if type(record) is not dict or set(record) != _GATE_FIELDS:
-        return ["missing or unknown gate fields"]
+        return ["missing or unknown gate fields; insufficient_evidence"]
     errors = []
     if any(type(record[key]) is not str or not record[key] or record[key] != record[key].strip()
            for key in _TEXT_FIELDS):
@@ -373,7 +375,12 @@ def gate_errors(record: object) -> list[str]:
     if type(record["non_master_collaboration_invoked"]) is not bool:
         errors.append("non_master_collaboration_invoked must be an exact boolean")
     elif record["non_master_collaboration_invoked"] is not False:
-        errors.append("non-master collaboration-control invocation is a blocking violation")
+        errors.append("non-master collaboration-control invocation is a blocking policy violation")
+    if record["delegation_control_mode"] != "behavioral_policy":
+        errors.append(
+            "delegation_control_mode must be exactly behavioral_policy; "
+            "the offline validator cannot authenticate host caller identity"
+        )
     if any(record[key] is not True for key in _TRUE_FIELDS):
         errors.append("required evidence is not verified")
     if any(record[key] is not False for key in _FALSE_FIELDS):
