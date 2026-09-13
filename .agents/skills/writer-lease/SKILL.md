@@ -12,8 +12,8 @@ process that rewrites Git metadata.
 
 ## Master procedure
 
-1. Confirm the exact authorized PR ID, base SHA, named writer role, dedicated writer worktree, and that no
-   prior writer remains active. Generate pseudonymous 64-lowercase-hex `owner_ref` and `session_ref`
+1. Confirm the exact authorized PR ID, base SHA, named writer role, and that no prior writer remains active.
+   Generate pseudonymous 64-lowercase-hex `owner_ref` and `session_ref`
    correlation values; never store raw agent/session IDs, paths, credentials, or transcripts.
 2. From trusted `main`, call `scripts/writer_lease.py acquire` before the writer starts. Persist the returned
    generated `lease_id` and the six-field identity tuple. Acquisition is intentionally non-idempotent.

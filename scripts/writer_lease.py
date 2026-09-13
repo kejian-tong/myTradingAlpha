@@ -13,7 +13,7 @@ import stat
 import subprocess
 import sys
 from collections.abc import Iterable
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ STATE_DIRECTORY = "codex-writer-lease"
 ACTIVE_NAME = "active.json"
 EVENTS_NAME = "events"
 ARCHIVE_NAME = "archive"
+TRANSITION_NAME = "transition.lock"
 MAX_EVENT_COUNT = 512
 MAX_ARCHIVED_LEASES = 64
 MAX_RECORD_BYTES = 4_096
@@ -117,7 +118,7 @@ def _decode_json(raw: bytes, maximum: int) -> object:
         _fail()
     try:
         value = json.loads(raw, object_pairs_hook=_unique_object)
-    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError, WriterLeaseError):
+    except (ValueError, UnicodeDecodeError, RecursionError, WriterLeaseError):
         _fail()
     if canonical_json_bytes(value) != raw:
         _fail()
@@ -191,6 +192,8 @@ def _validate_event(record: object) -> dict[str, Any]:
     if type(record) is not dict:
         _fail()
     event_type = record.get("event_type")
+    if type(event_type) is not str:
+        _fail()
     expected_fields = set(_EVENT_BASE_FIELDS)
     if event_type == "verify":
         expected_fields.update({"checkpoint", "phase"})
@@ -215,7 +218,7 @@ def _validate_event(record: object) -> dict[str, Any]:
         lease_id=record["lease_id"],
     )
     if event_type == "verify":
-        if record["checkpoint"] not in _CHECKPOINTS:
+        if type(record["checkpoint"]) is not str or record["checkpoint"] not in _CHECKPOINTS:
             _fail()
         _validate_label(record["phase"])
     return record
@@ -330,6 +333,27 @@ def _ensure_directory(path: Path, parent: Path) -> None:
     else:
         _fsync_directory(parent)
     _owned_directory(path, exact_mode=0o700)
+
+
+@contextmanager
+def _transition_guard(state: Path):
+    transition = state / TRANSITION_NAME
+    acquired = False
+    try:
+        os.mkdir(transition, 0o700)
+        acquired = True
+        _owned_directory(transition, exact_mode=0o700)
+        _fsync_directory(state)
+        yield
+    except (OSError, WriterLeaseError):
+        _fail()
+    finally:
+        if acquired:
+            try:
+                os.rmdir(transition)
+                _fsync_directory(state)
+            except (OSError, WriterLeaseError):
+                _fail()
 
 
 def _path_exists(path: Path) -> bool:
@@ -573,6 +597,13 @@ def _append_event(events: Path, event: dict[str, Any]) -> dict[str, Any]:
         hashlib.sha256(chain[-1][1]).hexdigest() if chain else ZERO_DIGEST
     )
     validated = _validate_event(event)
+    candidate_identity = {field: validated[field] for field in _IDENTITY_FIELDS}
+    if chain:
+        lane_identity = {field: chain[0][0][field] for field in _IDENTITY_FIELDS}
+        if chain[-1][0]["event_type"] == "release" or candidate_identity != lane_identity:
+            _fail()
+    elif validated["event_type"] != "acquire":
+        _fail()
     _validate_lifecycle([*(item for item, _raw in chain), validated])
     raw = canonical_json_bytes(validated)
     _exclusive_write(events / f"{sequence:08d}.json", raw)
@@ -631,6 +662,8 @@ def inspect(*, repo_root: Path | str) -> dict[str, Any]:
         return {"status": "inactive"}
     if not _path_exists(events):
         return {"status": "blocked"}
+    if _path_exists(state / TRANSITION_NAME):
+        return {"status": "blocked"}
     active_path = events.parent / ACTIVE_NAME
     try:
         active_exists = active_path.exists() or active_path.is_symlink()
@@ -676,16 +709,14 @@ def acquire(
         _fail()
     _verify_base_commit(root, base_sha)
     _common, state, events, _archive = _state_paths(root, create=True)
-    _check_acquisition_capacity(state, events)
-    lease_id = secrets.token_hex(32)
-    identity = {**supplied, "lease_id": lease_id}
-    active_path = state / ACTIVE_NAME
-    _exclusive_write(active_path, canonical_json_bytes(_record(identity)))
-    try:
+    with _transition_guard(state):
+        _check_acquisition_capacity(state, events)
+        lease_id = secrets.token_hex(32)
+        identity = {**supplied, "lease_id": lease_id}
+        active_path = state / ACTIVE_NAME
+        _exclusive_write(active_path, canonical_json_bytes(_record(identity)))
         _archive_completed_lane(state, events)
         _append_event(events, _event("acquire", identity))
-    except WriterLeaseError:
-        _fail()
     return _record(identity)
 
 
@@ -735,26 +766,31 @@ def verify(
     owner_ref: str,
     session_ref: str,
 ) -> dict[str, Any]:
-    if checkpoint not in _CHECKPOINTS:
+    if type(checkpoint) is not str or checkpoint not in _CHECKPOINTS:
         _fail()
     _validate_label(phase)
-    events, identity, chain = _active_identity(
-        repo_root=repo_root,
-        lease_id=lease_id,
-        pr_id=pr_id,
-        base_sha=base_sha,
-        writer_role=writer_role,
-        owner_ref=owner_ref,
-        session_ref=session_ref,
-    )
-    last = chain[-1][0]
-    if (
-        last["event_type"] == "verify"
-        and last["checkpoint"] == checkpoint
-        and last["phase"] == phase
-    ):
-        return last
-    return _append_event(events, _event("verify", identity, checkpoint=checkpoint, phase=phase))
+    _common, state, _events, _archive = _state_paths(repo_root, create=False)
+    with _transition_guard(state):
+        events, identity, chain = _active_identity(
+            repo_root=repo_root,
+            lease_id=lease_id,
+            pr_id=pr_id,
+            base_sha=base_sha,
+            writer_role=writer_role,
+            owner_ref=owner_ref,
+            session_ref=session_ref,
+        )
+        last = chain[-1][0]
+        if (
+            last["event_type"] == "verify"
+            and last["checkpoint"] == checkpoint
+            and last["phase"] == phase
+        ):
+            return last
+        return _append_event(
+            events,
+            _event("verify", identity, checkpoint=checkpoint, phase=phase),
+        )
 
 
 def release(
@@ -767,22 +803,35 @@ def release(
     owner_ref: str,
     session_ref: str,
 ) -> dict[str, Any]:
-    events, identity, _chain = _active_identity(
-        repo_root=repo_root,
-        lease_id=lease_id,
-        pr_id=pr_id,
-        base_sha=base_sha,
-        writer_role=writer_role,
-        owner_ref=owner_ref,
-        session_ref=session_ref,
-    )
-    released = _append_event(events, _event("release", identity))
-    active_path = events.parent / ACTIVE_NAME
-    try:
-        os.unlink(active_path)
-        _fsync_directory(events.parent)
-    except (OSError, WriterLeaseError):
-        _fail()
+    _common, state, _events, _archive = _state_paths(repo_root, create=False)
+    with _transition_guard(state):
+        events, identity, _chain = _active_identity(
+            repo_root=repo_root,
+            lease_id=lease_id,
+            pr_id=pr_id,
+            base_sha=base_sha,
+            writer_role=writer_role,
+            owner_ref=owner_ref,
+            session_ref=session_ref,
+        )
+        released = _append_event(events, _event("release", identity))
+        active_path = events.parent / ACTIVE_NAME
+        chain = _scan_events(events)
+        active = _validate_identity_record(
+            _decode_json(_read_regular(active_path), MAX_RECORD_BYTES)
+        )
+        if (
+            not _identity_matches(active, identity)
+            or not chain
+            or chain[-1][0]["event_type"] != "release"
+            or not _identity_matches(chain[-1][0], identity)
+        ):
+            _fail()
+        try:
+            os.unlink(active_path)
+            _fsync_directory(events.parent)
+        except (OSError, WriterLeaseError):
+            _fail()
     return released
 
 
@@ -815,7 +864,11 @@ def export_evidence(
         lease_id=lease_id,
     )
     _common, state, events, _archive = _state_paths(repo_root, create=False)
+    if _path_exists(state / TRANSITION_NAME):
+        _fail()
     lane = _find_evidence_lane(state, events, lease_id)
+    if lane == events and _path_exists(state / ACTIVE_NAME):
+        _fail()
     chain = _scan_events(lane)
     if (
         not chain
@@ -952,7 +1005,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         else:
             raw = _read_bounded_input(args["evidence"], MAX_EVIDENCE_BYTES)
             _print_json(validate_evidence(raw))
-    except (OSError, WriterLeaseError):
+    except (OSError, ValueError, TypeError, UnicodeError, WriterLeaseError):
         print("writer lease operation failed", file=sys.stderr)
         return 1
     return 0
