@@ -45,6 +45,10 @@ Use this skill before writing a JIT scope contract or editing productionization 
 12. Classify the task `normal`, `high`, or `critical` from the resulting correctness/safety risk and select
     the least expensive adequate named production route under root policy. The risk tags inform but do not
     mechanically determine the class; document the evidence-based mapping.
+13. For any fresh implementation or repair writer, confirm the `writer-lease` helper and skill come from
+    refreshed trusted `main`, identify the exact lease identity inputs, and confirm no previous writer remains
+    active. The Master acquires only before the writer starts; preflight and ordinary CI do not treat candidate
+    code or a live-state query as authority.
 
 ## Adversarial tag intent
 
@@ -68,7 +72,7 @@ Use this skill before writing a JIT scope contract or editing productionization 
 Return a compact preflight record containing base SHA, applicable instructions/docs, current-state drift,
 relevant paths/symbols, prerequisites, the complete `risk_profile`, boundary-review requirement/result,
 adversarial matrix reference when required, risk class, requested named routes, validation surfaces,
-blockers, and whether it is safe to proceed to the JIT scope contract.
+writer-lease readiness/limitations, blockers, and whether it is safe to proceed to the JIT scope contract.
 
 Do not edit production code during this skill. If an unresolved architecture conflict, missing prerequisite,
 unavailable required role, mandatory adversarial finding, or human gate blocks the task, return

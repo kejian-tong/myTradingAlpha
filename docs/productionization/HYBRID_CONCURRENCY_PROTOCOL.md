@@ -48,6 +48,15 @@ host-origin effective permission and complete tool-inventory evidence. An unveri
 is discarded as `insufficient_evidence`; its availability does not justify another writer, a generic
 replacement, or reuse of its output.
 
+Every fresh implementation or repair writer is additionally serialized by the repository-global cooperative
+lease in `.agents/skills/writer-lease/SKILL.md`. The Master acquires from trusted refreshed `main` before
+starting the writer, the writer records only the required cooperative checkpoints, and the Master releases
+only after independent host observation shows the writer stopped. `writer_start` is mandatory and later
+applicable checkpoint declarations cannot regress. Exported canonical evidence supplements that host
+observation and Git history; it does not authenticate either. Any incomplete, out-of-order, archive-capacity,
+or ambiguous lease transition blocks the next writer. Ordinary CI and the offline checker never read live
+lease state.
+
 ## 3. Concurrency budget
 
 Project config currently uses:

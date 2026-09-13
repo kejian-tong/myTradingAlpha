@@ -14,8 +14,9 @@ Verify independently:
 
 1. final base/head SHAs and the exact authorized PR/scope;
 2. durable JIT contract matches the final diff and no later roadmap slice leaked in;
-3. one production writer was active at a time and any replacement writer started only after the prior
-   writer stopped;
+3. one production writer was active at a time; the bounded canonical writer-lease artifact matches the
+   exact identity and Git history; release followed independent host observation that the writer stopped;
+   and any replacement writer started only after that completed release;
 4. required RED/GREEN/repair evidence is durable and consistent with Git history;
 5. controlling independent reviewer inspected the exact final head and returned APPROVE;
 6. every material specialist BLOCKER/HIGH is closed on the exact final head;

@@ -35,6 +35,10 @@ mutable writer checkout as if it were isolated.
    reconciliation, credential, security, persistence/network, and paper/live invariants.
 8. Compare final diff with the durable JIT contract and identify scope leakage or undocumented deviation.
 9. Inspect required CI/check evidence for the exact head; never reuse green checks from an older SHA.
+10. Validate the bounded canonical writer-lease artifact and digest, then reconcile its identity/checkpoint
+    chain with Master-owned host stopped-state evidence and Git history. The artifact is cooperative structural
+    evidence, not runtime authentication; missing or ambiguous lifecycle evidence is
+    `INSUFFICIENT_EVIDENCE`.
 
 ## Findings and verdict
 
