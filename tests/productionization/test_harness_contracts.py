@@ -106,6 +106,7 @@ def _gate() -> dict:
         "collaboration_controls_visible": False,
         "collaboration_observation_complete": True,
         "non_master_collaboration_invoked": False,
+        "delegation_control_mode": "behavioral_policy",
         "head_sha": "a" * 40, "base_sha": "b" * 40,
         "review_head_sha": "a" * 40, "review_base_sha": "b" * 40,
         "ci_head_sha": "a" * 40, "source_tree": "c" * 40, "ci_checkout_tree": "c" * 40,
@@ -219,7 +220,9 @@ def test_gate_requires_explicit_behavioral_delegation_control_mode() -> None:
 
 
 def test_gate_rejects_missing_delegation_control_mode() -> None:
-    assert _checker().gate_errors(_gate())
+    record = _gate()
+    del record["delegation_control_mode"]
+    assert _checker().gate_errors(record)
 
 
 @pytest.mark.parametrize("mode", ["host_enforced", "unknown", "", None])
