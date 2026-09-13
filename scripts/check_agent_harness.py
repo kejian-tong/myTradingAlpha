@@ -205,7 +205,7 @@ def _toml(path: Path) -> dict:
 
 
 def _normalize_memory_watchlist_cell(value: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
+    return " ".join(value.strip().split())
 
 
 def _memory_watchlist_errors(root: Path) -> list[str]:
