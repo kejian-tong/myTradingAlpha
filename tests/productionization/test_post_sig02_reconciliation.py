@@ -7,10 +7,14 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "6ed694fd6c31af3adc5be6d2ee85d85f54aa408f"
-RECONCILED_MAIN_TREE = "070179c0e8350e46bad899c0eb3291f9f07fb0cc"
+RECONCILED_MAIN_SHA = "4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4"
+RECONCILED_MAIN_TREE = "26d229efd92a3ba6dee6832d2e7e7c123f6573fb"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
+HARNESS_MERGE_SHA = "4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4"
+PERMANENT_EXTERNAL_REVIEW_POLICY = (
+    "GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used."
+)
 
 
 def test_sig02_operational_state_is_post_merge_and_stopped() -> None:
@@ -25,6 +29,21 @@ def test_sig02_operational_state_is_post_merge_and_stopped() -> None:
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
     assert "SIG-03` (informational only; not authorized" in state
+
+
+def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
+    state = STATE.read_text(encoding="utf-8")
+    required = (
+        "## Current harness policy",
+        "`last_completed_harness_pr`: `HARNESS-AUD-08` / PR #73 / merge",
+        HARNESS_MERGE_SHA,
+        PERMANENT_EXTERNAL_REVIEW_POLICY,
+        "`last_reconciled_automatic_review_ruleset_id`: `23141241` (disabled; fresh recheck required)",
+    )
+    missing = [marker for marker in required if marker not in state]
+    assert not missing, f"current Harness reconciliation is missing: {missing}"
+    assert "Prospective harness policy" not in state
+    assert "`HARNESS-V2-COLLAB-COMPAT` / PR #64 candidate" not in state
 
 
 def test_shipped_status_docs_mark_sig02_implemented_without_promoting_sig03() -> None:
