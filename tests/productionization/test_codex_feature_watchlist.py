@@ -262,6 +262,31 @@ def test_checker_rejects_memory_watchlist_contradictory_policy_reason(
     assert any("memory" in error.lower() and "watch" in error.lower() for error in errors), errors
 
 
+@pytest.mark.parametrize(
+    ("accepted_text", "hostile_text"),
+    (
+        ("`features.memories = false`", "`features.memories != false`"),
+        ("CLI `--config`/`--enable`", "CLI `config`/`--enable`"),
+    ),
+)
+def test_checker_rejects_memory_watchlist_punctuation_mutations(
+    tmp_path: Path, accepted_text: str, hostile_text: str
+) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(
+        _replace_memory_watchlist_row(original, _GOOD_MEMORY_WATCHLIST_ROW), encoding="utf-8"
+    )
+    assert checker.configuration_errors(fixture) == []
+
+    hostile_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(accepted_text, hostile_text)
+    path.write_text(_replace_memory_watchlist_row(original, hostile_row), encoding="utf-8")
+    errors = checker.configuration_errors(fixture)
+    assert any("memory" in error.lower() and "watch" in error.lower() for error in errors), errors
+
+
 def test_checker_rejects_memory_watchlist_missing_cli_config_override(tmp_path: Path) -> None:
     checker = _checker()
     fixture = _copy_harness_fixture(tmp_path)
