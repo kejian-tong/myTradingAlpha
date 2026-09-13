@@ -46,6 +46,17 @@ _DELEGATION_POLICY_SURFACES = (
     Path("docs/productionization/CODEX_FEATURE_WATCHLIST.md"),
 )
 _COPILOT_REVIEW_ACTOR_ID = 175_728_472
+_GENERIC_GITHUB_BOUNDARY_ERROR = [
+    "invalid GitHub review-boundary evidence; insufficient_evidence",
+]
+_PRE_DISMISS_EVIDENCE_FIELDS = (
+    "initial_review_pre_dismiss_state",
+    "initial_review_pre_dismiss_observed_at",
+    "moved_head_review_pre_dismiss_state",
+    "moved_head_review_pre_dismiss_observed_at",
+    "negative_probe_observed_at",
+    "positive_probe_observed_at",
+)
 
 
 def _role_path(root: Path, role: str) -> Path:
@@ -144,17 +155,22 @@ def _github_review_boundary() -> dict:
         "initial_review_commit_sha": initial_head,
         "initial_review_state": "DISMISSED",
         "initial_review_submitted_at": "2026-09-13T12:00:00Z",
+        "initial_review_pre_dismiss_state": "APPROVED",
+        "initial_review_pre_dismiss_observed_at": "2026-09-13T12:01:00Z",
         "moved_head_sha": final_head,
         "moved_head_review_id": 910_002,
         "moved_head_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "moved_head_review_commit_sha": final_head,
         "moved_head_review_state": "DISMISSED",
         "moved_head_review_submitted_at": "2026-09-13T12:15:00Z",
+        "moved_head_review_pre_dismiss_state": "APPROVED",
+        "moved_head_review_pre_dismiss_observed_at": "2026-09-13T12:16:00Z",
         "negative_probe_dismissed_review_id": 910_002,
         "negative_probe_head_sha": final_head,
         "negative_probe_review_decision": "REVIEW_REQUIRED",
         "negative_probe_merge_status": "BLOCKED",
         "negative_probe_merge_eligible": False,
+        "negative_probe_observed_at": "2026-09-13T12:17:00Z",
         "final_review_id": 910_003,
         "final_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "final_review_commit_sha": final_head,
@@ -164,6 +180,7 @@ def _github_review_boundary() -> dict:
         "positive_probe_review_decision": "APPROVED",
         "positive_probe_merge_status": "CLEAN",
         "positive_probe_merge_eligible": True,
+        "positive_probe_observed_at": "2026-09-13T12:21:00Z",
         "reviewer_is_last_pusher": False,
         "reviewer_is_last_pusher_basis": "github_ruleset_evaluation",
         "controlling_review_head_sha": final_head,
@@ -565,6 +582,53 @@ def test_github_review_boundary_transition_chronology_rejects_legacy_schema(
     assert _github_boundary_errors(_boundary_raw(record)), field
 
 
+def test_github_review_boundary_rejects_missing_pre_dismiss_evidence_in_legacy_schema() -> None:
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS and key not in _PRE_DISMISS_EVIDENCE_FIELDS
+    }
+    assert _github_boundary_errors(_boundary_raw(record)), "dismissed reviews need prior APPROVED evidence"
+
+
+def test_github_review_boundary_pre_dismiss_state_and_observation_fail_closed() -> None:
+    mutations = {
+        "initial_changes_requested": ("initial_review_pre_dismiss_state", "CHANGES_REQUESTED"),
+        "moved_commented": ("moved_head_review_pre_dismiss_state", "COMMENTED"),
+        "initial_observed_before_submit": (
+            "initial_review_pre_dismiss_observed_at", "2026-09-13T11:59:59Z",
+        ),
+        "initial_observed_after_preimage": (
+            "initial_review_pre_dismiss_observed_at", "2026-09-13T12:05:00Z",
+        ),
+        "moved_observed_before_submit": (
+            "moved_head_review_pre_dismiss_observed_at", "2026-09-13T12:14:59Z",
+        ),
+        "negative_before_moved_observation": (
+            "negative_probe_observed_at", "2026-09-13T12:15:59Z",
+        ),
+        "final_submitted_before_negative": (
+            "final_review_submitted_at", "2026-09-13T12:16:00Z",
+        ),
+        "positive_observed_before_final_submit": (
+            "positive_probe_observed_at", "2026-09-13T12:19:59Z",
+        ),
+        "positive_observed_after_capture": (
+            "positive_probe_observed_at", "2026-09-13T12:31:00Z",
+        ),
+    }
+    for name, (field, value) in mutations.items():
+        record = _github_review_boundary()
+        record[field] = value
+        assert _github_boundary_errors(_boundary_raw(record)), name
+
+    for field in _PRE_DISMISS_EVIDENCE_FIELDS:
+        record = _github_review_boundary()
+        del record[field]
+        assert _github_boundary_errors(_boundary_raw(record)), f"missing {field}"
+
+
 def test_github_review_boundary_rejects_coordinated_actor_id_substitution() -> None:
     checker = _checker()
     record = {
@@ -619,6 +683,59 @@ def test_github_review_boundary_rejects_ambiguous_or_unsanitized_input() -> None
         unsanitized = dict(record)
         unsanitized[forbidden] = "must never be persisted"
         assert _github_boundary_errors(_boundary_raw(unsanitized)), forbidden
+
+
+def test_github_review_boundary_normalizes_deep_json_across_all_entrypoints(tmp_path: Path) -> None:
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS
+    }
+    canonical = _boundary_raw(record)
+    marker = b'"pr_author_login":"repository-owner"'
+    nested_value = b"[" * 2_000 + b"0" + b"]" * 2_000
+    assert marker in canonical
+    inputs = {
+        "decode": b"[" * 30_000 + b"0" + b"]" * 30_000,
+        "canonicalize": canonical.replace(marker, b'"pr_author_login":' + nested_value),
+    }
+    failures = []
+    for name, raw in inputs.items():
+        assert len(raw) < 65_536
+        try:
+            raw_errors = checker.github_review_boundary_errors(raw)
+        except RecursionError:
+            raw_errors = "RecursionError"
+        if raw_errors != _GENERIC_GITHUB_BOUNDARY_ERROR:
+            failures.append((name, "raw", raw_errors))
+
+        evidence = tmp_path / f"deep-{name}.json"
+        evidence.write_bytes(raw)
+        try:
+            file_errors = checker.github_review_boundary_file_errors(evidence)
+        except RecursionError:
+            file_errors = "RecursionError"
+        if file_errors != _GENERIC_GITHUB_BOUNDARY_ERROR:
+            failures.append((name, "file", file_errors))
+
+        cli = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/check_agent_harness.py"),
+             "--github-review-boundary", str(evidence)],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if (
+            cli.returncode != 1
+            or cli.stdout.strip() != _GENERIC_GITHUB_BOUNDARY_ERROR[0]
+            or "Traceback" in cli.stdout
+            or str(evidence) in cli.stdout
+        ):
+            failures.append((name, "cli", cli.returncode, cli.stdout))
+    assert not failures, failures
 
 
 def test_github_review_boundary_cli_input_is_bounded_regular_and_no_follow(
