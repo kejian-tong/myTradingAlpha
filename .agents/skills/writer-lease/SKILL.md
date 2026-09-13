@@ -19,7 +19,8 @@ process that rewrites Git metadata.
    generated `lease_id` and the six-field identity tuple. Acquisition is intentionally non-idempotent.
 3. Give the writer only the tuple needed for its lane. Require `verify` at `writer_start` and at each
    applicable boundary: `before_red`, `before_green`, `before_commit`, and `before_push`. An exact repeated
-   verification is idempotent. A checkpoint is a declaration, not host attestation.
+   verification is idempotent. `writer_start` must be first; later checkpoints never regress, while
+   non-applicable intermediate phases may be omitted. A checkpoint is a declaration, not host attestation.
 4. Interrupt or wait for the writer to stop and obtain independent host observation of that stopped state.
    Only then may the Master call `release` with the exact tuple. Candidate code cannot authenticate this
    prerequisite, and the writer must never release its own lease.
@@ -27,8 +28,10 @@ process that rewrites Git metadata.
    bounded artifact or digest/reference in the PR conversation. The merge gate must compare this evidence
    with the Master-owned writer lifecycle and exact Git history.
 
-Any mismatch, malformed or unsafe state, missing event, event-capacity exhaustion, partial transition, or
-ambiguous stopped state fails closed. There is no automatic stale-state action. After independently proving
+Any mismatch, malformed or unsafe state, missing/out-of-order event, per-lease event exhaustion, fixed
+completed-archive capacity exhaustion, partial transition, or ambiguous stopped state fails closed. Completed
+evidence is retained for at most 64 archived leases plus the current lane; there is no rotation or automatic
+stale-state action. After independently proving
 the writer is stopped, the Master may quarantine the dedicated state directory manually for human recovery;
 never let candidate code decide that an existing lease is stale.
 

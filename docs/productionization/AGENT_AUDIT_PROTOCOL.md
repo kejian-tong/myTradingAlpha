@@ -191,14 +191,17 @@ Every fresh implementation or repair writer must follow `.agents/skills/writer-l
 `scripts/writer_lease.py` is available on refreshed trusted `main`. The Master acquires the fixed
 Git-common-dir lease before the writer starts, retains the exact PR/base/role and pseudonymous owner/session
 references plus generated lease ID, and requires cooperative verification at applicable writer, RED, GREEN,
-commit, and push boundaries. The writer must never acquire or release its own lease.
+commit, and push boundaries. `writer_start` is mandatory and first; subsequent applicable checkpoint ranks
+must not regress, though non-applicable intermediate phases may be omitted. The writer must never acquire or
+release its own lease.
 
 Release is permitted only after the Master obtains independent host observation that the writer stopped.
 The helper cannot authenticate that prerequisite, a runtime identity, or real-world checkpoint order. Its
 canonical bounded event chain is structural evidence that must be exported, validated, digest-bound, and
 reconciled with host and Git evidence during exact-head review and the Master merge gate. Any conflicting,
 partial, malformed, unsafe, exhausted, or ambiguous state fails closed. There is no candidate-controlled
-stale-state transition; manual quarantine requires prior independent stopped-state evidence.
+stale-state transition or archive rotation; the fixed completed-lease archive cap bounds retained files and
+total state. Manual quarantine requires prior independent stopped-state evidence.
 
 The lease is a cooperative guard among harness-compliant writers sharing a Git common directory. It is not
 a security boundary against a malicious same-user process capable of rewriting repository metadata.

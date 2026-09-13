@@ -493,6 +493,7 @@ def test_hostile_active_node_is_never_followed_replaced_or_auto_removed(
     acquired = _acquire(lease, primary, base_sha)
     active = _state_dir(common) / "active.json"
     valid = active.read_bytes()
+    _verify(lease, primary, base_sha, acquired["lease_id"])
     _release(lease, primary, base_sha, acquired["lease_id"])
     target = tmp_path / "outside-canary"
     target.write_text("must-not-change", encoding="utf-8")
@@ -588,6 +589,7 @@ def test_operation_does_not_mutate_source_ref_index_config_or_worktree_registrat
         "worktrees": _git(primary, "worktree", "list", "--porcelain"),
     }
     acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
     _verify(lease, primary, base_sha, acquired["lease_id"], checkpoint="before_red")
     _release(lease, primary, base_sha, acquired["lease_id"])
     after = {
@@ -856,6 +858,7 @@ def test_release_event_precedes_unlink_and_unlink_failure_blocks_reacquire(
 ) -> None:
     primary, _linked, base_sha, common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
     active = _state_dir(common) / "active.json"
     real_unlink = lease.os.unlink
 
@@ -887,7 +890,8 @@ def test_event_capacity_supports_productionization_horizon_and_fails_closed(
     monkeypatch.setattr(lease, "MAX_EVENT_COUNT", 4)
     primary, _linked, base_sha, _common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
-    for index in range(lease.MAX_EVENT_COUNT - 1):
+    _verify(lease, primary, base_sha, acquired["lease_id"])
+    for index in range(lease.MAX_EVENT_COUNT - 2):
         _verify(
             lease,
             primary,
@@ -1012,6 +1016,7 @@ def test_timestamps_are_not_validity_and_release_has_no_forgeable_stopped_proof(
 ) -> None:
     primary, _linked, base_sha, common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
     _release(lease, primary, base_sha, acquired["lease_id"])
     keys = {
         key

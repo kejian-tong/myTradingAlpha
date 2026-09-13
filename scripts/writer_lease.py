@@ -23,6 +23,7 @@ ACTIVE_NAME = "active.json"
 EVENTS_NAME = "events"
 ARCHIVE_NAME = "archive"
 MAX_EVENT_COUNT = 512
+MAX_ARCHIVED_LEASES = 64
 MAX_RECORD_BYTES = 4_096
 MAX_EVIDENCE_BYTES = 262_144
 MAX_DIRECTORY_ENTRIES = (MAX_EVENT_COUNT * 2) + 2
@@ -34,6 +35,13 @@ _WRITER_ROLES = frozenset(
 _CHECKPOINTS = frozenset(
     {"writer_start", "before_red", "before_green", "before_commit", "before_push"}
 )
+_CHECKPOINT_RANK = {
+    "writer_start": 0,
+    "before_red": 1,
+    "before_green": 2,
+    "before_commit": 3,
+    "before_push": 4,
+}
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _PR_ID = re.compile(r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\Z")
@@ -443,13 +451,13 @@ def _read_regular(path: Path, maximum: int = MAX_RECORD_BYTES) -> bytes:
                 os.close(fd)
 
 
-def _bounded_names(directory: Path) -> list[str]:
+def _bounded_names(directory: Path, maximum: int = MAX_DIRECTORY_ENTRIES) -> list[str]:
     names: list[str] = []
     try:
         with os.scandir(directory) as entries:
             for entry in entries:
                 names.append(entry.name)
-                if len(names) > MAX_DIRECTORY_ENTRIES:
+                if len(names) > maximum:
                     _fail()
     except (OSError, WriterLeaseError):
         _fail()
@@ -494,7 +502,64 @@ def _scan_events(events: Path) -> list[tuple[dict[str, Any], bytes]]:
             _fail()
         previous = digest
         result.append((event, raw))
+    _validate_lifecycle(event for event, _raw in result)
     return result
+
+
+def _validate_lifecycle(events: Iterable[dict[str, Any]]) -> None:
+    seen_start = False
+    last_rank = -1
+    for index, event in enumerate(events):
+        event_type = event["event_type"]
+        if index == 0:
+            if event_type != "acquire":
+                _fail()
+            continue
+        if event_type == "verify":
+            rank = _CHECKPOINT_RANK[event["checkpoint"]]
+            if not seen_start:
+                if event["checkpoint"] != "writer_start":
+                    _fail()
+                seen_start = True
+            elif rank < last_rank:
+                _fail()
+            last_rank = rank
+        elif event_type == "release" and not seen_start:
+            _fail()
+
+
+def _archive_lanes(state: Path) -> dict[str, Path]:
+    archive = state / ARCHIVE_NAME
+    if not _path_exists(archive):
+        return {}
+    _owned_directory(archive, exact_mode=0o700)
+    names = _bounded_names(archive, MAX_ARCHIVED_LEASES)
+    lanes: dict[str, Path] = {}
+    for name in names:
+        if _HEX64.fullmatch(name) is None:
+            _fail()
+        lane = archive / name
+        _owned_directory(lane, exact_mode=0o700)
+        chain = _scan_events(lane)
+        if (
+            not chain
+            or chain[-1][0]["event_type"] != "release"
+            or chain[0][0]["lease_id"] != name
+        ):
+            _fail()
+        lanes[name] = lane
+    return lanes
+
+
+def _check_acquisition_capacity(state: Path, events: Path) -> None:
+    lanes = _archive_lanes(state)
+    chain = _scan_events(events)
+    if not chain:
+        return
+    if chain[-1][0]["event_type"] != "release":
+        _fail()
+    if len(lanes) >= MAX_ARCHIVED_LEASES or chain[0][0]["lease_id"] in lanes:
+        _fail()
 
 
 def _append_event(events: Path, event: dict[str, Any]) -> dict[str, Any]:
@@ -508,6 +573,7 @@ def _append_event(events: Path, event: dict[str, Any]) -> dict[str, Any]:
         hashlib.sha256(chain[-1][1]).hexdigest() if chain else ZERO_DIGEST
     )
     validated = _validate_event(event)
+    _validate_lifecycle([*(item for item, _raw in chain), validated])
     raw = canonical_json_bytes(validated)
     _exclusive_write(events / f"{sequence:08d}.json", raw)
     _exclusive_write(
@@ -524,6 +590,9 @@ def _archive_completed_lane(state: Path, events: Path) -> None:
         _fail()
     lease_id = chain[0][0]["lease_id"]
     archive = state / ARCHIVE_NAME
+    lanes = _archive_lanes(state)
+    if len(lanes) >= MAX_ARCHIVED_LEASES or lease_id in lanes:
+        _fail()
     _ensure_directory(archive, state)
     destination = archive / lease_id
     try:
@@ -607,6 +676,7 @@ def acquire(
         _fail()
     _verify_base_commit(root, base_sha)
     _common, state, events, _archive = _state_paths(root, create=True)
+    _check_acquisition_capacity(state, events)
     lease_id = secrets.token_hex(32)
     identity = {**supplied, "lease_id": lease_id}
     active_path = state / ACTIVE_NAME
@@ -720,13 +790,10 @@ def _find_evidence_lane(state: Path, events: Path, lease_id: str) -> Path:
     chain = _scan_events(events)
     if chain and chain[0][0]["lease_id"] == lease_id:
         return events
-    archive = state / ARCHIVE_NAME
-    if not archive.exists():
+    lanes = _archive_lanes(state)
+    if lease_id not in lanes:
         _fail()
-    _owned_directory(archive, exact_mode=0o700)
-    lane = archive / lease_id
-    _owned_directory(lane, exact_mode=0o700)
-    return lane
+    return lanes[lease_id]
 
 
 def export_evidence(
@@ -799,6 +866,7 @@ def validate_evidence(raw: bytes) -> dict[str, Any]:
         events.append(event)
     if events[-1]["event_type"] != "release":
         _fail()
+    _validate_lifecycle(events)
     return value
 
 

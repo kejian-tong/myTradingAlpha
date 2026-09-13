@@ -14,7 +14,8 @@ starts. The writer uses only the Master-issued tuple and records applicable `wri
 `before_green`, `before_commit`, and `before_push` checkpoints. The writer never acquires or releases the
 lease. After independent host observation establishes that the writer stopped, the Master releases and
 exports the canonical evidence. Checkpoints are cooperative declarations, not runtime identity or order
-attestation; any mismatch or ambiguous transition fails closed.
+attestation. `writer_start` must be first and subsequent applicable checkpoints cannot regress; any mismatch,
+archive-capacity exhaustion, or ambiguous transition fails closed.
 
 ## RED
 

@@ -116,7 +116,8 @@ For every fresh implementation or repair writer after the lease helper is availa
 `main`, the Master must use the `writer-lease` skill. Acquire the repository-global lease before starting
 the writer, require cooperative checkpoints at applicable RED/GREEN/commit/push boundaries, and release it
 only after independent host observation establishes that the writer stopped. The candidate and writer cannot
-self-authorize acquisition or release. Persist bounded canonical lease evidence for review and the merge gate;
+self-authorize acquisition or release. `writer_start` is mandatory and first; later applicable checkpoint
+declarations cannot regress. Persist bounded canonical lease evidence for review and the merge gate;
 any missing, malformed, mismatched, exhausted, partial, or ambiguous state fails closed. This is cooperative
 one-writer evidence, not authenticated runtime identity or protection from a malicious same-user process.
 
