@@ -50,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.12.7"
@@ -60,6 +62,18 @@ jobs:
         # The repo is fully clean under the strict select, so we lint everything
         # (results/ and worklog/ are excluded via pyproject extend-exclude).
         run: uv run --no-sync ruff check .
+      - name: Check diff integrity against event base
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+          fi
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git diff --check "$BASE_SHA" HEAD
+      - name: Run network-deny canary
+        run: uv run --no-sync pytest -q -m "not integration" tests/productionization/test_validation_boundaries.py -k network_denial_canary
       # `ruff (strict, full repo)` is already a required main-protection status.
       # Keep the status name stable and bind the harness/static contract to it so
       # a harness failure cannot be merged even if the separate Foundation job is
