@@ -57,6 +57,16 @@ _PRE_DISMISS_EVIDENCE_FIELDS = (
     "negative_probe_observed_at",
     "positive_probe_observed_at",
 )
+_AUTOMATIC_REVIEW_TRANSITION_FIELDS = (
+    "moved_head_push_observed_at",
+    "moved_head_push_head_sha",
+    "initial_review_dismissal_trigger",
+    "initial_review_dismissal_observed_at",
+    "initial_review_dismissal_head_sha",
+    "moved_head_review_trigger",
+    "moved_head_review_trigger_observed_at",
+    "moved_head_review_trigger_head_sha",
+)
 
 
 def _role_path(root: Path, role: str) -> Path:
@@ -158,6 +168,14 @@ def _github_review_boundary() -> dict:
         "initial_review_pre_dismiss_state": "APPROVED",
         "initial_review_pre_dismiss_observed_at": "2026-09-13T12:01:00Z",
         "moved_head_sha": final_head,
+        "moved_head_push_observed_at": "2026-09-13T12:11:00Z",
+        "moved_head_push_head_sha": final_head,
+        "initial_review_dismissal_trigger": "ruleset_stale_on_push",
+        "initial_review_dismissal_observed_at": "2026-09-13T12:12:00Z",
+        "initial_review_dismissal_head_sha": final_head,
+        "moved_head_review_trigger": "copilot_ruleset_review_on_push",
+        "moved_head_review_trigger_observed_at": "2026-09-13T12:13:00Z",
+        "moved_head_review_trigger_head_sha": final_head,
         "moved_head_review_id": 910_002,
         "moved_head_review_actor_id": _COPILOT_REVIEW_ACTOR_ID,
         "moved_head_review_commit_sha": final_head,
@@ -629,6 +647,55 @@ def test_github_review_boundary_pre_dismiss_state_and_observation_fail_closed() 
         assert _github_boundary_errors(_boundary_raw(record)), f"missing {field}"
 
 
+def test_github_review_boundary_rejects_missing_automatic_transition_in_legacy_schema() -> None:
+    checker = _checker()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS and key not in _AUTOMATIC_REVIEW_TRANSITION_FIELDS
+    }
+    assert _github_boundary_errors(_boundary_raw(record)), "moved review transition must be push-triggered"
+
+
+def test_github_review_boundary_automatic_transition_fails_closed() -> None:
+    mutations = {
+        "manual_dismissal": ("initial_review_dismissal_trigger", "manual_dismissal"),
+        "manual_review_request": ("moved_head_review_trigger", "manual_review_request"),
+        "push_wrong_head": ("moved_head_push_head_sha", "1" * 40),
+        "dismissal_wrong_head": ("initial_review_dismissal_head_sha", "1" * 40),
+        "auto_review_wrong_head": ("moved_head_review_trigger_head_sha", "1" * 40),
+        "push_before_postimage": ("moved_head_push_observed_at", "2026-09-13T12:10:00Z"),
+        "dismissal_before_push": (
+            "initial_review_dismissal_observed_at", "2026-09-13T12:10:59Z",
+        ),
+        "auto_review_before_push": (
+            "moved_head_review_trigger_observed_at", "2026-09-13T12:10:59Z",
+        ),
+        "dismissal_after_approval": (
+            "initial_review_dismissal_observed_at", "2026-09-13T12:16:01Z",
+        ),
+        "auto_review_after_approval": (
+            "moved_head_review_trigger_observed_at", "2026-09-13T12:16:01Z",
+        ),
+    }
+    for name, (field, value) in mutations.items():
+        record = _github_review_boundary()
+        record[field] = value
+        assert _github_boundary_errors(_boundary_raw(record)), name
+
+    for field in _AUTOMATIC_REVIEW_TRANSITION_FIELDS:
+        record = _github_review_boundary()
+        del record[field]
+        assert _github_boundary_errors(_boundary_raw(record)), f"missing {field}"
+
+
+def test_github_review_boundary_does_not_invent_trigger_observation_order() -> None:
+    record = _github_review_boundary()
+    record["initial_review_dismissal_observed_at"] = "2026-09-13T12:13:00Z"
+    record["moved_head_review_trigger_observed_at"] = "2026-09-13T12:12:00Z"
+    assert _github_boundary_errors(_boundary_raw(record)) == []
+
+
 def test_github_review_boundary_rejects_coordinated_actor_id_substitution() -> None:
     checker = _checker()
     record = {
@@ -750,7 +817,11 @@ def test_github_review_boundary_normalizes_unhashable_review_ids_across_all_entr
     tmp_path: Path, field: str, kind: str, hostile_value: object,
 ) -> None:
     checker = _checker()
-    record = _github_review_boundary()
+    record = {
+        key: item
+        for key, item in _github_review_boundary().items()
+        if key in checker._GITHUB_BOUNDARY_FIELDS
+    }
     record[field] = hostile_value
     raw = _boundary_raw(record)
     evidence = tmp_path / f"unhashable-{field}-{kind}.json"
