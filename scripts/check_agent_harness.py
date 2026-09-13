@@ -182,20 +182,27 @@ _PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 _OPENAI_DOCS_MCP_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
-_MEMORY_WATCHLIST_LIMITATION_PHRASES = (
+_MEMORY_WATCHLIST_STATUS_PHRASES = (
     "explicitly disabled",
     "watch-only",
-    "prospective",
-    "trusted project",
-    "fresh session",
-    "configuration intent",
-    "cli",
-    "--config",
-    "--enable",
-    "higher-precedence",
-    "running sessions",
-    "retroactively",
-    "project configuration does not authenticate live runtime state",
+)
+_MEMORY_WATCHLIST_REQUIRED_CLAUSES = (
+    (
+        "`features.memories = false` is prospective configuration intent for a fresh session in a trusted project",
+        "Codex Memory watchlist must preserve the prospective trusted-project configuration-intent clause",
+    ),
+    (
+        "CLI `--config`/`--enable` flags remain higher-precedence overrides",
+        "Codex Memory watchlist must preserve the CLI `--config`/`--enable` higher-precedence override clause",
+    ),
+    (
+        "it does not retroactively change running sessions",
+        "Codex Memory watchlist must preserve the no-retroactive-running-sessions clause",
+    ),
+    (
+        "project configuration does not authenticate live-runtime state",
+        "Codex Memory watchlist must contain exactly one approved non-authentication clause",
+    ),
 )
 
 
@@ -219,6 +226,19 @@ def _contains_normalized_phrase(text: str, phrase: str) -> bool:
     return f" {normalized_phrase} " in f" {text} "
 
 
+def _count_normalized_phrase(text: str, phrase: str) -> int:
+    normalized_phrase = _normalize_memory_watchlist_text(phrase)
+    return len(list(re.finditer(rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)", text)))
+
+
+def _remove_normalized_phrase_once(text: str, phrase: str) -> str:
+    normalized_phrase = _normalize_memory_watchlist_text(phrase)
+    match = re.search(rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)", text)
+    if not match:
+        return text
+    return text[: match.start()] + text[match.end() :]
+
+
 def _memory_watchlist_errors(root: Path) -> list[str]:
     path = root / _WATCHLIST_PATH
     if not path.is_file():
@@ -234,25 +254,33 @@ def _memory_watchlist_errors(root: Path) -> list[str]:
     row = _normalize_memory_watchlist_text(rows[0])
     errors = [
         f"Codex Memory watchlist is missing limitation phrase: {phrase}"
-        for phrase in _MEMORY_WATCHLIST_LIMITATION_PHRASES
+        for phrase in _MEMORY_WATCHLIST_STATUS_PHRASES
         if not _contains_normalized_phrase(row, phrase)
     ]
-    approved_clause = _normalize_memory_watchlist_text(
-        "project configuration does not authenticate live runtime state"
-    )
-    matches = list(re.finditer(rf"(?<!\w){re.escape(approved_clause)}(?!\w)", row))
-    if len(matches) != 1:
+    residual = row
+    for clause, error_message in _MEMORY_WATCHLIST_REQUIRED_CLAUSES:
+        count = _count_normalized_phrase(row, clause)
+        if count != 1:
+            errors.append(error_message)
+            continue
+        residual = _remove_normalized_phrase_once(residual, clause)
+    if re.search(r"\b(?:authenticat|enforc)\w*", residual):
         errors.append(
-            "Codex Memory watchlist must contain exactly one approved non-authentication clause"
+            "Codex Memory watchlist must not contain authentication or enforcement claims "
+            "outside the approved non-authentication clause"
         )
-    else:
-        match = matches[0]
-        residual = row[: match.start()] + row[match.end() :]
-        if re.search(r"\b(?:authenticat|enforc)\w*", residual):
-            errors.append(
-                "Codex Memory watchlist must not contain authentication or enforcement claims "
-                "outside the approved non-authentication clause"
-            )
+    if re.search(r"\b(?:higher|precedence|override)\w*", residual):
+        errors.append(
+            "Codex Memory watchlist must not contain contradictory CLI `--config`/`--enable` precedence claims "
+            "outside the approved override clause"
+        )
+    if re.search(r"\bretroactiv\w*", residual) or _contains_normalized_phrase(
+        residual, "running sessions"
+    ):
+        errors.append(
+            "Codex Memory watchlist must not contain contradictory retroactivity claims "
+            "outside the approved no-retroactivity clause"
+        )
     return errors
 
 

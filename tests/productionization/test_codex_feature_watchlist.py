@@ -59,8 +59,8 @@ def _replace_memory_watchlist_row(text: str, replacement: str) -> str:
 
 _GOOD_MEMORY_WATCHLIST_ROW = (
     "| Codex Memories (`features.memories`) | explicitly disabled / watch-only | "
-    "`features.memories = false` is prospective configuration intent for a trusted project and fresh "
-    "session; the CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not retroactively "
+    "`features.memories = false` is prospective configuration intent for a fresh session in a trusted "
+    "project, while CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not retroactively "
     "change running sessions; project configuration does not authenticate live-runtime state | "
     "adoption requires a separate reviewed harness PR |"
 )
@@ -158,23 +158,15 @@ def test_watchlist_documents_all_reviewed_decisions() -> None:
 def test_memory_watchlist_documents_explicit_disablement_and_runtime_limits() -> None:
     text = (ROOT / "docs/productionization/CODEX_FEATURE_WATCHLIST.md").read_text(encoding="utf-8")
     row = _memory_watchlist_row(text).lower()
-    for phrase in (
-        "explicitly disabled",
-        "watch-only",
-        "prospective",
-        "trusted project",
-        "fresh session",
-        "configuration intent",
-        "cli",
-        "--config",
-        "--enable",
-        "higher-precedence",
-        "running sessions",
-        "retroactively",
-        "live-runtime",
-        "authenticate",
-    ):
+    for phrase in ("explicitly disabled", "watch-only"):
         assert phrase in row, f"Memory watchlist row is missing truthful limitation: {phrase}"
+    for clause in (
+        "`features.memories = false` is prospective configuration intent for a fresh session in a trusted project",
+        "cli `--config`/`--enable` flags remain higher-precedence overrides",
+        "it does not retroactively change running sessions",
+        "project configuration does not authenticate live-runtime state",
+    ):
+        assert clause in row, f"Memory watchlist row is missing truthful limitation: {clause}"
 
 
 def test_checker_rejects_memory_watchlist_host_enforcement_claim(tmp_path: Path) -> None:
@@ -233,6 +225,49 @@ def test_checker_rejects_memory_watchlist_contradictory_authentication_claim(tmp
     path.write_text(_replace_memory_watchlist_row(original, contradictory_row), encoding="utf-8")
     errors = checker.configuration_errors(fixture)
     assert any("memory" in error.lower() and "watch" in error.lower() for error in errors), errors
+
+
+def test_checker_rejects_memory_watchlist_contradictory_cli_precedence_claim(
+    tmp_path: Path,
+) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(
+        _replace_memory_watchlist_row(original, _GOOD_MEMORY_WATCHLIST_ROW), encoding="utf-8"
+    )
+    assert checker.configuration_errors(fixture) == []
+
+    contradictory_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(
+        "while CLI `--config`/`--enable` flags remain higher-precedence overrides;",
+        "while CLI `--config`/`--enable` flags remain higher-precedence overrides; "
+        "project configuration overrides the CLI `--config`/`--enable` flags;",
+    )
+    path.write_text(_replace_memory_watchlist_row(original, contradictory_row), encoding="utf-8")
+    errors = checker.configuration_errors(fixture)
+    assert any("memory" in error.lower() and "precedence" in error.lower() for error in errors), errors
+
+
+def test_checker_rejects_memory_watchlist_contradictory_retroactivity_claim(
+    tmp_path: Path,
+) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(
+        _replace_memory_watchlist_row(original, _GOOD_MEMORY_WATCHLIST_ROW), encoding="utf-8"
+    )
+    assert checker.configuration_errors(fixture) == []
+
+    contradictory_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(
+        "it does not retroactively change running sessions;",
+        "it does not retroactively change running sessions; it retroactively changes running sessions;",
+    )
+    path.write_text(_replace_memory_watchlist_row(original, contradictory_row), encoding="utf-8")
+    errors = checker.configuration_errors(fixture)
+    assert any("memory" in error.lower() and "retroactivity" in error.lower() for error in errors), errors
 
 
 def test_checker_rejects_memory_watchlist_missing_cli_config_override(tmp_path: Path) -> None:
