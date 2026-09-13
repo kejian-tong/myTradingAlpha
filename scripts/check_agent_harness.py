@@ -182,6 +182,15 @@ _PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 _OPENAI_DOCS_MCP_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+_MEMORY_WATCHLIST_CAPABILITY = "Codex Memories (`features.memories`)"
+_MEMORY_WATCHLIST_STATUS = "explicitly disabled / watch-only"
+_MEMORY_WATCHLIST_REASON = (
+    "this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable "
+    "recovery; `features.memories = false` is prospective configuration intent for a fresh session in a "
+    "trusted project, while CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not "
+    "retroactively change running sessions; project configuration does not authenticate live-runtime state; "
+    "hidden/local learned state must not become execution authority"
+)
 
 
 def _toml(path: Path) -> dict:
@@ -193,6 +202,42 @@ def _toml(path: Path) -> dict:
         except ModuleNotFoundError as exc:
             raise ValueError("TOML parser unavailable; use Python 3.11+ or locked dev") from exc
     return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _normalize_memory_watchlist_cell(value: str) -> str:
+    return " ".join(value.strip().split())
+
+
+def _memory_watchlist_errors(root: Path) -> list[str]:
+    path = root / _WATCHLIST_PATH
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8")
+    rows = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().lower().startswith("| codex memories (")
+    ]
+    if len(rows) != 1:
+        return ["Codex Memory watchlist must contain exactly one Memory decision row"]
+    parts = rows[0].split("|")
+    if len(parts) != 6 or parts[0].strip() or parts[-1].strip():
+        return ["Codex Memory watchlist must contain exactly four Markdown cells"]
+    actual = tuple(_normalize_memory_watchlist_cell(cell) for cell in parts[1:4])
+    expected = tuple(
+        _normalize_memory_watchlist_cell(cell)
+        for cell in (
+            _MEMORY_WATCHLIST_CAPABILITY,
+            _MEMORY_WATCHLIST_STATUS,
+            _MEMORY_WATCHLIST_REASON,
+        )
+    )
+    if actual != expected:
+        return [
+            "Codex Memory watchlist configuration (capability, status, and reason) must match "
+            "the canonical reviewed policy"
+        ]
+    return []
 
 
 def _single_hook_handler(event_map: dict, event: str, errors: list[str]) -> tuple[dict, dict] | None:
@@ -314,10 +359,11 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
     if "default_permissions" in config or "permissions" in config:
         errors.append("Codex Permission Profiles are watch-only while sandbox_mode isolation is active")
     features = config.get("features")
-    if isinstance(features, dict) and features.get("memories") not in (None, False):
+    if type(features) is not dict or features.get("memories") is not False:
         errors.append("Codex Memories are watch-only for this auditable repository harness")
     if "memories" in config:
         errors.append("Codex Memories configuration is watch-only for this repository")
+    errors.extend(_memory_watchlist_errors(root))
     if "otel" in config:
         errors.append("Codex OpenTelemetry exporters require a separate reviewed adoption PR")
     if "plugins" in config:

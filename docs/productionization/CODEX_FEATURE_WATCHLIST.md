@@ -12,7 +12,7 @@ and exact-head validation; it must not arrive incidentally inside a product-road
 | project-local `.codex/rules/*.rules` | watch only | Codex Rules are experimental and can change; the current harness records Master-only delegation as a behavioral policy, while configuration, hooks and GitHub gates do not authenticate the runtime caller | Rules become stable enough for a small command-policy pilot with `codex execpolicy check` regression cases |
 | Permission Profiles (`default_permissions` / `[permissions]`) | watch only | Permission Profiles are Beta and do not compose with the current `sandbox_mode`-based agent isolation; loaded `sandbox_mode` causes Codex to use the older sandbox system | permission profiles mature and a separate read-only-role pilot proves equivalent or stronger isolation before any migration |
 | project Apps (`features.apps`) | explicitly disabled | productionization sessions do not need Codex Apps; the project setting records configuration intent without claiming control over global, installed-plugin, or managed runtime Apps | a separate reviewed pilot defines the required runtime capability receipt and verifies the actual App surface in a fresh session |
-| Codex Memories (`features.memories`) | off / watch only | this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable recovery; hidden/local learned state must not become execution authority | a future design proves deterministic export/audit/recovery semantics and demonstrates clear value beyond `AGENT_STATE.md`, PR evidence and scoped instructions |
+| Codex Memories (`features.memories`) | explicitly disabled / watch-only | this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable recovery; `features.memories = false` is prospective configuration intent for a fresh session in a trusted project, while CLI `--config`/`--enable` flags remain higher-precedence overrides; it does not retroactively change running sessions; project configuration does not authenticate live-runtime state; hidden/local learned state must not become execution authority | a future design proves deterministic export/audit/recovery semantics and demonstrates clear value beyond `AGENT_STATE.md`, PR evidence and scoped instructions |
 | OpenTelemetry exporters (`[otel]`) | watch only | current narrow Git-common-dir telemetry captures the routing/concurrency evidence this single repository needs without exporting prompts or broad runtime traces | multi-repo/team observability creates a concrete backend, retention, privacy and access-control requirement |
 | repo-level Codex plugin configuration (`[plugins]`) | watch only | the harness is currently project-specific and already has repo Skills plus role-scoped MCP configuration intent; plugin packaging adds distribution/governance surface without current reuse benefit | the harness is deliberately reused across multiple repositories or teams and plugin packaging has a defined owner/versioning policy |
 
@@ -33,7 +33,7 @@ configuration when it detects any of these unapproved adoption surfaces or bound
 - `default_permissions` or a top-level `[permissions]` table in `.codex/config.toml`;
 - a missing or non-false project `features.apps` setting;
 - a project-level `[mcp_servers]` table;
-- `features.memories = true` or a top-level `[memories]` table;
+- a missing or non-exact-boolean-false project `features.memories` setting or a top-level `[memories]` table;
 - a top-level `[otel]` table;
 - a top-level `[plugins]` table.
 
