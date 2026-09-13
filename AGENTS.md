@@ -263,6 +263,8 @@ The master alone owns the final merge gate. Reviewer APPROVE is necessary but no
 merge, require exact-final-head scope, independent review, required CI, compatibility/safety, and durable
 merge-gate evidence. Bind autonomous merges to the expected head SHA.
 
+GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used.
+
 Automatic merge is permitted only when the user explicitly authorizes autonomous execution for the
 bounded task. Autonomous mode never means merge despite uncertainty.
 
