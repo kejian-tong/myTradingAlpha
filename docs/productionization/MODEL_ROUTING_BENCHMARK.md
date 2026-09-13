@@ -63,6 +63,7 @@ Output includes, per task class:
 - missing task IDs per route;
 - whether pairing is exact;
 - the paired task count.
+- the validated frozen task provenance for each task class/task ID.
 
 A different task set produces `incomplete_pairing` and no Pareto frontier. This prevents a cheap route
 run on easy PRs from being compared directly with a stronger route run only on difficult PRs.
@@ -154,6 +155,10 @@ Initial replay/shadow candidates remain:
 | hardest implementation/review synthesis | Sol / xhigh | Astra / xhigh canary; no active-PR authority |
 | master synthesis/merge-gate reasoning | Sol / xhigh | Astra / xhigh historical canary only |
 
+The validator accepts only the seven model/effort pairs shown in this matrix: Luna/max;
+Terra/medium, Terra/high, Terra/xhigh; Sol/high, Sol/xhigh; and Astra/xhigh. This constrains
+benchmark evidence only and does not change actual production routing.
+
 Freeze repository state, task prompt/scope, known findings and acceptance matrix before running routes.
 Historical SIG-02 is a useful hard case because it has an immutable final result and extensive known
 adversarial findings, but one task is not enough for a routing conclusion.
@@ -189,12 +194,22 @@ Until representative paired benchmark evidence accumulates, keep current product
 Each JSONL row contains:
 
 - `task_id`, `task_class`, `model`, `effort`;
+- `repository_commit_sha` and `repository_tree_sha` as lowercase 40-hex values, plus
+  `task_manifest_sha256` as a lowercase 64-hex value;
 - `acceptance_pass`, `safety_gate_pass`, `missed_blocker_high`;
 - `quality_score` in 0..100;
 - measured `duration_ms` and `retries`;
 - optionally, all three observed `input_tokens`, `cached_input_tokens`, and `output_tokens`.
 
+All nonnegative integer measurements use the inclusive signed 64-bit range `0..2**63 - 1` to bound
+input arithmetic and serialized benchmark economics. This is an input-safety/economics bound, not a
+claim about runtime limits or model behavior.
+
 Use one row per route/task identity. A failed end-to-end task run remains in the dataset with its observed
 duration, retries and token consumption. The benchmark output reports reliability, pairing, freshness,
 per-route aggregates and a task-class Pareto frontier when comparison is actually valid; it never grants
 routing or merge authority.
+
+The external frozen task manifest binds the task prompt and scope, acceptance matrix, and known findings.
+The validator checks only supplied provenance syntax and cross-route consistency; it cannot authenticate the
+repository, manifest, or runtime execution that produced those values.

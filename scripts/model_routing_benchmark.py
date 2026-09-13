@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -38,9 +40,24 @@ USD_RATES = {
 
 _MODELS = frozenset(CREDIT_RATES)
 _TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens")
+MAX_SIGNED_INT = 2**63 - 1
+_NONNEGATIVE_INTEGER_FIELDS = ("missed_blocker_high", "duration_ms", "retries")
+_PROVENANCE_FIELDS = (
+    "repository_commit_sha",
+    "repository_tree_sha",
+    "task_manifest_sha256",
+)
+_HEX40 = re.compile(r"[0-9a-f]{40}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_ALLOWED_EFFORTS = {
+    "gpt-5.6-luna": frozenset({"max"}),
+    "gpt-5.6-terra": frozenset({"medium", "high", "xhigh"}),
+    "gpt-5.6-sol": frozenset({"high", "xhigh"}),
+    "gpt-6-astra": frozenset({"xhigh"}),
+}
 _REQUIRED = {
     "task_id", "task_class", "model", "effort", "acceptance_pass", "safety_gate_pass",
-    "missed_blocker_high", "quality_score", "duration_ms", "retries",
+    "missed_blocker_high", "quality_score", "duration_ms", "retries", *_PROVENANCE_FIELDS,
 }
 _OPTIONAL = set(_TOKEN_FIELDS)
 
@@ -48,7 +65,12 @@ _OPTIONAL = set(_TOKEN_FIELDS)
 def _number(value: object, *, name: str) -> float:
     if type(value) not in (int, float) or isinstance(value, bool):
         raise ValueError(f"{name} must be numeric")
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
     if result < 0:
         raise ValueError(f"{name} must be non-negative")
     return result
@@ -58,6 +80,9 @@ def validate(record: object) -> dict:
     if type(record) is not dict:
         raise ValueError("benchmark record must be an object")
     keys = set(record)
+    missing_provenance = set(_PROVENANCE_FIELDS) - keys
+    if missing_provenance:
+        raise ValueError("benchmark record provenance fields are required")
     if not keys >= _REQUIRED or not keys <= (_REQUIRED | _OPTIONAL):
         raise ValueError("benchmark record fields differ from reviewed schema")
     for key in ("task_id", "task_class", "model", "effort"):
@@ -65,12 +90,27 @@ def validate(record: object) -> dict:
             raise ValueError(f"{key} must be a non-empty string")
     if record["model"] not in _MODELS:
         raise ValueError("model is not in the routing benchmark set")
+    if record["effort"] not in _ALLOWED_EFFORTS[record["model"]]:
+        raise ValueError("model/effort pair is not in the routing benchmark policy matrix")
+    if (
+        type(record["repository_commit_sha"]) is not str
+        or _HEX40.fullmatch(record["repository_commit_sha"]) is None
+        or type(record["repository_tree_sha"]) is not str
+        or _HEX40.fullmatch(record["repository_tree_sha"]) is None
+        or type(record["task_manifest_sha256"]) is not str
+        or _HEX64.fullmatch(record["task_manifest_sha256"]) is None
+    ):
+        raise ValueError("benchmark record provenance fields must be lowercase hexadecimal")
     for key in ("acceptance_pass", "safety_gate_pass"):
         if type(record[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
-    for key in ("missed_blocker_high", "duration_ms", "retries"):
-        if type(record[key]) is not int or isinstance(record[key], bool) or record[key] < 0:
-            raise ValueError(f"{key} must be a non-negative integer")
+    for key in _NONNEGATIVE_INTEGER_FIELDS:
+        if (
+            type(record[key]) is not int
+            or isinstance(record[key], bool)
+            or not 0 <= record[key] <= MAX_SIGNED_INT
+        ):
+            raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
     quality = _number(record["quality_score"], name="quality_score")
     if quality > 100:
         raise ValueError("quality_score must be <= 100")
@@ -79,8 +119,12 @@ def validate(record: object) -> dict:
         raise ValueError("token observations must provide input/cached/output together")
     if all(present_tokens):
         for key in _TOKEN_FIELDS:
-            if type(record[key]) is not int or isinstance(record[key], bool) or record[key] < 0:
-                raise ValueError(f"{key} must be a non-negative integer")
+            if (
+                type(record[key]) is not int
+                or isinstance(record[key], bool)
+                or not 0 <= record[key] <= MAX_SIGNED_INT
+            ):
+                raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
     return dict(record)
 
 
@@ -272,8 +316,15 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
     grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     validated = []
     identities = set()
+    provenance_by_task: dict[tuple[str, str], dict[str, str]] = {}
     for raw in records:
         row = validate(raw)
+        task_key = (row["task_class"], row["task_id"])
+        provenance = {field: row[field] for field in _PROVENANCE_FIELDS}
+        prior_provenance = provenance_by_task.get(task_key)
+        if prior_provenance is not None and prior_provenance != provenance:
+            raise ValueError("task provenance mismatch across model/effort routes")
+        provenance_by_task[task_key] = provenance
         identity = (row["task_class"], row["model"], row["effort"], row["task_id"])
         if identity in identities:
             raise ValueError("duplicate task_id for the same task class/model/effort route")
@@ -321,8 +372,28 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
         "promotion_task_target": PROMOTION_TASK_TARGET,
         "comparison_pairing": pairing_by_class,
         "astra_canary_pairing": _astra_pairing(validated),
+        "task_provenance": {
+            task_class: {
+                task_id: provenance_by_task[(task_class, task_id)]
+                for task_id in sorted(
+                    task_id_value
+                    for class_value, task_id_value in provenance_by_task
+                    if class_value == task_class
+                )
+            }
+            for task_class in sorted({class_value for class_value, _ in provenance_by_task})
+        },
         "task_classes": result_classes,
     }
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -331,7 +402,7 @@ def load_jsonl(path: Path) -> list[dict]:
         if not line.strip():
             continue
         try:
-            rows.append(validate(json.loads(line)))
+            rows.append(validate(json.loads(line, object_pairs_hook=_unique_object)))
         except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"invalid benchmark record on line {number}: {exc}") from exc
     return rows
