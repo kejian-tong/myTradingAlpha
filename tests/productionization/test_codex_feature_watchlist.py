@@ -215,6 +215,26 @@ def test_checker_rejects_memory_watchlist_missing_authentication_negation(tmp_pa
     assert any("memory" in error.lower() and "watch" in error.lower() for error in errors), errors
 
 
+def test_checker_rejects_memory_watchlist_contradictory_authentication_claim(tmp_path: Path) -> None:
+    checker = _checker()
+    fixture = _copy_harness_fixture(tmp_path)
+    path = fixture / "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(
+        _replace_memory_watchlist_row(original, _GOOD_MEMORY_WATCHLIST_ROW), encoding="utf-8"
+    )
+    assert checker.configuration_errors(fixture) == []
+
+    contradictory_row = _GOOD_MEMORY_WATCHLIST_ROW.replace(
+        "project configuration does not authenticate live-runtime state |",
+        "project configuration does not authenticate live-runtime state; "
+        "Project configuration authenticates live-runtime state. |",
+    )
+    path.write_text(_replace_memory_watchlist_row(original, contradictory_row), encoding="utf-8")
+    errors = checker.configuration_errors(fixture)
+    assert any("memory" in error.lower() and "watch" in error.lower() for error in errors), errors
+
+
 def test_checker_rejects_memory_watchlist_missing_cli_config_override(tmp_path: Path) -> None:
     checker = _checker()
     fixture = _copy_harness_fixture(tmp_path)
