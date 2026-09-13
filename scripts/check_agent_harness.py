@@ -100,6 +100,10 @@ _GITHUB_BOUNDARY_FIELDS = {
     "initial_review_id", "initial_review_actor_id", "initial_review_commit_sha",
     "initial_review_state", "initial_review_submitted_at", "initial_review_pre_dismiss_state",
     "initial_review_pre_dismiss_observed_at", "moved_head_sha",
+    "moved_head_push_observed_at", "moved_head_push_head_sha",
+    "initial_review_dismissal_trigger", "initial_review_dismissal_observed_at",
+    "initial_review_dismissal_head_sha", "moved_head_review_trigger",
+    "moved_head_review_trigger_observed_at", "moved_head_review_trigger_head_sha",
     "moved_head_review_id", "moved_head_review_actor_id", "moved_head_review_commit_sha",
     "moved_head_review_state", "moved_head_review_submitted_at",
     "moved_head_review_pre_dismiss_state", "moved_head_review_pre_dismiss_observed_at",
@@ -129,8 +133,10 @@ _GITHUB_BOUNDARY_FIELDS = {
 }
 _GITHUB_BOUNDARY_SHA_FIELDS = (
     "head_sha", "initial_head_sha", "initial_review_commit_sha", "moved_head_sha",
-    "moved_head_review_commit_sha", "negative_probe_head_sha", "final_review_commit_sha",
-    "positive_probe_head_sha", "controlling_review_head_sha", "required_checks_head_sha",
+    "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
+    "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
+    "negative_probe_head_sha", "final_review_commit_sha", "positive_probe_head_sha",
+    "controlling_review_head_sha", "required_checks_head_sha",
 )
 _GITHUB_BOUNDARY_DIGEST_FIELDS = (
     "main_ruleset_preimage_digest", "main_ruleset_postimage_digest",
@@ -140,7 +146,9 @@ _GITHUB_BOUNDARY_DIGEST_FIELDS = (
 )
 _GITHUB_BOUNDARY_TIME_FIELDS = (
     "captured_at", "initial_review_submitted_at", "initial_review_pre_dismiss_observed_at",
-    "moved_head_review_submitted_at", "moved_head_review_pre_dismiss_observed_at",
+    "moved_head_push_observed_at", "initial_review_dismissal_observed_at",
+    "moved_head_review_trigger_observed_at", "moved_head_review_submitted_at",
+    "moved_head_review_pre_dismiss_observed_at",
     "negative_probe_observed_at", "final_review_submitted_at", "positive_probe_observed_at",
     "main_ruleset_preimage_updated_at",
     "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
@@ -569,6 +577,7 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
             <= parsed_times["initial_review_pre_dismiss_observed_at"]
             < parsed_times["main_ruleset_preimage_captured_at"]
             < parsed_times["main_ruleset_postimage_updated_at"]
+            < parsed_times["moved_head_push_observed_at"]
             < parsed_times["moved_head_review_submitted_at"]
             <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
             < parsed_times["negative_probe_observed_at"]
@@ -577,6 +586,18 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
             <= captured
         ):
             errors.append("GitHub review/ruleset transition provenance is not strictly ordered")
+        if any(
+            not (
+                parsed_times["moved_head_push_observed_at"]
+                <= parsed_times[field]
+                <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
+            )
+            for field in (
+                "initial_review_dismissal_observed_at",
+                "moved_head_review_trigger_observed_at",
+            )
+        ):
+            errors.append("push-trigger observation is outside the moved-review transition")
         if parsed_times["main_ruleset_preimage_updated_at"] > parsed_times["main_ruleset_preimage_captured_at"]:
             errors.append("main ruleset preimage capture precedes its source update")
 
@@ -619,13 +640,20 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         or any(
             record[field] != head
             for field in (
-                "moved_head_sha", "moved_head_review_commit_sha", "negative_probe_head_sha",
-                "final_review_commit_sha", "positive_probe_head_sha", "controlling_review_head_sha",
+                "moved_head_sha", "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
+                "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
+                "negative_probe_head_sha", "final_review_commit_sha", "positive_probe_head_sha",
+                "controlling_review_head_sha",
                 "required_checks_head_sha",
             )
         )
     ):
         errors.append("stale or mismatched GitHub review-boundary head")
+    if (
+        record["initial_review_dismissal_trigger"] != "ruleset_stale_on_push"
+        or record["moved_head_review_trigger"] != "copilot_ruleset_review_on_push"
+    ):
+        errors.append("review transition is not ruleset push-triggered")
     review_ids = (
         record["initial_review_id"], record["moved_head_review_id"], record["final_review_id"],
     )
