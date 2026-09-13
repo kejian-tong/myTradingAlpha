@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -238,6 +239,111 @@ def _race_worker(
         queue.put(("rejected", type(exc).__name__))
     else:
         queue.put(("acquired", result["lease_id"]))
+
+
+def _transition_worker(
+    script: str,
+    action: str,
+    repo: str,
+    base_sha: str,
+    identity: dict[str, str],
+    barrier: Any,
+    queue: Any,
+    checkpoint: str = "before_red",
+) -> None:
+    module = _load_module(Path(script), f"writer_lease_transition_{action}_{os.getpid()}")
+    barrier.wait()
+    try:
+        if action == "verify":
+            module.verify(
+                repo_root=Path(repo),
+                base_sha=base_sha,
+                checkpoint=checkpoint,
+                phase=f"race-{checkpoint}",
+                **identity,
+            )
+        else:
+            module.release(repo_root=Path(repo), base_sha=base_sha, **identity)
+    except BaseException as exc:  # pragma: no cover - asserted in parent process
+        queue.put(("rejected", type(exc).__name__))
+    else:
+        queue.put(("accepted", action))
+
+
+def _delayed_old_operation_worker(
+    script: str,
+    action: str,
+    repo: str,
+    base_sha: str,
+    identity: dict[str, str],
+    ready: Any,
+    proceed: Any,
+    queue: Any,
+) -> None:
+    module = _load_module(Path(script), f"writer_lease_delayed_{action}_{os.getpid()}")
+    if hasattr(module, "_transition_guard"):
+        original_guard = module._transition_guard
+
+        @contextmanager
+        def delayed_guard(*args: object, **kwargs: object):
+            ready.set()
+            assert proceed.wait(timeout=20)
+            with original_guard(*args, **kwargs):
+                yield
+
+        module._transition_guard = delayed_guard
+    else:
+        original_active_identity = module._active_identity
+
+        def delayed_active_identity(**kwargs: object):
+            result = original_active_identity(**kwargs)
+            ready.set()
+            assert proceed.wait(timeout=20)
+            return result
+
+        module._active_identity = delayed_active_identity
+    try:
+        if action == "verify":
+            module.verify(
+                repo_root=Path(repo),
+                base_sha=base_sha,
+                checkpoint="before_red",
+                phase="delayed-old",
+                **identity,
+            )
+        else:
+            module.release(repo_root=Path(repo), base_sha=base_sha, **identity)
+    except BaseException as exc:  # pragma: no cover - asserted in parent process
+        queue.put(("rejected", type(exc).__name__))
+    else:
+        queue.put(("accepted", action))
+
+
+def _delayed_unlink_release_worker(
+    script: str,
+    repo: str,
+    base_sha: str,
+    identity: dict[str, str],
+    ready: Any,
+    proceed: Any,
+    queue: Any,
+) -> None:
+    module = _load_module(Path(script), f"writer_lease_delayed_unlink_{os.getpid()}")
+    original_unlink = module.os.unlink
+
+    def delayed_unlink(path: object, **kwargs: object) -> None:
+        if str(path).endswith("active.json"):
+            ready.set()
+            assert proceed.wait(timeout=20)
+        original_unlink(path, **kwargs)
+
+    module.os.unlink = delayed_unlink
+    try:
+        module.release(repo_root=Path(repo), base_sha=base_sha, **identity)
+    except BaseException as exc:  # pragma: no cover - asserted in parent process
+        queue.put(("rejected", type(exc).__name__))
+    else:
+        queue.put(("accepted", "release"))
 
 
 def _run_race(
@@ -1009,6 +1115,251 @@ def test_archived_lease_capacity_fails_before_active_or_completed_lane_mutation(
     }
     assert after == before
     assert not (state / "active.json").exists()
+
+
+def test_concurrent_verifies_leave_one_valid_canonical_chain(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
+    identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
+    identity.pop("base_sha")
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_transition_worker,
+            args=(
+                str(SCRIPT),
+                "verify",
+                str(primary),
+                base_sha,
+                identity,
+                barrier,
+                queue,
+                checkpoint,
+            ),
+        )
+        for checkpoint in ("before_red", "before_green")
+    ]
+    for process in processes:
+        process.start()
+    results = [queue.get(timeout=20) for _ in processes]
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+    assert any(status == "accepted" for status, _detail in results)
+    assert lease.inspect(repo_root=primary)["status"] == "active"
+    _release(lease, primary, base_sha, acquired["lease_id"])
+    raw = lease.export_evidence(
+        repo_root=primary,
+        lease_id=acquired["lease_id"],
+        **_identity(base_sha),
+    )
+    assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
+
+
+def test_duplicate_release_is_rejected_without_corrupting_completed_evidence(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
+    identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
+    identity.pop("base_sha")
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    proceed = context.Event()
+    queue = context.Queue()
+    process = context.Process(
+        target=_delayed_old_operation_worker,
+        args=(
+            str(SCRIPT),
+            "release",
+            str(primary),
+            base_sha,
+            identity,
+            ready,
+            proceed,
+            queue,
+        ),
+    )
+    process.start()
+    assert ready.wait(timeout=20)
+    _release(lease, primary, base_sha, acquired["lease_id"])
+    proceed.set()
+    assert queue.get(timeout=20)[0] == "rejected"
+    process.join(timeout=20)
+    assert process.exitcode == 0
+    raw = lease.export_evidence(
+        repo_root=primary,
+        lease_id=acquired["lease_id"],
+        **_identity(base_sha),
+    )
+    assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
+
+
+@pytest.mark.parametrize("action", ["verify", "release"])
+def test_delayed_old_operation_cannot_mutate_or_unlink_later_started_lease(
+    lease: ModuleType, tmp_path: Path, action: str
+) -> None:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    old = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, old["lease_id"])
+    old_identity = {**_identity(base_sha), "lease_id": old["lease_id"]}
+    old_identity.pop("base_sha")
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    proceed = context.Event()
+    queue = context.Queue()
+    process = context.Process(
+        target=_delayed_old_operation_worker,
+        args=(
+            str(SCRIPT),
+            action,
+            str(primary),
+            base_sha,
+            old_identity,
+            ready,
+            proceed,
+            queue,
+        ),
+    )
+    process.start()
+    assert ready.wait(timeout=20)
+    _release(lease, primary, base_sha, old["lease_id"])
+    new_identity = {
+        "pr_id": "HARNESS-AUD-06",
+        "owner_ref": OTHER_OWNER_REF,
+        "session_ref": OTHER_SESSION_REF,
+    }
+    new = _acquire(lease, primary, base_sha, **new_identity)
+    _verify(lease, primary, base_sha, new["lease_id"], **new_identity)
+    proceed.set()
+    assert queue.get(timeout=20)[0] == "rejected"
+    process.join(timeout=20)
+    assert process.exitcode == 0
+    active = lease.inspect(repo_root=primary)
+    assert active["status"] == "active"
+    assert active["active"]["lease_id"] == new["lease_id"]
+    _release(lease, primary, base_sha, new["lease_id"], **new_identity)
+    for lease_id, values in (
+        (old["lease_id"], {}),
+        (new["lease_id"], new_identity),
+    ):
+        raw = lease.export_evidence(
+            repo_root=primary,
+            lease_id=lease_id,
+            **_identity(base_sha, **values),
+        )
+        assert lease.validate_evidence(raw)["lease_id"] == lease_id
+
+
+def test_release_linearizes_before_later_acquire(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    old = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, old["lease_id"])
+    identity = {**_identity(base_sha), "lease_id": old["lease_id"]}
+    identity.pop("base_sha")
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    proceed = context.Event()
+    queue = context.Queue()
+    process = context.Process(
+        target=_delayed_unlink_release_worker,
+        args=(
+            str(SCRIPT),
+            str(primary),
+            base_sha,
+            identity,
+            ready,
+            proceed,
+            queue,
+        ),
+    )
+    process.start()
+    assert ready.wait(timeout=20)
+    with pytest.raises(lease.WriterLeaseError):
+        _acquire(
+            lease,
+            primary,
+            base_sha,
+            pr_id="HARNESS-AUD-06",
+            owner_ref=OTHER_OWNER_REF,
+            session_ref=OTHER_SESSION_REF,
+        )
+    proceed.set()
+    assert queue.get(timeout=20)[0] == "accepted"
+    process.join(timeout=20)
+    assert process.exitcode == 0
+    new = _acquire(
+        lease,
+        primary,
+        base_sha,
+        pr_id="HARNESS-AUD-06",
+        owner_ref=OTHER_OWNER_REF,
+        session_ref=OTHER_SESSION_REF,
+    )
+    _verify(
+        lease,
+        primary,
+        base_sha,
+        new["lease_id"],
+        pr_id="HARNESS-AUD-06",
+        owner_ref=OTHER_OWNER_REF,
+        session_ref=OTHER_SESSION_REF,
+    )
+    assert lease.inspect(repo_root=primary)["active"]["lease_id"] == new["lease_id"]
+
+
+@pytest.mark.parametrize("mutation", ["event_type", "checkpoint", "oversized_integer"])
+def test_hostile_canonical_json_always_raises_generic_library_error(
+    lease: ModuleType, tmp_path: Path, mutation: str
+) -> None:
+    raw, _primary, _base_sha, _lease_id = _completed_evidence(lease, tmp_path)
+    if mutation == "oversized_integer":
+        hostile = raw.replace(b'"schema_version":1', b'"schema_version":' + (b"9" * 5_000), 1)
+    else:
+        parsed = json.loads(raw)
+        parsed["events"][1][mutation] = ["SECRET-CANARY"] if mutation == "event_type" else {}
+        hostile = _canonical(parsed)
+    with pytest.raises(lease.WriterLeaseError) as exc_info:
+        lease.validate_evidence(hostile)
+    assert str(exc_info.value) == "writer lease operation failed"
+
+
+@pytest.mark.parametrize("mutation", ["event_type", "checkpoint", "oversized_integer"])
+def test_hostile_canonical_json_cli_has_only_generic_error(
+    lease: ModuleType, tmp_path: Path, mutation: str
+) -> None:
+    raw, _primary, _base_sha, _lease_id = _completed_evidence(lease, tmp_path)
+    if mutation == "oversized_integer":
+        hostile = raw.replace(b'"schema_version":1', b'"schema_version":' + (b"9" * 5_000), 1)
+    else:
+        parsed = json.loads(raw)
+        parsed["events"][1][mutation] = ["SECRET-CANARY"] if mutation == "event_type" else {}
+        hostile = _canonical(parsed)
+    evidence_path = tmp_path / "SECRET-PATH-CANARY.json"
+    evidence_path.write_bytes(hostile)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "validate", str(evidence_path)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "writer lease operation failed\n"
+
+
+def test_writer_lease_does_not_require_separate_writer_worktree_policy() -> None:
+    skill = (ROOT / ".agents/skills/writer-lease/SKILL.md").read_text(encoding="utf-8").lower()
+    assert "dedicated writer worktree" not in skill
 
 
 def test_timestamps_are_not_validity_and_release_has_no_forgeable_stopped_proof(
