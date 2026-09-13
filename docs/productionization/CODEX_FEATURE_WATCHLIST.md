@@ -9,7 +9,7 @@ and exact-head validation; it must not arrive incidentally inside a product-road
 
 | Capability | Current status | Why | Earliest reconsideration trigger |
 | --- | --- | --- | --- |
-| project-local `.codex/rules/*.rules` | watch only | Codex Rules are experimental and can change; the current sandbox, master-only delegation, hooks and GitHub gates already constrain execution | Rules become stable enough for a small command-policy pilot with `codex execpolicy check` regression cases |
+| project-local `.codex/rules/*.rules` | watch only | Codex Rules are experimental and can change; the current harness records Master-only delegation as a behavioral policy, while configuration, hooks and GitHub gates do not authenticate the runtime caller | Rules become stable enough for a small command-policy pilot with `codex execpolicy check` regression cases |
 | Permission Profiles (`default_permissions` / `[permissions]`) | watch only | Permission Profiles are Beta and do not compose with the current `sandbox_mode`-based agent isolation; loaded `sandbox_mode` causes Codex to use the older sandbox system | permission profiles mature and a separate read-only-role pilot proves equivalent or stronger isolation before any migration |
 | project Apps (`features.apps`) | explicitly disabled | productionization sessions do not need Codex Apps; the project setting records configuration intent without claiming control over global, installed-plugin, or managed runtime Apps | a separate reviewed pilot defines the required runtime capability receipt and verifies the actual App surface in a fresh session |
 | Codex Memories (`features.memories`) | off / watch only | this repository requires GitHub/repository-grounded, cross-session and cross-machine auditable recovery; hidden/local learned state must not become execution authority | a future design proves deterministic export/audit/recovery semantics and demonstrates clear value beyond `AGENT_STATE.md`, PR evidence and scoped instructions |
@@ -21,6 +21,10 @@ documentation before an adoption proposal; this file records the reviewed decisi
 feature can never become appropriate.
 
 ## Guardrail semantics
+
+Master-only delegation is a behavioral policy, not repo-level host identity enforcement. The watchlist and
+offline checks describe project intent and observed evidence; they cannot authenticate a runtime caller or
+selectively enforce delegation capability.
 
 `scripts/check_agent_harness.py` checks project configuration intent and fails the reviewed project
 configuration when it detects any of these unapproved adoption surfaces or boundaries:
