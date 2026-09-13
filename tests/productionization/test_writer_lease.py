@@ -27,6 +27,18 @@ SESSION_REF = "b" * 64
 OTHER_OWNER_REF = "c" * 64
 OTHER_SESSION_REF = "d" * 64
 PR_ID = "HARNESS-AUD-05"
+WRITER_ROLE = "normal_implementer"
+OTHER_WRITER_ROLE = "high_implementer"
+WRITER_ROLES = {
+    "normal_implementer",
+    "high_implementer",
+    "critical_implementer",
+}
+
+# These caller-supplied digests are pseudonymous correlation references. They do not
+# authenticate a runtime owner or session identity.
+assert re.fullmatch(r"[0-9a-f]{64}", OWNER_REF)
+assert re.fullmatch(r"[0-9a-f]{64}", SESSION_REF)
 
 
 def _load_module(path: Path, name: str = "writer_lease_contract") -> ModuleType:
@@ -79,19 +91,30 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
         ],
         check=True,
     )
-    head = _git(primary, "rev-parse", "HEAD")
+    base_sha = _git(primary, "rev-parse", "HEAD")
     subprocess.run(
-        ["git", "-C", str(primary), "worktree", "add", "--detach", "-q", str(linked), head],
+        [
+            "git",
+            "-C",
+            str(primary),
+            "worktree",
+            "add",
+            "--detach",
+            "-q",
+            str(linked),
+            base_sha,
+        ],
         check=True,
     )
     common = Path(_git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    return primary, linked, head, common
+    return primary, linked, base_sha, common
 
 
-def _identity(head: str, **overrides: str) -> dict[str, str]:
+def _identity(base_sha: str, **overrides: str) -> dict[str, str]:
     values = {
         "pr_id": PR_ID,
-        "head_sha": head,
+        "base_sha": base_sha,
+        "writer_role": WRITER_ROLE,
         "owner_ref": OWNER_REF,
         "session_ref": SESSION_REF,
     }
@@ -99,17 +122,37 @@ def _identity(head: str, **overrides: str) -> dict[str, str]:
     return values
 
 
-def _acquire(module: ModuleType, repo: Path, head: str, **overrides: str) -> dict[str, Any]:
-    result = module.acquire(repo_root=repo, **_identity(head, **overrides))
+def _assert_bound_identity(
+    record: dict[str, Any],
+    *,
+    base_sha: str,
+    lease_id: str,
+    **overrides: str,
+) -> None:
+    expected = _identity(base_sha, **overrides)
+    expected["lease_id"] = lease_id
+    assert {field: record[field] for field in expected} == expected
+
+
+def _acquire(
+    module: ModuleType, repo: Path, base_sha: str, **overrides: str
+) -> dict[str, Any]:
+    result = module.acquire(repo_root=repo, **_identity(base_sha, **overrides))
     assert type(result) is dict
     assert re.fullmatch(r"[0-9a-f]{64}", result["lease_id"])
+    _assert_bound_identity(
+        result,
+        base_sha=base_sha,
+        lease_id=result["lease_id"],
+        **overrides,
+    )
     return result
 
 
 def _verify(
     module: ModuleType,
     repo: Path,
-    head: str,
+    base_sha: str,
     lease_id: str,
     *,
     checkpoint: str = "writer_start",
@@ -121,25 +164,37 @@ def _verify(
         lease_id=lease_id,
         checkpoint=checkpoint,
         phase=phase,
-        **_identity(head, **overrides),
+        **_identity(base_sha, **overrides),
     )
     assert type(result) is dict
+    _assert_bound_identity(
+        result,
+        base_sha=base_sha,
+        lease_id=lease_id,
+        **overrides,
+    )
     return result
 
 
 def _release(
     module: ModuleType,
     repo: Path,
-    head: str,
+    base_sha: str,
     lease_id: str,
     **overrides: str,
 ) -> dict[str, Any]:
     result = module.release(
         repo_root=repo,
         lease_id=lease_id,
-        **_identity(head, **overrides),
+        **_identity(base_sha, **overrides),
     )
     assert type(result) is dict
+    _assert_bound_identity(
+        result,
+        base_sha=base_sha,
+        lease_id=lease_id,
+        **overrides,
+    )
     return result
 
 
@@ -160,8 +215,9 @@ def _canonical(value: object) -> bytes:
 def _race_worker(
     script: str,
     repo: str,
-    head: str,
+    base_sha: str,
     pr_id: str,
+    writer_role: str,
     owner_ref: str,
     session_ref: str,
     barrier: Any,
@@ -173,7 +229,8 @@ def _race_worker(
         result = module.acquire(
             repo_root=Path(repo),
             pr_id=pr_id,
-            head_sha=head,
+            base_sha=base_sha,
+            writer_role=writer_role,
             owner_ref=owner_ref,
             session_ref=session_ref,
         )
@@ -186,7 +243,7 @@ def _race_worker(
 def _run_race(
     module: ModuleType,
     repo: Path,
-    head: str,
+    base_sha: str,
     pr_ids: list[str],
 ) -> list[tuple[str, str]]:
     context = multiprocessing.get_context("spawn")
@@ -199,8 +256,9 @@ def _run_race(
             args=(
                 str(SCRIPT),
                 str(repo),
-                head,
+                base_sha,
                 pr_id,
+                WRITER_ROLE,
                 f"{index + 1:064x}",
                 f"{index + 101:064x}",
                 barrier,
@@ -229,8 +287,8 @@ def test_multiprocess_race_has_exactly_one_winner_repo_globally(
     tmp_path: Path,
     pr_ids: list[str],
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
-    results = _run_race(lease, primary, head, pr_ids)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    results = _run_race(lease, primary, base_sha, pr_ids)
     assert [status for status, _ in results].count("acquired") == 1
     assert [status for status, _ in results].count("rejected") == len(pr_ids) - 1
 
@@ -238,13 +296,13 @@ def test_multiprocess_race_has_exactly_one_winner_repo_globally(
 def test_primary_and_linked_worktrees_share_one_fixed_common_dir_lease(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     with pytest.raises(lease.WriterLeaseError):
         _acquire(
             lease,
             linked,
-            head,
+            base_sha,
             pr_id="HARNESS-AUD-99",
             owner_ref=OTHER_OWNER_REF,
             session_ref=OTHER_SESSION_REF,
@@ -252,39 +310,70 @@ def test_primary_and_linked_worktrees_share_one_fixed_common_dir_lease(
     assert _state_dir(common).parent == common.resolve()
     assert _state_dir(common).is_dir()
     assert not (primary / STATE_DIRECTORY).exists()
-    assert lease.inspect(repo_root=linked)["active"]["lease_id"] == acquired["lease_id"]
+    active = lease.inspect(repo_root=linked)["active"]
+    _assert_bound_identity(active, base_sha=base_sha, lease_id=acquired["lease_id"])
 
 
-def test_acquire_is_non_idempotent_and_retry_uses_verify(
-    lease: ModuleType, tmp_path: Path
+@pytest.mark.parametrize("writer_role", sorted(WRITER_ROLES))
+def test_acquire_is_non_idempotent_and_verify_stays_bound_to_stable_base(
+    lease: ModuleType, tmp_path: Path, writer_role: str
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha, writer_role=writer_role)
     with pytest.raises(lease.WriterLeaseError):
-        _acquire(lease, primary, head)
-    verified = _verify(lease, primary, head, acquired["lease_id"])
+        _acquire(lease, primary, base_sha, writer_role=writer_role)
+    (primary / "tracked.txt").write_text("writer commit\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(primary), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(primary),
+            "-c",
+            "user.name=Writer Lease Test",
+            "-c",
+            "user.email=writer-lease@example.invalid",
+            "commit",
+            "-qm",
+            "writer advances head",
+        ],
+        check=True,
+    )
+    assert _git(primary, "rev-parse", "HEAD") != base_sha
+    verified = _verify(
+        lease,
+        primary,
+        base_sha,
+        acquired["lease_id"],
+        writer_role=writer_role,
+    )
     assert verified["lease_id"] == acquired["lease_id"]
 
 
-@pytest.mark.parametrize("field", ["lease_id", "pr_id", "owner_ref", "session_ref", "head_sha"])
+@pytest.mark.parametrize(
+    "field",
+    ["lease_id", "pr_id", "base_sha", "writer_role", "owner_ref", "session_ref"],
+)
 def test_wrong_identity_never_verifies_or_releases(
     lease: ModuleType, tmp_path: Path, field: str
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     values = {
         "lease_id": acquired["lease_id"],
         "pr_id": PR_ID,
+        "base_sha": base_sha,
+        "writer_role": WRITER_ROLE,
         "owner_ref": OWNER_REF,
         "session_ref": SESSION_REF,
-        "head_sha": head,
     }
     values[field] = {
         "lease_id": "f" * 64,
         "pr_id": "HARNESS-AUD-99",
+        "base_sha": "e" * 40,
+        "writer_role": OTHER_WRITER_ROLE,
         "owner_ref": OTHER_OWNER_REF,
         "session_ref": OTHER_SESSION_REF,
-        "head_sha": "e" * 40,
     }[field]
     with pytest.raises(lease.WriterLeaseError):
         lease.verify(
@@ -301,8 +390,8 @@ def test_wrong_identity_never_verifies_or_releases(
 def test_checkpoint_lifecycle_and_release_are_durable_and_ordered(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     for checkpoint in (
         "writer_start",
         "before_red",
@@ -313,12 +402,12 @@ def test_checkpoint_lifecycle_and_release_are_durable_and_ordered(
         _verify(
             lease,
             primary,
-            head,
+            base_sha,
             acquired["lease_id"],
             checkpoint=checkpoint,
             phase=f"phase-{checkpoint}",
         )
-    _release(lease, primary, head, acquired["lease_id"])
+    _release(lease, primary, base_sha, acquired["lease_id"])
 
     state = _state_dir(common)
     assert not (state / "active.json").exists()
@@ -336,7 +425,11 @@ def test_checkpoint_lifecycle_and_release_are_durable_and_ordered(
         event = json.loads(raw)
         assert event["sequence"] == sequence
         assert event["previous_event_digest"] == previous
-        assert event["lease_id"] == acquired["lease_id"]
+        _assert_bound_identity(
+            event,
+            base_sha=base_sha,
+            lease_id=acquired["lease_id"],
+        )
         previous = hashlib.sha256(raw).hexdigest()
         observed.append(event["event_type"])
     assert observed == ["acquire", "verify", "verify", "verify", "verify", "verify", "release"]
@@ -346,7 +439,7 @@ def test_checkpoint_lifecycle_and_release_are_durable_and_ordered(
 def test_state_permissions_and_create_flags_are_fail_closed(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
+    primary, _linked, base_sha, common = _repository(tmp_path)
     calls: list[tuple[int, int]] = []
     real_open = lease.os.open
 
@@ -356,10 +449,15 @@ def test_state_permissions_and_create_flags_are_fail_closed(
         return real_open(path, flags, mode, **kwargs)
 
     monkeypatch.setattr(lease.os, "open", recording_open)
-    _acquire(lease, primary, head)
+    acquired = _acquire(lease, primary, base_sha)
     state = _state_dir(common)
     assert stat.S_IMODE(state.stat().st_mode) == 0o700
     assert stat.S_IMODE((state / "active.json").stat().st_mode) == 0o600
+    _assert_bound_identity(
+        json.loads((state / "active.json").read_bytes()),
+        base_sha=base_sha,
+        lease_id=acquired["lease_id"],
+    )
     assert calls
     for flags, mode in calls:
         assert flags & os.O_CREAT
@@ -372,26 +470,30 @@ def test_state_permissions_and_create_flags_are_fail_closed(
 def test_complete_write_loop_handles_short_os_writes(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
     real_write = lease.os.write
 
     def short_write(fd: int, data: bytes) -> int:
         return real_write(fd, data[: max(1, min(3, len(data)))])
 
     monkeypatch.setattr(lease.os, "write", short_write)
-    acquired = _acquire(lease, primary, head)
-    assert lease.inspect(repo_root=primary)["active"]["lease_id"] == acquired["lease_id"]
+    acquired = _acquire(lease, primary, base_sha)
+    _assert_bound_identity(
+        lease.inspect(repo_root=primary)["active"],
+        base_sha=base_sha,
+        lease_id=acquired["lease_id"],
+    )
 
 
 @pytest.mark.parametrize("node_kind", ["malformed", "symlink", "fifo", "directory", "unsafe_mode"])
 def test_hostile_active_node_is_never_followed_replaced_or_auto_removed(
     lease: ModuleType, tmp_path: Path, node_kind: str
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     active = _state_dir(common) / "active.json"
     valid = active.read_bytes()
-    _release(lease, primary, head, acquired["lease_id"])
+    _release(lease, primary, base_sha, acquired["lease_id"])
     target = tmp_path / "outside-canary"
     target.write_text("must-not-change", encoding="utf-8")
     if node_kind == "malformed":
@@ -410,7 +512,7 @@ def test_hostile_active_node_is_never_followed_replaced_or_auto_removed(
         _acquire(
             lease,
             primary,
-            head,
+            base_sha,
             owner_ref=OTHER_OWNER_REF,
             session_ref=OTHER_SESSION_REF,
         )
@@ -421,38 +523,38 @@ def test_hostile_active_node_is_never_followed_replaced_or_auto_removed(
 def test_symlinked_state_directory_and_unsafe_common_directory_fail_closed(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
+    primary, _linked, base_sha, common = _repository(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
     state = _state_dir(common)
     state.symlink_to(outside, target_is_directory=True)
     with pytest.raises(lease.WriterLeaseError):
-        _acquire(lease, primary, head)
+        _acquire(lease, primary, base_sha)
     assert list(outside.iterdir()) == []
     state.unlink()
     original_mode = stat.S_IMODE(common.stat().st_mode)
     common.chmod(original_mode | stat.S_IWGRP | stat.S_IWOTH)
     try:
         with pytest.raises(lease.WriterLeaseError):
-            _acquire(lease, primary, head)
+            _acquire(lease, primary, base_sha)
     finally:
         common.chmod(original_mode)
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="safe wrong-owner fixture requires root")
 def test_wrong_owner_active_file_fails_closed(lease: ModuleType, tmp_path: Path) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     active = _state_dir(common) / "active.json"
     os.chown(active, 1, -1)
     with pytest.raises(lease.WriterLeaseError):
-        _verify(lease, primary, head, acquired["lease_id"])
+        _verify(lease, primary, base_sha, acquired["lease_id"])
 
 
 def test_git_environment_redirects_and_trace_writes_are_ignored(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
+    primary, _linked, base_sha, common = _repository(tmp_path)
     poison = tmp_path / "poison"
     trace = tmp_path / "git-trace-canary"
     for name, value in {
@@ -468,7 +570,7 @@ def test_git_environment_redirects_and_trace_writes_are_ignored(
         "GIT_TRACE2_EVENT": str(trace),
     }.items():
         monkeypatch.setenv(name, value)
-    _acquire(lease, primary, head)
+    _acquire(lease, primary, base_sha)
     assert _state_dir(common).is_dir()
     assert not poison.exists()
     assert not trace.exists()
@@ -477,7 +579,7 @@ def test_git_environment_redirects_and_trace_writes_are_ignored(
 def test_operation_does_not_mutate_source_ref_index_config_or_worktree_registration(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
     before = {
         "head": _git(primary, "rev-parse", "HEAD"),
         "tree": _git(primary, "write-tree"),
@@ -485,9 +587,9 @@ def test_operation_does_not_mutate_source_ref_index_config_or_worktree_registrat
         "config": _git(primary, "config", "--local", "--list"),
         "worktrees": _git(primary, "worktree", "list", "--porcelain"),
     }
-    acquired = _acquire(lease, primary, head)
-    _verify(lease, primary, head, acquired["lease_id"], checkpoint="before_red")
-    _release(lease, primary, head, acquired["lease_id"])
+    acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"], checkpoint="before_red")
+    _release(lease, primary, base_sha, acquired["lease_id"])
     after = {
         "head": _git(primary, "rev-parse", "HEAD"),
         "tree": _git(primary, "write-tree"),
@@ -516,28 +618,32 @@ def test_canonical_ascii_json_has_golden_bytes_and_digest(lease: ModuleType) -> 
     )
 
 
-def _completed_evidence(module: ModuleType, tmp_path: Path) -> tuple[bytes, Path, str]:
-    primary, _linked, head, _common = _repository(tmp_path)
-    acquired = _acquire(module, primary, head)
-    _verify(module, primary, head, acquired["lease_id"])
-    _release(module, primary, head, acquired["lease_id"])
+def _completed_evidence(
+    module: ModuleType, tmp_path: Path
+) -> tuple[bytes, Path, str, str]:
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(module, primary, base_sha)
+    _verify(module, primary, base_sha, acquired["lease_id"])
+    _release(module, primary, base_sha, acquired["lease_id"])
     raw = module.export_evidence(
         repo_root=primary,
         lease_id=acquired["lease_id"],
-        **_identity(head),
+        **_identity(base_sha),
     )
     assert type(raw) is bytes
-    return raw, primary, acquired["lease_id"]
+    return raw, primary, base_sha, acquired["lease_id"]
 
 
 def test_export_is_bounded_canonical_and_structurally_valid(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    raw, _primary, lease_id = _completed_evidence(lease, tmp_path)
+    raw, _primary, base_sha, lease_id = _completed_evidence(lease, tmp_path)
     assert len(raw) <= lease.MAX_EVIDENCE_BYTES <= 262_144
     assert raw == _canonical(json.loads(raw))
     parsed = lease.validate_evidence(raw)
-    assert parsed["lease_id"] == lease_id
+    _assert_bound_identity(parsed, base_sha=base_sha, lease_id=lease_id)
+    for event in parsed["events"]:
+        _assert_bound_identity(event, base_sha=base_sha, lease_id=lease_id)
     assert [event["event_type"] for event in parsed["events"]] == [
         "acquire",
         "verify",
@@ -562,7 +668,7 @@ def test_export_is_bounded_canonical_and_structurally_valid(
 def test_evidence_parser_rejects_hostile_json_and_identifiers(
     lease: ModuleType, tmp_path: Path, mutation: str
 ) -> None:
-    raw, _primary, _lease_id = _completed_evidence(lease, tmp_path)
+    raw, _primary, _base_sha, _lease_id = _completed_evidence(lease, tmp_path)
     parsed = json.loads(raw)
     if mutation == "duplicate":
         hostile = raw.replace(b"{", b'{"schema_version":1,', 1)
@@ -593,9 +699,12 @@ def test_evidence_parser_rejects_hostile_json_and_identifiers(
     ["gap", "reorder", "cross_lease", "predecessor", "event_unknown", "capacity"],
 )
 def test_structural_validation_rejects_broken_event_chains(
-    lease: ModuleType, tmp_path: Path, mutation: str
+    lease: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
 ) -> None:
-    raw, _primary, _lease_id = _completed_evidence(lease, tmp_path)
+    raw, _primary, _base_sha, _lease_id = _completed_evidence(lease, tmp_path)
     parsed = json.loads(raw)
     events = parsed["events"]
     if mutation == "gap":
@@ -609,7 +718,8 @@ def test_structural_validation_rejects_broken_event_chains(
     elif mutation == "event_unknown":
         events[1]["unexpected"] = 1
     else:
-        parsed["events"] = events * (lease.MAX_EVENT_COUNT + 1)
+        monkeypatch.setattr(lease, "MAX_EVENT_COUNT", 4)
+        parsed["events"] = events * 2
     with pytest.raises(lease.WriterLeaseError):
         lease.validate_evidence(_canonical(parsed))
 
@@ -618,9 +728,10 @@ def test_structural_validation_rejects_broken_event_chains(
     ("field", "hostile"),
     [
         ("pr_id", "HARNESS-AUD-05/../../escape"),
+        ("writer_role", "reviewer_high"),
         ("owner_ref", "a" * 63),
         ("session_ref", "A" * 64),
-        ("head_sha", "g" * 40),
+        ("base_sha", "g" * 40),
     ],
 )
 def test_acquire_rejects_path_digest_case_and_size_attacks_without_reflection(
@@ -630,10 +741,10 @@ def test_acquire_rejects_path_digest_case_and_size_attacks_without_reflection(
     field: str,
     hostile: str,
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
     canary = f"SECRET-{hostile}-CANARY"
     with pytest.raises(lease.WriterLeaseError) as exc_info:
-        _acquire(lease, primary, head, **{field: canary})
+        _acquire(lease, primary, base_sha, **{field: canary})
     captured = capsys.readouterr()
     combined = f"{exc_info.value}\n{captured.out}\n{captured.err}"
     assert canary not in combined
@@ -642,10 +753,10 @@ def test_acquire_rejects_path_digest_case_and_size_attacks_without_reflection(
 def test_raw_identifiers_paths_and_credentials_never_enter_state_or_evidence(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
-    _verify(lease, primary, head, acquired["lease_id"])
-    _release(lease, primary, head, acquired["lease_id"])
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
+    _release(lease, primary, base_sha, acquired["lease_id"])
     all_bytes = b"".join(
         path.read_bytes() for path in _state_dir(common).rglob("*") if path.is_file()
     )
@@ -665,7 +776,7 @@ def test_raw_identifiers_paths_and_credentials_never_enter_state_or_evidence(
 def test_fault_before_active_create_never_produces_two_leases(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
+    primary, _linked, base_sha, common = _repository(tmp_path)
     real_open = lease.os.open
     injected = False
 
@@ -678,17 +789,21 @@ def test_fault_before_active_create_never_produces_two_leases(
 
     monkeypatch.setattr(lease.os, "open", fail_first_create)
     with pytest.raises(lease.WriterLeaseError):
-        _acquire(lease, primary, head)
+        _acquire(lease, primary, base_sha)
     active = _state_dir(common) / "active.json"
     assert not active.exists()
-    acquired = _acquire(lease, primary, head)
-    assert lease.inspect(repo_root=primary)["active"]["lease_id"] == acquired["lease_id"]
+    acquired = _acquire(lease, primary, base_sha)
+    _assert_bound_identity(
+        lease.inspect(repo_root=primary)["active"],
+        base_sha=base_sha,
+        lease_id=acquired["lease_id"],
+    )
 
 
 def test_partial_active_write_fails_blocked_without_auto_recovery(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
+    primary, _linked, base_sha, common = _repository(tmp_path)
     real_write = lease.os.write
     calls = 0
 
@@ -701,14 +816,14 @@ def test_partial_active_write_fails_blocked_without_auto_recovery(
 
     monkeypatch.setattr(lease.os, "write", fail_after_partial)
     with pytest.raises(lease.WriterLeaseError):
-        _acquire(lease, primary, head)
+        _acquire(lease, primary, base_sha)
     assert (_state_dir(common) / "active.json").exists()
     assert lease.inspect(repo_root=primary)["status"] == "blocked"
     with pytest.raises(lease.WriterLeaseError):
         _acquire(
             lease,
             primary,
-            head,
+            base_sha,
             owner_ref=OTHER_OWNER_REF,
             session_ref=OTHER_SESSION_REF,
         )
@@ -717,7 +832,7 @@ def test_partial_active_write_fails_blocked_without_auto_recovery(
 def test_event_fsync_failure_leaves_active_or_blocked_never_auto_recovered(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
+    primary, _linked, base_sha, common = _repository(tmp_path)
     state = _state_dir(common)
     real_fsync = lease.os.fsync
 
@@ -729,7 +844,7 @@ def test_event_fsync_failure_leaves_active_or_blocked_never_auto_recovered(
 
     monkeypatch.setattr(lease.os, "fsync", fail_when_event_exists)
     with pytest.raises(lease.WriterLeaseError):
-        _acquire(lease, primary, head)
+        _acquire(lease, primary, base_sha)
     assert (state / "active.json").exists()
     assert lease.inspect(repo_root=primary)["status"] == "blocked"
 
@@ -737,8 +852,8 @@ def test_event_fsync_failure_leaves_active_or_blocked_never_auto_recovered(
 def test_release_event_precedes_unlink_and_unlink_failure_blocks_reacquire(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     active = _state_dir(common) / "active.json"
     real_unlink = lease.os.unlink
 
@@ -749,29 +864,32 @@ def test_release_event_precedes_unlink_and_unlink_failure_blocks_reacquire(
 
     monkeypatch.setattr(lease.os, "unlink", fail_active_unlink)
     with pytest.raises(lease.WriterLeaseError):
-        _release(lease, primary, head, acquired["lease_id"])
+        _release(lease, primary, base_sha, acquired["lease_id"])
     assert active.exists()
     assert lease.inspect(repo_root=primary)["status"] == "blocked"
     with pytest.raises(lease.WriterLeaseError):
         _acquire(
             lease,
             primary,
-            head,
+            base_sha,
             owner_ref=OTHER_OWNER_REF,
             session_ref=OTHER_SESSION_REF,
         )
 
 
-def test_event_capacity_is_fixed_and_fails_closed(lease: ModuleType, tmp_path: Path) -> None:
+def test_event_capacity_supports_productionization_horizon_and_fails_closed(
+    lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert type(lease.MAX_EVENT_COUNT) is int
-    assert 8 <= lease.MAX_EVENT_COUNT <= 256
-    primary, _linked, head, _common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    assert 512 <= lease.MAX_EVENT_COUNT <= 4096
+    monkeypatch.setattr(lease, "MAX_EVENT_COUNT", 4)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     for index in range(lease.MAX_EVENT_COUNT - 1):
         _verify(
             lease,
             primary,
-            head,
+            base_sha,
             acquired["lease_id"],
             checkpoint="before_commit",
             phase=f"p-{index}",
@@ -780,7 +898,7 @@ def test_event_capacity_is_fixed_and_fails_closed(lease: ModuleType, tmp_path: P
         _verify(
             lease,
             primary,
-            head,
+            base_sha,
             acquired["lease_id"],
             checkpoint="before_push",
             phase="at-capacity",
@@ -791,9 +909,9 @@ def test_event_capacity_is_fixed_and_fails_closed(lease: ModuleType, tmp_path: P
 def test_timestamps_are_not_validity_and_release_has_no_forgeable_stopped_proof(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, _linked, head, common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
-    _release(lease, primary, head, acquired["lease_id"])
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
+    _release(lease, primary, base_sha, acquired["lease_id"])
     keys = {
         key
         for path in _state_dir(common).rglob("*.json")
@@ -811,10 +929,10 @@ def test_timestamps_are_not_validity_and_release_has_no_forgeable_stopped_proof(
 def test_unsupported_platform_fails_closed(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
     monkeypatch.setattr(lease.sys, "platform", "win32")
     with pytest.raises(lease.WriterLeaseError):
-        _acquire(lease, primary, head)
+        _acquire(lease, primary, base_sha)
 
 
 def test_cli_surface_has_only_cooperative_lifecycle_actions(lease: ModuleType) -> None:
@@ -853,24 +971,40 @@ def test_helper_is_isolated_from_telemetry_hooks_ci_network_and_roadmap_behavior
         "sig-03",
     ):
         assert forbidden not in source
-    assert "writer_lease" not in (ROOT / "scripts/check_agent_harness.py").read_text(
-        encoding="utf-8"
-    )
+    checker_source = (ROOT / "scripts/check_agent_harness.py").read_text(encoding="utf-8")
+    for required_static_contract in (
+        "scripts/writer_lease.py",
+        "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
+        ".agents/skills/writer-lease/SKILL.md",
+    ):
+        assert required_static_contract in checker_source
+    for forbidden_live_state_access in (
+        "import writer_lease",
+        "from writer_lease",
+        "codex-writer-lease",
+        "active.json",
+        "export_evidence(",
+    ):
+        assert forbidden_live_state_access not in checker_source
     workflow_text = "\n".join(
-        path.read_text(encoding="utf-8") for path in (ROOT / ".github/workflows").glob("*.yml")
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / ".github/workflows").iterdir()
+        if path.suffix in {".yml", ".yaml"}
     )
     assert "writer_lease" not in workflow_text
+    hooks_text = (ROOT / ".codex/hooks.json").read_text(encoding="utf-8")
+    assert "writer_lease" not in hooks_text
 
 
 def test_checkpoint_is_cooperative_evidence_not_identity_or_order_attestation(
     lease: ModuleType, tmp_path: Path
 ) -> None:
-    primary, _linked, head, _common = _repository(tmp_path)
-    acquired = _acquire(lease, primary, head)
+    primary, _linked, base_sha, _common = _repository(tmp_path)
+    acquired = _acquire(lease, primary, base_sha)
     evidence = _verify(
         lease,
         primary,
-        head,
+        base_sha,
         acquired["lease_id"],
         checkpoint="before_push",
         phase="declared-only",
