@@ -109,7 +109,9 @@ _GITHUB_BOUNDARY_FIELDS = {
     "moved_head_review_pre_dismiss_state", "moved_head_review_pre_dismiss_observed_at",
     "negative_probe_dismissed_review_id", "negative_probe_head_sha",
     "negative_probe_review_decision", "negative_probe_merge_status",
-    "negative_probe_merge_eligible", "negative_probe_observed_at",
+    "negative_probe_merge_eligible", "negative_probe_prerequisites_observed_at",
+    "negative_probe_required_checks_head_sha", "negative_probe_required_checks_pass",
+    "negative_probe_review_threads_resolved", "negative_probe_observed_at",
     "final_review_id", "final_review_actor_id",
     "final_review_commit_sha", "final_review_state", "final_review_submitted_at",
     "positive_probe_head_sha", "positive_probe_review_decision", "positive_probe_merge_status",
@@ -117,10 +119,14 @@ _GITHUB_BOUNDARY_FIELDS = {
     "reviewer_is_last_pusher", "reviewer_is_last_pusher_basis",
     "controlling_review_head_sha", "controlling_review_approved", "required_checks_head_sha",
     "required_checks_pass", "main_ruleset_id", "main_ruleset_preimage_updated_at",
-    "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
-    "main_ruleset_preimage_digest",
-    "main_ruleset_postimage_digest", "main_ruleset_unchanged_preimage_digest",
+    "main_ruleset_preimage_captured_at", "main_ruleset_preimage_refetched_at",
+    "main_ruleset_postimage_updated_at", "main_ruleset_preimage_required_approvals",
+    "main_ruleset_preimage_dismiss_stale_reviews",
+    "main_ruleset_preimage_require_last_push_approval", "main_ruleset_preimage_digest",
+    "main_ruleset_preimage_refetch_digest", "main_ruleset_postimage_digest",
+    "main_ruleset_unchanged_preimage_digest", "main_ruleset_unchanged_preimage_refetch_digest",
     "main_ruleset_unchanged_postimage_digest", "main_ruleset_preimage_etag_digest",
+    "main_ruleset_preimage_refetch_etag_digest",
     "main_ruleset_postimage_etag_digest", "main_ruleset_active", "main_ruleset_bypass_actor_count",
     "main_ruleset_required_statuses_strict", "main_ruleset_required_approvals",
     "main_ruleset_dismiss_stale_reviews", "main_ruleset_require_last_push_approval",
@@ -135,13 +141,16 @@ _GITHUB_BOUNDARY_SHA_FIELDS = (
     "head_sha", "initial_head_sha", "initial_review_commit_sha", "moved_head_sha",
     "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
     "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
-    "negative_probe_head_sha", "final_review_commit_sha", "positive_probe_head_sha",
+    "negative_probe_head_sha", "negative_probe_required_checks_head_sha",
+    "final_review_commit_sha", "positive_probe_head_sha",
     "controlling_review_head_sha", "required_checks_head_sha",
 )
 _GITHUB_BOUNDARY_DIGEST_FIELDS = (
-    "main_ruleset_preimage_digest", "main_ruleset_postimage_digest",
-    "main_ruleset_unchanged_preimage_digest", "main_ruleset_unchanged_postimage_digest",
-    "main_ruleset_preimage_etag_digest", "main_ruleset_postimage_etag_digest",
+    "main_ruleset_preimage_digest", "main_ruleset_preimage_refetch_digest",
+    "main_ruleset_postimage_digest", "main_ruleset_unchanged_preimage_digest",
+    "main_ruleset_unchanged_preimage_refetch_digest", "main_ruleset_unchanged_postimage_digest",
+    "main_ruleset_preimage_etag_digest", "main_ruleset_preimage_refetch_etag_digest",
+    "main_ruleset_postimage_etag_digest",
     "auto_review_ruleset_digest",
 )
 _GITHUB_BOUNDARY_TIME_FIELDS = (
@@ -149,9 +158,11 @@ _GITHUB_BOUNDARY_TIME_FIELDS = (
     "moved_head_push_observed_at", "initial_review_dismissal_observed_at",
     "moved_head_review_trigger_observed_at", "moved_head_review_submitted_at",
     "moved_head_review_pre_dismiss_observed_at",
-    "negative_probe_observed_at", "final_review_submitted_at", "positive_probe_observed_at",
+    "negative_probe_prerequisites_observed_at", "negative_probe_observed_at",
+    "final_review_submitted_at", "positive_probe_observed_at",
     "main_ruleset_preimage_updated_at",
-    "main_ruleset_preimage_captured_at", "main_ruleset_postimage_updated_at",
+    "main_ruleset_preimage_captured_at", "main_ruleset_preimage_refetched_at",
+    "main_ruleset_postimage_updated_at",
     "auto_review_ruleset_updated_at",
 )
 _GITHUB_BOUNDARY_POSITIVE_IDS = (
@@ -576,11 +587,13 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
             < parsed_times["initial_review_submitted_at"]
             <= parsed_times["initial_review_pre_dismiss_observed_at"]
             < parsed_times["main_ruleset_preimage_captured_at"]
+            < parsed_times["main_ruleset_preimage_refetched_at"]
             < parsed_times["main_ruleset_postimage_updated_at"]
             < parsed_times["moved_head_push_observed_at"]
             < parsed_times["moved_head_review_submitted_at"]
             <= parsed_times["moved_head_review_pre_dismiss_observed_at"]
-            < parsed_times["negative_probe_observed_at"]
+            < parsed_times["negative_probe_prerequisites_observed_at"]
+            <= parsed_times["negative_probe_observed_at"]
             < parsed_times["final_review_submitted_at"]
             <= parsed_times["positive_probe_observed_at"]
             <= captured
@@ -642,7 +655,8 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
             for field in (
                 "moved_head_sha", "moved_head_push_head_sha", "initial_review_dismissal_head_sha",
                 "moved_head_review_trigger_head_sha", "moved_head_review_commit_sha",
-                "negative_probe_head_sha", "final_review_commit_sha", "positive_probe_head_sha",
+                "negative_probe_head_sha", "negative_probe_required_checks_head_sha",
+                "final_review_commit_sha", "positive_probe_head_sha",
                 "controlling_review_head_sha",
                 "required_checks_head_sha",
             )
@@ -674,6 +688,8 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         record["negative_probe_review_decision"] != "REVIEW_REQUIRED"
         or record["negative_probe_merge_status"] != "BLOCKED"
         or record["negative_probe_merge_eligible"] is not False
+        or record["negative_probe_required_checks_pass"] is not True
+        or record["negative_probe_review_threads_resolved"] is not True
         or record["positive_probe_review_decision"] != "APPROVED"
         or record["positive_probe_merge_status"] != "CLEAN"
         or record["positive_probe_merge_eligible"] is not True
@@ -690,6 +706,9 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
     if record["main_ruleset_id"] != 20_780_950 or record["auto_review_ruleset_id"] != 23_141_241:
         errors.append("unexpected GitHub ruleset identity")
     main_expected = {
+        "main_ruleset_preimage_required_approvals": 0,
+        "main_ruleset_preimage_dismiss_stale_reviews": False,
+        "main_ruleset_preimage_require_last_push_approval": False,
         "main_ruleset_active": True,
         "main_ruleset_bypass_actor_count": 0,
         "main_ruleset_required_statuses_strict": True,
@@ -714,6 +733,14 @@ def github_review_boundary_errors(raw: bytes) -> list[str]:
         errors.append("GitHub ruleset or automatic-review policy differs")
     if record["main_ruleset_preimage_digest"] == record["main_ruleset_postimage_digest"]:
         errors.append("main ruleset transition projection did not change")
+    if (
+        record["main_ruleset_preimage_digest"] != record["main_ruleset_preimage_refetch_digest"]
+        or record["main_ruleset_unchanged_preimage_digest"]
+        != record["main_ruleset_unchanged_preimage_refetch_digest"]
+        or record["main_ruleset_preimage_etag_digest"]
+        != record["main_ruleset_preimage_refetch_etag_digest"]
+    ):
+        errors.append("main ruleset preimage refetch drifted")
     if (
         record["main_ruleset_unchanged_preimage_digest"]
         != record["main_ruleset_unchanged_postimage_digest"]
