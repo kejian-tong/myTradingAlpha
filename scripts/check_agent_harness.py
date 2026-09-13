@@ -190,6 +190,7 @@ _MEMORY_WATCHLIST_LIMITATION_PHRASES = (
     "fresh session",
     "configuration intent",
     "cli",
+    "--config",
     "--enable",
     "higher-precedence",
     "running sessions",
