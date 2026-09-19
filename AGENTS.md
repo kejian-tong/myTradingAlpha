@@ -91,11 +91,12 @@ The master/orchestrator owns scope, dependency order, model routing, JIT synthes
 merge decision. Master-only delegation is a behavioral policy, not repo-level host identity enforcement;
 the master/root context is the only project role behaviorally authorized to spawn subagents.
 
-Every project-scoped non-master named role must load `[agents] enabled = false`. A GPT-5.6 Sol
-Multi-Agent V2 child may nevertheless expose collaboration controls; collaboration-control visibility alone
-is not a stop condition. The Master remains the only role authorized to invoke collaboration controls or
-delegate work under this behavioral policy. Do not invoke collaboration controls or delegate nested work
-from a non-master role. Any attempted or completed nested delegation is a blocking policy violation.
+Every project-scoped non-master named role must load `[agents] enabled = false`. A correctly loaded
+non-master role may nevertheless expose a runtime collaboration-control capability; collaboration-control
+visibility alone is not a stop condition. The Master remains the only role authorized to invoke
+collaboration controls or delegate work under this behavioral policy. Do not invoke collaboration controls
+or delegate nested work from a non-master role. Any attempted or completed nested delegation is a blocking
+policy violation.
 Record complete trustworthy runtime observation and stop on an actual non-master invocation attempt;
 missing or untrusted observation is `insufficient_evidence`, while `telemetry_conflict` remains separate
 for route or loading contradictions. Checked-in configuration, role instructions, hooks, and offline

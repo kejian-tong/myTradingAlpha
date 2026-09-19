@@ -174,12 +174,12 @@ Model and configuration references:
 If a required named role cannot be spawned with its project configuration, do not silently substitute a
 generic worker and then claim the intended route. Record `insufficient_evidence` and stop before merge.
 
-### 2.1 Multi-Agent V2 collaboration-control compatibility
+### 2.1 Runtime collaboration-control capability
 
 Master-only delegation is a behavioral policy, not repo-level host identity enforcement. Checked-in
 configuration and this protocol describe expected behavior; they cannot authenticate the runtime caller.
-GPT-5.6 Sol Multi-Agent V2 may expose collaboration controls in a correctly loaded non-master custom
-agent even when its checked-in configuration retains `[agents] enabled = false`. Treat that visibility as
+A correctly loaded non-master custom agent may expose a runtime collaboration-control capability even when
+its checked-in configuration retains `[agents] enabled = false`. Treat that capability's visibility as
 informational runtime evidence, not as a delegation event or a stop condition. The configured
 `[agents] enabled = false` value remains mandatory and is still validated for every non-master role.
 
