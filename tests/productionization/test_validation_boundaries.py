@@ -154,6 +154,27 @@ def test_ci_lint_job_has_history_bound_diff_check_and_network_canary() -> None:
     assert "deny" in lint_job.lower()
 
 
+def test_ci_keeps_static_contract_checks_only_in_required_lint_job() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    lint_job = _workflow_job(workflow, "lint")
+    foundation_job = _workflow_job(workflow, "foundation-contract-docs-lock")
+
+    assert 'name: ruff (strict, full repo)' in lint_job
+    assert "name: Foundation contract/docs/lock" in foundation_job
+    assert "uv sync --locked --extra dev" in foundation_job
+    assert "uv run --no-sync pytest -q tests/productionization" in foundation_job
+
+    static_checks = (
+        "python scripts/check_agent_harness.py",
+        "python scripts/check_dependency_direction.py",
+        "python scripts/check_lock_consistency.py",
+        "python scripts/check_markdown_contracts.py",
+    )
+    for command in static_checks:
+        assert lint_job.count(command) == 1
+        assert foundation_job.count(command) == 0
+
+
 def test_audit_protocol_limits_network_guard_to_python_test_phase() -> None:
     text = (ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(encoding="utf-8")
     assert "Python-level pytest test-phase evidence" in text
