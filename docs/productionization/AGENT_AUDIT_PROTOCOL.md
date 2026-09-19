@@ -93,6 +93,23 @@ must remain supplemental evidence and cannot replace complete runtime observatio
 required CI, or the Master merge gate. A missing or contradictory receipt remains `insufficient_evidence`
 at any gate that requires authenticated runtime evidence; no caller may upgrade this structural result.
 
+### 1.1.1 Hook runtime manifest evidence
+
+`scripts/hook_runtime_manifest.py` verifies a separate bounded `hook_runtime_manifest` record. The exact
+schema binds `session_ref`, `pr_id`, `base_sha`, `head_sha`, `tree_sha`, and the lowercase SHA-256
+`hook_config_digest` of `.codex/hooks.json` bytes read from the exact head Git object. It also records
+`evidence_source`, host-reported loaded/trusted booleans, `evidence_consistent`, and a pseudonymous
+`host_evidence_ref` when host-runtime evidence is declared. The verifier accepts only canonical ASCII
+JSON with one trailing newline, rejects duplicate/unknown/sensitive fields and bounded-input violations,
+and sanitizes inherited `GIT_*` redirects before no-lazy-fetch Git lookups.
+
+The four explicit states are `observed`, `unavailable`, `unknown`, and `contradictory`. Only a host-runtime
+record with a supplied evidence reference, exact booleans, consistency, and both loaded/trusted true may
+be `observed` with `hooks_effective=true`; unavailable and contradictory records are always false. A
+`caller_declaration` or `none` record must have null host fields/reference, is always `unknown`, and is
+never effective. A passing result is structural/supplemental only: it cannot authenticate evidence origin,
+host trust, or runtime hook loading, and it cannot replace CI, independent review, or the Master gate.
+
 ### 1.2 Native parent admission for read-only roles
 
 The repository does not implement a launcher, sandbox, or attestation service. For each read-only role, the

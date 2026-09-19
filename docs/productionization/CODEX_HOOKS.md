@@ -10,6 +10,17 @@ The trusted project hook configuration lives at `.codex/hooks.json`. Codex may r
 or trust project hooks before command hooks execute. A hook that was not loaded or trusted is not merge
 evidence and must never be treated as if it ran.
 
+The bounded `scripts/hook_runtime_manifest.py` verifier may record supplemental structural evidence about
+that limitation. Its exact manifest binds a pseudonymous session reference, PR ID, base/head/tree SHAs,
+and the SHA-256 digest of the `.codex/hooks.json` bytes from the exact head Git object. It records the
+declared evidence origin, host-reported loaded/trusted booleans, consistency, and an optional pseudonymous
+host evidence reference. The four states are `observed`, `unavailable`, `unknown`, and `contradictory`:
+only a complete, consistent host-runtime declaration with loaded and trusted both true can be observed and
+effective; caller/absent evidence is unknown with null host fields and never effective. This verifier is
+offline, canonical-input, fail-closed structural checking only. It cannot authenticate host trust or
+evidence provenance, and its output never replaces CI, independent review, exact-head evidence, or the
+Master merge gate.
+
 The reviewed telemetry-v3 hook surface is deliberately narrow:
 
 - `SessionStart` synchronously runs `scripts/codex_hook_guard.py session-start` to validate the
