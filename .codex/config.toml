@@ -83,6 +83,10 @@ blocks the master merge gate. A controlling reviewer verdict of APPROVE means th
 the master merge gate; it does not authorize merge by itself. Only the master/orchestrator may issue
 the final MERGE verdict after independently checking all exact-head gates.
 
+If native admission is unavailable, `DEGRADED_MASTER_REVIEW` is a separately authorized, per-task
+Harness-only maintenance path; it is not independent review and cannot authorize roadmap/product work or
+waive broker, PAPER/live, or promotion gates. This configuration remains intent, not runtime proof.
+
 Do not substitute a generic/default worker for a required named roadmap role merely because it is
 available. If the required named role cannot be spawned with its project configuration, record
 `insufficient_evidence` and stop before merge instead of claiming the requested route was used.

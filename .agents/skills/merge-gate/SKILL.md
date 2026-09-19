@@ -18,7 +18,11 @@ Verify independently:
    exact identity and Git history; release followed independent host observation that the writer stopped;
    and any replacement writer started only after that completed release;
 4. required RED/GREEN/repair evidence is durable and consistent with Git history;
-5. controlling independent reviewer inspected the exact final head and returned APPROVE;
+5. controlling independent reviewer inspected the exact final head and returned APPROVE. For the sole
+   `DEGRADED_MASTER_REVIEW` exception, only an explicitly authorized Harness-only maintenance task with
+   unavailable native admission may use the separate Master-owned degraded artifact; it is not independent
+   review and must contain exact-head diff, RED replay, complete local validation/required CI, durable
+   evidence, missing-runtime disclosure, and no unresolved BLOCKER/HIGH or material uncertainty;
 6. every material specialist BLOCKER/HIGH is closed on the exact final head;
 7. required focused/full validation and GitHub CI/CodeQL/Dependency Review pass for the exact final head;
 8. backward compatibility, dependency direction, packaging/import, migration/rollback, and relevant
@@ -41,6 +45,10 @@ operation to the expected final head SHA so a moved head cannot be merged accide
 If any BLOCKER/HIGH, attributable required-CI failure, stale approval/check, scope leak, missing role,
 architecture conflict, permission problem, or human promotion gate remains, return `DO NOT MERGE` and
 stop rather than weakening the gate.
+
+`DEGRADED_MASTER_REVIEW` cannot authorize roadmap/product, broker, PAPER/live, promotion, or other
+externally consequential work. Outside that narrow Harness-only exception, missing native independent review
+remains a fail-closed merge blocker.
 
 After merge, refresh main and reconcile the actual merge SHA before beginning any separately authorized
 next roadmap slice.

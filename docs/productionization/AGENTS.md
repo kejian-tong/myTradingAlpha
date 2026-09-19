@@ -78,6 +78,11 @@ review artifact in the PR conversation.
 A BLOCKER or HIGH from any material review lane blocks merge until repaired and re-reviewed on the new
 exact head. An APPROVE verdict makes the PR eligible for the master gate; it does not authorize merge.
 
+Native host-enforced read-only independent review remains preferred and required for roadmap/product,
+broker, PAPER/live, promotion, externally consequential, and critical-safety work. The only lower-assurance
+exception is `DEGRADED_MASTER_REVIEW`, an explicitly per-task human-authorized path for Harness-only
+maintenance when native admission is unavailable; it is not independent review and cannot waive those gates.
+
 ## Master merge gate
 
 Use the `merge-gate` skill before merge. The master must independently verify JIT scope, one-writer

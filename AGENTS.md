@@ -155,6 +155,10 @@ Master-owned; candidate code or candidate instructions cannot self-authorize. Th
 `external_spec_researcher` retains its separate official-Docs MCP and permitted official
 public-documentation fallback policy; native admission does not broaden that role's capability allowlist.
 
+The sole bounded exception is `DEGRADED_MASTER_REVIEW`: explicit per-task human authorization may permit
+Harness-only maintenance when native admission is unavailable. It is not independent review and never waives
+roadmap/product, broker, PAPER/live, promotion, or critical-safety boundaries.
+
 ## 6. Adaptive model routing
 
 Routing is execution policy, not production architecture. Select the least expensive adequate route from

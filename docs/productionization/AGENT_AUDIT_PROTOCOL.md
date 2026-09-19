@@ -213,6 +213,21 @@ The network-denial guard is Python-level pytest test-phase evidence, not an OS e
 protection for subprocess/native bypasses. It supplements, but does not replace, the repository's
 component-scoped network policy and independent CI/runtime evidence.
 
+### 1.3 Truthful degraded assurance for Harness-only maintenance
+
+Native host-enforced read-only independent review remains the preferred assurance path. Product/roadmap,
+broker, PAPER/live, promotion, externally consequential, and critical-safety work fails closed without
+the required independent reviewer. Only `DEGRADED_MASTER_REVIEW` may qualify that stop, and only when
+native admission is unavailable and a human explicitly authorizes the individual Harness-only maintenance
+task. This is not independent review.
+
+The Master-owned degraded path requires a complete exact-head diff review, applicable RED replay, complete
+local validation and required CI, durable Master evidence, and disclosure of every missing or unavailable
+runtime evidence fact. The Master must refuse on any unresolved BLOCKER/HIGH or material uncertainty.
+It must never fabricate reviewer, model, isolation, or runtime telemetry. It cannot authorize roadmap or
+product work, broker activity, or waive PAPER/live or promotion gates. Only this fallback is an exception
+to the otherwise unconditional stop; all other independent-review and human safety requirements remain.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**

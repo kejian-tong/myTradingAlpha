@@ -33,6 +33,9 @@ Create a durable contract tied to the exact current base SHA with:
   `boundary_reviewer` evidence used;
 - the writer-lease identity plan, required lifecycle checkpoints, evidence/export binding, and any explicit
   bootstrap limitation;
+- the assurance path: native independent review, or `DEGRADED_MASTER_REVIEW` only with explicit per-task
+  human authorization for Harness-only maintenance, native-admission unavailability, the missing runtime
+  evidence disclosure, exact-head Master review, and the separate degraded evidence artifact;
 - for every true risk tag, an adversarial contract matrix entry mapping concrete attack/failure cases ->
   invariant -> RED/validation evidence -> expected closure verdict.
 
@@ -65,3 +68,5 @@ for genuinely non-executable documentation-only work, but the decision must foll
 surfaces rather than the PR label.
 
 The JIT grants no authority beyond the user-authorized task and cannot waive any paper/live gate.
+`DEGRADED_MASTER_REVIEW` is not independent review, cannot fabricate runtime telemetry, and cannot authorize
+roadmap/product, broker, PAPER/live, promotion, or other externally consequential work.
