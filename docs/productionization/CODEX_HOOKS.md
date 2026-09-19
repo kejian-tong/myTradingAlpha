@@ -29,15 +29,20 @@ The reviewed telemetry-v3 hook surface is deliberately narrow:
   It denies only a small reviewed set of directly invoked destructive commands: Git force push,
   `git reset --hard`, forced `git clean`, forced `git branch -D`, and recursive+forced `rm` against
   root/home/current-directory targets.
-- `Stop` synchronously runs `scripts/codex_hook_guard.py stop`, repeating harness consistency and
-  `git diff --check` for lightweight whitespace/conflict-marker feedback.
+- `Stop` synchronously runs `scripts/codex_hook_guard.py stop` for report-only harness consistency and
+  `git diff --check` feedback. It independently attempts both diagnostics, emits bounded
+  `codex hook advisory:` messages to stderr when findings or diagnostic failures occur, and always
+  exits successfully so unrelated working-tree state cannot create a stop loop. It does not infer
+  change ownership or claim that a finding is attributable to the current agent.
 - `SubagentStart` and `SubagentStop` asynchronously run `scripts/codex_telemetry_hook.py`, recording
   role/model plus measured active concurrency and, on a matched stop, duration.
 - `PostCompact` asynchronously records whether compaction was `manual` or `auto`.
 - `SessionEnd` synchronously runs the telemetry bridge only to remove hashed ephemeral lifecycle
   correlation state for the ending main session; it writes no durable telemetry record.
 
-The two general guard hooks are bounded by a 15-second timeout. `PreToolUse` is synchronous and bounded by
+The two general guard hooks are bounded by a 15-second timeout. The Stop hook's nested `git diff --check`
+diagnostic is independently bounded by five seconds, below the outer hook timeout. Advisory text is capped
+at 1,024 characters and truncated after the first diagnostics. `PreToolUse` is synchronous and bounded by
 five seconds so a reviewed deny decision is returned before a matched Bash command runs. Start/stop/
 compaction telemetry hooks are best-effort, asynchronous and bounded by five seconds. SessionEnd cleanup
 is synchronous and bounded by three seconds. Telemetry and cleanup deliberately fail open: observability
@@ -108,11 +113,12 @@ Hook output is supplemental runtime evidence only. The authoritative merge requi
 5. the master merge gate and every explicit human promotion gate.
 
 If project hooks are unavailable, untrusted, skipped, or behave differently in a particular Codex
-surface/worktree, record that limitation rather than claiming a hook passed. General guard-hook failures
-require repair of the underlying consistency/diff problem. A `PreToolUse` deny means the attempted Bash
-command must not be used to bypass the project policy; choose a safe non-destructive alternative or stop.
-Telemetry/cleanup failure is an observability gap, not a reason to weaken or halt otherwise valid
-execution.
+surface/worktree, record that limitation rather than claiming a hook passed. `SessionStart` retains
+fail-closed configuration validation. Stop findings and diagnostic failures are report-only advisory
+feedback; authoritative enforcement remains exact-head validation, required CI, independent review, and
+the Master merge gate. A `PreToolUse` deny means the attempted Bash command must not be used to bypass the
+project policy; choose a safe non-destructive alternative or stop. Telemetry/cleanup failure is an
+observability gap, not a reason to weaken or halt otherwise valid execution.
 
 ## Change control
 
