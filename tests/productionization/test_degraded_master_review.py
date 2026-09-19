@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 POLICY_SURFACES = (
     Path("AGENTS.md"),
+    Path("docs/productionization/AGENTS.md"),
     Path("docs/productionization/AGENT_AUDIT_PROTOCOL.md"),
     Path("docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md"),
     Path(".codex/config.toml"),
