@@ -276,12 +276,12 @@ def test_caller_or_absent_evidence_is_unknown_and_never_effective(
     [
         ("evidence_source", "caller_declaration"),
         ("evidence_source", "none"),
-        ("hook_state", "observed"),
+        ("hook_state", "unavailable"),
         ("host_reported_loaded", False),
         ("host_reported_trusted", False),
         ("evidence_consistent", False),
         ("host_evidence_ref", None),
-        ("hooks_effective", True),
+        ("hooks_effective", False),
     ],
 )
 def test_truth_table_transitions_are_rejected_when_fields_disagree(
@@ -289,18 +289,7 @@ def test_truth_table_transitions_are_rejected_when_fields_disagree(
 ) -> None:
     repo = _repository(tmp_path)
     record = _manifest(repo)
-    if field == "evidence_source":
-        record.update(
-            evidence_source=value,
-            hook_state="unknown",
-            host_reported_loaded=None,
-            host_reported_trusted=None,
-            evidence_consistent=None,
-            host_evidence_ref=None,
-            hooks_effective=False,
-        )
-    else:
-        record[field] = value
+    record[field] = value
     path = tmp_path / "invalid-transition.json"
     _write_manifest(path, record)
 
