@@ -5,8 +5,9 @@ description: Independently review one exact myTradingAlpha PR head, verify RED/T
 
 # Exact-Head Independent Review
 
-Use only in a fresh reviewer context different from the implementer. Review repository/diff evidence,
-not the implementer's summary.
+For native independent review, use only a fresh reviewer context different from the implementer. Review
+repository/diff evidence, not the implementer's summary. The separate `DEGRADED_MASTER_REVIEW` path is
+Master-owned Harness-only maintenance and may be used only under its explicit fallback contract.
 
 ## Isolation requirement
 

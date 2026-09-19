@@ -27,7 +27,9 @@ Verify independently:
 7. required focused/full validation and GitHub CI/CodeQL/Dependency Review pass for the exact final head;
 8. backward compatibility, dependency direction, packaging/import, migration/rollback, and relevant
    security/side-effect boundaries remain valid;
-9. no required role/runtime evidence is contradictory or `insufficient_evidence`;
+9. no required role/runtime evidence is contradictory or `insufficient_evidence`. The only allowed exception
+   is explicitly disclosed missing native reviewer admission, identity, model, or isolation runtime evidence
+   under `DEGRADED_MASTER_REVIEW`; all other contradictory or insufficient evidence remains blocking;
 10. no explicit human paper/live/promotion gate is being crossed.
 
 ## Durable artifact
@@ -36,6 +38,10 @@ Before autonomous merge, persist a GitHub PR-conversation artifact containing PR
 complexity/route, JIT reference, implementer/reviewer configured routes, RED evidence, independent review
 reference, validation/CI, scope/compatibility, unresolved non-blocking findings, and final
 `MERGE|DO NOT MERGE` verdict.
+
+The artifact must record review assurance and either the native independent-review reference/role or the
+separate degraded Master artifact. Never fabricate reviewer/model fields; the degraded artifact records its
+Master-owned assurance and disclosed runtime-evidence limitation instead.
 
 ## Decision
 
