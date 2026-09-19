@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -196,6 +197,14 @@ def _assert_rejected(result: subprocess.CompletedProcess[str]) -> None:
     assert result.returncode != 0, result.stdout
 
 
+def _load_verifier_module() -> Any:
+    spec = importlib.util.spec_from_file_location("hook_runtime_manifest_repair", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_hook_runtime_manifest_contract_is_implemented() -> None:
     assert SCRIPT.is_file(), "missing implementation: scripts/hook_runtime_manifest.py"
 
@@ -369,6 +378,21 @@ def test_manifest_must_use_bounded_canonical_json(tmp_path: Path, manifest_runne
     _assert_rejected(manifest_runner(path, repo))
 
 
+def test_manifest_symlink_path_is_rejected_without_following(
+    tmp_path: Path, manifest_runner: Any
+) -> None:
+    repo = _repository(tmp_path)
+    target = tmp_path / "canonical.json"
+    _write_manifest(target, _manifest(repo))
+    link = tmp_path / "manifest-link.json"
+    link.symlink_to(target)
+
+    result = manifest_runner(link, repo)
+
+    _assert_rejected(result)
+    assert str(target) not in result.stdout
+
+
 def test_oversized_malformed_and_unicode_json_fail_closed(
     tmp_path: Path, manifest_runner: Any
 ) -> None:
@@ -404,6 +428,47 @@ def test_digest_comes_from_exact_head_git_object_not_dirty_worktree(
     ).hexdigest()
     _write_manifest(path, record)
     _assert_rejected(manifest_runner(path, repo))
+
+
+def test_hook_blob_size_is_checked_before_blob_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_verifier_module()
+    repo = _repository(tmp_path)
+    path = tmp_path / "oversized-head-object.json"
+    record = _manifest(repo)
+    _write_manifest(path, record)
+    head = _head(repo)
+    calls: list[tuple[str, ...]] = []
+    original_git_run = module._git_run
+
+    def fake_git_run(root: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+        calls.append(arguments)
+        if arguments[:2] == ("cat-file", "-s"):
+            return subprocess.CompletedProcess(
+                ["git", *arguments],
+                0,
+                stdout=f"{module.MAX_HOOK_CONFIG_BYTES + 1}\n".encode("ascii"),
+                stderr=b"",
+            )
+        if arguments[:2] == ("cat-file", "blob"):
+            raise AssertionError("oversized hook object must not be captured")
+        return original_git_run(root, *arguments)
+
+    monkeypatch.setattr(module, "_git_run", fake_git_run)
+
+    with pytest.raises(ValueError):
+        module.verify_manifest(
+            path,
+            repo_root=repo,
+            expected_pr_id=PR_ID,
+            expected_session_ref=SESSION_REF,
+            expected_base_sha=head,
+            expected_head_sha=head,
+        )
+
+    assert any(arguments[:2] == ("cat-file", "-s") for arguments in calls)
+    assert not any(arguments[:2] == ("cat-file", "blob") for arguments in calls)
 
 
 def test_head_tree_and_base_are_bound_to_trusted_checked_out_history(
