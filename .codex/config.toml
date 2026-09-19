@@ -1,111 +1,28 @@
-# Project-scoped Codex harness. Loaded only for trusted projects.
-# Keep production architecture in docs/productionization; this file controls agent execution only.
-
 model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 
 developer_instructions = """
-For myTradingAlpha productionization work, read and follow root AGENTS.md,
-`docs/productionization/AGENT_AUDIT_PROTOCOL.md`, and
-`docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md` before selecting or spawning roadmap agents.
+Trusted-project runtime configuration. Before work, read root AGENTS.md, the scoped AGENTS.md files
+needed for touched paths, docs/productionization/AGENT_AUDIT_PROTOCOL.md, and
+docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md. Use the named roles and procedures advertised by
+root AGENTS.md; configuration and model self-report are intent, not runtime proof.
 
-Use the project-scoped named Codex agents under `.codex/agents/` for every new roadmap PR after this
-policy is present on the checked-out base branch:
-- normal: `normal_implementer` + controlling `reviewer_high`
-- high: `normal_implementer` + controlling `reviewer_high`
-- high implementation-only escalation: replace the writer with `high_implementer`; keep `reviewer_high`
-- high review-only escalation: retain `normal_implementer`; replace review with `reviewer_xhigh`
-- critical: `normal_implementer` + controlling `reviewer_xhigh`
-- difficult escalation: `high_implementer` + controlling `reviewer_xhigh`
-- hardest escalation: `critical_implementer` + controlling `reviewer_xhigh`
-- review-only escalation: retain the existing implementer and use `reviewer_xhigh`
-- hybrid read-only specialists: `code_explorer`, `test_auditor`, `boundary_reviewer`
-- on-demand external specification research: `external_spec_researcher`
-- shadow-only hardest/critical historical replay: `astra_canary`
+Master-only delegation is a behavioral policy, not runtime identity enforcement. Collaboration-control
+visibility alone is non-blocking. Do not invoke collaboration controls or delegate nested work. Any
+attempted or completed nested delegation is a blocking policy violation. Non-master roles disable nested
+agents in their role TOMLs.
 
-Master uses GPT-5.6 Sol / xhigh (Extra High). reviewer_high and boundary_reviewer use Sol/high;
-reviewer_xhigh uses Sol/xhigh. Normal and critical implementation stays on Luna/max. Difficult
-escalation uses Sol/high implementation, and the hardest production layer uses Sol/xhigh implementation
-with a fresh Sol/xhigh reviewer. The external_spec_researcher uses Luna/max and is read-only; its
-role-scoped OpenAI Developer Docs MCP configuration intent allows only the reviewed documentation
-tools. This declaration is not runtime capability isolation and configured availability is not proof
-that the runtime exposed or successfully called the MCP. Project Apps are explicitly disabled below,
-but global, installed-plugin, and managed runtime policy remain outside this repository configuration's
-authority.
-
-For every read-only role, the Master must start from a fresh host-enforced read-only parent; live parent
-overrides control and the role TOML remains configuration intent. Before substantive work or any tool call,
-require post-spawn host-origin evidence of the effective child boundary and complete tool inventory under
-root AGENTS.md. This configuration, model self-report, hooks, telemetry, caller evidence, and offline
-validators cannot authenticate that runtime boundary; missing or contradictory host evidence is
-`insufficient_evidence` and the lane must be discarded.
-
-The astra_canary uses GPT-6 Astra / xhigh in a read-only, no-child, no-MCP shadow context for closed
-historical or immutable replay tasks only. It may not implement, repair, control-review, merge, or act as
-Master for an active PR. Adding this canary does not activate a GPT-6 production route. GPT-6 production
-routes remain disabled until a separate reviewed harness change promotes one from representative
-repo-specific evidence. Record only observed canary runtime/model/token evidence; unavailable or
-uncomparable runs are `insufficient_evidence`.
-
-Record the selected production route, evidence-based reason, and affected roles in the JIT and
-AGENT_STATE.md before spawning. These tiers do not replace normal/high/critical safety classification,
-raise concurrency, resolve a human architecture decision, or waive any stop/promotion gate.
-
-Normal and high intentionally share the initial Luna/max + Sol/high route. Normal remains there unless
-new evidence requires reclassification. For high work, implementation complexity alone escalates only
-the writer to Sol/high; review ambiguity alone escalates only the reviewer to Sol/xhigh; both together
-select the difficult route. Stop the prior writer/reviewer before replacement and record the reason.
-
-Use hybrid concurrency rather than concurrent production writers:
-- before the JIT spec, parallelize independent read-only exploration/audit lanes when useful;
-- during RED/GREEN/REFACTOR and repair, allow only one production-code writer for the active PR;
-- after freezing an exact PR head, the controlling reviewer and relevant read-only specialist lanes may
-  review the same exact SHA concurrently;
-- after repair, prior review evidence is stale; rerun the controlling reviewer and affected specialist
-  lanes against the new exact head;
-- collect durable results and close completed subagent threads before spawning replacements when no
-  follow-up is expected.
-
-Master-only delegation is a behavioral policy, not repo-level host identity enforcement. The master/root
-thread is the only orchestration role behaviorally authorized to spawn subagents. Every project-scoped
-non-master role must load `[agents] enabled = false`; a correctly loaded non-master role may nevertheless
-expose a runtime collaboration-control capability. Collaboration-control visibility alone is non-blocking.
-Do not invoke collaboration controls or delegate nested work.
-Any attempted or completed nested delegation is a blocking policy violation.
-Record complete trustworthy runtime observation and stop on an actual non-master invocation attempt;
-missing or untrusted observation is `insufficient_evidence`; retain `telemetry_conflict` for separate
-route/loading contradictions. Checked-in configuration, hooks, and the offline validator cannot
-authenticate the runtime caller's role or identity.
-
-The controlling reviewer required by AGENT_AUDIT_PROTOCOL.md remains mandatory. Specialist lanes are
-additional evidence and never self-approve merge. Any unresolved BLOCKER/HIGH from any review lane
-blocks the master merge gate. A controlling reviewer verdict of APPROVE means the PR is eligible for
-the master merge gate; it does not authorize merge by itself. Only the master/orchestrator may issue
-the final MERGE verdict after independently checking all exact-head gates.
-
-If native admission is unavailable, `DEGRADED_MASTER_REVIEW` is a separately authorized, per-task
-Harness-only maintenance path; it is not independent review and cannot authorize roadmap/product work or
-waive broker, PAPER/live, or promotion gates. This configuration remains intent, not runtime proof.
-
-Do not substitute a generic/default worker for a required named roadmap role merely because it is
-available. If the required named role cannot be spawned with its project configuration, record
-`insufficient_evidence` and stop before merge instead of claiming the requested route was used.
-
-For roadmap implementation PRs, preserve auditable red-green-refactor history, persist the independent
-controlling-review artifact on the GitHub PR at the exact reviewed head, and persist the master
-merge-gate artifact on the GitHub PR at the exact final head before merge, as defined in
-AGENT_AUDIT_PROTOCOL.md.
-
-This policy is prospective. Existing running agents retain their loaded routes; do not relabel their
-historical evidence. After this harness PR merges, refresh the relevant checkout with main and start a
-fresh master/session to load the new project configs. A paused PR may resume with newly loaded roles
-only after its existing stop conditions are resolved; do not require that blocked PR to merge first.
-New files are configuration intent until the runtime exposes and successfully loads their named roles.
+Every read-only lane requires a fresh host-enforced read-only parent and post-spawn host-origin evidence of
+the effective boundary and complete tool inventory. This configuration intent is not runtime proof and
+cannot authenticate runtime isolation. If native admission is unavailable, DEGRADED_MASTER_REVIEW is an explicit per-task
+human-authorized Harness-only maintenance path, not independent review; it cannot authorize roadmap,
+broker, PAPER/live, or promotion work. Use one production writer, the writer lease, exact head evidence,
+and the root/audit/hybrid merge boundaries. These settings are prospective: refresh main and start a
+fresh session after a harness policy change.
 """
 
 [agents]
 enabled = true
-# This is a concurrency guardrail, not a lifetime/per-PR spawn cap. The master/root thread is separate.
 max_concurrent_threads_per_session = 6
 
 [features]
