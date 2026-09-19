@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -45,6 +46,7 @@ REQUIRED_FIELDS = frozenset(
 
 _SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 _SHA64 = re.compile(r"[0-9a-f]{64}\Z")
+_DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 _PR_ID = re.compile(r"[A-Z][A-Z0-9_-]{2,63}\Z")
 _EVIDENCE_SOURCES = frozenset({"host_runtime", "caller_declaration", "none"})
 _HOOK_STATES = frozenset({"observed", "unavailable", "unknown", "contradictory"})
@@ -80,9 +82,49 @@ def _contains_non_ascii(value: object) -> bool:
     return False
 
 
+def _read_owned_bounded(path: Path, limit: int) -> bytes:
+    try:
+        before_open = os.lstat(path)
+    except OSError as exc:
+        raise ValueError("record file is unavailable") from exc
+    if not stat.S_ISREG(before_open.st_mode):
+        raise ValueError("record file must be a regular file")
+
+    flags = os.O_RDONLY
+    for name in ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK"):
+        flags |= getattr(os, name, 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("record file cannot be opened safely") from exc
+    try:
+        after_open = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(after_open.st_mode)
+            or after_open.st_dev != before_open.st_dev
+            or after_open.st_ino != before_open.st_ino
+        ):
+            raise ValueError("record file changed during open")
+        chunks = bytearray()
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+            remaining -= len(chunk)
+        if len(chunks) > limit:
+            raise ValueError("record exceeds bounded size")
+        return bytes(chunks)
+    except OSError as exc:
+        raise ValueError("record file cannot be read safely") from exc
+    finally:
+        os.close(descriptor)
+
+
 def _read_canonical_record(path: Path) -> dict[str, object]:
-    raw = path.read_bytes()
-    if len(raw) > MAX_RECORD_BYTES or not raw.endswith(b"\n") or raw.endswith(b"\n\n"):
+    raw = _read_owned_bounded(path, MAX_RECORD_BYTES)
+    if not raw.endswith(b"\n") or raw.endswith(b"\n\n"):
         raise ValueError("record size or line ending is invalid")
     try:
         text = raw[:-1].decode("ascii")
@@ -238,11 +280,25 @@ def _git_text(root: Path, *arguments: str) -> str:
     return completed.stdout.decode("ascii").strip()
 
 
-def _git_blob(root: Path, *arguments: str) -> bytes:
-    completed = _git_run(root, *arguments)
-    if completed.returncode != 0:
+def _git_blob(root: Path, spec: str, limit: int) -> bytes:
+    size_result = _git_run(root, "cat-file", "-s", spec)
+    if size_result.returncode != 0:
+        raise ValueError("Git object size lookup failed")
+    try:
+        size_text = size_result.stdout.decode("ascii").strip()
+    except UnicodeError as exc:
+        raise ValueError("Git object size is invalid") from exc
+    if _DECIMAL.fullmatch(size_text) is None:
+        raise ValueError("Git object size is invalid")
+    if len(size_text) > len(str(limit)) or int(size_text) > limit:
+        raise ValueError("Git object exceeds bounded size")
+
+    blob_result = _git_run(root, "cat-file", "blob", spec)
+    if blob_result.returncode != 0:
         raise ValueError("Git object lookup failed")
-    return completed.stdout
+    if len(blob_result.stdout) != int(size_text) or len(blob_result.stdout) > limit:
+        raise ValueError("Git object size changed during capture")
+    return blob_result.stdout
 
 
 def _git_config_present(root: Path, *arguments: str) -> bool:
@@ -325,10 +381,8 @@ def _validate_repository_binding(
         raise ValueError("record base ancestry is invalid")
 
     hook_bytes = _git_blob(
-        resolved_root, "cat-file", "blob", f"{expected_head_sha}:.codex/hooks.json"
+        resolved_root, f"{expected_head_sha}:.codex/hooks.json", MAX_HOOK_CONFIG_BYTES
     )
-    if len(hook_bytes) > MAX_HOOK_CONFIG_BYTES:
-        raise ValueError("hook configuration is unbounded")
     if hashlib.sha256(hook_bytes).hexdigest() != record["hook_config_digest"]:
         raise ValueError("hook configuration digest is invalid")
 
