@@ -15,8 +15,10 @@ Verify independently:
 1. final base/head SHAs and the exact authorized PR/scope;
 2. durable JIT contract matches the final diff and no later roadmap slice leaked in;
 3. one production writer was active at a time; the bounded canonical writer-lease artifact matches the
-   exact identity and Git history; release followed independent host observation that the writer stopped;
-   and any replacement writer started only after that completed release;
+   exact identity and Git history; its `branch_ref` and derived `writer_lane_ref` resolve to the same
+   dedicated linked worktree and exact Git common directory; candidate `HEAD` movement is not mistaken for
+   identity; release followed independent host observation that the writer stopped; and any replacement
+   writer started only after that completed release;
 4. required RED/GREEN/repair evidence is durable and consistent with Git history;
 5. controlling independent reviewer inspected the exact final head and returned APPROVE. For the sole
    `DEGRADED_MASTER_REVIEW` exception, only an explicitly authorized Harness-only maintenance task with

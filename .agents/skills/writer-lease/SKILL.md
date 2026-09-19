@@ -15,9 +15,12 @@ process that rewrites Git metadata.
 1. Confirm the exact authorized PR ID, base SHA, named writer role, and that no prior writer remains active.
    Generate pseudonymous 64-lowercase-hex `owner_ref` and `session_ref`
    correlation values; never store raw agent/session IDs, paths, credentials, or transcripts.
-2. From trusted `main`, call `scripts/writer_lease.py acquire` before the writer starts. Persist the returned
-   generated `lease_id` and the six-field identity tuple. Acquisition is intentionally non-idempotent.
-3. Give the writer only the tuple needed for its lane. Require `verify` at `writer_start` and at each
+2. From trusted `main`, call `scripts/writer_lease.py acquire` before the writer starts from a dedicated
+   linked worktree. Supply the exact full `branch_ref`; the helper derives the canonical 64-hex
+   `writer_lane_ref` from the linked gitdir relative to the exact Git common directory and persists only
+   that digest. Persist the returned `lease_id` and identity tuple. Acquisition is intentionally non-idempotent.
+3. Give the writer only the tuple needed for its lane, including exact `branch_ref` and `writer_lane_ref`.
+   Require `verify` at `writer_start` and at each
    applicable boundary: `before_red`, `before_green`, `before_commit`, and `before_push`. An exact repeated
    verification is idempotent. `writer_start` must be first; later checkpoints never regress, while
    non-applicable intermediate phases may be omitted. A checkpoint is a declaration, not host attestation.
@@ -39,6 +42,9 @@ never let candidate code decide that an existing lease is stale.
 
 The PR that first introduces this helper cannot use candidate code to authorize its own writer; record the
 Master-observed single-writer bootstrap limitation. Ordinary CI and the offline harness checker validate
-only checked-in contracts and must not read live lease state. The lease writes only under the verified Git
-common directory and never changes refs, index, config, registered worktrees, product behavior, or remote
-state.
+only checked-in contracts and must not read live lease state. The lease requires an exact canonical
+dedicated linked worktree: non-detached `HEAD` must equal `branch_ref`, the linked gitdir must be canonical
+under the same common directory, and exactly one bounded `git worktree list --porcelain -z` registration
+must match. Verify, release, and export re-derive and match the lane before state access; candidate `HEAD`
+movement on the same branch is not identity. The lease writes only under the verified Git common directory
+and never changes refs, index, config, registered worktrees, product behavior, or remote state.

@@ -36,6 +36,8 @@ WRITER_ROLES = {
     "high_implementer",
     "critical_implementer",
 }
+WRITER_BRANCH_NAME = "writer-lease-lane"
+WRITER_BRANCH_REF = f"refs/heads/{WRITER_BRANCH_NAME}"
 
 # HARNESS-AUD-14 uses a real linked worktree so the lane-binding contract can be
 # exercised without relying on user-specific paths or a caller-created digest.
@@ -109,15 +111,16 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
             str(primary),
             "worktree",
             "add",
-            "--detach",
             "-q",
+            "-b",
+            WRITER_BRANCH_NAME,
             str(linked),
             base_sha,
         ],
         check=True,
     )
     common = Path(_git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    return primary, linked, base_sha, common
+    return linked, primary, base_sha, common
 
 
 def _dedicated_repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
@@ -309,6 +312,7 @@ def _identity(base_sha: str, **overrides: str) -> dict[str, str]:
         "writer_role": WRITER_ROLE,
         "owner_ref": OWNER_REF,
         "session_ref": SESSION_REF,
+        "branch_ref": WRITER_BRANCH_REF,
     }
     values.update(overrides)
     return values
@@ -323,19 +327,24 @@ def _assert_bound_identity(
 ) -> None:
     expected = _identity(base_sha, **overrides)
     expected["lease_id"] = lease_id
+    writer_lane_ref = overrides.get("writer_lane_ref")
+    if writer_lane_ref is not None:
+        expected["writer_lane_ref"] = writer_lane_ref
     assert {field: record[field] for field in expected} == expected
 
 
 def _acquire(
     module: ModuleType, repo: Path, base_sha: str, **overrides: str
 ) -> dict[str, Any]:
-    result = module.acquire(repo_root=repo, **_identity(base_sha, **overrides))
+    identity = _identity(base_sha, **overrides)
+    result = module.acquire(repo_root=repo, **identity)
     assert type(result) is dict
     assert re.fullmatch(r"[0-9a-f]{64}", result["lease_id"])
     _assert_bound_identity(
         result,
         base_sha=base_sha,
         lease_id=result["lease_id"],
+        writer_lane_ref=result["writer_lane_ref"],
         **overrides,
     )
     return result
@@ -351,18 +360,29 @@ def _verify(
     phase: str = "harness-aud-05",
     **overrides: str,
 ) -> dict[str, Any]:
+    branch_ref = overrides.pop("branch_ref", WRITER_BRANCH_REF)
+    writer_lane_ref = overrides.pop(
+        "writer_lane_ref", module.inspect(repo_root=repo)["active"]["writer_lane_ref"]
+    )
     result = module.verify(
         repo_root=repo,
         lease_id=lease_id,
         checkpoint=checkpoint,
         phase=phase,
-        **_identity(base_sha, **overrides),
+        **_identity(
+            base_sha,
+            branch_ref=branch_ref,
+            writer_lane_ref=writer_lane_ref,
+            **overrides,
+        ),
     )
     assert type(result) is dict
     _assert_bound_identity(
         result,
         base_sha=base_sha,
         lease_id=lease_id,
+        branch_ref=branch_ref,
+        writer_lane_ref=writer_lane_ref,
         **overrides,
     )
     return result
@@ -375,16 +395,27 @@ def _release(
     lease_id: str,
     **overrides: str,
 ) -> dict[str, Any]:
+    branch_ref = overrides.pop("branch_ref", WRITER_BRANCH_REF)
+    writer_lane_ref = overrides.pop(
+        "writer_lane_ref", module.inspect(repo_root=repo)["active"]["writer_lane_ref"]
+    )
     result = module.release(
         repo_root=repo,
         lease_id=lease_id,
-        **_identity(base_sha, **overrides),
+        **_identity(
+            base_sha,
+            branch_ref=branch_ref,
+            writer_lane_ref=writer_lane_ref,
+            **overrides,
+        ),
     )
     assert type(result) is dict
     _assert_bound_identity(
         result,
         base_sha=base_sha,
         lease_id=lease_id,
+        branch_ref=branch_ref,
+        writer_lane_ref=writer_lane_ref,
         **overrides,
     )
     return result
@@ -420,6 +451,7 @@ def _race_worker(
     try:
         result = module.acquire(
             repo_root=Path(repo),
+            branch_ref=WRITER_BRANCH_REF,
             pr_id=pr_id,
             base_sha=base_sha,
             writer_role=writer_role,
@@ -580,7 +612,7 @@ def test_primary_and_linked_worktrees_share_one_fixed_common_dir_lease(
     assert _state_dir(common).parent == common.resolve()
     assert _state_dir(common).is_dir()
     assert not (primary / STATE_DIRECTORY).exists()
-    active = lease.inspect(repo_root=linked)["active"]
+    active = lease.inspect(repo_root=primary)["active"]
     _assert_bound_identity(active, base_sha=base_sha, lease_id=acquired["lease_id"])
 
 
@@ -622,7 +654,16 @@ def test_acquire_is_non_idempotent_and_verify_stays_bound_to_stable_base(
 
 @pytest.mark.parametrize(
     "field",
-    ["lease_id", "pr_id", "base_sha", "writer_role", "owner_ref", "session_ref"],
+    [
+        "lease_id",
+        "pr_id",
+        "base_sha",
+        "writer_role",
+        "owner_ref",
+        "session_ref",
+        "branch_ref",
+        "writer_lane_ref",
+    ],
 )
 def test_wrong_identity_never_verifies_or_releases(
     lease: ModuleType, tmp_path: Path, field: str
@@ -636,6 +677,8 @@ def test_wrong_identity_never_verifies_or_releases(
         "writer_role": WRITER_ROLE,
         "owner_ref": OWNER_REF,
         "session_ref": SESSION_REF,
+        "branch_ref": WRITER_BRANCH_REF,
+        "writer_lane_ref": acquired["writer_lane_ref"],
     }
     values[field] = {
         "lease_id": "f" * 64,
@@ -644,6 +687,8 @@ def test_wrong_identity_never_verifies_or_releases(
         "writer_role": OTHER_WRITER_ROLE,
         "owner_ref": OTHER_OWNER_REF,
         "session_ref": OTHER_SESSION_REF,
+        "branch_ref": "refs/heads/not-the-writer-lane",
+        "writer_lane_ref": "f" * 64,
     }[field]
     with pytest.raises(lease.WriterLeaseError):
         lease.verify(
@@ -900,7 +945,7 @@ def _completed_evidence(
     raw = module.export_evidence(
         repo_root=primary,
         lease_id=acquired["lease_id"],
-        **_identity(base_sha),
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
     )
     assert type(raw) is bytes
     return raw, primary, base_sha, acquired["lease_id"]
@@ -1287,7 +1332,10 @@ def test_concurrent_verifies_leave_one_valid_canonical_chain(
     primary, _linked, base_sha, _common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
     _verify(lease, primary, base_sha, acquired["lease_id"])
-    identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
+    identity = {
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
+        "lease_id": acquired["lease_id"],
+    }
     identity.pop("base_sha")
     context = multiprocessing.get_context("spawn")
     ready = [context.Event(), context.Event()]
@@ -1327,7 +1375,7 @@ def test_concurrent_verifies_leave_one_valid_canonical_chain(
     raw = lease.export_evidence(
         repo_root=primary,
         lease_id=acquired["lease_id"],
-        **_identity(base_sha),
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
     )
     assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
 
@@ -1338,7 +1386,10 @@ def test_verify_vs_release_rejects_stale_verify_after_both_validate_active(
     primary, _linked, base_sha, _common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
     _verify(lease, primary, base_sha, acquired["lease_id"])
-    identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
+    identity = {
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
+        "lease_id": acquired["lease_id"],
+    }
     identity.pop("base_sha")
     context = multiprocessing.get_context("spawn")
     verify_ready = context.Event()
@@ -1388,7 +1439,7 @@ def test_verify_vs_release_rejects_stale_verify_after_both_validate_active(
     raw = lease.export_evidence(
         repo_root=primary,
         lease_id=acquired["lease_id"],
-        **_identity(base_sha),
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
     )
     assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
 
@@ -1399,7 +1450,10 @@ def test_duplicate_release_is_rejected_without_corrupting_completed_evidence(
     primary, _linked, base_sha, _common = _repository(tmp_path)
     acquired = _acquire(lease, primary, base_sha)
     _verify(lease, primary, base_sha, acquired["lease_id"])
-    identity = {**_identity(base_sha), "lease_id": acquired["lease_id"]}
+    identity = {
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
+        "lease_id": acquired["lease_id"],
+    }
     identity.pop("base_sha")
     context = multiprocessing.get_context("spawn")
     ready = context.Event()
@@ -1428,7 +1482,7 @@ def test_duplicate_release_is_rejected_without_corrupting_completed_evidence(
     raw = lease.export_evidence(
         repo_root=primary,
         lease_id=acquired["lease_id"],
-        **_identity(base_sha),
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
     )
     assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
 
@@ -1440,7 +1494,10 @@ def test_delayed_old_operation_cannot_mutate_or_unlink_later_started_lease(
     primary, _linked, base_sha, _common = _repository(tmp_path)
     old = _acquire(lease, primary, base_sha)
     _verify(lease, primary, base_sha, old["lease_id"])
-    old_identity = {**_identity(base_sha), "lease_id": old["lease_id"]}
+    old_identity = {
+        **_identity(base_sha, writer_lane_ref=old["writer_lane_ref"]),
+        "lease_id": old["lease_id"],
+    }
     old_identity.pop("base_sha")
     context = multiprocessing.get_context("spawn")
     ready = context.Event()
@@ -1484,7 +1541,11 @@ def test_delayed_old_operation_cannot_mutate_or_unlink_later_started_lease(
         raw = lease.export_evidence(
             repo_root=primary,
             lease_id=lease_id,
-            **_identity(base_sha, **values),
+            **_identity(
+                base_sha,
+                writer_lane_ref=(old if lease_id == old["lease_id"] else new)["writer_lane_ref"],
+                **values,
+            ),
         )
         assert lease.validate_evidence(raw)["lease_id"] == lease_id
 
@@ -1495,7 +1556,10 @@ def test_release_linearizes_before_later_acquire(
     primary, _linked, base_sha, _common = _repository(tmp_path)
     old = _acquire(lease, primary, base_sha)
     _verify(lease, primary, base_sha, old["lease_id"])
-    identity = {**_identity(base_sha), "lease_id": old["lease_id"]}
+    identity = {
+        **_identity(base_sha, writer_lane_ref=old["writer_lane_ref"]),
+        "lease_id": old["lease_id"],
+    }
     identity.pop("base_sha")
     context = multiprocessing.get_context("spawn")
     ready = context.Event()
@@ -1554,7 +1618,7 @@ def test_hostile_canonical_json_always_raises_generic_library_error(
 ) -> None:
     raw, _primary, _base_sha, _lease_id = _completed_evidence(lease, tmp_path)
     if mutation == "oversized_integer":
-        hostile = raw.replace(b'"schema_version":1', b'"schema_version":' + (b"9" * 5_000), 1)
+        hostile = raw.replace(b'"schema_version":2', b'"schema_version":' + (b"9" * 5_000), 1)
     else:
         parsed = json.loads(raw)
         parsed["events"][1][mutation] = ["SECRET-CANARY"] if mutation == "event_type" else {}
@@ -1570,7 +1634,7 @@ def test_hostile_canonical_json_cli_has_only_generic_error(
 ) -> None:
     raw, _primary, _base_sha, _lease_id = _completed_evidence(lease, tmp_path)
     if mutation == "oversized_integer":
-        hostile = raw.replace(b'"schema_version":1', b'"schema_version":' + (b"9" * 5_000), 1)
+        hostile = raw.replace(b'"schema_version":2', b'"schema_version":' + (b"9" * 5_000), 1)
     else:
         parsed = json.loads(raw)
         parsed["events"][1][mutation] = ["SECRET-CANARY"] if mutation == "event_type" else {}
@@ -1943,6 +2007,7 @@ def test_writer_lane_ref_is_deterministic_and_not_a_frozen_head(
     writer_lane, _primary, base_sha, _common = _dedicated_repository(tmp_path)
     first = _lane_acquire(lease, writer_lane, base_sha)
     first_lane_ref = first["writer_lane_ref"]
+    _lane_verify(lease, writer_lane, base_sha, first)
     _lane_release(lease, writer_lane, base_sha, first)
     second = _lane_acquire(lease, writer_lane, base_sha)
     assert second["writer_lane_ref"] == first_lane_ref

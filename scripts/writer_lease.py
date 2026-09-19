@@ -17,7 +17,7 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATE_DIRECTORY = "codex-writer-lease"
 ACTIVE_NAME = "active.json"
 EVENTS_NAME = "events"
@@ -28,7 +28,10 @@ MAX_ARCHIVED_LEASES = 64
 MAX_RECORD_BYTES = 4_096
 MAX_EVIDENCE_BYTES = 262_144
 MAX_DIRECTORY_ENTRIES = (MAX_EVENT_COUNT * 2) + 2
+MAX_BRANCH_REF_BYTES = 256
+MAX_WORKTREE_LIST_BYTES = 131_072
 ZERO_DIGEST = "0" * 64
+WRITER_LANE_DOMAIN = b"mytradingalpha:writer-lane:v1\0"
 
 _WRITER_ROLES = frozenset(
     {"normal_implementer", "high_implementer", "critical_implementer"}
@@ -47,6 +50,7 @@ _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _PR_ID = re.compile(r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\Z")
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+_BRANCH_REF = re.compile(r"refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
 _IDENTITY_FIELDS = (
     "pr_id",
     "base_sha",
@@ -54,6 +58,8 @@ _IDENTITY_FIELDS = (
     "owner_ref",
     "session_ref",
     "lease_id",
+    "branch_ref",
+    "writer_lane_ref",
 )
 _ACTIVE_FIELDS = frozenset({"schema_version", *_IDENTITY_FIELDS})
 _EVENT_BASE_FIELDS = frozenset(
@@ -136,9 +142,11 @@ def _validate_identity_values(
     writer_role: str,
     owner_ref: str,
     session_ref: str,
+    branch_ref: str,
+    writer_lane_ref: str,
     lease_id: str | None = None,
 ) -> dict[str, str]:
-    values = (pr_id, base_sha, writer_role, owner_ref, session_ref)
+    values = (pr_id, base_sha, writer_role, owner_ref, session_ref, branch_ref, writer_lane_ref)
     if any(type(value) is not str or not _is_ascii(value) for value in values):
         _fail()
     if len(pr_id) > 64 or _PR_ID.fullmatch(pr_id) is None:
@@ -149,18 +157,43 @@ def _validate_identity_values(
         _fail()
     if _HEX64.fullmatch(owner_ref) is None or _HEX64.fullmatch(session_ref) is None:
         _fail()
+    _validate_branch_ref(branch_ref)
+    if _HEX64.fullmatch(writer_lane_ref) is None:
+        _fail()
     result = {
         "pr_id": pr_id,
         "base_sha": base_sha,
         "writer_role": writer_role,
         "owner_ref": owner_ref,
         "session_ref": session_ref,
+        "branch_ref": branch_ref,
+        "writer_lane_ref": writer_lane_ref,
     }
     if lease_id is not None:
         if type(lease_id) is not str or _HEX64.fullmatch(lease_id) is None:
             _fail()
         result["lease_id"] = lease_id
     return result
+
+
+def _validate_branch_ref(value: str) -> None:
+    if (
+        type(value) is not str
+        or not value.isascii()
+        or len(value.encode("ascii")) > MAX_BRANCH_REF_BYTES
+        or _BRANCH_REF.fullmatch(value) is None
+        or ".." in value
+        or "//" in value
+        or "@{" in value
+        or value.endswith("/")
+        or value.endswith(".")
+        or value.endswith(".lock")
+    ):
+        _fail()
+
+
+def _validate_acquire_branch_ref(value: str) -> None:
+    _validate_branch_ref(value)
 
 
 def _validate_identity_record(record: object) -> dict[str, Any]:
@@ -174,6 +207,8 @@ def _validate_identity_record(record: object) -> dict[str, Any]:
         writer_role=record["writer_role"],
         owner_ref=record["owner_ref"],
         session_ref=record["session_ref"],
+        branch_ref=record["branch_ref"],
+        writer_lane_ref=record["writer_lane_ref"],
         lease_id=record["lease_id"],
     )
     return record
@@ -215,6 +250,8 @@ def _validate_event(record: object) -> dict[str, Any]:
         writer_role=record["writer_role"],
         owner_ref=record["owner_ref"],
         session_ref=record["session_ref"],
+        branch_ref=record["branch_ref"],
+        writer_lane_ref=record["writer_lane_ref"],
         lease_id=record["lease_id"],
     )
     if event_type == "verify":
@@ -258,6 +295,150 @@ def _git(repo_root: Path, *arguments: str) -> str:
     if not output or "\n" in output or "\x00" in output:
         _fail()
     return output
+
+
+def _git_raw(repo_root: Path, *arguments: str, maximum: int = MAX_WORKTREE_LIST_BYTES) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(repo_root), *arguments],
+            env=_safe_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, ValueError):
+        _fail()
+    if result.returncode != 0 or type(result.stdout) is not bytes or len(result.stdout) > maximum:
+        _fail()
+    return result.stdout
+
+
+def _canonical_directory(path: Path) -> Path:
+    if not path.is_absolute():
+        _fail()
+    try:
+        canonical = path.resolve(strict=True)
+    except (OSError, TypeError, ValueError):
+        _fail()
+    if canonical != path:
+        _fail()
+    _owned_directory(canonical)
+    return canonical
+
+
+def _read_git_marker(root: Path) -> Path:
+    marker = root / ".git"
+    try:
+        metadata = marker.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _fail()
+        raw = marker.read_bytes()
+    except (OSError, WriterLeaseError):
+        _fail()
+    if not raw or len(raw) > MAX_RECORD_BYTES:
+        _fail()
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        _fail()
+    if not text.startswith("gitdir: ") or not text.endswith("\n") or text.count("\n") != 1:
+        _fail()
+    target = Path(text[8:-1])
+    if not target.is_absolute():
+        _fail()
+    try:
+        canonical = target.resolve(strict=True)
+    except OSError:
+        _fail()
+    if canonical != target:
+        _fail()
+    return canonical
+
+
+def _parse_worktree_list(raw: bytes) -> list[dict[str, str]]:
+    if type(raw) is not bytes or not raw or len(raw) > MAX_WORKTREE_LIST_BYTES:
+        _fail()
+    if not raw.endswith(b"\0\0"):
+        _fail()
+    try:
+        records = raw[:-2].split(b"\0\0")
+        parsed: list[dict[str, str]] = []
+        for record in records:
+            if not record:
+                _fail()
+            fields = record.split(b"\0")
+            values: dict[str, str] = {}
+            for field in fields:
+                if b" " in field:
+                    key_raw, value_raw = field.split(b" ", 1)
+                    value = value_raw.decode("utf-8", errors="strict")
+                else:
+                    key_raw = field
+                    value = ""
+                key = key_raw.decode("ascii")
+                if key in values or (
+                    not value and key not in {"detached", "locked", "prunable"}
+                ):
+                    _fail()
+                values[key] = value
+            if set(values) - {"worktree", "HEAD", "branch", "detached", "locked", "prunable"}:
+                _fail()
+            if set(values) < {"worktree", "HEAD"}:
+                _fail()
+            if ("branch" in values) == ("detached" in values):
+                _fail()
+            if _HEX40.fullmatch(values["HEAD"]) is None:
+                _fail()
+            if "branch" in values:
+                _validate_branch_ref(values["branch"])
+            worktree = Path(values["worktree"])
+            if not worktree.is_absolute() or worktree.resolve(strict=True) != worktree:
+                _fail()
+            parsed.append(values)
+    except (OSError, UnicodeDecodeError, ValueError, WriterLeaseError):
+        _fail()
+    if not parsed or len(parsed) > MAX_EVENT_COUNT:
+        _fail()
+    return parsed
+
+
+def _writer_lane_binding(repo_root: Path | str, branch_ref: str) -> tuple[Path, str]:
+    _validate_branch_ref(branch_ref)
+    try:
+        supplied_root = Path(repo_root)
+    except (TypeError, ValueError):
+        _fail()
+    root = _canonical_directory(supplied_root)
+    top_level_text = _git(root, "rev-parse", "--show-toplevel")
+    if top_level_text != str(root):
+        _fail()
+    common_text = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    common = _canonical_directory(Path(common_text))
+    if _read_git_marker(root) != _canonical_directory(Path(_git(root, "rev-parse", "--path-format=absolute", "--absolute-git-dir"))):
+        _fail()
+    gitdir = _read_git_marker(root)
+    worktrees = common / "worktrees"
+    if not worktrees.is_dir() or worktrees.resolve(strict=True) != worktrees:
+        _fail()
+    if gitdir.parent != worktrees or gitdir == worktrees:
+        _fail()
+    _owned_directory(gitdir)
+    if _git(root, "symbolic-ref", "--quiet", "HEAD") != branch_ref:
+        _fail()
+    registrations = _parse_worktree_list(
+        _git_raw(root, "worktree", "list", "--porcelain", "-z")
+    )
+    matches = [
+        item
+        for item in registrations
+        if item.get("worktree") == str(root) and item.get("branch") == branch_ref
+    ]
+    if len(matches) != 1:
+        _fail()
+    relative = gitdir.relative_to(common).as_posix()
+    lane_ref = hashlib.sha256(WRITER_LANE_DOMAIN + relative.encode("ascii")).hexdigest()
+    return common, lane_ref
 
 
 def _validate_platform() -> None:
@@ -371,10 +552,10 @@ def _state_paths(
 ) -> tuple[Path, Path, Path, Path]:
     _validate_platform()
     try:
-        root = Path(repo_root).resolve(strict=True)
+        supplied_root = Path(repo_root)
     except (OSError, TypeError, ValueError):
         _fail()
-    _owned_directory(root)
+    root = _canonical_directory(supplied_root)
     common_text = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
     common_input = Path(common_text)
     if not common_input.is_absolute():
@@ -657,15 +838,21 @@ def _event(event_type: str, identity: dict[str, str], **detail: str) -> dict[str
 
 
 def inspect(*, repo_root: Path | str) -> dict[str, Any]:
-    _common, state, events, _archive = _state_paths(repo_root, create=False)
-    if not _path_exists(state):
-        return {"status": "inactive"}
-    if not _path_exists(events):
-        return {"status": "blocked"}
-    if _path_exists(state / TRANSITION_NAME):
-        return {"status": "blocked"}
-    active_path = events.parent / ACTIVE_NAME
     try:
+        try:
+            root = Path(repo_root)
+        except (OSError, TypeError, ValueError):
+            _fail()
+        branch_ref = _git(_canonical_directory(root), "symbolic-ref", "--quiet", "HEAD")
+        _common, lane_ref = _writer_lane_binding(root, branch_ref)
+        _common, state, events, _archive = _state_paths(root, create=False)
+        if not _path_exists(state):
+            return {"status": "inactive"}
+        if not _path_exists(events):
+            return {"status": "blocked"}
+        if _path_exists(state / TRANSITION_NAME):
+            return {"status": "blocked"}
+        active_path = events.parent / ACTIVE_NAME
         active_exists = active_path.exists() or active_path.is_symlink()
         chain = _scan_events(events)
         if not active_exists:
@@ -677,7 +864,9 @@ def inspect(*, repo_root: Path | str) -> dict[str, Any]:
         active = _validate_identity_record(_decode_json(_read_regular(active_path), MAX_RECORD_BYTES))
         identity = {field: active[field] for field in _IDENTITY_FIELDS}
         if (
-            not chain
+            active["branch_ref"] != branch_ref
+            or active["writer_lane_ref"] != lane_ref
+            or not chain
             or not all(_identity_matches(event, identity) for event, _raw in chain)
             or chain[-1][0]["event_type"] == "release"
         ):
@@ -690,21 +879,26 @@ def inspect(*, repo_root: Path | str) -> dict[str, Any]:
 def acquire(
     *,
     repo_root: Path | str,
+    branch_ref: str,
     pr_id: str,
     base_sha: str,
     writer_role: str,
     owner_ref: str,
     session_ref: str,
 ) -> dict[str, Any]:
+    _validate_acquire_branch_ref(branch_ref)
+    _common, writer_lane_ref = _writer_lane_binding(repo_root, branch_ref)
     supplied = _validate_identity_values(
         pr_id=pr_id,
         base_sha=base_sha,
         writer_role=writer_role,
         owner_ref=owner_ref,
         session_ref=session_ref,
+        branch_ref=branch_ref,
+        writer_lane_ref=writer_lane_ref,
     )
     try:
-        root = Path(repo_root).resolve(strict=True)
+        root = _canonical_directory(Path(repo_root))
     except (OSError, TypeError, ValueError):
         _fail()
     _verify_base_commit(root, base_sha)
@@ -729,13 +923,20 @@ def _active_identity(
     writer_role: str,
     owner_ref: str,
     session_ref: str,
+    branch_ref: str,
+    writer_lane_ref: str,
 ) -> tuple[Path, dict[str, str], list[tuple[dict[str, Any], bytes]]]:
+    _common, derived_lane_ref = _writer_lane_binding(repo_root, branch_ref)
+    if derived_lane_ref != writer_lane_ref:
+        _fail()
     expected = _validate_identity_values(
         pr_id=pr_id,
         base_sha=base_sha,
         writer_role=writer_role,
         owner_ref=owner_ref,
         session_ref=session_ref,
+        branch_ref=branch_ref,
+        writer_lane_ref=writer_lane_ref,
         lease_id=lease_id,
     )
     _common, state, events, _archive = _state_paths(repo_root, create=False)
@@ -765,10 +966,15 @@ def verify(
     writer_role: str,
     owner_ref: str,
     session_ref: str,
+    branch_ref: str,
+    writer_lane_ref: str,
 ) -> dict[str, Any]:
     if type(checkpoint) is not str or checkpoint not in _CHECKPOINTS:
         _fail()
     _validate_label(phase)
+    _common, derived_lane_ref = _writer_lane_binding(repo_root, branch_ref)
+    if derived_lane_ref != writer_lane_ref:
+        _fail()
     _common, state, _events, _archive = _state_paths(repo_root, create=False)
     with _transition_guard(state):
         events, identity, chain = _active_identity(
@@ -779,6 +985,8 @@ def verify(
             writer_role=writer_role,
             owner_ref=owner_ref,
             session_ref=session_ref,
+            branch_ref=branch_ref,
+            writer_lane_ref=writer_lane_ref,
         )
         last = chain[-1][0]
         if (
@@ -802,7 +1010,12 @@ def release(
     writer_role: str,
     owner_ref: str,
     session_ref: str,
+    branch_ref: str,
+    writer_lane_ref: str,
 ) -> dict[str, Any]:
+    _common, derived_lane_ref = _writer_lane_binding(repo_root, branch_ref)
+    if derived_lane_ref != writer_lane_ref:
+        _fail()
     _common, state, _events, _archive = _state_paths(repo_root, create=False)
     with _transition_guard(state):
         events, identity, _chain = _active_identity(
@@ -813,6 +1026,8 @@ def release(
             writer_role=writer_role,
             owner_ref=owner_ref,
             session_ref=session_ref,
+            branch_ref=branch_ref,
+            writer_lane_ref=writer_lane_ref,
         )
         released = _append_event(events, _event("release", identity))
         active_path = events.parent / ACTIVE_NAME
@@ -854,13 +1069,20 @@ def export_evidence(
     writer_role: str,
     owner_ref: str,
     session_ref: str,
+    branch_ref: str,
+    writer_lane_ref: str,
 ) -> bytes:
+    _common, derived_lane_ref = _writer_lane_binding(repo_root, branch_ref)
+    if derived_lane_ref != writer_lane_ref:
+        _fail()
     identity = _validate_identity_values(
         pr_id=pr_id,
         base_sha=base_sha,
         writer_role=writer_role,
         owner_ref=owner_ref,
         session_ref=session_ref,
+        branch_ref=branch_ref,
+        writer_lane_ref=writer_lane_ref,
         lease_id=lease_id,
     )
     _common, state, events, _archive = _state_paths(repo_root, create=False)
@@ -897,6 +1119,8 @@ def validate_evidence(raw: bytes) -> dict[str, Any]:
         writer_role=value["writer_role"],
         owner_ref=value["owner_ref"],
         session_ref=value["session_ref"],
+        branch_ref=value["branch_ref"],
+        writer_lane_ref=value["writer_lane_ref"],
         lease_id=value["lease_id"],
     )
     events_value = value["events"]
@@ -923,13 +1147,18 @@ def validate_evidence(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def _identity_arguments(parser: argparse.ArgumentParser, *, include_lease: bool) -> None:
+def _identity_arguments(
+    parser: argparse.ArgumentParser, *, include_lease: bool, include_lane: bool
+) -> None:
     parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument("--branch-ref", required=True)
     parser.add_argument("--pr-id", required=True)
     parser.add_argument("--base-sha", required=True)
     parser.add_argument("--writer-role", required=True, choices=sorted(_WRITER_ROLES))
     parser.add_argument("--owner-ref", required=True)
     parser.add_argument("--session-ref", required=True)
+    if include_lane:
+        parser.add_argument("--writer-lane-ref", required=True)
     if include_lease:
         parser.add_argument("--lease-id", required=True)
 
@@ -976,17 +1205,17 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = _LeaseArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     acquire_parser = commands.add_parser("acquire")
-    _identity_arguments(acquire_parser, include_lease=False)
+    _identity_arguments(acquire_parser, include_lease=False, include_lane=False)
     verify_parser = commands.add_parser("verify")
-    _identity_arguments(verify_parser, include_lease=True)
+    _identity_arguments(verify_parser, include_lease=True, include_lane=True)
     verify_parser.add_argument("--checkpoint", required=True, choices=sorted(_CHECKPOINTS))
     verify_parser.add_argument("--phase", required=True)
     release_parser = commands.add_parser("release")
-    _identity_arguments(release_parser, include_lease=True)
+    _identity_arguments(release_parser, include_lease=True, include_lane=True)
     inspect_parser = commands.add_parser("inspect")
     inspect_parser.add_argument("--repo-root", required=True, type=Path)
     export_parser = commands.add_parser("export")
-    _identity_arguments(export_parser, include_lease=True)
+    _identity_arguments(export_parser, include_lease=True, include_lane=True)
     validate_parser = commands.add_parser("validate")
     validate_parser.add_argument("evidence", type=Path)
     args = vars(parser.parse_args(list(argv) if argv is not None else None))
