@@ -209,6 +209,10 @@ Ordinary CI and the offline harness checker validate only the static contract an
 state. The introducing PR is a disclosed bootstrap exception: candidate code cannot authorize its own writer,
 so the Master must separately record external single-writer observation.
 
+The network-denial guard is Python-level pytest test-phase evidence, not an OS egress sandbox and not
+protection for subprocess/native bypasses. It supplements, but does not replace, the repository's
+component-scoped network policy and independent CI/runtime evidence.
+
 ## 3. Just-in-time PR Implementation Spec / Scope Contract
 
 Stable architecture is defined up front; exact implementation mechanics are resolved **just in time**

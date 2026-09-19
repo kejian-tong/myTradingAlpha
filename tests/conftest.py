@@ -1,9 +1,14 @@
 """Default-off provider integrations and isolated per-test configuration."""
 
 import os
+import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+class NetworkDeniedError(OSError):
+    """Stable Python-level denial used for ordinary test-phase network attempts."""
 
 
 def pytest_addoption(parser):
@@ -72,6 +77,25 @@ def _isolate_config():
     config_module._config = copy.deepcopy(default_config.DEFAULT_CONFIG)
     yield
     config_module._config = copy.deepcopy(default_config.DEFAULT_CONFIG)
+
+
+@pytest.fixture(autouse=True)
+def _network_denial_guard(monkeypatch, request):
+    opted_in = (
+        request.config.getoption("--run-provider-integration")
+        and request.node.get_closest_marker("integration") is not None
+    )
+    if opted_in:
+        return
+
+    def deny(*_args, **_kwargs):
+        raise NetworkDeniedError("network access denied by default test guard")
+
+    monkeypatch.setattr(socket, "getaddrinfo", deny)
+    monkeypatch.setattr(socket, "create_connection", deny)
+    monkeypatch.setattr(socket.socket, "connect", deny)
+    monkeypatch.setattr(socket.socket, "connect_ex", deny)
+    monkeypatch.setattr(socket.socket, "sendto", deny)
 
 
 @pytest.fixture()
