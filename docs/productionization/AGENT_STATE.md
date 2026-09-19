@@ -1,101 +1,76 @@
 # Productionization Agent State
 
-This is the compact operational recovery snapshot. GitHub and current `main` are authoritative.
-Approved architecture remains in the productionization roadmap and phase documents. Historical detail
-removed from this snapshot remains immutable in Git commits, workflow runs and PR conversations.
+This is the bounded operational recovery snapshot, not a chronological log. GitHub/current `main` is authoritative;
+immutable detail remains in commits, pull requests, and workflow runs.
 
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4`
-- `last_reconciled_main_tree`: `26d229efd92a3ba6dee6832d2e7e7c123f6573fb`
+- `last_reconciled_main_sha`: `14cb132a92f9177f0f22492a4708a6ed8880918a`
+- `last_reconciled_main_tree`: `1da844190e5aff3a85aabddcf0b9911b2333874c`
 - `roadmap_status`: `sig_02_merged_stopped`
 - `current_pr_id`: none
 - `current_phase`: none active
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
   `376c9c044722ee37f3fa36691b576420e3b6253d`
-- `harness_reconciled_through`: `HARNESS-AUD-08` / PR #73 / merge
-  `4eb8d97b6f2bfc5ef9458263673cfbcf5cb49fb4`
-- `last_reconciled_automatic_review_ruleset_id`: `23141241` (disabled; fresh recheck required)
-- `next_pr_id`: `SIG-03` (informational only; not authorized by the current harness-maintenance task)
-- `stop_after_pr_id`: `SIG-02` (completed historical stop boundary)
 - `autonomy_mode`: disabled for roadmap implementation after SIG-02 completion
 - `active_writer`: none
 - `merge`: merged
 
-No new roadmap slice is active. The current user authorization is limited to bounded Codex-harness
-maintenance and does not authorize SIG-03, SIG-04, SIG-05, BT-01 or any later roadmap implementation.
-No model/provider inference, paid data, deployment, broker, PAPER/live, real-order or promotion action is
-authorized by this state. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
+No new roadmap slice is active. `next_pr_id`: `SIG-03` (informational only; not authorized; not started).
+No later roadmap implementation, product behavior, broker/PAPER/live action, credential, deployment, or
+promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
 
-## Latest completed roadmap slice: SIG-02
+## SIG-02 recovery reference
 
-PR #45 implemented the Evidence tools and `ResearchNote` boundary as a pure, deterministic transformation
-of sealed `EvidenceBundle` / cached-response evidence. It added domain-qualified references, exact
-bundle/provenance/cutoff/artifact binding, defensive immutable access, bounded canonical serialization,
-typed failures, hostile-data redaction and no provider/network/ordinary-graph fallback.
-
-Final immutable evidence:
-
-- final reviewed source head: `de51698180ff6873c7512c70828add3c55728fb9`
-- final source tree: `ef87b5e4c5b9778bbbcdde74d6db5b53b802865c`
-- merged base main: `acb4f971b584b0ba12d83d9e57c96c85c95da418`
-- actual merge commit: `376c9c044722ee37f3fa36691b576420e3b6253d`
-- merge parents: `acb4f971b584b0ba12d83d9e57c96c85c95da418`,
-  `de51698180ff6873c7512c70828add3c55728fb9`
-- merge/resulting-main tree: `ef87b5e4c5b9778bbbcdde74d6db5b53b802865c`
-- merge time: `2026-09-07T18:04:30Z`
-- final Master merge-gate artifact: PR #45 comment `5574233504`
-- post-merge final receipt: PR #45 comment `5574325065`
-- main-push CI `34150165313`: PASS
-- main-push CodeQL `34150165320`: PASS
-
-The final controlling review used fresh `reviewer_xhigh`, configured `gpt-5.6-sol / xhigh`, on the exact
-source head above and returned APPROVE with all prior BLOCKER/HIGH findings closed before the Master
-merge gate. The completed SIG-02 task did not authorize or start SIG-03.
-
-## Routing and lessons retained for future work
-
-SIG-02 was classified `high` and ultimately used the difficult production route:
-
-- original implementer: `normal_implementer` / `gpt-5.6-luna / max`
-- final repair implementer: `high_implementer` / `gpt-5.6-sol / high`
-- final controlling reviewer: `reviewer_xhigh` / `gpt-5.6-sol / xhigh`
-- Master: configured/requested `gpt-5.6-sol / xhigh`
-
-Only one production writer ran at a time. Replacements began only after the prior writer stopped. The
-SIG-02-only runtime alternative permitting correctly loaded children to expose, but not invoke,
-collaboration controls expired after post-merge verification; normal master-only delegation policy now
-applies without that exception.
-
-The durable review history in PR #45 shows repeated late discovery of hostile-input, provenance,
-redaction, canonicalization and bounded-work defects. Future high/critical work should use that evidence
-to shift adversarial boundary analysis earlier during preflight/JIT rather than treating those findings as
-a reason to weaken review.
+PR #45 implemented the deterministic Evidence tools and `ResearchNote` boundary over sealed evidence.
+The final reviewed source head was `de51698180ff6873c7512c70828add3c55728fb9`; its source tree was
+`ef87b5e4c5b9778bbbcdde74d6db5b53b802865c`. The merge commit was
+`376c9c044722ee37f3fa36691b576420e3b6253d` with resulting tree
+`ef87b5e4c5b9778bbbcdde74d6db5b53b802865c`. No provider, network, ordinary-graph fallback, broker,
+PAPER/live, or promotion behavior was introduced.
 
 ## Current harness policy
 
-Merged Harness maintenance PRs #64–#69, #72 and #73 define the current operating boundary. Collaboration
-control visibility in a non-master V2 child is informational only; an actual invocation or completed nested
-delegation blocks progression. Runtime capability receipts, capability isolation and native read-only
-admission remain required, and the Master remains the only role permitted to delegate. The cooperative
-repository-global writer lease is active policy for every fresh implementation or repair writer.
+- `harness_reconciled_through`: `HARNESS-AUD-19` / PR #84 / merge
+  `14cb132a92f9177f0f22492a4708a6ed8880918a`
+- HARNESS-AUD-20 is the closeout reconciliation based on this exact main
+  `14cb132a92f9177f0f22492a4708a6ed8880918a`; it is not merged and has no future merge SHA.
 
-Codex Memories and project Apps are explicitly disabled as checked-in configuration intent. These settings
-apply prospectively to fresh sessions in trusted projects; CLI/configuration overrides, host evidence and
-already-running sessions remain controlling, and checked-in intent does not authenticate live runtime state.
-GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used. The automatic-review
-ruleset `23141241` was observed disabled at the last reconciliation; GitHub/current `main` remains authoritative,
-so it must be freshly rechecked before relying on that fact. PR #70's optional review-boundary machinery was
-removed by PR #73; PR #71 was closed without merge and is not an active recovery target.
+The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
+integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane
+identity, hook manifests, and advisory stop diagnostics; #82–#84 covered Foundation CI deduplication,
+runtime-neutral collaboration terminology, and instruction ownership/compaction.
 
-## State and recovery policy
+| Harness PR | Exact merge SHA |
+| --- | --- |
+| PR #74 | `9177e984c533aa26177fe368190d6e3142342760` |
+| PR #75 | `436545cfe8a2b4785f5ef81eb6476f4a2477658c` |
+| PR #76 | `9a717c85d293256adaa0ccbc6cf8ce84305253a4` |
+| PR #77 | `3e43b2f3c75471573fb969ff07550603c679d0e8` |
+| PR #78 | `502378aa34c98db8892e0b789608f919589cdeb4` |
+| PR #79 | `e138e63823a3c477cbac976ef9a25c1d867c70d6` |
+| PR #80 | `c2eb5d2e9e2defb06ba009d0d0d0f42cea8b2467` |
+| PR #81 | `0b204cc276de8a4d95f43c8da59415244f9944e0` |
+| PR #82 | `ab775c3d3d75e3a8f30c455f35c1d33fd782b389` |
+| PR #83 | `f9b6eb12425ef2e5c8933b75ba327adabd7f76af` |
+| PR #84 | `14cb132a92f9177f0f22492a4708a6ed8880918a` |
 
-This snapshot is intentionally compact and remains below the target in `AGENT_STATE_COMPACTION.md`.
-Detailed SIG-02 repair chronology remains in PR #45, its immutable commits/workflows, and the historical
-pre-compaction state snapshot. Do not re-expand this file into a chronological log.
+- Former automatic-review ruleset `23141241`: observed disabled on 2026-09-19; main-protection required contexts
+  remain authoritative.
+- Post-#84 main-push CI `35472036890`: PASS; CodeQL `35472036776`: PASS.
 
-A fresh Master must still fetch GitHub/current `main`, reconcile this snapshot, read applicable scoped
-instructions and phase documents, and obtain fresh authorization before starting any later roadmap slice.
-Harness-only commits may advance `main` after the reconciled roadmap merge without implying that a later
-roadmap slice has started.
+## Runtime limitations and watch-only features
+
+- The host permission profile is disabled/unrestricted, so native read-only admission is unavailable.
+- `DEGRADED_MASTER_REVIEW` is a per-task-authorized Harness-only fallback with lower assurance; it is not independent
+  review and cannot authorize roadmap, product, broker, PAPER/live, promotion, or critical-safety work.
+- Hook load/trust state is unknown and ineffective absent a host report.
+- Runtime receipt, offline verifier, and checked-in config do not authenticate host/model/isolation.
+- The writer lease is cooperative structural evidence and does not defend against same-user processes.
+- Apps and Memories remain disabled by intent. Rules, Permission Profiles, OTel, and repo Plugins remain
+  watch-only.
+- External-spec official Docs MCP remains configuration intent unless observed at runtime.
+
+The root instructions own the permanent external-agent prohibition. This state records operational facts only
+and does not replace the root policy, audit protocol, required CI, exact-head review, or Master merge gate.
