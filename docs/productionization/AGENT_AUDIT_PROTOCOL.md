@@ -22,6 +22,16 @@ SHAs, effective sandbox/profile/approval, and four lowercase SHA-256 references 
 The verifier performs no network, write, transcript, or runtime-control operation. Missing or contradictory
 host evidence remains `insufficient_evidence`; caller-created evidence cannot upgrade it.
 
+The receipt schema is bounded, canonical, and duplicate-free: `schema_version`, `evidence_source`,
+`permission_system`, `permission_profile`, `tool_names`, `pr_id`, `base_sha`, `head_sha`, `tree_sha`,
+`role`, and `config_path`. The permission system is `legacy_sandbox` or `permission_profile`; the
+permission profile meaning is `:read-only` for an admissible read-only lane and `disabled` for an absent
+permission profile. Trusted expectations bind `expected_pr_id`, `expected_base_sha`, `expected_head_sha`,
+`expected_role`, and `expected_config_path` to the checked-out tree. `tool_names` is a complete sorted unique
+inventory. The parser rejects input over 64 KiB, duplicate-key JSON, partial-promisor repositories, and
+lazy-fetch/object substitution. For external specification research, the exact OpenAI Developer Docs MCP
+allowlist is `openaiDeveloperDocs`: `fetch_openai_doc` and `search_openai_docs` only.
+
 ### 1.1.1 Hook runtime manifest evidence
 
 `scripts/hook_runtime_manifest.py` verifies a bounded `hook runtime manifest` bound to session reference,
@@ -50,6 +60,8 @@ is a blocking policy violation, including a runtime-denied or no-op attempt. Mis
 `insufficient_evidence`, and `telemetry_conflict` remains a separate finding. Named read-only roles retain
 `[agents] enabled = false` and the compact admission marker; the external-spec role retains its official
 OpenAI Developer Docs MCP intent and fallback limitation.
+Gate evidence names `collaboration_controls_visible`, `collaboration_observation_complete`,
+`non_master_collaboration_invoked`, and `delegation_control_mode=behavioral_policy`.
 
 ## 2. Ownership and assurance
 

@@ -1,14 +1,14 @@
 # myTradingAlpha Agent Harness
 
 This file is repository-wide policy. Automatic instruction discovery follows the project root to the current working directory (CWD)
-and stops there; opening or editing a deeper file does not load its; opened or edited content is not auto-loaded.
-`AGENTS.md`. For paths outside that chain, `productionization-preflight` must explicitly read the scoped
+and stops there; opening or editing a deeper file does not load its `AGENTS.md`; opened or edited content is not automatically loaded.
+For paths outside that chain, `productionization-preflight` must explicitly read the scoped
 instructions. This policy remains authoritative over configuration, role files, hooks, and skills.
 
 ## Repository language
 
 Repository-authored engineering prose is English, including docs, code comments/docstrings, commit messages,
-PR text, reviews, and reports; this includes English/Chinese handling in prose. Preserve localization strings, fixtures, identifiers, and
+PR text, reviews, and reports requested in English or Chinese. Preserve localization strings, fixtures, identifiers, and
 immutable historical evidence as data.
 
 ## 2. Ownership and architecture invariants
@@ -96,7 +96,19 @@ record requested/configured actual route and never invent runtime telemetry.
 | `external_spec_researcher` | GPT-5.6 Luna / max |
 | `astra_canary` | GPT-6 Astra / xhigh, shadow-only |
 
-Normal/high/critical routes are Luna/max plus Sol/high initially; evidence may escalate implementation
+### Named route matrix
+
+| class | named writer + controlling reviewer |
+| --- | --- |
+| normal | `normal_implementer` + `reviewer_high` |
+| high initial | `normal_implementer` + `reviewer_high` |
+| high implementation escalation | `high_implementer` + `reviewer_high` |
+| high review escalation | `normal_implementer` + `reviewer_xhigh` |
+| critical | `normal_implementer` + `reviewer_xhigh` |
+| difficult | `high_implementer` + `reviewer_xhigh` |
+| hardest | `critical_implementer` + `reviewer_xhigh` |
+
+Normal/high/critical routes use Luna/max plus Sol/high initially; evidence may escalate implementation
 to Sol/high, review to Sol/xhigh, or both to Sol/xhigh. GPT-6 production routes remain disabled. The
 `astra_canary` is shadow-only for closed historical/immutable replay and cannot write, control-review,
 merge, or act as Master. An unavailable or incomparable canary is `insufficient_evidence`, not a route

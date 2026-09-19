@@ -30,7 +30,7 @@ Use before the JIT scope contract or any productionization edit. This procedure 
    attack/failure cases, invariants, and closure evidence. An unavailable required lane is
    `insufficient_evidence`.
 9. Optional `code_explorer`/`test_auditor` lanes may run independently; they add evidence and do not
-replace the controlling exact head reviewer. Classify risk and select the least expensive adequate
+   replace the controlling reviewer. Classify risk and select the least expensive adequate
    named route under root policy.
 10. For a fresh writer, confirm the lease helper/skill comes from trusted refreshed main, the exact lane
     identity, and no previous writer remains active. The Master acquires before the writer; preflight and
@@ -49,5 +49,5 @@ denied network/persistence/provider/broker/file/process effects (`external_side_
 Return base SHA, instructions/docs, current drift, paths, prerequisites, complete risk profile, boundary
 review/matrix reference, class/routes, validation surfaces, lease readiness, blockers, and whether JIT is
 safe. If a required role, prerequisite, architecture resolution, adversarial closure, or human gate is
-missing, return `insufficient_evidence`/blocked; do not invent a resolution. Shift-left evidence does not
-replace the controlling exact-head reviewer. do not replace the controlling exact-head reviewer.
+missing, return `insufficient_evidence`/blocked; do not invent a resolution. Shift-left evidence is not a
+replacement; do not replace the controlling exact-head reviewer.

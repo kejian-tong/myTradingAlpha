@@ -24,14 +24,14 @@ isolation cannot be established, return `INSUFFICIENT_EVIDENCE` and preserve the
 
 Native host-enforced read-only independent review remains preferred and is required for roadmap/product,
 broker, paper and live, promotion, externally consequential, and critical-safety work. When native
-admission is unavailable, `DEGRADED_MASTER_REVIEW` may be used only for explicitly per-task human-authorized
+admission is unavailable, the degraded Master path may be used only for explicitly per-task human-authorized
 Harness-only maintenance. It is not an independent reviewer artifact or verdict.
 
 The Master reviews the complete exact head, replays RED, runs complete local validation/required CI,
 discloses every missing runtime fact, and refuses on unresolved BLOCKER/HIGH or material uncertainty. It
 must not fabricate reviewer, model, isolation, or runtime telemetry. Record separate assurance, authorization,
 native-admission limitation, exact head, RED replay, validation/CI, missing evidence, findings, and
-`DO NOT MERGE`; this path cannot authorize roadmap/product, broker, paper and live,
+`DEGRADED_MASTER_REVIEW|DO NOT MERGE`; this path cannot authorize roadmap/product, broker, paper and live,
 promotion, or critical-safety work.
 
 ## Review procedure
