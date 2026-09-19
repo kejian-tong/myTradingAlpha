@@ -411,3 +411,39 @@ def test_role_descriptions_remain_meaningful_after_compression() -> None:
         assert re.search(r"implement(?:er|ation|ing)", description, flags=re.IGNORECASE), (
             f"{role} description must identify implementation responsibility: {description!r}"
         )
+
+
+def test_root_route_matrix_replaces_the_ambiguous_route_summary() -> None:
+    text = _text(ROOT_SURFACE)
+    assert "Normal/high/critical routes use Luna/max plus Sol/high initially" not in text
+    assert not re.search(
+        r"critical[^|\n]{0,100}(?:reviewer_high|Sol/high)", text, flags=re.IGNORECASE
+    ), "critical work must not be mapped to the initial reviewer or Sol/high in prose"
+
+
+def test_audit_permission_schema_states_both_read_only_system_pairs() -> None:
+    text = _text(AUDIT_SURFACE)
+    assert re.search(r"\bschema_version\s*=\s*1\b", text)
+    assert re.search(r"\bevidence_source\s*=\s*host_runtime\b", text)
+
+    legacy = re.search(
+        r"permission_system\s*=\s*legacy_sandbox(?P<body>.{0,240})",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert legacy and re.search(r"active.{0,80}read[- ]only", legacy.group("body"), re.IGNORECASE)
+    assert legacy and re.search(
+        r"permission_profile\s*=\s*disabled", legacy.group("body"), re.IGNORECASE
+    )
+
+    profile = re.search(
+        r"permission_system\s*=\s*permission_profile(?P<body>.{0,240})",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert profile and re.search(
+        r"legacy sandbox.{0,80}disabled", profile.group("body"), re.IGNORECASE
+    )
+    assert profile and re.search(
+        r"permission_profile\s*=\s*:read-only", profile.group("body"), re.IGNORECASE
+    )
