@@ -358,6 +358,94 @@ def test_remove_never_uses_force_for_candidate_cleanup(
     assert '"worktree", "remove", "--force"' not in source
 
 
+def test_successful_remove_and_safe_create_rollback_never_prune_or_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remove_base = tmp_path / "remove"
+    remove_base.mkdir()
+    remove_helper, remove_repo, _remove_sha, remove_root, remove_review = _create_review(remove_base)
+    remove_calls: list[tuple[str, ...]] = []
+    real_remove_run = remove_helper._run
+
+    def recording_remove_run(command_repo: Path, *args: str) -> None:
+        remove_calls.append(args)
+        real_remove_run(command_repo, *args)
+
+    monkeypatch.setattr(remove_helper, "_run", recording_remove_run)
+    remove_helper.remove(remove_repo, remove_review, allowed_root=remove_root)
+    remove_violations = [
+        args for args in remove_calls if "prune" in args or "--force" in args
+    ]
+
+    rollback_helper = _helper()
+    rollback_base = tmp_path / "rollback"
+    rollback_base.mkdir()
+    rollback_repo, rollback_sha = _init_repo(rollback_base)
+    rollback_root = rollback_base / "allowed"
+    rollback_root.mkdir()
+    rollback_review = rollback_root / "review"
+    rollback_calls: list[tuple[str, ...]] = []
+    real_rollback_run = rollback_helper._run
+
+    def recording_rollback_run(command_repo: Path, *args: str) -> None:
+        rollback_calls.append(args)
+        real_rollback_run(command_repo, *args)
+
+    def fail_marker_write(_gitdir: Path, _payload: dict[str, object]) -> None:
+        raise RuntimeError("injected marker write failure")
+
+    monkeypatch.setattr(rollback_helper, "_run", recording_rollback_run)
+    monkeypatch.setattr(rollback_helper, "_write_owner_marker", fail_marker_write)
+    with pytest.raises(RuntimeError, match="marker write failure"):
+        rollback_helper.create(
+            rollback_repo, rollback_sha, rollback_review, allowed_root=rollback_root
+        )
+    assert not rollback_review.exists()
+    assert str(rollback_review) not in _git(rollback_repo, "worktree", "list", "--porcelain")
+    rollback_violations = [
+        args for args in rollback_calls if "prune" in args or "--force" in args
+    ]
+    assert not remove_violations, f"successful remove used forbidden commands: {remove_violations}"
+    assert not rollback_violations, (
+        f"safe create rollback used forbidden commands: {rollback_violations}"
+    )
+
+
+@pytest.mark.parametrize("field", ["repo_root", "worktree_path", "allowed_root", "head_sha"])
+def test_create_rollback_preserves_mismatched_owner_marker_for_manual_recovery(
+    tmp_path: Path, field: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = _helper()
+    repo, sha = _init_repo(tmp_path)
+    allowed_root = tmp_path / "allowed"
+    allowed_root.mkdir()
+    review = allowed_root / "review"
+    replacements = {
+        "repo_root": str((tmp_path / "other-repo").resolve()),
+        "worktree_path": str((tmp_path / "other-review").resolve()),
+        "allowed_root": str((tmp_path / "other-allowed").resolve()),
+        "head_sha": "0" * 40 if sha != "0" * 40 else "1" * 40,
+    }
+
+    def replace_marker_then_fail(
+        marker_repo: Path, marker_path: Path, marker_root: Path
+    ) -> tuple[Path, dict[str, object]]:
+        marker, payload = _owner_marker(marker_path)
+        payload[field] = replacements[field]
+        marker.write_bytes(_canonical_json(payload))
+        raise RuntimeError("injected validation failure after marker replacement")
+
+    monkeypatch.setattr(helper, "_validate_review_state", replace_marker_then_fail)
+    with pytest.raises(RuntimeError, match="after marker replacement"):
+        helper.create(repo, sha, review, allowed_root=allowed_root)
+
+    assert review.is_dir()
+    assert str(review) in _git(repo, "worktree", "list", "--porcelain")
+    marker, payload = _owner_marker(review)
+    assert marker.read_bytes() == _canonical_json(payload)
+    assert payload[field] == replacements[field]
+
+
 def test_exact_head_review_documents_session_specific_root_and_fail_closed_recovery() -> None:
     instructions = (ROOT / ".agents/skills/exact-head-review/SKILL.md").read_text(encoding="utf-8")
     lowered = instructions.lower()
