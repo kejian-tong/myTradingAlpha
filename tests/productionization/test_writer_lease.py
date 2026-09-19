@@ -278,10 +278,18 @@ def _raw_git(repo: Path, *args: str) -> bytes:
 
 
 def _git_metadata_snapshot(primary: Path, writer_lane: Path) -> dict[str, bytes]:
+    primary_index = Path(
+        _git(primary, "rev-parse", "--path-format=absolute", "--git-path", "index")
+    )
+    writer_index = Path(
+        _git(writer_lane, "rev-parse", "--path-format=absolute", "--git-path", "index")
+    )
     return {
         "primary_head": _raw_git(primary, "rev-parse", "HEAD"),
         "writer_head": _raw_git(writer_lane, "rev-parse", "HEAD"),
         "writer_tree": _raw_git(writer_lane, "write-tree"),
+        "primary_index": primary_index.read_bytes(),
+        "writer_index": writer_index.read_bytes(),
         "primary_status": _raw_git(
             primary, "status", "--porcelain=v1", "--untracked-files=all"
         ),
@@ -1635,6 +1643,25 @@ def test_cli_surface_has_only_cooperative_lifecycle_actions(lease: ModuleType) -
         assert forbidden not in lowered
 
 
+def test_cli_lane_identity_arguments_are_bound_per_operation(lease: ModuleType) -> None:
+    for action in ("acquire", "verify", "release", "export"):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), action, "--help"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout
+        help_text = result.stdout.lower()
+        assert "--branch-ref" in help_text
+        if action == "acquire":
+            assert "--writer-lane-ref" not in help_text
+        else:
+            assert "--writer-lane-ref" in help_text
+
+
 def test_helper_is_isolated_from_telemetry_hooks_ci_network_and_roadmap_behavior(
     lease: ModuleType
 ) -> None:
@@ -1714,6 +1741,20 @@ def test_dedicated_lane_binds_branch_digest_and_allows_head_advance(
     assert active["branch_ref"] == AUD14_BRANCH_REF
     assert active["writer_lane_ref"] == acquired["writer_lane_ref"]
     _lane_verify(lease, writer_lane, base_sha, acquired)
+    after_precommit_helpers = _git_metadata_snapshot(primary, writer_lane)
+    for field in (
+        "primary_head",
+        "writer_head",
+        "writer_tree",
+        "primary_index",
+        "writer_index",
+        "primary_status",
+        "writer_status",
+        "refs",
+        "config",
+        "worktrees",
+    ):
+        assert after_precommit_helpers[field] == before[field]
 
     (writer_lane / "tracked.txt").write_text("writer advances lane\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(writer_lane), "add", "tracked.txt"], check=True)
@@ -1734,6 +1775,7 @@ def test_dedicated_lane_binds_branch_digest_and_allows_head_advance(
     )
     assert _git(writer_lane, "rev-parse", "HEAD") != base_sha
     assert _git(writer_lane, "symbolic-ref", "--quiet", "HEAD") == AUD14_BRANCH_REF
+    before_postcommit_helpers = _git_metadata_snapshot(primary, writer_lane)
     _lane_verify(
         lease,
         writer_lane,
@@ -1748,10 +1790,22 @@ def test_dedicated_lane_binds_branch_digest_and_allows_head_advance(
     assert evidence["branch_ref"] == AUD14_BRANCH_REF
     assert evidence["writer_lane_ref"] == acquired["writer_lane_ref"]
 
-    after = _git_metadata_snapshot(primary, writer_lane)
-    for field in ("primary_head", "refs", "config", "worktrees"):
-        assert after[field] == before[field]
-    assert after["writer_head"] != before["writer_head"]
+    after_postcommit_helpers = _git_metadata_snapshot(primary, writer_lane)
+    for field in (
+        "primary_head",
+        "writer_head",
+        "writer_tree",
+        "primary_index",
+        "writer_index",
+        "primary_status",
+        "writer_status",
+        "refs",
+        "config",
+        "worktrees",
+    ):
+        assert after_postcommit_helpers[field] == before_postcommit_helpers[field]
+    assert before_postcommit_helpers["writer_head"] != before["writer_head"]
+    assert before_postcommit_helpers["refs"] != before["refs"]
     state_bytes = b"".join(
         path.read_bytes() for path in _state_dir(common).rglob("*") if path.is_file()
     )
