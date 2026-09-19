@@ -305,7 +305,7 @@ def _write_owner_marker(gitdir: Path, payload: dict[str, object]) -> None:
         os.close(fd)
 
 
-def _safe_rollback(repo: Path, path: Path, expected_head: str) -> bool:
+def _safe_rollback(repo: Path, path: Path, allowed_root: Path, expected_head: str) -> bool:
     try:
         if not path.is_dir():
             return False
@@ -325,9 +325,11 @@ def _safe_rollback(repo: Path, path: Path, expected_head: str) -> bool:
         except FileNotFoundError:
             pass
         if marker_present or any(candidate.is_file() for candidate in gitdir.glob("*.json")):
-            _read_owner_marker(gitdir)
+            payload = _read_owner_marker(gitdir)
+            _validate_owner_identity(payload, repo=repo, path=path, allowed_root=allowed_root)
+            if payload["head_sha"] != expected_head:
+                return False
         _run(repo, "worktree", "remove", str(path))
-        _run(repo, "worktree", "prune")
         return True
     except Exception:
         return False
@@ -366,7 +368,7 @@ def create(repo: Path, sha: str, path: Path, *, allowed_root: Path) -> None:
         _validate_review_state(repo_root, destination, allowed)
     except Exception:
         if added:
-            _safe_rollback(repo_root, destination, sha)
+            _safe_rollback(repo_root, destination, allowed, sha)
         raise
 
 
@@ -376,7 +378,6 @@ def remove(repo: Path, path: Path, *, allowed_root: Path) -> None:
     repo_root = _canonical_repo(repo)
     _validate_review_state(repo_root, destination, allowed)
     _run(repo_root, "worktree", "remove", str(destination))
-    _run(repo_root, "worktree", "prune")
 
 
 def main() -> int:
