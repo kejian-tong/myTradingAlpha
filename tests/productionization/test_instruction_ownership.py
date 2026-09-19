@@ -320,3 +320,94 @@ def test_existing_executable_contract_owners_remain_present() -> None:
     }
     missing = [label for label, relative in owners.items() if not _path(relative).is_file()]
     assert not missing, f"compression must not remove executable contract owners: {missing}"
+
+
+def test_root_owns_an_explicit_named_route_matrix() -> None:
+    text = _text(ROOT_SURFACE)
+    assert re.search(r"route matrix", text, flags=re.IGNORECASE), (
+        "root AGENTS.md must own the named implementation/reviewer route matrix"
+    )
+    section = text.split("## 6. Adaptive model routing", 1)[1].split("## 7.", 1)[0]
+    route_rows = {
+        "normal": ("normal_implementer", "reviewer_high"),
+        "high initial": ("normal_implementer", "reviewer_high"),
+        "high implementation escalation": ("high_implementer", "reviewer_high"),
+        "high review escalation": ("normal_implementer", "reviewer_xhigh"),
+        "critical": ("normal_implementer", "reviewer_xhigh"),
+        "difficult": ("high_implementer", "reviewer_xhigh"),
+        "hardest": ("critical_implementer", "reviewer_xhigh"),
+    }
+    for label, (writer, reviewer) in route_rows.items():
+        matching_rows = [
+            line.casefold()
+            for line in section.splitlines()
+            if label in line.casefold()
+        ]
+        assert any(writer in line and reviewer in line for line in matching_rows), (
+            f"route matrix row {label!r} must bind {writer}+{reviewer}: {matching_rows}"
+        )
+
+
+def test_audit_protocol_owns_receipt_manifest_and_delegation_schema_terms() -> None:
+    text = _text(AUDIT_SURFACE)
+    for token in (
+        "schema_version",
+        "evidence_source",
+        "permission_system",
+        "legacy_sandbox",
+        "permission_profile",
+        ":read-only",
+        "tool_names",
+        "expected_pr_id",
+        "expected_base_sha",
+        "expected_head_sha",
+        "expected_role",
+        "expected_config_path",
+        "64 KiB",
+        "duplicate-key",
+        "partial-promisor",
+        "fetch_openai_doc",
+        "search_openai_docs",
+        "collaboration_controls_visible",
+        "collaboration_observation_complete",
+        "non_master_collaboration_invoked",
+    ):
+        assert token in text, f"audit protocol must own evidence-schema term: {token}"
+    assert re.search(
+        r"delegation_control_mode\s*[=:]\s*behavioral_policy", text
+    ), "audit protocol must name the behavioral delegation evidence mode"
+
+
+def test_degraded_exact_head_skill_preserves_positive_verdict_token() -> None:
+    text = _text(Path(".agents/skills/exact-head-review/SKILL.md"))
+    assert re.search(r"DEGRADED_MASTER_REVIEW\s*\|\s*DO NOT MERGE", text), (
+        "exact-head review must preserve the positive degraded assurance verdict token"
+    )
+
+
+def test_compressed_policy_prose_has_no_malformed_fragments_or_list_breaks() -> None:
+    root = _text(ROOT_SURFACE)
+    assert "does not load its;" not in root
+    assert "auto-loaded.\n`AGENTS.md`" not in root
+    assert "English/Chinese handling in prose" not in root
+
+    preflight = _text(Path(".agents/skills/productionization-preflight/SKILL.md"))
+    clause = "do not replace the controlling exact-head reviewer"
+    assert preflight.casefold().count(clause) == 1
+    procedure = preflight.split("## Procedure", 1)[1].split("## Adversarial", 1)[0]
+    in_numbered_steps = False
+    for line in procedure.splitlines():
+        if re.match(r"^\d+\.\s", line):
+            in_numbered_steps = True
+            continue
+        if in_numbered_steps and line.strip() and not line.startswith("##"):
+            assert line.startswith("   "), f"list continuation lost indentation: {line!r}"
+
+
+def test_role_descriptions_remain_meaningful_after_compression() -> None:
+    for role in ("normal_implementer", "high_implementer"):
+        description = str(_toml(Path(".codex/agents") / f"{role.replace('_', '-')}.toml")["description"])
+        assert len(description) >= 20, role
+        assert re.search(r"implement(?:er|ation|ing)", description, flags=re.IGNORECASE), (
+            f"{role} description must identify implementation responsibility: {description!r}"
+        )
