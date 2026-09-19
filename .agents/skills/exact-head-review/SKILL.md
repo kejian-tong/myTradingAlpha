@@ -10,10 +10,16 @@ not the implementer's summary.
 
 ## Isolation requirement
 
-Default to a detached isolated Git worktree for executable RED replay and exact-head validation. Use
-`scripts/review_worktree.py create --sha <full-sha> --path <temporary-path>` when a local Git checkout is
-available, and remove it after evidence collection. The review worktree is read/execute-only evidence
-space: it does not authorize a second production writer, commits, pushes, repair edits, or merge actions.
+Default to a detached isolated Git worktree for executable RED replay and exact-head validation. For each
+review session, allocate an existing session-specific `allowed_root` directory and pass it explicitly to
+both operations: `scripts/review_worktree.py create --sha <full-sha> --path <temporary-path>
+--allowed-root <session-specific-root>` and the corresponding `remove` command. The review worktree is
+read/execute-only evidence space: it does not authorize a second production writer, commits, pushes,
+repair edits, or merge actions.
+
+If marker, registration, HEAD, or cleanliness validation fails, fail closed and preserve the directory
+and Git registration for manual recovery. Do not use `--force` or automatic pruning to recover an
+ambiguous review worktree; a human must inspect and remove it safely.
 
 If the runtime cannot create an isolated worktree, record the limitation and use another demonstrably
 non-destructive exact-SHA checkout only when equivalent isolation can be established. If required RED or
