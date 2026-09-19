@@ -123,10 +123,15 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
     return linked, primary, base_sha, common
 
 
-def _dedicated_repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
+def _dedicated_repository(
+    tmp_path: Path,
+    *,
+    writer_name: str = "writer-lane",
+    branch_name: str = AUD14_BRANCH_NAME,
+) -> tuple[Path, Path, str, Path]:
     """Return (writer_lane, primary, base_sha, common_dir) for AUD-14 tests."""
     primary = tmp_path / "primary"
-    writer_lane = tmp_path / "writer-lane"
+    writer_lane = tmp_path / writer_name
     primary.mkdir()
     subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
     (primary / "tracked.txt").write_text("base\n", encoding="utf-8")
@@ -156,14 +161,14 @@ def _dedicated_repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
             "add",
             "--quiet",
             "-b",
-            AUD14_BRANCH_NAME,
+            branch_name,
             str(writer_lane),
             base_sha,
         ],
         check=True,
     )
     common = Path(_git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    assert _git(writer_lane, "symbolic-ref", "--quiet", "HEAD") == AUD14_BRANCH_REF
+    assert _git(writer_lane, "symbolic-ref", "--quiet", "HEAD") == f"refs/heads/{branch_name}"
     return writer_lane, primary, base_sha, common
 
 
@@ -2038,6 +2043,78 @@ def test_writer_lane_ref_is_deterministic_and_not_a_frozen_head(
     )
     assert verified["writer_lane_ref"] == first_lane_ref
     _lane_release(lease, writer_lane, base_sha, second)
+
+
+def test_unicode_linked_lane_path_keeps_ascii_branch_and_digest_only_state(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    writer_lane, _primary, base_sha, common = _dedicated_repository(
+        tmp_path,
+        writer_name="写作者-lane",
+        branch_name="ascii-repair-lane",
+    )
+    branch_ref = "refs/heads/ascii-repair-lane"
+    gitdir = Path(
+        _git(writer_lane, "rev-parse", "--path-format=absolute", "--git-dir")
+    )
+    assert any(not part.isascii() for part in gitdir.parts)
+
+    first = _lane_acquire(lease, writer_lane, base_sha, branch_ref=branch_ref)
+    assert re.fullmatch(r"[0-9a-f]{64}", first["writer_lane_ref"])
+    _lane_verify(lease, writer_lane, base_sha, first, branch_ref=branch_ref)
+    _lane_release(lease, writer_lane, base_sha, first, branch_ref=branch_ref)
+    raw = _lane_export(lease, writer_lane, base_sha, first, branch_ref=branch_ref)
+    assert lease.validate_evidence(raw)["writer_lane_ref"] == first["writer_lane_ref"]
+
+    second = _lane_acquire(lease, writer_lane, base_sha, branch_ref=branch_ref)
+    assert second["writer_lane_ref"] == first["writer_lane_ref"]
+    _lane_verify(lease, writer_lane, base_sha, second, branch_ref=branch_ref)
+    _lane_release(lease, writer_lane, base_sha, second, branch_ref=branch_ref)
+
+    state_bytes = b"".join(
+        path.read_bytes() for path in _state_dir(common).rglob("*") if path.is_file()
+    )
+    for forbidden in (str(writer_lane), str(gitdir), str(common)):
+        assert forbidden.encode() not in state_bytes
+        assert forbidden.encode() not in raw
+
+
+def test_matching_registration_with_different_head_is_rejected_before_state(
+    lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer_lane, primary, base_sha, common = _dedicated_repository(tmp_path)
+    valid = _raw_git(primary, "worktree", "list", "--porcelain", "-z")
+    records = valid[:-2].split(b"\0\0")
+    replacement_head = b"f" * 40
+    mutated: list[bytes] = []
+    for record in records:
+        fields = record.split(b"\0")
+        if any(field == f"worktree {writer_lane}".encode() for field in fields):
+            fields = [
+                b"HEAD " + replacement_head if field.startswith(b"HEAD ") else field
+                for field in fields
+            ]
+        mutated.append(b"\0".join(fields))
+    payload = b"\0\0".join(mutated) + b"\0\0"
+
+    real_run = lease.subprocess.run
+
+    def _is_worktree_list(command: object) -> bool:
+        return isinstance(command, (list, tuple)) and "worktree" in command and "list" in command
+
+    def fake_run(command: object, *args: object, **kwargs: object) -> object:
+        if _is_worktree_list(command):
+            return subprocess.CompletedProcess(command, 0, stdout=payload, stderr=b"")
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(lease.subprocess, "run", fake_run)
+    with pytest.raises(lease.WriterLeaseError) as exc_info:
+        lease.acquire(
+            repo_root=writer_lane,
+            **_lane_identity(base_sha),
+        )
+    assert str(exc_info.value) == "writer lease operation failed"
+    assert not _state_dir(common).exists()
 
 
 @pytest.mark.parametrize("payload_kind", ["malformed", "duplicate", "oversized"])
