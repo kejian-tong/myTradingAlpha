@@ -33,6 +33,9 @@ Create a durable contract tied to the exact current base SHA with:
   `boundary_reviewer` evidence used;
 - the writer-lease identity plan, required lifecycle checkpoints, evidence/export binding, and any explicit
   bootstrap limitation;
+- the exact dedicated linked writer worktree identity: full `branch_ref`, derived `writer_lane_ref`, canonical
+  gitdir/common-directory membership, bounded registration evidence, and the rule that moving candidate `HEAD`
+  is not a lease identity;
 - the assurance path: native independent review, or `DEGRADED_MASTER_REVIEW` only with explicit per-task
   human authorization for Harness-only maintenance, native-admission unavailability, the missing runtime
   evidence disclosure, exact-head Master review, and the separate degraded evidence artifact;

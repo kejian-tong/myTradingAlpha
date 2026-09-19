@@ -190,10 +190,14 @@ events, spawn agents, contact GitHub, write files, or merge a PR.
 Every fresh implementation or repair writer must follow `.agents/skills/writer-lease/SKILL.md` after
 `scripts/writer_lease.py` is available on refreshed trusted `main`. The Master acquires the fixed
 Git-common-dir lease before the writer starts, retains the exact PR/base/role and pseudonymous owner/session
-references plus generated lease ID, and requires cooperative verification at applicable writer, RED, GREEN,
-commit, and push boundaries. `writer_start` is mandatory and first; subsequent applicable checkpoint ranks
-must not regress, though non-applicable intermediate phases may be omitted. The writer must never acquire or
-release its own lease.
+references plus generated lease ID, and requires the writer to use an exact dedicated linked worktree bound
+to a full `branch_ref` and derived 64-hex `writer_lane_ref` from canonical gitdir identity relative to the
+same Git common directory. The helper requires one bounded matching `git worktree list --porcelain -z`
+registration, rejects primary/detached/unregistered/noncanonical lanes, and re-derives the lane for verify,
+checkpoint, release, and export. Candidate `HEAD` movement on the same branch is not identity. Cooperative
+verification is required at applicable writer, RED, GREEN, commit, and push boundaries. `writer_start` is
+mandatory and first; subsequent applicable checkpoint ranks must not regress, though non-applicable
+intermediate phases may be omitted. The writer must never acquire or release its own lease.
 
 Release is permitted only after the Master obtains independent host observation that the writer stopped.
 The helper cannot authenticate that prerequisite, a runtime identity, or real-world checkpoint order. Its

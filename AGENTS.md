@@ -113,13 +113,15 @@ The project concurrency guardrail is six open spawned threads. Six is burst head
 Do not spawn redundant agents merely to fill capacity.
 
 For every fresh implementation or repair writer after the lease helper is available on refreshed trusted
-`main`, the Master must use the `writer-lease` skill. Acquire the repository-global lease before starting
-the writer, require cooperative checkpoints at applicable RED/GREEN/commit/push boundaries, and release it
-only after independent host observation establishes that the writer stopped. The candidate and writer cannot
-self-authorize acquisition or release. `writer_start` is mandatory and first; later applicable checkpoint
-declarations cannot regress. Persist bounded canonical lease evidence for review and the merge gate;
-any missing, malformed, mismatched, exhausted, partial, or ambiguous state fails closed. This is cooperative
-one-writer evidence, not authenticated runtime identity or protection from a malicious same-user process.
+`main`, the Master must use the `writer-lease` skill and acquire it before starting a writer in a dedicated
+linked worktree bound to the exact full `branch_ref` and derived `writer_lane_ref`. Require cooperative
+checkpoints at applicable RED/GREEN/commit/push boundaries, and release only after independent host
+observation establishes that the writer stopped. The candidate and writer cannot self-authorize acquisition
+or release. `writer_start` is mandatory and first; later applicable checkpoint declarations cannot regress.
+Persist bounded canonical lease evidence, including exact common-directory/lane binding, for review and the
+merge gate; any missing, malformed, mismatched, exhausted, partial, or ambiguous state fails closed. This is
+cooperative one-writer evidence, not authenticated runtime identity or protection from a malicious same-user
+process.
 
 Named specialist roles:
 
