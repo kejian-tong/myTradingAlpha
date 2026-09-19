@@ -33,10 +33,10 @@ Do not parallelize two production writers against the same PR merely to increase
 future task is truly decomposable into isolated worktrees and disjoint write ownership, that requires an
 explicit JIT decision by the master; it is not the default roadmap workflow.
 
-Master-only delegation is a behavioral policy, not repo-level host identity enforcement. Codex Multi-Agent
-V2 may expose collaboration controls to a correctly loaded non-master role despite its `[agents] enabled =
-false` configuration intent. Collaboration-control visibility alone is non-blocking. The Master remains the
-only role behaviorally authorized to invoke collaboration controls or delegate work; non-master roles must
+Master-only delegation is a behavioral policy, not repo-level host identity enforcement. A correctly loaded
+non-master role may expose a runtime collaboration-control capability despite its `[agents] enabled = false`
+configuration intent. Collaboration-control visibility alone is non-blocking. The Master remains the only
+role behaviorally authorized to invoke collaboration controls or delegate work; non-master roles must
 not invoke those controls or delegate nested work. Any attempted or completed nested delegation, including a
 runtime-denied or no-op attempt, is a blocking policy violation. Complete trustworthy observation is required
 to accept that no invocation occurred; missing observation is `insufficient_evidence`, and

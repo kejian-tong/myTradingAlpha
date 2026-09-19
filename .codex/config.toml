@@ -68,8 +68,8 @@ Use hybrid concurrency rather than concurrent production writers:
 
 Master-only delegation is a behavioral policy, not repo-level host identity enforcement. The master/root
 thread is the only orchestration role behaviorally authorized to spawn subagents. Every project-scoped
-non-master role must load `[agents] enabled = false`; a GPT-5.6 Sol Multi-Agent V2 child may nevertheless
-expose collaboration controls. Collaboration-control visibility alone is non-blocking.
+non-master role must load `[agents] enabled = false`; a correctly loaded non-master role may nevertheless
+expose a runtime collaboration-control capability. Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.
 Any attempted or completed nested delegation is a blocking policy violation.
 Record complete trustworthy runtime observation and stop on an actual non-master invocation attempt;
