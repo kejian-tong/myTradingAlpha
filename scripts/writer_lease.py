@@ -339,7 +339,7 @@ def _read_git_marker(root: Path) -> Path:
     if not raw or len(raw) > MAX_RECORD_BYTES:
         _fail()
     try:
-        text = raw.decode("ascii")
+        text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         _fail()
     if not text.startswith("gitdir: ") or not text.endswith("\n") or text.count("\n") != 1:
@@ -415,9 +415,12 @@ def _writer_lane_binding(repo_root: Path | str, branch_ref: str) -> tuple[Path, 
         _fail()
     common_text = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
     common = _canonical_directory(Path(common_text))
-    if _read_git_marker(root) != _canonical_directory(Path(_git(root, "rev-parse", "--path-format=absolute", "--absolute-git-dir"))):
-        _fail()
     gitdir = _read_git_marker(root)
+    absolute_gitdir = _canonical_directory(
+        Path(_git(root, "rev-parse", "--path-format=absolute", "--absolute-git-dir"))
+    )
+    if gitdir != absolute_gitdir:
+        _fail()
     worktrees = common / "worktrees"
     if not worktrees.is_dir() or worktrees.resolve(strict=True) != worktrees:
         _fail()
@@ -436,8 +439,12 @@ def _writer_lane_binding(repo_root: Path | str, branch_ref: str) -> tuple[Path, 
     ]
     if len(matches) != 1:
         _fail()
+    if matches[0]["HEAD"] != _git(root, "rev-parse", "HEAD"):
+        _fail()
     relative = gitdir.relative_to(common).as_posix()
-    lane_ref = hashlib.sha256(WRITER_LANE_DOMAIN + relative.encode("ascii")).hexdigest()
+    lane_ref = hashlib.sha256(
+        WRITER_LANE_DOMAIN + relative.encode("utf-8", errors="strict")
+    ).hexdigest()
     return common, lane_ref
 
 
