@@ -35,6 +35,26 @@ this telemetry stream, model reports, caller JSON, static configuration, and the
 cannot authenticate that boundary. Missing or contradictory host evidence discards the lane with
 `insufficient_evidence`; telemetry cannot repair or override the failed admission.
 
+## Hook runtime manifests
+
+`scripts/hook_runtime_manifest.py` verifies a bounded `hook_runtime_manifest` record as a separate,
+structural-only evidence surface. The exact canonical ASCII record binds a pseudonymous `session_ref`,
+`pr_id`, `base_sha`, `head_sha`, `tree_sha`, and a SHA-256 `hook_config_digest` computed from the exact
+head Git object for `.codex/hooks.json`. It records the declared `evidence_source`, host-reported loaded
+and trusted booleans, `evidence_consistent`, and a pseudonymous `host_evidence_ref` when available.
+
+The allowed states are `observed`, `unavailable`, `unknown`, and `contradictory`. Only complete,
+consistent host-runtime evidence with loaded and trusted both true may be observed and effective.
+Unavailable and contradictory evidence is always ineffective. `caller_declaration` and `none` must carry
+null host fields/reference, remain unknown, and can never become effective. The verifier rejects duplicate,
+unknown, sensitive, noncanonical, oversized, or Unicode-bearing input, reads the hook configuration only
+from the exact Git object, and sanitizes inherited Git redirects with lazy fetching disabled.
+
+A passing manifest is supplemental structural evidence only. It cannot authenticate the declared evidence
+origin, host trust, or actual hook loading, and it never replaces required CI, exact-head independent review,
+or the Master merge gate. The verifier performs no network, record generation, transcript/prompt/credential
+parsing, or file writes.
+
 ## Storage and exact-head safety
 
 Use `scripts/harness_telemetry.py`. Durable records are written beneath the repository Git common
