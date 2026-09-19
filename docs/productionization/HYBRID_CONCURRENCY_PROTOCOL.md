@@ -48,6 +48,11 @@ host-origin effective permission and complete tool-inventory evidence. An unveri
 is discarded as `insufficient_evidence`; its availability does not justify another writer, a generic
 replacement, or reuse of its output.
 
+`DEGRADED_MASTER_REVIEW` is a separate, explicit per-task human-authorized fallback only for Harness-only
+maintenance when native admission is unavailable. It is not independent review and does not authorize
+roadmap/product, broker, PAPER/live, promotion, externally consequential, or critical-safety work; those
+scopes remain fail-closed.
+
 Every fresh implementation or repair writer is additionally serialized by the repository-global cooperative
 lease in `.agents/skills/writer-lease/SKILL.md`. The Master acquires from trusted refreshed `main` before
 starting the writer, the writer records only the required cooperative checkpoints, and the Master releases

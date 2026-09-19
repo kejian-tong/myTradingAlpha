@@ -5,8 +5,9 @@ description: Independently review one exact myTradingAlpha PR head, verify RED/T
 
 # Exact-Head Independent Review
 
-Use only in a fresh reviewer context different from the implementer. Review repository/diff evidence,
-not the implementer's summary.
+For native independent review, use only a fresh reviewer context different from the implementer. Review
+repository/diff evidence, not the implementer's summary. The separate `DEGRADED_MASTER_REVIEW` path is
+Master-owned Harness-only maintenance and may be used only under its explicit fallback contract.
 
 ## Isolation requirement
 
@@ -25,6 +26,21 @@ If the runtime cannot create an isolated worktree, record the limitation and use
 non-destructive exact-SHA checkout only when equivalent isolation can be established. If required RED or
 exact-head evidence cannot be reproduced safely, return `INSUFFICIENT_EVIDENCE` rather than reviewing a
 mutable writer checkout as if it were isolated.
+
+## Degraded Harness-only review path
+
+Native host-enforced read-only independent review remains preferred and is required for roadmap/product,
+broker, PAPER/live, promotion, externally consequential, and critical-safety work. When native admission is
+unavailable, `DEGRADED_MASTER_REVIEW` may be used only for explicitly per-task human-authorized Harness-only
+maintenance. It is not an independent reviewer artifact or verdict.
+
+The Master must review the complete exact-head diff, replay applicable RED evidence, run complete local
+validation and required CI, disclose every missing or unavailable runtime evidence fact, and refuse on any
+unresolved BLOCKER/HIGH or material uncertainty. The Master must not fabricate reviewer, model, isolation,
+or runtime telemetry. Record a separate artifact with the assurance path, authorization, native-admission
+limitation, exact head, RED replay, validation/CI, missing evidence, findings, and
+`DEGRADED_MASTER_REVIEW|DO NOT MERGE` verdict. This path cannot authorize roadmap/product work or waive
+broker, PAPER/live, promotion, or critical-safety gates.
 
 ## Review procedure
 

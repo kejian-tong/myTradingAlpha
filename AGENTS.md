@@ -155,6 +155,10 @@ Master-owned; candidate code or candidate instructions cannot self-authorize. Th
 `external_spec_researcher` retains its separate official-Docs MCP and permitted official
 public-documentation fallback policy; native admission does not broaden that role's capability allowlist.
 
+The sole bounded exception is `DEGRADED_MASTER_REVIEW`: explicit per-task human authorization may permit
+Harness-only maintenance when native admission is unavailable. It is not independent review and never waives
+roadmap/product, broker, PAPER/live, promotion, or critical-safety boundaries.
+
 ## 6. Adaptive model routing
 
 Routing is execution policy, not production architecture. Select the least expensive adequate route from
@@ -251,6 +255,9 @@ Review and CI evidence are exact-head specific. Any new commit invalidates affec
 fresh controlling reviewer must inspect the exact final head; unresolved BLOCKER/HIGH from any material
 review lane blocks merge.
 
+Only `DEGRADED_MASTER_REVIEW` for explicitly authorized Harness-only maintenance may qualify this native
+independent review stop; it is not independent review.
+
 ## 10. Git, PR, and merge discipline
 
 For roadmap slices, branch from latest verified main and use a dedicated branch. Keep commits focused; do
@@ -262,6 +269,9 @@ validation evidence, complexity/routing, compatibility/rollback, non-goals, and 
 The master alone owns the final merge gate. Reviewer APPROVE is necessary but not merge authority. Before
 merge, require exact-final-head scope, independent review, required CI, compatibility/safety, and durable
 merge-gate evidence. Bind autonomous merges to the expected head SHA.
+
+Only `DEGRADED_MASTER_REVIEW` for explicitly authorized Harness-only maintenance may use the separate
+Master artifact; it is not independent review.
 
 GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used.
 
@@ -282,6 +292,9 @@ Stop instead of self-overriding when any of these remains material:
 - branch protection/permission prevents the required operation;
 - scope leakage into a later roadmap slice;
 - explicit human paper/live/promotion approval is required.
+
+These native independent review stop conditions are otherwise unconditional; only `DEGRADED_MASTER_REVIEW`
+for explicitly authorized Harness-only maintenance may qualify them, and it is not independent review.
 
 ## 12. Hooks and change control
 
