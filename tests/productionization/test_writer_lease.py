@@ -9,6 +9,7 @@ import json
 import multiprocessing
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -35,6 +36,14 @@ WRITER_ROLES = {
     "high_implementer",
     "critical_implementer",
 }
+
+# HARNESS-AUD-14 uses a real linked worktree so the lane-binding contract can be
+# exercised without relying on user-specific paths or a caller-created digest.
+AUD14_PR_ID = "HARNESS-AUD-14"
+AUD14_BRANCH_NAME = "codex-harness-aud-14-writer"
+AUD14_BRANCH_REF = f"refs/heads/{AUD14_BRANCH_NAME}"
+AUD14_OWNER_REF = "e" * 64
+AUD14_SESSION_REF = "f" * 64
 
 # These caller-supplied digests are pseudonymous correlation references. They do not
 # authenticate a runtime owner or session identity.
@@ -109,6 +118,180 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
     )
     common = Path(_git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     return primary, linked, base_sha, common
+
+
+def _dedicated_repository(tmp_path: Path) -> tuple[Path, Path, str, Path]:
+    """Return (writer_lane, primary, base_sha, common_dir) for AUD-14 tests."""
+    primary = tmp_path / "primary"
+    writer_lane = tmp_path / "writer-lane"
+    primary.mkdir()
+    subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+    (primary / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(primary), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(primary),
+            "-c",
+            "user.name=Writer Lease Test",
+            "-c",
+            "user.email=writer-lease@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    base_sha = _git(primary, "rev-parse", "HEAD")
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(primary),
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            AUD14_BRANCH_NAME,
+            str(writer_lane),
+            base_sha,
+        ],
+        check=True,
+    )
+    common = Path(_git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    assert _git(writer_lane, "symbolic-ref", "--quiet", "HEAD") == AUD14_BRANCH_REF
+    return writer_lane, primary, base_sha, common
+
+
+def _lane_identity(base_sha: str, *, branch_ref: str = AUD14_BRANCH_REF) -> dict[str, str]:
+    return {
+        "pr_id": AUD14_PR_ID,
+        "base_sha": base_sha,
+        "writer_role": WRITER_ROLE,
+        "owner_ref": AUD14_OWNER_REF,
+        "session_ref": AUD14_SESSION_REF,
+        "branch_ref": branch_ref,
+    }
+
+
+def _lane_acquire(
+    module: ModuleType,
+    writer_lane: Path,
+    base_sha: str,
+    *,
+    branch_ref: str = AUD14_BRANCH_REF,
+) -> dict[str, Any]:
+    result = module.acquire(
+        repo_root=writer_lane,
+        **_lane_identity(base_sha, branch_ref=branch_ref),
+    )
+    assert type(result) is dict
+    assert result["schema_version"] == 2
+    assert result["branch_ref"] == branch_ref
+    assert re.fullmatch(r"[0-9a-f]{64}", result["writer_lane_ref"])
+    return result
+
+
+def _lane_verify(
+    module: ModuleType,
+    writer_lane: Path,
+    base_sha: str,
+    acquired: dict[str, Any],
+    *,
+    checkpoint: str = "writer_start",
+    phase: str = "harness-aud-14",
+    branch_ref: str | None = None,
+    writer_lane_ref: str | None = None,
+) -> dict[str, Any]:
+    identity = _lane_identity(
+        base_sha,
+        branch_ref=branch_ref or acquired["branch_ref"],
+    )
+    result = module.verify(
+        repo_root=writer_lane,
+        lease_id=acquired["lease_id"],
+        writer_lane_ref=writer_lane_ref or acquired["writer_lane_ref"],
+        checkpoint=checkpoint,
+        phase=phase,
+        **identity,
+    )
+    assert type(result) is dict
+    assert result["branch_ref"] == identity["branch_ref"]
+    assert result["writer_lane_ref"] == (
+        writer_lane_ref or acquired["writer_lane_ref"]
+    )
+    return result
+
+
+def _lane_release(
+    module: ModuleType,
+    writer_lane: Path,
+    base_sha: str,
+    acquired: dict[str, Any],
+    *,
+    branch_ref: str | None = None,
+    writer_lane_ref: str | None = None,
+) -> dict[str, Any]:
+    identity = _lane_identity(
+        base_sha,
+        branch_ref=branch_ref or acquired["branch_ref"],
+    )
+    result = module.release(
+        repo_root=writer_lane,
+        lease_id=acquired["lease_id"],
+        writer_lane_ref=writer_lane_ref or acquired["writer_lane_ref"],
+        **identity,
+    )
+    assert type(result) is dict
+    return result
+
+
+def _lane_export(
+    module: ModuleType,
+    writer_lane: Path,
+    base_sha: str,
+    acquired: dict[str, Any],
+    *,
+    branch_ref: str | None = None,
+    writer_lane_ref: str | None = None,
+) -> bytes:
+    identity = _lane_identity(
+        base_sha,
+        branch_ref=branch_ref or acquired["branch_ref"],
+    )
+    raw = module.export_evidence(
+        repo_root=writer_lane,
+        lease_id=acquired["lease_id"],
+        writer_lane_ref=writer_lane_ref or acquired["writer_lane_ref"],
+        **identity,
+    )
+    assert type(raw) is bytes
+    return raw
+
+
+def _raw_git(repo: Path, *args: str) -> bytes:
+    return subprocess.check_output(
+        ["git", "-C", str(repo), *args],
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _git_metadata_snapshot(primary: Path, writer_lane: Path) -> dict[str, bytes]:
+    return {
+        "primary_head": _raw_git(primary, "rev-parse", "HEAD"),
+        "writer_head": _raw_git(writer_lane, "rev-parse", "HEAD"),
+        "writer_tree": _raw_git(writer_lane, "write-tree"),
+        "primary_status": _raw_git(
+            primary, "status", "--porcelain=v1", "--untracked-files=all"
+        ),
+        "writer_status": _raw_git(
+            writer_lane, "status", "--porcelain=v1", "--untracked-files=all"
+        ),
+        "refs": _raw_git(primary, "for-each-ref", "--format=%(refname) %(objectname)"),
+        "config": _raw_git(primary, "config", "--local", "--list"),
+        "worktrees": _raw_git(primary, "worktree", "list", "--porcelain", "-z"),
+    }
 
 
 def _identity(base_sha: str, **overrides: str) -> dict[str, str]:
@@ -1398,9 +1581,11 @@ def test_hostile_canonical_json_cli_has_only_generic_error(
     assert result.stderr == "writer lease operation failed\n"
 
 
-def test_writer_lease_does_not_require_separate_writer_worktree_policy() -> None:
+def test_writer_lease_requires_dedicated_writer_lane_policy() -> None:
     skill = (ROOT / ".agents/skills/writer-lease/SKILL.md").read_text(encoding="utf-8").lower()
-    assert "dedicated writer worktree" not in skill
+    assert "dedicated linked worktree" in skill
+    assert "branch_ref" in skill
+    assert "writer_lane_ref" in skill
 
 
 def test_timestamps_are_not_validity_and_release_has_no_forgeable_stopped_proof(
@@ -1512,3 +1697,306 @@ def test_checkpoint_is_cooperative_evidence_not_identity_or_order_attestation(
     serialized = _canonical(evidence).lower()
     for forbidden in (b"authenticated", b"host_enforced", b"master_identity", b"executed_after"):
         assert forbidden not in serialized
+
+
+def test_dedicated_lane_binds_branch_digest_and_allows_head_advance(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    writer_lane, primary, base_sha, common = _dedicated_repository(tmp_path)
+    before = _git_metadata_snapshot(primary, writer_lane)
+    acquired = _lane_acquire(lease, writer_lane, base_sha)
+    assert acquired["branch_ref"] == AUD14_BRANCH_REF
+    assert re.fullmatch(r"[0-9a-f]{64}", acquired["writer_lane_ref"])
+    assert str(writer_lane).encode() not in _canonical(acquired)
+
+    active = lease.inspect(repo_root=writer_lane)["active"]
+    assert active["schema_version"] == 2
+    assert active["branch_ref"] == AUD14_BRANCH_REF
+    assert active["writer_lane_ref"] == acquired["writer_lane_ref"]
+    _lane_verify(lease, writer_lane, base_sha, acquired)
+
+    (writer_lane / "tracked.txt").write_text("writer advances lane\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(writer_lane), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(writer_lane),
+            "-c",
+            "user.name=Writer Lease Test",
+            "-c",
+            "user.email=writer-lease@example.invalid",
+            "commit",
+            "-qm",
+            "candidate advances branch",
+        ],
+        check=True,
+    )
+    assert _git(writer_lane, "rev-parse", "HEAD") != base_sha
+    assert _git(writer_lane, "symbolic-ref", "--quiet", "HEAD") == AUD14_BRANCH_REF
+    _lane_verify(
+        lease,
+        writer_lane,
+        base_sha,
+        acquired,
+        checkpoint="before_red",
+    )
+    _lane_release(lease, writer_lane, base_sha, acquired)
+    raw = _lane_export(lease, writer_lane, base_sha, acquired)
+    evidence = lease.validate_evidence(raw)
+    assert evidence["schema_version"] == 2
+    assert evidence["branch_ref"] == AUD14_BRANCH_REF
+    assert evidence["writer_lane_ref"] == acquired["writer_lane_ref"]
+
+    after = _git_metadata_snapshot(primary, writer_lane)
+    for field in ("primary_head", "refs", "config", "worktrees"):
+        assert after[field] == before[field]
+    assert after["writer_head"] != before["writer_head"]
+    state_bytes = b"".join(
+        path.read_bytes() for path in _state_dir(common).rglob("*") if path.is_file()
+    )
+    for forbidden in (str(writer_lane), str(primary), str(common)):
+        assert forbidden.encode() not in state_bytes
+        assert forbidden.encode() not in raw
+
+
+@pytest.mark.parametrize(
+    "bad_lane",
+    ["primary", "detached", "unregistered", "symlink-gitdir", "wrong-branch"],
+)
+def test_acquire_requires_exact_registered_dedicated_lane(
+    lease: ModuleType, tmp_path: Path, bad_lane: str
+) -> None:
+    writer_lane, primary, base_sha, common = _dedicated_repository(tmp_path)
+    branch_ref = AUD14_BRANCH_REF
+    if bad_lane == "primary":
+        candidate = primary
+        branch_ref = _git(primary, "symbolic-ref", "--quiet", "HEAD")
+    elif bad_lane == "detached":
+        candidate = tmp_path / "detached"
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(primary),
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                str(candidate),
+                base_sha,
+            ],
+            check=True,
+        )
+    elif bad_lane in {"unregistered", "symlink-gitdir"}:
+        candidate = tmp_path / "unregistered"
+        candidate.mkdir()
+        gitdir = _git(
+            writer_lane,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+        )
+        if bad_lane == "symlink-gitdir":
+            gitdir_link = tmp_path / "gitdir-link"
+            gitdir_link.symlink_to(gitdir, target_is_directory=True)
+            gitdir = str(gitdir_link)
+        (candidate / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+        shutil.copy2(writer_lane / "tracked.txt", candidate / "tracked.txt")
+    else:
+        candidate = writer_lane
+        branch_ref = "refs/heads/not-the-writer-lane"
+
+    with pytest.raises(lease.WriterLeaseError) as exc_info:
+        lease.acquire(
+            repo_root=candidate,
+            **_lane_identity(base_sha, branch_ref=branch_ref),
+        )
+    assert str(exc_info.value) == "writer lease operation failed"
+    assert not _state_dir(common).exists()
+
+
+@pytest.mark.parametrize(
+    "branch_ref",
+    [
+        "writer-lane",
+        "refs/tags/not-a-branch",
+        "refs/heads/../escape",
+        "refs/heads/" + ("x" * 1024),
+    ],
+)
+def test_hostile_branch_refs_fail_closed_without_partial_state(
+    lease: ModuleType, tmp_path: Path, branch_ref: str
+) -> None:
+    writer_lane, _primary, base_sha, common = _dedicated_repository(tmp_path)
+    with pytest.raises(lease.WriterLeaseError) as exc_info:
+        lease.acquire(
+            repo_root=writer_lane,
+            **_lane_identity(base_sha, branch_ref=branch_ref),
+        )
+    assert str(exc_info.value) == "writer lease operation failed"
+    assert not _state_dir(common).exists()
+
+
+def test_wrong_lane_branch_or_root_is_rejected_without_state_mutation(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    writer_lane, primary, base_sha, common = _dedicated_repository(tmp_path)
+    acquired = _lane_acquire(lease, writer_lane, base_sha)
+    _lane_verify(lease, writer_lane, base_sha, acquired)
+    state = _state_dir(common)
+    before = {
+        path.relative_to(state).as_posix(): path.read_bytes()
+        for path in state.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(lease.WriterLeaseError) as branch_error:
+        _lane_verify(
+            lease,
+            writer_lane,
+            base_sha,
+            acquired,
+            branch_ref="refs/heads/not-the-writer-lane",
+        )
+    assert str(branch_error.value) == "writer lease operation failed"
+    for hostile_lane_ref in ("0" * 64, "not-a-digest", "A" * 64):
+        with pytest.raises(lease.WriterLeaseError) as lane_error:
+            _lane_verify(
+                lease,
+                writer_lane,
+                base_sha,
+                acquired,
+                writer_lane_ref=hostile_lane_ref,
+            )
+        assert str(lane_error.value) == "writer lease operation failed"
+    with pytest.raises(lease.WriterLeaseError) as root_error:
+        _lane_verify(lease, primary, base_sha, acquired)
+    assert str(root_error.value) == "writer lease operation failed"
+
+    after = {
+        path.relative_to(state).as_posix(): path.read_bytes()
+        for path in state.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    _lane_release(lease, writer_lane, base_sha, acquired)
+
+
+def test_writer_lane_ref_is_deterministic_and_not_a_frozen_head(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    writer_lane, _primary, base_sha, _common = _dedicated_repository(tmp_path)
+    first = _lane_acquire(lease, writer_lane, base_sha)
+    first_lane_ref = first["writer_lane_ref"]
+    _lane_release(lease, writer_lane, base_sha, first)
+    second = _lane_acquire(lease, writer_lane, base_sha)
+    assert second["writer_lane_ref"] == first_lane_ref
+    _lane_verify(lease, writer_lane, base_sha, second)
+    (writer_lane / "tracked.txt").write_text("second candidate head\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(writer_lane), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(writer_lane),
+            "-c",
+            "user.name=Writer Lease Test",
+            "-c",
+            "user.email=writer-lease@example.invalid",
+            "commit",
+            "-qm",
+            "second candidate head",
+        ],
+        check=True,
+    )
+    verified = _lane_verify(
+        lease,
+        writer_lane,
+        base_sha,
+        second,
+        checkpoint="before_commit",
+    )
+    assert verified["writer_lane_ref"] == first_lane_ref
+    _lane_release(lease, writer_lane, base_sha, second)
+
+
+@pytest.mark.parametrize("payload_kind", ["malformed", "duplicate", "oversized"])
+def test_worktree_registration_parser_is_bounded_and_fail_closed(
+    lease: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload_kind: str,
+) -> None:
+    writer_lane, primary, base_sha, common = _dedicated_repository(tmp_path)
+    valid = _raw_git(primary, "worktree", "list", "--porcelain", "-z")
+    if payload_kind == "malformed":
+        payload = b"worktree /malformed\0branch refs/heads/writer\0"
+    elif payload_kind == "duplicate":
+        payload = valid + valid
+    else:
+        payload = b"x" * (1_048_576 + 1)
+
+    real_run = lease.subprocess.run
+    real_check_output = lease.subprocess.check_output
+
+    def _is_worktree_list(command: object) -> bool:
+        return isinstance(command, (list, tuple)) and "worktree" in command and "list" in command
+
+    def fake_run(command: object, *args: object, **kwargs: object) -> object:
+        if _is_worktree_list(command):
+            output: object = payload.decode() if kwargs.get("text") else payload
+            error: object = "" if kwargs.get("text") else b""
+            return subprocess.CompletedProcess(command, 0, stdout=output, stderr=error)
+        return real_run(command, *args, **kwargs)
+
+    def fake_check_output(command: object, *args: object, **kwargs: object) -> object:
+        if _is_worktree_list(command):
+            return payload.decode() if kwargs.get("text") else payload
+        return real_check_output(command, *args, **kwargs)
+
+    monkeypatch.setattr(lease.subprocess, "run", fake_run)
+    monkeypatch.setattr(lease.subprocess, "check_output", fake_check_output)
+    with pytest.raises(lease.WriterLeaseError) as exc_info:
+        lease.acquire(
+            repo_root=writer_lane,
+            **_lane_identity(base_sha),
+        )
+    assert str(exc_info.value) == "writer lease operation failed"
+    assert not _state_dir(common).exists()
+
+
+def test_symlink_and_hostile_git_environment_cannot_redirect_lane_identity(
+    lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer_lane, primary, base_sha, common = _dedicated_repository(tmp_path)
+    symlink_lane = tmp_path / "writer-lane-alias"
+    symlink_lane.symlink_to(writer_lane, target_is_directory=True)
+    with pytest.raises(lease.WriterLeaseError) as exc_info:
+        lease.acquire(
+            repo_root=symlink_lane,
+            **_lane_identity(base_sha),
+        )
+    assert str(exc_info.value) == "writer lease operation failed"
+    assert not _state_dir(common).exists()
+
+    poison = tmp_path / "poison"
+    trace = tmp_path / "git-trace"
+    for name, value in {
+        "GIT_DIR": str(poison / "dir"),
+        "GIT_COMMON_DIR": str(poison / "common"),
+        "GIT_WORK_TREE": str(poison / "tree"),
+        "GIT_INDEX_FILE": str(poison / "index"),
+        "GIT_OBJECT_DIRECTORY": str(poison / "objects"),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(poison / "alternate"),
+        "GIT_CONFIG_GLOBAL": str(poison / "global"),
+        "GIT_CONFIG_SYSTEM": str(poison / "system"),
+        "GIT_TRACE": str(trace),
+        "GIT_TRACE2_EVENT": str(trace),
+    }.items():
+        monkeypatch.setenv(name, value)
+    acquired = _lane_acquire(lease, writer_lane, base_sha)
+    _lane_verify(lease, writer_lane, base_sha, acquired)
+    assert _state_dir(common).is_dir()
+    assert not poison.exists()
+    assert not trace.exists()
