@@ -1,70 +1,35 @@
 # Hybrid Concurrent Agent Execution Protocol
 
-Status: execution-harness policy. This document supplements root `AGENTS.md` and
-`AGENT_AUDIT_PROTOCOL.md`. It does **not** change production architecture, roadmap dependencies, or the
-47 implementation PR definitions.
+This execution-harness document supplements root `AGENTS.md` and
+`AGENT_AUDIT_PROTOCOL.md`. It defines scheduling only; it changes no product architecture, roadmap
+dependency, safety gate, model ID, or merge authority.
 
-## 1. Goal
+> Parallel reads and independent review; serialized production writes.
 
-Use Codex concurrency where work is genuinely independent while preserving deterministic ownership of
-production changes.
+## 1. Ownership rules
 
-The default operating principle is:
+For one active PR, the Master/orchestrator owns scope, synthesis, and the final gate. At most one production-code writer
+is active. RED, GREEN, REFACTOR, and each repair cycle have one named owner; a
+replacement writer never overlaps the prior writer. Read-only specialists may run concurrently only for
+independent questions, and a controlling reviewer plus specialists review one frozen exact head. No lane
+starts a dependency-ordered later PR before the current PR is merged. Concurrency never waives paper and live
+or another explicit human promotion gate.
 
-> **Parallel reads and independent review; serialized production writes.**
+Master-only delegation is a behavioral policy, not host identity enforcement. A non-master role may expose
+runtime collaboration controls despite `[agents] enabled = false`; collaboration-control visibility alone
+is non-blocking. Do not invoke collaboration controls or delegate nested work. Any attempted or completed
+nested delegation is a blocking policy violation. Runtime-denied or no-op attempts remain blocking. Missing
+observation is `insufficient_evidence`; `telemetry_conflict` is separate.
 
-This protocol improves pre-flight discovery and review coverage without allowing multiple agents to
-race on the same implementation branch or weaken exact-head auditability.
+Every read-only lane requires the root native parent-admission sequence and complete host-origin evidence;
+an unverified lane is discarded. `DEGRADED_MASTER_REVIEW` is an explicit per-task human-authorized
+Harness-only fallback when native-admission is unavailable. It is not independent review and cannot
+authorize roadmap/product, broker, paper and live, promotion, externally consequential, or critical-safety
+work. See the root and audit protocol for the assurance artifact and safety boundaries.
 
-## 2. Non-negotiable ownership rules
+## 2. Concurrency budget
 
-For one active roadmap PR:
-
-- the master/orchestrator remains the decision owner and final merge gate;
-- at most **one production-code writer** may be active at a time;
-- RED, GREEN, REFACTOR, and each repair cycle are owned by one named implementer/repair implementer;
-- read-only specialists may run concurrently when their questions are independent;
-- the controlling reviewer follows the recorded route using `reviewer_high` or `reviewer_xhigh`;
-- specialist reviews add evidence; they do not replace the controlling independent-review artifact;
-- no agent may start a dependency-ordered later roadmap PR before the current PR is merged;
-- no concurrency rule waives paper/live or other explicit human promotion gates.
-
-Do not parallelize two production writers against the same PR merely to increase throughput. If a
-future task is truly decomposable into isolated worktrees and disjoint write ownership, that requires an
-explicit JIT decision by the master; it is not the default roadmap workflow.
-
-Master-only delegation is a behavioral policy, not repo-level host identity enforcement. A correctly loaded
-non-master role may expose a runtime collaboration-control capability despite its `[agents] enabled = false`
-configuration intent. Collaboration-control visibility alone is non-blocking. The Master remains the only
-role behaviorally authorized to invoke collaboration controls or delegate work; non-master roles must
-not invoke those controls or delegate nested work. Any attempted or completed nested delegation, including a
-runtime-denied or no-op attempt, is a blocking policy violation. Complete trustworthy observation is required
-to accept that no invocation occurred; missing observation is `insufficient_evidence`, and
-`telemetry_conflict` remains a separate blocking signal for actual route/loading contradictions.
-
-Every read-only lane is also subject to root `AGENTS.md` native parent admission. The Master selects a
-fresh host-enforced read-only parent and, before substantive child work or any tool call, verifies fresh
-host-origin effective permission and complete tool-inventory evidence. An unverified or contradictory lane
-is discarded as `insufficient_evidence`; its availability does not justify another writer, a generic
-replacement, or reuse of its output.
-
-`DEGRADED_MASTER_REVIEW` is a separate, explicit per-task human-authorized fallback only for Harness-only
-maintenance when native admission is unavailable. It is not independent review and does not authorize
-roadmap/product, broker, PAPER/live, promotion, externally consequential, or critical-safety work; those
-scopes remain fail-closed.
-
-Every fresh implementation or repair writer is additionally serialized by the repository-global cooperative
-lease in `.agents/skills/writer-lease/SKILL.md`. The Master acquires from trusted refreshed `main` before
-starting the writer, the writer records only the required cooperative checkpoints, and the Master releases
-only after independent host observation shows the writer stopped. `writer_start` is mandatory and later
-applicable checkpoint declarations cannot regress. Exported canonical evidence supplements that host
-observation and Git history; it does not authenticate either. Any incomplete, out-of-order, archive-capacity,
-or ambiguous lease transition blocks the next writer. Ordinary CI and the offline checker never read live
-lease state.
-
-## 3. Concurrency budget
-
-Project config currently uses:
+The project configuration is:
 
 ```toml
 [agents]
@@ -72,194 +37,55 @@ enabled = true
 max_concurrent_threads_per_session = 6
 ```
 
-Treat this as a **concurrently open spawned-thread guardrail**, not a total-per-PR or lifetime spawn cap.
-The master/root context is separate from these spawned-agent slots. The six-slot cap is burst headroom,
-not a target: spawn only lanes with material independent work and continue closing completed threads
-promptly.
+Six is a concurrently open spawned-thread guardrail and burst headroom, not a lifetime or per-PR spawn
+cap. The Master context is separate. Spawn only lanes with material independent work and close completed
+lanes promptly. There is no fixed numeric limit on cumulative repair/review cycles; every cycle must add
+evidence and must not lower tests or ignore findings.
 
-The harness does not impose a numeric maximum on cumulative implement/review/repair cycles. Continue
-only while each cycle produces new evidence toward closure. Existing `AGENTS.md` stop conditions still
-apply; repeated repair is not permission to lower tests, ignore findings, or force a PASS.
+## 3. Phase A — concurrent pre-flight
 
-When a subagent's result has been collected and no follow-up is expected, close that completed thread so
-it does not occupy a concurrency slot unnecessarily.
+After reconciling main/GitHub and selecting the authorized PR, the Master may run independent read-only
+exploration, test audit, and boundary review lanes. They inspect the same base SHA and report current files,
+tests/CI, scope/compatibility risks, and any adversarial contract matrix. The Master resolves conflicts and
+persists the JIT scope contract; specialists never decide architecture or authorize progression.
 
-## 4. Named specialist roles
+## 4. Phase B — serialized TDD implementation
 
-| Role | Route | Mode | Primary purpose |
-| --- | --- | --- | --- |
-| `code_explorer` | GPT-5.6 Luna / max | read-only | current code paths, symbols, interfaces, doc/code drift |
-| `test_auditor` | GPT-5.6 Luna / max | read-only | TDD contract, tests, negative cases, validation and CI |
-| `boundary_reviewer` | GPT-5.6 Sol / high | read-only | architecture, scope, compatibility, security and side-effect boundaries |
+After the JIT contract is durable:
 
-Writer and controlling-review routes:
+1. Start exactly one named implementer appropriate to the risk class.
+2. Verify the writer lease and dedicated lane at `writer_start`.
+3. Create and push test-only RED evidence, then implement minimum GREEN behavior.
+4. Refactor only inside the JIT boundary and run the local validation floor.
+5. Freeze the candidate exact head for review.
 
-- `normal_implementer` — Luna/max;
-- `high_implementer` — Sol/high;
-- `critical_implementer` — Sol/xhigh;
-- `reviewer_high` — Sol/high;
-- `reviewer_xhigh` — Sol/xhigh (critical/adjudication role);
-- hardest route: `critical_implementer` — Sol/xhigh plus fresh `reviewer_xhigh` — Sol/xhigh.
+Read-only specialists may answer bounded questions, but never write production code or become a second
+implementer. The writer lease and evidence lifecycle are defined by the audit protocol and writer skill.
 
-Normal and high share the initial Luna/max writer plus Sol/high reviewer. For high work,
-implementation-only escalation replaces the writer with `high_implementer`; review-only escalation
-retains the Luna writer and replaces the reviewer with `reviewer_xhigh`; both changes select the
-difficult route. Normal does not escalate without reclassification evidence.
+## 5. Phase C — concurrent exact head review
 
-Select the least expensive adequate route under root `AGENTS.md` Section 6. Review-only escalation
-retains the existing implementer. Keep normal/high/critical risk classification and its gates. A
-replacement writer never runs alongside the previous writer. The concurrency budget is unchanged.
+Once a candidate head is frozen, the controlling reviewer and relevant specialists may review concurrently
+against that same full SHA. The Master reconciles findings; specialist evidence never replaces the
+controlling review artifact. A new commit makes affected prior review/CI evidence stale.
 
-## 5. Phase A — concurrent pre-flight before JIT
+## 6. Repair and re-review loop
 
-After reconciling current `main`/GitHub and selecting the next dependency-valid PR, the master may spawn
-up to three independent read-only specialist lanes concurrently:
+For a material defect, mark affected evidence stale, classify the defect from actual risk, start one repair
+writer only after the prior writer stops, and use repair RED -> GREEN when executable. Freeze the new head,
+run required validation, start a fresh controlling reviewer, and rerun every lane whose BLOCKER/HIGH or
+changed boundary is affected. Never reuse approval from an older head. Stop for unresolved severity,
+architecture conflict, unavailable required role, scope leakage, or missing human gate.
 
-1. `code_explorer` — map current implementation reality and doc/code drift;
-2. `test_auditor` — map existing test/CI evidence and propose the smallest observable RED contract;
-3. `boundary_reviewer` — identify architecture/scope/security/compatibility constraints.
+## 7. Master synthesis and merge gate
 
-Use only lanes that have material independent work. Do not spawn agents merely to fill available slots.
-For a tiny docs-only PR, one or zero specialist lanes may be sufficient.
+Before merge, the Master independently confirms JIT scope, single-writer history, RED/GREEN evidence, exact
+head review, closure of material findings, required CI, compatibility, and safety/promotion boundaries.
+The durable Master gate and any degraded assurance artifact follow `AGENT_AUDIT_PROTOCOL.md`; a reviewer
+verdict is eligibility evidence, not merge authority.
 
-All pre-flight lanes inspect the same reconciled base SHA. The master waits for the required lanes,
-deduplicates/conflict-checks their evidence, resolves ordinary differences through repository evidence,
-and then writes the controlling JIT Implementation Spec / Scope Contract.
+## 8. Lifecycle and rollback
 
-If specialist reports reveal a material architecture conflict that the approved docs/current code do
-not resolve, follow the existing stop condition instead of letting agents vote on a redesign.
-
-## 6. Phase B — serialized TDD implementation
-
-After the JIT spec is durable:
-
-1. spawn exactly one named implementer appropriate to the classified complexity;
-2. create durable test-only RED evidence where executable TDD applies;
-3. perform minimum GREEN implementation;
-4. REFACTOR only within the JIT boundary;
-5. run required local validation;
-6. freeze an exact candidate PR head for independent review.
-
-Read-only specialists may answer narrowly scoped questions during implementation, but they must not
-write production code or become a second implementer.
-
-## 7. Phase C — concurrent exact-head review
-
-Once a candidate PR head is frozen, review lanes may run concurrently **against the same exact SHA**.
-
-Required lane:
-
-- controlling reviewer named by the complexity and recorded model tier.
-
-Default specialist lanes when material to the PR:
-
-- `test_auditor` for RED/TDD/test/CI quality;
-- `boundary_reviewer` for architecture/scope/security/compatibility boundaries.
-
-`code_explorer` is normally a pre-flight role and should not be spawned again unless the final diff
-requires fresh call-path/current-state tracing.
-
-The master collects all lane results and performs triage. Specialist findings use the same severity
-vocabulary (`BLOCKER`, `HIGH`, `MEDIUM`, `LOW`, `NIT`). An unresolved `BLOCKER` or `HIGH` from **any**
-lane blocks merge even if the controlling reviewer otherwise approves.
-
-The durable independent-review artifact required by `AGENT_AUDIT_PROTOCOL.md` is still produced by the
-controlling reviewer. Before it is persisted/finalized, the master should provide or reconcile material
-specialist findings so the controlling artifact reflects the complete exact-head evidence set.
-
-## 8. Repair and re-review loop
-
-If triage finds a material defect:
-
-1. mark all affected prior exact-head evidence stale after the next commit;
-2. classify/escalate complexity from the actual defect, not merely the number of review rounds;
-3. spawn **one** appropriate repair implementer;
-4. use repair RED -> repair GREEN when the defect is executable/testable;
-5. run validation and freeze the new exact head;
-6. spawn a fresh controlling reviewer;
-7. re-run every specialist lane that found a prior BLOCKER/HIGH or whose boundary was changed by the
-   repair;
-8. optionally omit unaffected specialist lanes when the master can prove their evidence remains
-   irrelevant to the changed surface — but never reuse an old exact-head approval as approval of the
-   new SHA.
-
-For ambiguity, advance review only as evidence requires:
-`reviewer_high -> reviewer_xhigh`.
-Re-review count alone does not make a PR `critical` or justify a stronger route. Safety classification remains
-tied to correctness/external-effect risk under `AGENTS.md`; route escalation requires a separate
-recorded reason.
-
-There is no fixed `N` for repair/re-review attempts. Continue only while the scope remains valid and the
-system is converging. Stop under the existing autonomous stop conditions when evidence cannot be made
-sufficient without redesign, scope leakage, unavailable required roles, unresolved BLOCKER/HIGH, or a
-human gate.
-
-## 9. Master synthesis and merge gate
-
-The master does not delegate final ownership. Before merge it must independently confirm:
-
-- the JIT contract matches the final diff;
-- the single-writer rule was preserved;
-- required RED/GREEN evidence is durable;
-- controlling reviewer inspected the exact final head;
-- all material specialist BLOCKER/HIGH findings are closed on the exact final head;
-- required CI is green for the exact final head;
-- architecture/scope/backward compatibility remain valid;
-- the required master merge-gate artifact is durable.
-
-Only then may autonomous mode merge an ordinary roadmap PR.
-
-## 10. Recommended lifecycle
-
-```text
-                          MASTER / Sol xhigh
-                               |
-              +----------------+----------------+
-              |                |                |
-              v                v                v
-        code_explorer      test_auditor   boundary_reviewer
-         read-only          read-only         read-only
-              |                |                |
-              +----------------+----------------+
-                               |
-                    Master synthesizes JIT
-                               |
-                               v
-                       ONE IMPLEMENTER
-                    RED -> GREEN -> REFACTOR
-                               |
-                        freeze exact head
-                               |
-              +----------------+----------------+
-              |                |                |
-              v                v                v
-       controlling         test_auditor   boundary_reviewer
-         reviewer           read-only         read-only
-              |                |                |
-              +----------------+----------------+
-                               |
-                         Master triage
-                         /           \
-                   finding           clean
-                      |                |
-                      v                v
-              ONE repair writer   Master gate
-              RED -> GREEN            |
-                      |             exact CI
-                new exact head         |
-                      |               MERGE
-                fresh re-review
-```
-
-This is a hybrid-concurrent workflow, not a multi-writer workflow.
-
-## 11. Activation and migration
-
-This policy is prospective. Running agents keep their loaded routes; prior model/review evidence is
-not relabeled. After this independent harness PR merges, refresh the relevant checkout with `main`
-and start a **fresh master session** to load the new configuration. A paused PR may resume with new
-agents after its stop conditions are resolved; do not require a blocked PR to merge before this
-harness update. Verify named-role availability on resume and record actual loading evidence.
-
-No production/runtime migration is involved. Rollback is simply reverting this harness/config change;
-production code and roadmap architecture remain unchanged.
+This is hybrid-concurrent scheduling, not a multi-writer workflow. Read/review lanes can be parallel;
+production writes are serialized. The policy is prospective: after this Harness change merges, refresh main
+and start a fresh session. Rollback is reverting this policy/configuration change; no product/runtime
+migration is involved.

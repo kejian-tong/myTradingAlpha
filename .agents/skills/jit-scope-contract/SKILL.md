@@ -5,71 +5,37 @@ description: Build the exact just-in-time implementation scope contract for one 
 
 # JIT Scope Contract
 
-Use after `productionization-preflight` and before GREEN production implementation.
+Use after `productionization-preflight` and before GREEN. Persist one contract tied to the exact base SHA;
+it narrows work and grants no authority beyond the user-authorized PR.
 
-## Required fields
+## Required contract
 
-Create a durable contract tied to the exact current base SHA with:
+Record PR/phase/base/prerequisites; applicable root/scoped instructions, role/config, and design sources;
+current drift; exact files/symbols; interfaces/invariants and failure semantics; security, network,
+persistence, credentials, and external-side-effect boundaries; compatibility; non-goals/later deferrals;
+migration/rollback; ordered steps; smallest RED plan and expected failure; minimum GREEN/refactor boundary;
+focused/full validation; acceptance matrix; risk class/routes/escalation; complete preflight `risk_profile`;
+boundary-review requirement/evidence; writer-lease lifecycle and exact dedicated lane identity; and the
+assurance path.
 
-- PR ID/title, phase, base SHA, and prerequisite merge SHAs;
-- applicable root/scoped `AGENTS.md`, Codex role/config, architecture/design/implementation sources;
-- current-state findings and material doc/code drift;
-- exact existing/new files and symbols expected;
-- interfaces, schemas, invariants, and observable behavior;
-- explicit failure/error semantics;
-- security, network, persistence, credential, and external-side-effect boundaries;
-- backward-compatibility requirements;
-- explicit non-goals and later-slice deferrals;
-- migration and rollback;
-- ordered implementation steps;
-- smallest RED test/fixture plan and expected failure;
-- minimum GREEN behavior and refactor boundary;
-- exact focused/full validation commands;
-- acceptance matrix mapping requirement -> evidence -> expected verdict;
-- `normal|high|critical` classification, named implementer/reviewer, configured routes, and evidence-based
-  escalation triggers;
-- the complete preflight `risk_profile` using the reviewed seven tags;
-- whether adversarial boundary preflight was mandatory and, when required, the exact base SHA and
-  `boundary_reviewer` evidence used;
-- the writer-lease identity plan, required lifecycle checkpoints, evidence/export binding, and any explicit
-  bootstrap limitation;
-- the exact dedicated linked writer worktree identity: full `branch_ref`, derived `writer_lane_ref`, canonical
-  gitdir/common-directory membership, bounded registration evidence, and the rule that moving candidate `HEAD`
-  is not a lease identity;
-- the assurance path: native independent review, or `DEGRADED_MASTER_REVIEW` only with explicit per-task
-  human authorization for Harness-only maintenance, native-admission unavailability, the missing runtime
-  evidence disclosure, exact-head Master review, and the separate degraded evidence artifact;
-- for every true risk tag, an adversarial contract matrix entry mapping concrete attack/failure cases ->
-  invariant -> RED/validation evidence -> expected closure verdict.
+The lane identity includes full `branch_ref`, derived `writer_lane_ref`, canonical gitdir/common-directory
+membership, bounded worktree registration, and the rule that moving candidate `HEAD` is not identity. The
+assurance path is native independent review, or `DEGRADED_MASTER_REVIEW` only with explicit per-task human
+authorization for Harness-only maintenance, unavailable native admission, missing-runtime disclosure,
+exact head Master review, and a separate degraded artifact.
 
-## Adversarial closure rule
-
-A true preflight tag is not a narrative warning. Before GREEN begins, its material attack/failure cases
-must be represented by the JIT acceptance matrix and the smallest meaningful RED/negative validation
-plan. Examples include hostile object/callback and malformed-wire probes for `untrusted_input`,
-Unicode/escaping/hash determinism for `serialization_canonicalization`, encoded/nested confidentiality
-cases for `secret_redaction`, cutoff/chronology mismatches for `temporal_provenance`, bounded-work cases
-for `resource_complexity`, retry/race/state-transition cases for `concurrency_idempotency`, and denied or
-mocked side-effect boundaries for `external_side_effect`.
-
-If the mandatory boundary review reports a material BLOCKER/HIGH that cannot be represented and closed
-within the authorized architecture/scope, stop for resolution. Do not postpone a known preflight
-BLOCKER/HIGH until the final review simply because implementation has not begun.
+For every true risk tag, add an adversarial matrix entry mapping attack/failure cases -> invariant ->
+RED/validation evidence -> expected closure verdict. In other words, for every true risk tag the matrix
+must show closure. Do not postpone a known preflight BLOCKER/HIGH until
+final review merely because implementation has not begun.
 
 ## Rules
 
-Use actual current files/APIs rather than copying stale proposed filenames mechanically. Resolve ordinary
-drift with the smallest backward-compatible implementation that preserves approved architecture. Stop
-for human resolution when a material architecture conflict cannot be resolved without redesign.
+Use actual current files/APIs, resolve ordinary drift with the smallest compatible change, and stop for an
+architecture conflict requiring redesign. For docs-only/Harness-only work, reduce the contract
+proportionally but retain scope, non-goals, validation, compatibility, rollback, and why executable RED is
+not applicable. Risk tags may be false only when the touched surface truly has no such risk.
 
-Persist the JIT in the PR body or another durable GitHub PR-conversation artifact before GREEN begins.
-Do not pre-generate static JIT files for future roadmap slices.
-
-For docs-only/harness-only changes, reduce the contract proportionally but keep scope, non-goals,
-validation, compatibility, rollback, and why executable RED is not applicable. Risk tags may all be false
-for genuinely non-executable documentation-only work, but the decision must follow the actual touched
-surfaces rather than the PR label.
-
-The JIT grants no authority beyond the user-authorized task and cannot waive any paper/live gate.
-`DEGRADED_MASTER_REVIEW` is not independent review, cannot fabricate runtime telemetry, and cannot authorize
-roadmap/product, broker, PAPER/live, promotion, or other externally consequential work.
+The JIT cannot waive paper and live approval, fabricate runtime telemetry, authorize roadmap/product,
+broker, promotion, or other externally consequential work. A material adversarial BLOCKER/HIGH that cannot
+be closed inside scope blocks GREEN.

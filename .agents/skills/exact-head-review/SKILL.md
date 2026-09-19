@@ -3,81 +3,53 @@ name: exact-head-review
 description: Independently review one exact myTradingAlpha PR head, verify RED/TDD evidence and acceptance criteria, and produce a durable structured verdict.
 ---
 
-# Exact-Head Independent Review
+# Exact Head Independent Review
 
-For native independent review, use only a fresh reviewer context different from the implementer. Review
-repository/diff evidence, not the implementer's summary. The separate `DEGRADED_MASTER_REVIEW` path is
-Master-owned Harness-only maintenance and may be used only under its explicit fallback contract.
+For native independent review, use a fresh reviewer context different from the implementer. Inspect
+repository/diff evidence, not summaries. The separate `DEGRADED_MASTER_REVIEW` path is Master-owned
+Harness-only maintenance and may be used only under its explicit fallback contract.
 
 ## Isolation requirement
 
-Default to a detached isolated Git worktree for executable RED replay and exact-head validation. For each
-review session, allocate an existing session-specific `allowed_root` directory and pass it explicitly to
-both operations: `scripts/review_worktree.py create --sha <full-sha> --path <temporary-path>
---allowed-root <session-specific-root>` and the corresponding `remove` command. The review worktree is
-read/execute-only evidence space: it does not authorize a second production writer, commits, pushes,
-repair edits, or merge actions.
+Default to a detached isolated Git worktree for RED replay and final validation. Allocate a session-specific
+`allowed_root` and pass it to `scripts/review_worktree.py create --sha <full-sha> --path <temporary-path>
+--allowed-root <session-specific-root>` and the matching `remove`. The worktree is read/execute-only: it
+does not authorize a writer, commit, push, repair, or merge.
 
-If marker, registration, HEAD, or cleanliness validation fails, fail closed and preserve the directory
-and Git registration for manual recovery. Do not use `--force` or automatic pruning to recover an
-ambiguous review worktree; a human must inspect and remove it safely.
+If marker, registration, HEAD, or cleanliness validation fails, fail closed and preserve the directory and
+registration for human recovery. Do not use force or automatic pruning. If equivalent non-destructive
+isolation cannot be established, return `INSUFFICIENT_EVIDENCE` and preserve the directory for manual recovery.
 
-If the runtime cannot create an isolated worktree, record the limitation and use another demonstrably
-non-destructive exact-SHA checkout only when equivalent isolation can be established. If required RED or
-exact-head evidence cannot be reproduced safely, return `INSUFFICIENT_EVIDENCE` rather than reviewing a
-mutable writer checkout as if it were isolated.
-
-## Degraded Harness-only review path
+## Degraded Harness-only review
 
 Native host-enforced read-only independent review remains preferred and is required for roadmap/product,
-broker, PAPER/live, promotion, externally consequential, and critical-safety work. When native admission is
-unavailable, `DEGRADED_MASTER_REVIEW` may be used only for explicitly per-task human-authorized Harness-only
-maintenance. It is not an independent reviewer artifact or verdict.
+broker, paper and live, promotion, externally consequential, and critical-safety work. When native
+admission is unavailable, the degraded Master path may be used only for explicitly per-task human-authorized
+Harness-only maintenance. It is not an independent reviewer artifact or verdict.
 
-The Master must review the complete exact-head diff, replay applicable RED evidence, run complete local
-validation and required CI, disclose every missing or unavailable runtime evidence fact, and refuse on any
-unresolved BLOCKER/HIGH or material uncertainty. The Master must not fabricate reviewer, model, isolation,
-or runtime telemetry. Record a separate artifact with the assurance path, authorization, native-admission
-limitation, exact head, RED replay, validation/CI, missing evidence, findings, and
-`DEGRADED_MASTER_REVIEW|DO NOT MERGE` verdict. This path cannot authorize roadmap/product work or waive
-broker, PAPER/live, promotion, or critical-safety gates.
+The Master reviews the complete exact head, replays RED, runs complete local validation/required CI,
+discloses every missing runtime fact, and refuses on unresolved BLOCKER/HIGH or material uncertainty. It
+must not fabricate reviewer, model, isolation, or runtime telemetry. Record separate assurance, authorization,
+native-admission limitation, exact head, RED replay, validation/CI, missing evidence, findings, and
+`DEGRADED_MASTER_REVIEW|DO NOT MERGE`; this path cannot authorize roadmap/product, broker, paper and live,
+promotion, or critical-safety work.
 
 ## Review procedure
 
-1. Fetch current main and PR; record exact base and head SHAs.
-2. Read applicable root/scoped `AGENTS.md`, JIT contract, roadmap/phase docs, and relevant state entry.
+1. Fetch current main/PR and record exact base/head SHAs.
+2. Read applicable root/scoped instructions, JIT, roadmap/phase docs, and state evidence.
 3. Inspect every changed filename and the complete final diff.
-4. Verify the dedicated RED history: base-to-RED should contain only appropriate tests/fixtures/test
-   harness; reproduce the recorded focused RED failure at the exact RED SHA in the isolated review
-   worktree by default.
-5. Validate the exact final head in the same isolation model after switching/recreating at that full SHA.
-6. Inspect focused tests and material existing regressions for negative cases, determinism, tautology,
-   missing boundaries, and validation/CI coverage.
-7. Trace applicable architecture, compatibility, temporal, numerical, accounting, idempotency,
-   reconciliation, credential, security, persistence/network, and paper/live invariants.
-8. Compare final diff with the durable JIT contract and identify scope leakage or undocumented deviation.
-9. Inspect required CI/check evidence for the exact head; never reuse green checks from an older SHA.
-10. Validate the bounded canonical writer-lease artifact and digest, then reconcile its identity/checkpoint
-    chain with Master-owned host stopped-state evidence and Git history. The artifact is cooperative structural
-    evidence, not runtime authentication; missing or ambiguous lifecycle evidence is
-    `INSUFFICIENT_EVIDENCE`.
+4. Verify base-to-RED is test/fixture-only and reproduce its focused failure in isolated evidence space.
+5. Validate the exact final head in the same isolation model.
+6. Inspect tests, determinism, negative cases, regressions, validation/CI, compatibility, security,
+   persistence/network, and safety/promotion boundaries.
+7. Compare the final diff with JIT scope and identify leakage or undocumented deviation.
+8. Reconcile required CI and the bounded canonical writer-lease artifact with Git evidence. Missing or
+   ambiguous lifecycle evidence is `INSUFFICIENT_EVIDENCE`.
 
-## Findings and verdict
+## Findings and durable verdict
 
-Classify findings `BLOCKER`, `HIGH`, `MEDIUM`, `LOW`, or `NIT`. Any unresolved BLOCKER/HIGH means
-`REQUEST CHANGES`. Do not repair code in the controlling review context.
-
-Return a structured artifact containing:
-
-- PR ID/number and exact reviewed base/head;
-- reviewer role/config and configured model/effort;
-- isolation method and exact SHA(s) checked;
-- JIT artifact reference;
-- RED evidence `PASS|FAIL|INSUFFICIENT_EVIDENCE`;
-- findings with file/evidence references;
-- acceptance matrix;
-- scope-leak and safety-gate verdicts;
-- final `APPROVE|REQUEST CHANGES`.
-
-The master must persist the artifact in the GitHub PR conversation before merge. A later commit makes the
-approval stale and requires fresh exact-head review. Reviewer approval never authorizes merge by itself.
+Classify `BLOCKER`, `HIGH`, `MEDIUM`, `LOW`, or `NIT`; unresolved BLOCKER/HIGH means `REQUEST CHANGES`.
+Return PR/base/head, reviewer role/configured route, isolation, JIT reference, RED verdict, findings,
+acceptance matrix, scope/safety verdicts, and `APPROVE|REQUEST CHANGES`. The Master persists the artifact
+in the PR conversation; any later commit makes approval stale.

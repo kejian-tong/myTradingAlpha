@@ -1,174 +1,87 @@
 # myTradingAlpha Agent Harness
 
-This file defines repository-wide agent policy. Codex automatic project-instruction discovery walks from
-the project root to the current working directory (CWD) and stops there; deeper `AGENTS.md` files on that
-root-to-CWD chain add path-specific instructions, with the closest discovered file providing local detail.
-Do not assume a nested `AGENTS.md` outside the current CWD chain becomes loaded merely because a file in
-that subtree is opened or edited. For every in-scope path outside the current CWD chain, the
-`productionization-preflight` skill must explicitly read the applicable scoped `AGENTS.md` before edits.
-The global safety, authority, language, routing, and merge rules below always remain in force.
+This file is repository-wide policy. Automatic instruction discovery follows the project root to the current working directory (CWD)
+and stops there; opening or editing a deeper file does not load its `AGENTS.md`; opened or edited content is not automatically loaded.
+For paths outside that chain, `productionization-preflight` must explicitly read the scoped
+instructions. This policy remains authoritative over configuration, role files, hooks, and skills.
 
 ## Repository language
 
-All repository-authored engineering prose must be English, including docs, code comments/docstrings,
-commit messages, PR text, reviews, and reports, even when the user asks in Chinese or another language.
-Preserve product localization data, fixtures, exact identifiers, sealed artifacts, and immutable historical
-evidence as data. Do not rewrite an original review/model verdict merely to make it match a newer policy.
+Repository-authored engineering prose is English, including docs, code comments/docstrings, commit messages,
+PR text, reviews, and reports requested in English or Chinese. Preserve localization strings, fixtures, identifiers, and
+immutable historical evidence as data.
 
 ## 2. Ownership and architecture invariants
 
-This repository productionizes an upstream-derived Research Graph incrementally:
+`tradingagents/` is the upstream-derived research namespace; `mytradingalpha/` is production-owned.
+No `tradingagents/` module imports `mytradingalpha`; only `mytradingalpha.research` may adapt
+`tradingagents`; other bounded contexts consume production contracts instead of research internals.
+Unless an authorized slice says otherwise, preserve upstream public imports, CLI/runtime behavior,
+configuration precedence, distribution identity, and persisted research artifacts. Prefer additive,
+opt-in changes.
 
-- `tradingagents/` is the upstream-derived research namespace.
-- `mytradingalpha/` is the production-owned namespace.
-- No module under `tradingagents/` may import `mytradingalpha`.
-- Only `mytradingalpha.research` may import/adapt `tradingagents`.
-- Other production bounded contexts consume production-owned contracts/interfaces and must not import
-  `tradingagents` directly or another domain's persistence internals.
+Scoped instruction routes are:
 
-Unless the authorized slice explicitly requires otherwise, preserve existing `tradingagents` public
-imports, CLI behavior, runtime behavior, configuration/environment precedence, distribution identity,
-and persisted research artifacts. Prefer additive, opt-in changes over invasive migration.
-
-Path-specific rules:
-
-- `docs/productionization/AGENTS.md` — roadmap execution, JIT, operational state, review artifacts.
-- `mytradingalpha/AGENTS.md` — production dependency, determinism, compatibility, side-effect rules.
-- `tradingagents/AGENTS.md` — upstream/research compatibility boundary.
-- `tests/productionization/AGENTS.md` — deterministic TDD/contract-test rules.
-
-These scoped files are authoritative for their paths when applicable, but automatic discovery depends on
-the root-to-CWD chain. Preflight explicitly loads any other scoped file needed by the authorized change.
+- `docs/productionization/AGENTS.md` — roadmap execution, JIT, state, and review artifacts;
+- `mytradingalpha/AGENTS.md` — production dependencies, determinism, compatibility, and side effects;
+- `tradingagents/AGENTS.md` — upstream/research compatibility;
+- `tests/productionization/AGENTS.md` — deterministic TDD and contract tests.
 
 ## 3. Productionization authority and roadmap
 
-Approved architecture and dependency order live in:
+Current GitHub/main and repository state define implementation reality. Approved architecture and order
+come from `docs/productionization/README.md`, `07_PR_IMPLEMENTATION_PLAN.md`, the assigned phase
+`DESIGN.md`/`IMPLEMENTATION.md`, and applicable traceability/test appendices. Do not redesign an approved
+invariant to fit drift; stop for human resolution when a small compatible change cannot reconcile it.
 
-- `docs/productionization/README.md`;
-- `docs/productionization/07_PR_IMPLEMENTATION_PLAN.md`;
-- the assigned phase `DESIGN.md` and `IMPLEMENTATION.md`;
-- applicable traceability/test appendices.
-
-Actual current repository state is authoritative for implementation reality, but it does not grant
-permission to redesign approved architecture. If current code and approved design materially conflict,
-choose the smallest safe backward-compatible implementation that preserves the approved invariant; stop
-for human resolution if that is not possible.
-
-Default to one roadmap PR ID per implementation session. Do not start a dependency-ordered later slice
-before the current slice is merged. A user-authorized bounded harness/maintenance task does not authorize
-the next roadmap implementation PR.
-
-For productionization workflow procedures, use the repo skills under `.agents/skills/`:
-
-- `productionization-preflight`;
-- `jit-scope-contract`;
-- `tdd-red-green-evidence`;
-- `exact-head-review`;
-- `merge-gate`;
-- `writer-lease`.
-
-Skills describe how to execute repeatable procedures; they never override the invariants or authority in
-this file or scoped `AGENTS.md` files.
+Execute one authorized roadmap PR at a time. A bounded Harness maintenance PR does not authorize SIG-03
+or a later productionization slice. The repository skills are the procedures for
+`productionization-preflight`, `jit-scope-contract`, `tdd-red-green-evidence`, `exact-head-review`,
+`merge-gate`, and `writer-lease`.
 
 ## 4. Safety and external side effects
 
-Do not introduce behavior before its approved roadmap phase or merged prerequisites. In particular:
+Do not introduce behavior before its approved phase or prerequisites. Before Phase 09 no live broker
+write is permitted. Never invent credentials, accounts, allowlists, risk limits, or permissive live
+defaults. Orchestration cannot waive paper/live promotion approval; no agent may approve its own
+externally consequential side effect. Idempotency, reconciliation, unknown-ACK handling, halts, secret
+isolation, and promotion gates fail closed when applicable. Explicit human PAPER/live/promotion approval
+remains mandatory.
 
-- before Phase 09, no live broker write is permitted;
-- no agent may invent credentials, secrets, account identifiers, allowlists, risk limits, or permissive
-  live defaults;
-- autonomous orchestration cannot waive paper/live promotion gates;
-- an agent cannot approve its own externally consequential side effect;
-- idempotency, reconciliation, unknown-ACK handling, kill/halt controls, credential isolation, and
-  promotion gates fail closed when in scope.
+## 5. Master-centric execution and ownership
 
-Explicit human paper/live/promotion approval remains mandatory wherever the architecture requires it,
-regardless of model strength, review count, automation mode, or passing tests.
+The Master/orchestrator owns scope, dependency order, routing, JIT synthesis, triage, and the final merge
+decision. Master-only delegation is a behavioral policy, not runtime identity enforcement. Every named
+non-master role sets `[agents] enabled = false`; collaboration-control visibility alone is non-blocking.
+Do not invoke collaboration controls or delegate nested work. Any attempted or completed nested delegation
+is a blocking policy violation. A runtime-denied/no-op attempt is still an attempt; missing trustworthy
+observation is `insufficient_evidence`, while `telemetry_conflict` remains distinct.
 
-## 5. Master-centric multi-agent model
-
-The master/orchestrator owns scope, dependency order, model routing, JIT synthesis, triage, and the final
-merge decision. Master-only delegation is a behavioral policy, not repo-level host identity enforcement;
-the master/root context is the only project role behaviorally authorized to spawn subagents.
-
-Every project-scoped non-master named role must load `[agents] enabled = false`. A correctly loaded
-non-master role may nevertheless expose a runtime collaboration-control capability; collaboration-control
-visibility alone is not a stop condition. The Master remains the only role authorized to invoke
-collaboration controls or delegate work under this behavioral policy. Do not invoke collaboration controls
-or delegate nested work from a non-master role. Any attempted or completed nested delegation is a blocking
-policy violation.
-Record complete trustworthy runtime observation and stop on an actual non-master invocation attempt;
-missing or untrusted observation is `insufficient_evidence`, while `telemetry_conflict` remains separate
-for route or loading contradictions. Checked-in configuration, role instructions, hooks, and offline
-validators cannot authenticate the runtime caller's role or identity.
-
-Use hybrid concurrency:
-
-- parallelize materially independent read-only exploration/audit/review when useful;
-- allow at most one production-code writer for the active PR;
-- never run a replacement writer concurrently with the prior writer;
-- exact-head review lanes may run concurrently against the same frozen SHA;
-- close completed child threads when no follow-up is expected.
-
-The project concurrency guardrail is six open spawned threads. Six is burst headroom, not a target.
-Do not spawn redundant agents merely to fill capacity.
-
-For every fresh implementation or repair writer after the lease helper is available on refreshed trusted
-`main`, the Master must use the `writer-lease` skill and acquire it before starting a writer in a dedicated
-linked worktree bound to the exact full `branch_ref` and derived `writer_lane_ref`. Require cooperative
-checkpoints at applicable RED/GREEN/commit/push boundaries, and release only after independent host
-observation establishes that the writer stopped. The candidate and writer cannot self-authorize acquisition
-or release. `writer_start` is mandatory and first; later applicable checkpoint declarations cannot regress.
-Persist bounded canonical lease evidence, including exact common-directory/lane binding, for review and the
-merge gate; any missing, malformed, mismatched, exhausted, partial, or ambiguous state fails closed. This is
-cooperative one-writer evidence, not authenticated runtime identity or protection from a malicious same-user
-process.
-
-Named specialist roles:
-
-- `code_explorer` — read-only code/current-state exploration;
-- `test_auditor` — read-only TDD/test/CI audit;
-- `boundary_reviewer` — read-only architecture/security/scope boundary review;
-- `external_spec_researcher` — on-demand read-only authoritative mutable external specification research.
-
-Specialists add evidence; they never replace the controlling independent reviewer or self-authorize merge.
-The `astra_canary` is not a production specialist: it is a shadow-only evaluator for closed historical or
-immutable replay tasks and cannot participate in an active PR as writer, controlling reviewer, or Master.
+Use hybrid scheduling: independent reads/reviews may run together, but one production writer owns an
+active PR. Never overlap a replacement writer. Review lanes inspect the same frozen exact head; close
+completed lanes. The project guardrail is six concurrently open spawned threads, not a target or lifetime
+cap. The Master alone decides and merges. GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used.
 
 ### 5.1 Native read-only admission
 
-Before spawning any reviewer, auditor, explorer, external-spec researcher, or canary, the Master must use
-a fresh host-enforced read-only parent. A writable, unrestricted, disabled, unknown, stale, or merely
-inherited-but-unverified parent permission is inadmissible. The live parent overrides are controlling;
-`sandbox_mode = "read-only"`, `approval_policy = "never"`, and `[agents] enabled = false` in a role file
-are configuration intent only and cannot override contradictory runtime evidence.
+Native host-enforced read-only admission is preferred and required for reviewers, auditors, explorers,
+external specification research, canaries, and every roadmap/product, broker, PAPER/live, promotion,
+externally consequential, or critical-safety review. A fresh host-enforced read-only parent is required;
+live parent overrides are controlling; before substantive work or any tool call, obtain post-spawn host-origin evidence
+for the effective sandbox/profile/approval tuple and complete tool inventory. The first child turn is admission-only,
+must receive no substantive task, make no tool call, and cannot self-approve; only then may the follow-up substantive task
+be sent. On failure, interrupt and discard the lane. child/model prose is not host evidence; model self-report, caller-created JSON, hooks, telemetry, static TOML, and an
+offline verifier cannot authenticate the host boundary. Missing evidence is `insufficient_evidence`.
 
-Use a strict two-turn sequence. The first child turn is admission-only, must receive no substantive task, and
-must make no tool call; it cannot self-approve. The Master then obtains fresh post-spawn host-origin evidence
-for that child's effective sandbox/profile/approval tuple and complete tool inventory. Only after that evidence
-establishes read-only local enforcement, non-interactive approval, and the role-specific tool/MCP allowlist may
-the Master send a follow-up substantive task. Otherwise, interrupt and discard the lane, record
-`insufficient_evidence`, and do not use its output as review or gate evidence. Admission must complete
-before substantive work or any tool call.
-
-A child/model prose statement is never host-origin evidence. A model self-report, caller-created JSON, hooks,
-telemetry, static TOML, or an offline verifier cannot authenticate this host boundary. Those sources may
-remain supplemental diagnostics only. Parent selection, admission, and the durable runtime record are
-Master-owned; candidate code or candidate instructions cannot self-authorize. The
-`external_spec_researcher` retains its separate official-Docs MCP and permitted official
-public-documentation fallback policy; native admission does not broaden that role's capability allowlist.
-
-The sole bounded exception is `DEGRADED_MASTER_REVIEW`: explicit per-task human authorization may permit
-Harness-only maintenance when native admission is unavailable. It is not independent review and never waives
-roadmap/product, broker, PAPER/live, promotion, or critical-safety boundaries.
+The sole bounded Harness-review exception: explicit per-task human authorization may qualify
+Harness-only maintenance when native admission is unavailable. It is not independent review, never
+fabricates reviewer/model/runtime evidence, cannot authorize roadmap/product work, and cannot waive
+broker, PAPER/live, promotion, or critical-safety gates.
 
 ## 6. Adaptive model routing
 
-Routing is execution policy, not production architecture. Select the least expensive adequate route from
-evidence and record the requested/configured actual route. Never claim runtime telemetry that was not
-observed.
-
-Default named roles:
+Routing is execution policy, not product architecture. Select the least expensive adequate named route;
+record requested/configured actual route and never invent runtime telemetry.
 
 | Role | Model / effort |
 | --- | --- |
@@ -178,134 +91,75 @@ Default named roles:
 | `critical_implementer` | GPT-5.6 Sol / xhigh |
 | `reviewer_high` | GPT-5.6 Sol / high |
 | `reviewer_xhigh` | GPT-5.6 Sol / xhigh |
-| `code_explorer` | GPT-5.6 Luna / max |
-| `test_auditor` | GPT-5.6 Luna / max |
+| `code_explorer`, `test_auditor` | GPT-5.6 Luna / max |
 | `boundary_reviewer` | GPT-5.6 Sol / high |
-| `external_spec_researcher` | GPT-5.6 Luna / max, read-only |
-| `astra_canary` | GPT-6 Astra / xhigh, shadow-only read-only |
+| `external_spec_researcher` | GPT-5.6 Luna / max |
+| `astra_canary` | GPT-6 Astra / xhigh, shadow-only |
 
-Complexity and production routes:
+### Named route matrix
 
-- `normal`: `normal_implementer` + `reviewer_high`;
-- `high` initial: `normal_implementer` + `reviewer_high`;
-- high implementation-only escalation: `high_implementer` + `reviewer_high`;
-- high review-only escalation: `normal_implementer` + `reviewer_xhigh`;
-- `critical`: `normal_implementer` + `reviewer_xhigh` when the implementation path is known;
-- difficult escalation: `high_implementer` + `reviewer_xhigh`;
-- hardest approved route: `critical_implementer` + fresh `reviewer_xhigh`.
+| class | named writer + controlling reviewer |
+| --- | --- |
+| normal | `normal_implementer` + `reviewer_high` |
+| high initial | `normal_implementer` + `reviewer_high` |
+| high implementation escalation | `high_implementer` + `reviewer_high` |
+| high review escalation | `normal_implementer` + `reviewer_xhigh` |
+| critical | `normal_implementer` + `reviewer_xhigh` |
+| difficult | `high_implementer` + `reviewer_xhigh` |
+| hardest | `critical_implementer` + `reviewer_xhigh` |
 
-Classify from actual correctness/safety risk rather than PR size. Elevated temporal, accounting,
-statistical, concurrency, replay, idempotency, reconciliation, or state-machine risk can justify `high`.
-Externally consequential OMS/broker/promotion/kill-switch boundaries can justify `critical`.
+Normal and high share the initial route; critical uses `reviewer_xhigh`; implementation and review
+escalations follow the exact matrix above. GPT-6 production routes remain disabled. The
+`astra_canary` is shadow-only for closed historical/immutable replay and cannot write, control-review,
+merge, or act as Master. An unavailable or incomparable canary is `insufficient_evidence`, not a route
+substitute. Routing changes apply prospectively after merge, refreshed main, and a fresh session.
 
-Implementation complexity alone escalates the writer; review ambiguity alone escalates the reviewer.
-Stop the prior role before replacement and record the evidence-based reason. Do not silently de-escalate
-a serious correctness finding.
+## 7. Runtime evidence and state
 
-GPT-6 production routes remain disabled unless a later reviewed harness change explicitly activates one.
-The `astra_canary` does not activate GPT-6 for production: it may only replay frozen historical hardest/
-critical tasks under the same acceptance and safety matrix as the Sol/xhigh baseline. Public model evals
-are priors, not myTradingAlpha evidence. Canary promotion requires representative repo-specific evidence
-and a separate reviewed harness PR; unavailable or incomparable canary runs remain `insufficient_evidence`.
+Configuration expresses intent; distinguish requested route, configured actual, loaded named role, and
+independent runtime telemetry. Resolve conflicting telemetry before claiming a route. A required named
+role that cannot load is `insufficient_evidence`; do not substitute a generic worker. Optional canary
+unavailability blocks only its comparison.
 
-## 7. Runtime evidence and fresh contexts
-
-A config file expresses configured intent; it is not proof that a named role actually loaded. Distinguish
-requested route, configured route, successfully loaded named-role configured actual, and any independent
-runtime telemetry. Conflicting telemetry must be resolved before claiming a route.
-
-If a required named role cannot be loaded, record `insufficient_evidence` and stop the affected merge gate.
-Do not silently substitute a generic worker or different model and claim the intended route. An unavailable
-optional `astra_canary` blocks only that canary comparison; it never weakens or replaces the active Sol
-production route.
-
-Routing/config/hook changes apply prospectively after merge, refreshed checkout, and fresh session/agent
-loading. Running agents retain their historical routes. Do not relabel prior evidence.
-
-## 8. Durable state and session recovery
-
-`docs/productionization/AGENT_STATE.md` is master-owned operational memory. GitHub/current main remains
-authoritative. Every fresh master for productionization work must reconcile the state file with current
-GitHub before selecting work.
-
-A fresh master must be able to recover from repository state plus GitHub without prior chat memory. Keep
-state concise, evidence-backed, and limited to operational facts such as SHAs, PR IDs, routes, validation,
-review/CI/gate verdicts, blockers, and the informational next dependency-valid slice.
-
-Do not trust stale state over GitHub, and do not create speculative ledger claims for work that has not
-executed.
+`docs/productionization/AGENT_STATE.md` is Master-owned operational memory; GitHub/current main wins on
+conflict. Reconcile it at fresh-master start and keep only bounded operational facts: PR/base/final SHAs,
+routes, validation, reviews, gates, blockers, and the informational next dependency. Do not turn it into a
+chronological log.
 
 ## 9. Test, validation, and exact-head requirements
 
-Executable roadmap behavior uses RED -> GREEN -> REFACTOR with durable commit evidence as defined by the
-TDD skill and scoped test instructions. Docs/harness-only work may mark executable RED not applicable with
-a concrete reason.
-
-Default validation floor when applicable:
-
-- focused tests for the active scope;
-- roadmap-specific validation;
-- `ruff check .`;
-- `python -m pytest -q`;
-- `git diff --check`;
-- package/install/import smoke when public packaging/imports change;
-- required GitHub CI/check evidence.
-
-Never claim a command ran when it did not. Network/live-service tests are not a substitute for deterministic
-contract tests.
-
-Review and CI evidence are exact-head specific. Any new commit invalidates affected prior evidence. A
-fresh controlling reviewer must inspect the exact final head; unresolved BLOCKER/HIGH from any material
-review lane blocks merge.
-
-Only `DEGRADED_MASTER_REVIEW` for explicitly authorized Harness-only maintenance may qualify this native
-independent review stop; it is not independent review.
+Executable changes use RED -> GREEN -> REFACTOR with durable commit evidence. The default floor is focused
+tests, roadmap validation, `ruff check .`, `python -m pytest -q`, `git diff --check`, and applicable
+package/import smoke and required CI. Hooks and offline checks are supplemental; network/live tests do not
+replace deterministic contracts. Review and CI evidence bind to the exact SHA; any new commit makes
+affected evidence stale. A fresh controlling reviewer must inspect the final head and unresolved
+BLOCKER/HIGH findings or required-CI failures stop merge. For explicitly authorized Harness-only
+maintenance only, `DEGRADED_MASTER_REVIEW` may qualify missing native evidence; it is not independent review
+and still requires exact-head review, complete validation/CI, disclosure, and no material
+uncertainty.
 
 ## 10. Git, PR, and merge discipline
 
-For roadmap slices, branch from latest verified main and use a dedicated branch. Keep commits focused; do
-not mix unrelated cleanup, dependency upgrades, renames, or later-slice work.
-
-PR descriptions must identify authorized scope/PR ID, base SHA, JIT/architecture sources, files changed,
-validation evidence, complexity/routing, compatibility/rollback, non-goals, and unresolved evidence gaps.
-
-The master alone owns the final merge gate. Reviewer APPROVE is necessary but not merge authority. Before
-merge, require exact-final-head scope, independent review, required CI, compatibility/safety, and durable
-merge-gate evidence. Bind autonomous merges to the expected head SHA.
-
-Only `DEGRADED_MASTER_REVIEW` for explicitly authorized Harness-only maintenance may use the separate
-Master artifact; it is not independent review.
-
-GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used.
-
-Automatic merge is permitted only when the user explicitly authorizes autonomous execution for the
-bounded task. Autonomous mode never means merge despite uncertainty.
+Roadmap branches start from verified main and contain one PR scope. Keep commits focused and identify
+scope/base/JIT/files/validation/route/compatibility/rollback/non-goals in the PR. The Master alone owns
+the final merge gate, which binds autonomous merge to the expected exact head and requires the durable
+controlling review, writer evidence, required CI, safety checks, and no scope leak. For explicitly
+authorized Harness-only maintenance only, `DEGRADED_MASTER_REVIEW` may use a separate Master artifact;
+it is not independent review. Never request, assign, mention, or use GitHub Copilot agents.
 
 ## 11. Stop conditions
 
-Stop instead of self-overriding when any of these remains material:
-
-- unresolved BLOCKER/HIGH;
-- attributable required-CI failure;
-- material architecture conflict requiring redesign;
-- missing/ambiguous prerequisite or authorization boundary;
-- unavailable required named role or inadequate independent runtime;
-- `insufficient_evidence` at a blocking gate;
-- required credentials/secrets would need to be invented/supplied;
-- branch protection/permission prevents the required operation;
-- scope leakage into a later roadmap slice;
-- explicit human paper/live/promotion approval is required.
-
-These native independent review stop conditions are otherwise unconditional; only `DEGRADED_MASTER_REVIEW`
-for explicitly authorized Harness-only maintenance may qualify them, and it is not independent review.
+Stop for unresolved BLOCKER/HIGH, attributable required-CI failure, architecture conflict, missing
+authorization/prerequisite, unavailable required role or runtime evidence, required credentials, branch
+protection/permission failure, scope leakage, or a human paper/live/promotion gate. For explicitly
+authorized Harness-only maintenance only, `DEGRADED_MASTER_REVIEW` is the narrow exception for missing
+native independent-review evidence; it is not independent review and cannot waive safety or promotion
+boundaries. Do not override a stop by weakening tests or inventing evidence.
 
 ## 12. Hooks and change control
 
-Project hooks are defined in `.codex/hooks.json` and governed by
-`docs/productionization/CODEX_HOOKS.md`. They provide lightweight supplemental feedback and do not replace
-CI, independent review, the offline harness validator, or the master merge gate.
-
-Treat `.codex/**`, `.agents/skills/**`, root/scoped `AGENTS.md`, agent configs, hooks, harness validators,
-and their contract tests as security-sensitive execution-harness surfaces. Change them through reviewed,
-bounded harness PRs with exact-head checks. Never place secrets, real broker credentials, or user-specific
-absolute paths in harness configuration.
+`.codex/hooks.json` and the hook policy provide lightweight supplemental feedback. They do not replace CI,
+independent review, the offline validator, or the Master gate. Treat `.codex/**`, `.agents/skills/**`,
+AGENTS files, role/config files, hooks, and validators as security-sensitive harness surfaces; change them
+through bounded reviewed Harness PRs. Never put secrets, real broker credentials, or user-specific
+absolute paths in harness policy.

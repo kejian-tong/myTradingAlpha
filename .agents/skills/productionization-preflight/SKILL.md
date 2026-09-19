@@ -5,75 +5,49 @@ description: Reconcile GitHub, main, roadmap state, current code, applicable ins
 
 # Productionization Preflight
 
-Use this skill before writing a JIT scope contract or editing productionization code.
+Use before the JIT scope contract or any productionization edit. This procedure supplies evidence; root
+`AGENTS.md` and scoped instructions remain authoritative.
 
 ## Procedure
 
-1. Fetch/sync current `main`; record its exact SHA and verify the active worktree/branch will not overwrite
-   unrelated user changes.
-2. Read the applicable instruction chain. Codex automatically discovers project instructions only along
-   the project-root-to-current-working-directory chain and stops at the CWD. Always read root `AGENTS.md`;
-   then explicitly read every deeper `AGENTS.md` applicable to any in-scope path that is not already on
-   the discovered CWD chain. Opening or editing a file does not by itself prove its nested instructions
-   were automatically loaded.
-3. Read `docs/productionization/AGENT_STATE.md` completely and reconcile it against current GitHub PR,
-   merge, and CI/check evidence. GitHub/current main wins on conflict.
-4. Identify the explicitly authorized roadmap PR ID or bounded maintenance scope. Do not infer authority
-   to start a later roadmap slice.
-5. For roadmap work, read the assigned row in `07_PR_IMPLEMENTATION_PLAN.md`, the complete relevant phase
-   `DESIGN.md` and `IMPLEMENTATION.md`, and applicable traceability/test appendices.
-6. Inspect actual current files, symbols, interfaces, package/import behavior, tests, validation scripts,
-   and CI surfaces touched by the proposed slice.
-7. Reconcile doc assumptions with current implementation reality. Record drift rather than silently
-   redesigning architecture.
-8. Identify dependencies/prerequisites, compatibility constraints, side-effect boundaries, explicit
-   non-goals, and later-slice deferrals.
-9. Build an explicit boolean `risk_profile` for the authorized scope using exactly these tags:
-   `untrusted_input`, `serialization_canonicalization`, `secret_redaction`, `temporal_provenance`,
-   `resource_complexity`, `concurrency_idempotency`, and `external_side_effect`. A tag is true when the
-   proposed change creates, modifies, validates, serializes, transports, or relies on that risk surface;
-   do not set tags false merely because the intended implementation is small.
-10. If **any** risk tag is true, the Master must run a fresh read-only `boundary_reviewer` against the same
-    reconciled base SHA **before RED/GREEN implementation**. The specialist must return a compact
-    adversarial contract matrix mapping each true tag to concrete attack/failure cases, invariants, and
-    required closure evidence. Incorporate material findings into the JIT and RED plan. An unavailable
-    required boundary reviewer is `insufficient_evidence`; do not proceed as if the mandatory preflight
-    occurred.
-11. `code_explorer` and `test_auditor` remain optional preflight lanes when materially useful. They may run
-    in parallel with the mandatory boundary lane when their work is independent. Specialists add evidence;
-    they do not replace the controlling exact-head reviewer.
-12. Classify the task `normal`, `high`, or `critical` from the resulting correctness/safety risk and select
-    the least expensive adequate named production route under root policy. The risk tags inform but do not
-    mechanically determine the class; document the evidence-based mapping.
-13. For any fresh implementation or repair writer, confirm the `writer-lease` helper and skill come from
-    refreshed trusted `main`, identify the exact lease identity inputs, and confirm no previous writer remains
-    active. The Master acquires only before the writer starts; preflight and ordinary CI do not treat candidate
-    code or a live-state query as authority.
+1. Fetch/sync current `main`; record its exact SHA and confirm the worktree/branch will not overwrite
+   unrelated changes.
+2. Read root `AGENTS.md`, then explicitly read every deeper `AGENTS.md` applicable to an in-scope path that
+   is outside the project-root-to-current-working-directory chain. The instruction chain stops at the CWD.
+   Opening/editing a file does not by itself prove its instructions loaded.
+3. Read and reconcile `docs/productionization/AGENT_STATE.md` with current GitHub PR/merge/check evidence;
+   GitHub/current main wins.
+4. Confirm the authorized PR or bounded Harness scope; do not infer authority for a later slice.
+5. For roadmap work, read its plan row, complete phase DESIGN/IMPLEMENTATION, and applicable appendices.
+6. Inspect actual files/symbols/APIs, tests, package/runtime touchpoints, validation, and CI; record drift,
+   dependencies, compatibility, side-effect boundaries, non-goals, and rollback.
+7. Build a boolean `risk_profile` using exactly these tags: `untrusted_input`,
+   `serialization_canonicalization`, `secret_redaction`, `temporal_provenance`, `resource_complexity`,
+   `concurrency_idempotency`, and `external_side_effect`. Do not set a tag false merely because the edit
+   is small.
+8. If **any** risk tag is true, before RED/GREEN implementation the Master runs a fresh read-only
+   `boundary_reviewer` on the same base SHA. Its adversarial contract matrix maps each true tag to concrete
+   attack/failure cases, invariants, and closure evidence. An unavailable required lane is
+   `insufficient_evidence`.
+9. Optional `code_explorer`/`test_auditor` lanes may run independently; they add evidence and do not
+   replace the controlling reviewer. Classify risk and select the least expensive adequate
+   named route under root policy.
+10. For a fresh writer, confirm the lease helper/skill comes from trusted refreshed main, the exact lane
+    identity, and no previous writer remains active. The Master acquires before the writer; preflight and
+    ordinary CI do not authenticate live state.
 
 ## Adversarial tag intent
 
-- `untrusted_input`: hostile/unknown external or caller-controlled values, subclass/callback/object-shape
-  attacks, parser/validator boundaries, injection or malformed wire data.
-- `serialization_canonicalization`: canonical bytes/hashes, schema/wire compatibility, Unicode/escaping,
-  deterministic ordering, mutable-after-hash or representation ambiguity.
-- `secret_redaction`: credentials/tokens/private identifiers, logging/rendering/derived artifacts,
-  escaped/encoded/nested secret representations or confidentiality boundaries.
-- `temporal_provenance`: availability/ingestion/event/publication timestamps, knowledge cutoffs, revision
-  lineage, source manifests, replay/PIT eligibility or chronology.
-- `resource_complexity`: adversarial CPU/memory/input-size behavior, recursion, pathological matching,
-  bounded work, amplification or denial-of-service surfaces.
-- `concurrency_idempotency`: races, retries, duplicate work, state transitions, exactly-once/idempotent
-  semantics, unknown acknowledgement or reconciliation.
-- `external_side_effect`: network/persistence/provider/broker/file/process writes, credentials, deployment,
-  PAPER/live behavior or any action whose consequences escape the candidate's pure in-memory boundary.
+Use the matrix for hostile object/callback or malformed input (`untrusted_input`), canonical bytes,
+Unicode, escaping, and mutable-after-hash (`serialization_canonicalization`), encoded/nested secrets
+(`secret_redaction`), chronology/cutoff/revision (`temporal_provenance`), bounded work and input size
+(`resource_complexity`), races/retries/duplicates/state transitions (`concurrency_idempotency`), and
+denied network/persistence/provider/broker/file/process effects (`external_side_effect`).
 
-## Output
+## Output and stop rule
 
-Return a compact preflight record containing base SHA, applicable instructions/docs, current-state drift,
-relevant paths/symbols, prerequisites, the complete `risk_profile`, boundary-review requirement/result,
-adversarial matrix reference when required, risk class, requested named routes, validation surfaces,
-writer-lease readiness/limitations, blockers, and whether it is safe to proceed to the JIT scope contract.
-
-Do not edit production code during this skill. If an unresolved architecture conflict, missing prerequisite,
-unavailable required role, mandatory adversarial finding, or human gate blocks the task, return
-`insufficient_evidence`/blocked rather than inventing a resolution.
+Return base SHA, instructions/docs, current drift, paths, prerequisites, complete risk profile, boundary
+review/matrix reference, class/routes, validation surfaces, lease readiness, blockers, and whether JIT is
+safe. If a required role, prerequisite, architecture resolution, adversarial closure, or human gate is
+missing, return `insufficient_evidence`/blocked; do not invent a resolution. Shift-left evidence is not a
+replacement; do not replace the controlling exact-head reviewer.
