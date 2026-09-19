@@ -108,8 +108,8 @@ record requested/configured actual route and never invent runtime telemetry.
 | difficult | `high_implementer` + `reviewer_xhigh` |
 | hardest | `critical_implementer` + `reviewer_xhigh` |
 
-Normal/high/critical routes use Luna/max plus Sol/high initially; evidence may escalate implementation
-to Sol/high, review to Sol/xhigh, or both to Sol/xhigh. GPT-6 production routes remain disabled. The
+Normal and high share the initial route; critical uses `reviewer_xhigh`; implementation and review
+escalations follow the exact matrix above. GPT-6 production routes remain disabled. The
 `astra_canary` is shadow-only for closed historical/immutable replay and cannot write, control-review,
 merge, or act as Master. An unavailable or incomparable canary is `insufficient_evidence`, not a route
 substitute. Routing changes apply prospectively after merge, refreshed main, and a fresh session.

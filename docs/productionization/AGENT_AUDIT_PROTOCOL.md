@@ -22,15 +22,16 @@ SHAs, effective sandbox/profile/approval, and four lowercase SHA-256 references 
 The verifier performs no network, write, transcript, or runtime-control operation. Missing or contradictory
 host evidence remains `insufficient_evidence`; caller-created evidence cannot upgrade it.
 
-The receipt schema is bounded, canonical, and duplicate-free: `schema_version`, `evidence_source`,
-`permission_system`, `permission_profile`, `tool_names`, `pr_id`, `base_sha`, `head_sha`, `tree_sha`,
-`role`, and `config_path`. The permission system is `legacy_sandbox` or `permission_profile`; the
-permission profile meaning is `:read-only` for an admissible read-only lane and `disabled` for an absent
-permission profile. Trusted expectations bind `expected_pr_id`, `expected_base_sha`, `expected_head_sha`,
-`expected_role`, and `expected_config_path` to the checked-out tree. `tool_names` is a complete sorted unique
-inventory. The parser rejects input over 64 KiB, duplicate-key JSON, partial-promisor repositories, and
-lazy-fetch/object substitution. For external specification research, the exact OpenAI Developer Docs MCP
-allowlist is `openaiDeveloperDocs`: `fetch_openai_doc` and `search_openai_docs` only.
+The receipt schema is bounded, canonical, and duplicate-free: `schema_version=1` and
+`evidence_source=host_runtime`, with `permission_system`, `permission_profile`, `tool_names`, `pr_id`,
+`base_sha`, `head_sha`, `tree_sha`, `role`, and `config_path`. `permission_system=legacy_sandbox` requires
+an active read-only legacy sandbox and `permission_profile=disabled`; `permission_system=permission_profile`
+requires the legacy sandbox disabled and `permission_profile=:read-only`. Trusted expectations bind
+`expected_pr_id`, `expected_base_sha`, `expected_head_sha`, `expected_role`, and `expected_config_path` to
+the checked-out tree. `tool_names` is a complete sorted unique inventory. The parser rejects input over
+64 KiB, duplicate-key JSON, partial-promisor repositories, and lazy-fetch/object substitution. For external
+specification research, the exact OpenAI Developer Docs MCP allowlist is `openaiDeveloperDocs`:
+`fetch_openai_doc` and `search_openai_docs` only.
 
 ### 1.1.1 Hook runtime manifest evidence
 
