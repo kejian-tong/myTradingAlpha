@@ -34,6 +34,17 @@ LEGACY_ADMISSION_MARKER = (
     "Native read-only admission is governed by root AGENTS.md and must complete before "
     "substantive work or any tool call."
 )
+LEGACY_TWO_TURN_PHRASES = (
+    "first child turn is admission-only",
+    "receive no substantive task",
+    "make no tool call",
+    "cannot self-approve",
+    "follow-up substantive task",
+    "interrupt and discard the lane",
+)
+READ_ONLY_REVIEW_MARKER = (
+    "Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate."
+)
 
 
 def _role(role: str, root: Path = ROOT) -> dict[str, object]:
@@ -143,38 +154,43 @@ def test_checker_no_longer_owns_native_admission_or_two_turn_gate() -> None:
     assert "approval_policy" in source
 
 
-def test_offline_validator_allows_retired_role_admission_marker(
+def test_offline_validator_rejects_retired_role_admission_marker(
     tmp_path: Path,
 ) -> None:
     checker = _checker()
     fixture = _copy_harness_fixture(tmp_path)
     path = fixture / ".codex/agents/reviewer-high.toml"
     text = path.read_text(encoding="utf-8")
-    path.write_text(text.replace(LEGACY_ADMISSION_MARKER, ""), encoding="utf-8")
+    path.write_text(
+        text.replace(
+            READ_ONLY_REVIEW_MARKER,
+            f"{READ_ONLY_REVIEW_MARKER}\n\n{LEGACY_ADMISSION_MARKER}",
+        ),
+        encoding="utf-8",
+    )
 
     errors = checker.configuration_errors(fixture)
-    assert not any(
-        "reviewer_high" in error and "admission" in error.casefold()
-        for error in errors
-    ), errors
+    assert "reviewer_high retired native admission marker is forbidden" in errors
 
 
 @pytest.mark.parametrize(
     "relative",
     ("AGENTS.md", "docs/productionization/AGENT_AUDIT_PROTOCOL.md"),
 )
-def test_offline_validator_allows_retired_two_turn_gate(
+@pytest.mark.parametrize("legacy_phrase", LEGACY_TWO_TURN_PHRASES)
+def test_offline_validator_rejects_retired_two_turn_gate(
     tmp_path: Path,
     relative: str,
+    legacy_phrase: str,
 ) -> None:
     checker = _checker()
     fixture = _copy_harness_fixture(tmp_path)
     path = fixture / relative
     text = path.read_text(encoding="utf-8")
     path.write_text(
-        text.replace("first child turn is admission-only", "review context is separate"),
+        f"{text}\nRetired policy replay: {legacy_phrase}.\n",
         encoding="utf-8",
     )
 
     errors = checker.configuration_errors(fixture)
-    assert not any("two-turn native admission" in error for error in errors), errors
+    assert f"retired two-turn admission phrase is forbidden: {relative}" in errors
