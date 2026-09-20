@@ -37,27 +37,23 @@ _COLLABORATION_INSTRUCTION_CONTRACT = (
     "Do not invoke collaboration controls or delegate nested work.",
     "Any attempted or completed nested delegation is a blocking policy violation.",
 )
-_READ_ONLY_ADMISSION_MARKER = (
-    "Native read-only admission is governed by root AGENTS.md and must complete before "
-    "substantive work or any tool call."
+_READ_ONLY_REVIEW_MARKER = (
+    "Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate."
 )
-_ROOT_NATIVE_ADMISSION_CONTRACT = (
-    "fresh host-enforced read-only parent",
-    "live parent overrides are controlling",
-    "post-spawn host-origin evidence",
-    "effective sandbox/profile/approval tuple",
-    "complete tool inventory",
-    "discard the lane",
-    "cannot authenticate",
+_ROOT_REVIEW_ASSURANCE_CONTRACT = (
+    "Read-only review assurance",
+    "detached exact-head worktree",
+    "cleanliness before and after review",
+    "supplemental disclosure",
+    "does not itself block or stop review",
+    "The Master alone owns the merge decision",
 )
-_TWO_TURN_NATIVE_ADMISSION_CONTRACT = (
-    "first child turn is admission-only",
-    "receive no substantive task",
-    "make no tool call",
-    "cannot self-approve",
-    "follow-up substantive task",
-    "interrupt and discard the lane",
-    "child/model prose",
+_PROTOCOL_REVIEW_ASSURANCE_CONTRACT = (
+    "Read-only role assurance",
+    "fresh context separate from the writer",
+    "exact SHA and cleanliness before and after review",
+    "supplemental disclosure",
+    "Independent review assurance",
 )
 _SKILL_NAMES = (
     "productionization-preflight",
@@ -297,15 +293,27 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
     root_text = root_agents.read_text(encoding="utf-8")
     if len(root_text.encode("utf-8")) > 18_000:
         errors.append("root AGENTS.md exceeds reviewed compact instruction budget")
-    if any(clause not in root_text for clause in _ROOT_NATIVE_ADMISSION_CONTRACT):
-        errors.append("root native read-only admission contract is missing")
-    if any(clause not in root_text for clause in _TWO_TURN_NATIVE_ADMISSION_CONTRACT):
-        errors.append("root two-turn native admission contract is missing")
+    if any(clause not in root_text for clause in _ROOT_REVIEW_ASSURANCE_CONTRACT):
+        errors.append("root read-only review assurance contract is missing")
     protocol_text = (root / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
         encoding="utf-8"
     )
-    if any(clause not in protocol_text for clause in _TWO_TURN_NATIVE_ADMISSION_CONTRACT):
-        errors.append("protocol two-turn native admission contract is missing")
+    if any(clause not in protocol_text for clause in _PROTOCOL_REVIEW_ASSURANCE_CONTRACT):
+        errors.append("protocol read-only review assurance contract is missing")
+    active_policy_text = "\n".join(
+        (
+            root_text,
+            protocol_text,
+            (root / "docs/productionization/AGENTS.md").read_text(encoding="utf-8"),
+            (root / "docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md").read_text(
+                encoding="utf-8"
+            ),
+            (root / ".codex/config.toml").read_text(encoding="utf-8"),
+            *(path.read_text(encoding="utf-8") for path in (root / ".agents/skills").glob("*/SKILL.md")),
+        )
+    )
+    if "DEGRADED_MASTER_REVIEW" in active_policy_text:
+        errors.append("retired degraded review fallback remains in active policy")
     for relative in _SCOPED_AGENT_PATHS:
         path = root / relative
         if not path.is_file():
@@ -385,9 +393,9 @@ def configuration_errors(root: Path) -> list[str]:
                 errors.append(f"{name} collaboration instruction contract is missing")
             if readonly and (
                 type(instructions) is not str
-                or _READ_ONLY_ADMISSION_MARKER not in instructions
+                or _READ_ONLY_REVIEW_MARKER not in instructions
             ):
-                errors.append(f"{name} native read-only admission intent is missing")
+                errors.append(f"{name} read-only non-mutation contract is missing")
             if name == "normal_implementer" and (
                 type(instructions) is not str or "normal/high/critical" not in instructions
             ):

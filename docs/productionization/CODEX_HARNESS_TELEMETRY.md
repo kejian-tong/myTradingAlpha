@@ -26,14 +26,13 @@ high-capability function gateways, and external App/MCP/connector tools outside 
 read-only allowlist. Canonical bare and namespaced mutation/delegation aliases receive the same rejection;
 read-only `list_agents` and `wait_agent` observation controls may remain visible.
 Diagnostic output does not echo untrusted receipt keys or values. The verifier performs no network or
-write operation and does not persist receipt data to telemetry. Invoke it only as supplemental admission
-evidence, with independent runtime observation and the normal review/CI/merge gates still required.
+write operation and does not persist receipt data to telemetry. Invoke it only as supplemental boundary
+evidence; the normal review/CI/merge gates remain required.
 
-Native read-only admission depends on fresh host-origin evidence captured before substantive child work or
-any tool call: the effective sandbox/profile/approval tuple and complete tool inventory. Lifecycle hooks,
-this telemetry stream, model reports, caller JSON, static configuration, and the offline receipt verifier
-cannot authenticate that boundary. Missing or contradictory host evidence discards the lane with
-`insufficient_evidence`; telemetry cannot repair or override the failed admission.
+Host-origin sandbox/profile/approval facts and the complete tool inventory are supplemental disclosure.
+Lifecycle hooks, this telemetry stream, model reports, caller JSON, static configuration, and the offline
+receipt verifier cannot authenticate that boundary. Missing host evidence does not itself block review;
+contradictory observed evidence or observed mutation remains a blocking finding that telemetry cannot repair.
 
 ## Hook runtime manifests
 

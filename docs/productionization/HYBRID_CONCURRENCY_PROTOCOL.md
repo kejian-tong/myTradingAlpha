@@ -21,11 +21,11 @@ is non-blocking. Do not invoke collaboration controls or delegate nested work. A
 nested delegation is a blocking policy violation. Runtime-denied or no-op attempts remain blocking. Missing
 observation is `insufficient_evidence`; `telemetry_conflict` is separate.
 
-Every read-only lane requires the root native parent-admission sequence and complete host-origin evidence;
-an unverified lane is discarded. `DEGRADED_MASTER_REVIEW` is an explicit per-task human-authorized
-Harness-only fallback when native-admission is unavailable. It is not independent review and cannot
-authorize roadmap/product, broker, paper and live, promotion, externally consequential, or critical-safety
-work. See the root and audit protocol for the assurance artifact and safety boundaries.
+Every read-only lane is a fresh context separate from the writer and retains configured read-only intent.
+It does not edit files, commit, push, merge, or delegate. Missing host-origin boundary facts are
+supplemental disclosure and do not themselves block a lane; observed mutation, stale evidence, dirty
+isolation, a missing required role, or contradictory runtime facts remain blocking. See the root and audit
+protocol for exact-head assurance and safety boundaries.
 
 ## 2. Concurrency budget
 
@@ -80,7 +80,7 @@ architecture conflict, unavailable required role, scope leakage, or missing huma
 
 Before merge, the Master independently confirms JIT scope, single-writer history, RED/GREEN evidence, exact
 head review, closure of material findings, required CI, compatibility, and safety/promotion boundaries.
-The durable Master gate and any degraded assurance artifact follow `AGENT_AUDIT_PROTOCOL.md`; a reviewer
+The durable Master gate and independent review artifact follow `AGENT_AUDIT_PROTOCOL.md`; a reviewer
 verdict is eligibility evidence, not merge authority.
 
 ## 8. Lifecycle and rollback

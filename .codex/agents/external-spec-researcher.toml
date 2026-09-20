@@ -23,7 +23,7 @@ account, credential, order-entry, or write-capable financial MCPs. Return a comp
 the master with source freshness, contradictions, unresolved gaps, and whether the result is strong
 enough to use in a JIT/review decision.
 
-Native read-only admission is governed by root AGENTS.md and must complete before substantive work or any tool call.
+Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

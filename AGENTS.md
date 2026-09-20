@@ -62,21 +62,20 @@ active PR. Never overlap a replacement writer. Review lanes inspect the same fro
 completed lanes. The project guardrail is six concurrently open spawned threads, not a target or lifetime
 cap. The Master alone decides and merges. GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used.
 
-### 5.1 Native read-only admission
+### 5.1 Read-only review assurance
 
-Native host-enforced read-only admission is preferred and required for reviewers, auditors, explorers,
-external specification research, canaries, and every roadmap/product, broker, PAPER/live, promotion,
-externally consequential, or critical-safety review. A fresh host-enforced read-only parent is required;
-live parent overrides are controlling; before substantive work or any tool call, obtain post-spawn host-origin evidence
-for the effective sandbox/profile/approval tuple and complete tool inventory. The first child turn is admission-only,
-must receive no substantive task, make no tool call, and cannot self-approve; only then may the follow-up substantive task
-be sent. On failure, interrupt and discard the lane. child/model prose is not host evidence; model self-report, caller-created JSON, hooks, telemetry, static TOML, and an
-offline verifier cannot authenticate the host boundary. Missing evidence is `insufficient_evidence`.
+Reviewers, auditors, explorers, external specification researchers, and canaries use fresh contexts
+separate from the writer. Their role configuration retains `sandbox_mode = "read-only"`,
+`approval_policy = "never"`, and `[agents] enabled = false`. They do not edit files, create commits, push,
+merge, or delegate. Controlling review uses a detached exact-head worktree, records candidate SHA and
+cleanliness before and after review, replays RED, and binds the verdict and required CI to the frozen head.
+Any later commit makes the affected review and CI stale.
 
-The sole bounded Harness-review exception: explicit per-task human authorization may qualify
-Harness-only maintenance when native admission is unavailable. It is not independent review, never
-fabricates reviewer/model/runtime evidence, cannot authorize roadmap/product work, and cannot waive
-broker, PAPER/live, promotion, or critical-safety gates.
+Missing host-origin sandbox/profile/approval evidence or a complete tool inventory
+is supplemental disclosure and does not itself block or stop review. Configuration, model prose, caller JSON, hooks,
+telemetry, and offline verifiers still cannot authenticate runtime isolation. Observed mutation, a stale
+head, dirty isolation, a missing required role, contradictory runtime facts, unresolved BLOCKER/HIGH, or
+required-CI failure remains fail-closed. The Master alone owns the merge decision.
 
 ## 6. Adaptive model routing
 
@@ -133,28 +132,24 @@ tests, roadmap validation, `ruff check .`, `python -m pytest -q`, `git diff --ch
 package/import smoke and required CI. Hooks and offline checks are supplemental; network/live tests do not
 replace deterministic contracts. Review and CI evidence bind to the exact SHA; any new commit makes
 affected evidence stale. A fresh controlling reviewer must inspect the final head and unresolved
-BLOCKER/HIGH findings or required-CI failures stop merge. For explicitly authorized Harness-only
-maintenance only, `DEGRADED_MASTER_REVIEW` may qualify missing native evidence; it is not independent review
-and still requires exact-head review, complete validation/CI, disclosure, and no material
-uncertainty.
+BLOCKER/HIGH findings or required-CI failures stop merge. Missing supplemental host-attestation facts do
+not replace the required separate controlling review, complete validation, or exact-head CI.
 
 ## 10. Git, PR, and merge discipline
 
 Roadmap branches start from verified main and contain one PR scope. Keep commits focused and identify
 scope/base/JIT/files/validation/route/compatibility/rollback/non-goals in the PR. The Master alone owns
 the final merge gate, which binds autonomous merge to the expected exact head and requires the durable
-controlling review, writer evidence, required CI, safety checks, and no scope leak. For explicitly
-authorized Harness-only maintenance only, `DEGRADED_MASTER_REVIEW` may use a separate Master artifact;
-it is not independent review. Never request, assign, mention, or use GitHub Copilot agents.
+controlling review, writer evidence, required CI, safety checks, and no scope leak. Never request, assign,
+mention, or use GitHub Copilot agents.
 
 ## 11. Stop conditions
 
 Stop for unresolved BLOCKER/HIGH, attributable required-CI failure, architecture conflict, missing
 authorization/prerequisite, unavailable required role or runtime evidence, required credentials, branch
-protection/permission failure, scope leakage, or a human paper/live/promotion gate. For explicitly
-authorized Harness-only maintenance only, `DEGRADED_MASTER_REVIEW` is the narrow exception for missing
-native independent-review evidence; it is not independent review and cannot waive safety or promotion
-boundaries. Do not override a stop by weakening tests or inventing evidence.
+protection/permission failure, scope leakage, observed reviewer mutation, stale/dirty isolation, or a human
+paper/live/promotion gate. Supplemental host-attestation absence alone is not a stop. Do not override a
+stop by weakening tests or inventing evidence.
 
 ## 12. Hooks and change control
 
