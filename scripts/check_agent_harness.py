@@ -55,6 +55,18 @@ _PROTOCOL_REVIEW_ASSURANCE_CONTRACT = (
     "supplemental disclosure",
     "Independent review assurance",
 )
+_RETIRED_ROLE_ADMISSION_MARKER = (
+    "Native read-only admission is governed by root AGENTS.md and must complete before "
+    "substantive work or any tool call."
+)
+_RETIRED_TWO_TURN_PHRASES = (
+    "first child turn is admission-only",
+    "receive no substantive task",
+    "make no tool call",
+    "cannot self-approve",
+    "follow-up substantive task",
+    "interrupt and discard the lane",
+)
 _SKILL_NAMES = (
     "productionization-preflight",
     "jit-scope-contract",
@@ -300,6 +312,13 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
     )
     if any(clause not in protocol_text for clause in _PROTOCOL_REVIEW_ASSURANCE_CONTRACT):
         errors.append("protocol read-only review assurance contract is missing")
+    for relative, text in (
+        ("AGENTS.md", root_text),
+        ("docs/productionization/AGENT_AUDIT_PROTOCOL.md", protocol_text),
+    ):
+        folded = text.casefold()
+        if any(phrase in folded for phrase in _RETIRED_TWO_TURN_PHRASES):
+            errors.append(f"retired two-turn admission phrase is forbidden: {relative}")
     active_policy_text = "\n".join(
         (
             root_text,
@@ -396,6 +415,12 @@ def configuration_errors(root: Path) -> list[str]:
                 or _READ_ONLY_REVIEW_MARKER not in instructions
             ):
                 errors.append(f"{name} read-only non-mutation contract is missing")
+            if (
+                readonly
+                and type(instructions) is str
+                and _RETIRED_ROLE_ADMISSION_MARKER.casefold() in instructions.casefold()
+            ):
+                errors.append(f"{name} retired native admission marker is forbidden")
             if name == "normal_implementer" and (
                 type(instructions) is not str or "normal/high/critical" not in instructions
             ):

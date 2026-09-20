@@ -41,7 +41,8 @@ PAPER/live, or promotion behavior was introduced.
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
 integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane
 identity, hook manifests, and advisory stop diagnostics; #82–#84 covered Foundation CI deduplication,
-runtime-neutral collaboration terminology, instruction ownership/compaction, and final state closeout.
+runtime-neutral collaboration terminology, and instruction ownership/compaction; #85 completed final state
+closeout.
 
 | Harness PR | Exact merge SHA |
 | --- | --- |
