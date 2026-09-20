@@ -1,8 +1,9 @@
-"""Contracts for native host admission of repository read-only roles."""
+"""Contracts for configured read-only roles without a native admission gate."""
 
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 from pathlib import Path
 
@@ -29,11 +30,11 @@ WRITER_ROLES = (
     "high_implementer",
     "critical_implementer",
 )
-ROLE_ADMISSION_MARKER = (
+LEGACY_ADMISSION_MARKER = (
     "Native read-only admission is governed by root AGENTS.md and must complete before "
     "substantive work or any tool call."
 )
-TWO_TURN_ADMISSION_CONTRACT = (
+LEGACY_TWO_TURN_PHRASES = (
     "first child turn is admission-only",
     "receive no substantive task",
     "make no tool call",
@@ -41,15 +42,8 @@ TWO_TURN_ADMISSION_CONTRACT = (
     "follow-up substantive task",
     "interrupt and discard the lane",
 )
-POLICY_PATHS = (
-    ".codex/config.toml",
-    "AGENTS.md",
-    "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
-    "docs/productionization/CODEX_FEATURE_WATCHLIST.md",
-    "docs/productionization/CODEX_HARNESS_TELEMETRY.md",
-    "docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md",
-    "scripts/check_agent_harness.py",
-    *(f".codex/agents/{role.replace('_', '-')}.toml" for role in READ_ONLY_ROLES),
+READ_ONLY_REVIEW_MARKER = (
+    "Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate."
 )
 
 
@@ -60,7 +54,7 @@ def _role(role: str, root: Path = ROOT) -> dict[str, object]:
 
 def _checker():
     path = ROOT / "scripts/check_agent_harness.py"
-    spec = importlib.util.spec_from_file_location("native_admission_checker", path)
+    spec = importlib.util.spec_from_file_location("review_assurance_checker", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -93,28 +87,43 @@ def _copy_harness_fixture(tmp_path: Path) -> Path:
 def test_rejected_launcher_canary_and_policy_claims_are_absent() -> None:
     assert not (ROOT / "scripts/read_only_role_launcher.py").exists()
     assert not (ROOT / ".codex/read-only-probe.secret").exists()
-    text = "\n".join((ROOT / path).read_text(encoding="utf-8") for path in POLICY_PATHS)
+    active_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            ROOT / "AGENTS.md",
+            ROOT / "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
+            ROOT / "scripts/check_agent_harness.py",
+        )
+    )
     for rejected in (
         "scripts/read_only_role_launcher.py",
         ".codex/read-only-probe.secret",
         "read_only_role_launcher.py",
         "read-only-probe.secret",
     ):
-        assert rejected not in text
+        assert rejected not in active_text
 
 
-def test_exact_read_only_roles_declare_compact_intent_only_contract() -> None:
+def test_read_only_roles_keep_configuration_and_non_mutation_contracts() -> None:
     for role in READ_ONLY_ROLES:
         config = _role(role)
         assert config["sandbox_mode"] == "read-only", role
         assert config["approval_policy"] == "never", role
         assert config["agents"] == {"enabled": False}, role
+
         instructions = str(config["developer_instructions"])
-        assert ROLE_ADMISSION_MARKER in instructions, role
-        admission_lines = [
-            line for line in instructions.splitlines() if "admission" in line.casefold()
-        ]
-        assert admission_lines == [ROLE_ADMISSION_MARKER], role
+        assert LEGACY_ADMISSION_MARKER not in instructions, role
+        for pattern in (
+            r"do not edit|never edit",
+            r"do not.{0,80}(?:create )?commit|never.{0,80}commit",
+            r"do not.{0,80}push|never.{0,80}push",
+            r"do not.{0,80}merge|never.{0,80}merge",
+            r"do not invoke collaboration controls or delegate nested work",
+        ):
+            assert re.search(pattern, instructions, flags=re.IGNORECASE | re.DOTALL), (
+                f"{role} lost non-mutation/delegation boundary: {pattern}"
+            )
+
     for role in WRITER_ROLES:
         assert "approval_policy" not in _role(role), role
 
@@ -132,92 +141,56 @@ def test_external_spec_preserves_docs_mcp_and_fallback_contract() -> None:
     assert "another official public source only when" in instructions
 
 
-def test_root_policy_requires_host_origin_native_admission_and_fails_closed() -> None:
-    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    for required in (
-        "fresh host-enforced read-only parent",
-        "live parent overrides are controlling",
-        "post-spawn host-origin evidence",
-        "effective sandbox/profile/approval tuple",
-        "complete tool inventory",
-        "before substantive work or any tool call",
-        "discard the lane",
-        "insufficient_evidence",
+def test_checker_no_longer_owns_native_admission_or_two_turn_gate() -> None:
+    source = (ROOT / "scripts/check_agent_harness.py").read_text(encoding="utf-8")
+    for legacy_symbol in (
+        "_READ_ONLY_ADMISSION_MARKER",
+        "_ROOT_NATIVE_ADMISSION_CONTRACT",
+        "_TWO_TURN_NATIVE_ADMISSION_CONTRACT",
+        "two-turn native admission contract is missing",
     ):
-        assert required in text
-    for unauthenticated in (
-        "model self-report",
-        "caller-created JSON",
-        "hooks",
-        "telemetry",
-        "static TOML",
-        "offline verifier",
-    ):
-        assert unauthenticated in text
-    assert "cannot authenticate" in text
+        assert legacy_symbol not in source
+    assert "sandbox_mode" in source
+    assert "approval_policy" in source
 
 
-def test_root_and_protocol_require_two_turn_master_owned_admission() -> None:
-    for relative in (
-        "AGENTS.md",
-        "docs/productionization/AGENT_AUDIT_PROTOCOL.md",
-    ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        for required in TWO_TURN_ADMISSION_CONTRACT:
-            assert required in text, f"{relative}: {required}"
-        assert "child/model prose" in text
-
-
-def test_project_config_defers_to_native_parent_without_claiming_runtime_proof() -> None:
-    config = tomllib.loads((ROOT / ".codex/config.toml").read_text(encoding="utf-8"))
-    assert config["agents"] == {
-        "enabled": True,
-        "max_concurrent_threads_per_session": 6,
-    }
-    assert config["features"]["apps"] is False
-    instructions = str(config["developer_instructions"])
-    assert "fresh host-enforced read-only parent" in instructions
-    assert "post-spawn host-origin" in instructions
-    assert "configuration intent" in instructions
-    assert "cannot authenticate" in instructions
-
-
-@pytest.mark.parametrize("mutation", ["approval", "admission"])
-def test_offline_validator_rejects_missing_intent_without_claiming_authentication(
+def test_offline_validator_rejects_retired_role_admission_marker(
     tmp_path: Path,
-    mutation: str,
 ) -> None:
     checker = _checker()
     fixture = _copy_harness_fixture(tmp_path)
     path = fixture / ".codex/agents/reviewer-high.toml"
     text = path.read_text(encoding="utf-8")
-    if mutation == "approval":
-        text = text.replace('approval_policy = "never"\n', "")
-    else:
-        text = text.replace(ROLE_ADMISSION_MARKER, "admission omitted")
-    path.write_text(text, encoding="utf-8")
+    path.write_text(
+        text.replace(
+            READ_ONLY_REVIEW_MARKER,
+            f"{READ_ONLY_REVIEW_MARKER}\n\n{LEGACY_ADMISSION_MARKER}",
+        ),
+        encoding="utf-8",
+    )
+
     errors = checker.configuration_errors(fixture)
-    assert any("reviewer_high" in error and "intent" in error for error in errors)
-    checker_source = (ROOT / "scripts/check_agent_harness.py").read_text(encoding="utf-8")
-    assert "cannot authenticate host-origin runtime evidence" in checker_source
+    assert "reviewer_high retired native admission marker is forbidden" in errors
 
 
 @pytest.mark.parametrize(
     "relative",
     ("AGENTS.md", "docs/productionization/AGENT_AUDIT_PROTOCOL.md"),
 )
-def test_offline_validator_rejects_missing_two_turn_admission_contract(
+@pytest.mark.parametrize("legacy_phrase", LEGACY_TWO_TURN_PHRASES)
+def test_offline_validator_rejects_retired_two_turn_gate(
     tmp_path: Path,
     relative: str,
+    legacy_phrase: str,
 ) -> None:
     checker = _checker()
     fixture = _copy_harness_fixture(tmp_path)
     path = fixture / relative
     text = path.read_text(encoding="utf-8")
-    text = text.replace(
-        "first child turn is admission-only",
-        "first child turn is unspecified",
+    path.write_text(
+        f"{text}\nRetired policy replay: {legacy_phrase}.\n",
+        encoding="utf-8",
     )
-    path.write_text(text, encoding="utf-8")
+
     errors = checker.configuration_errors(fixture)
-    assert any("two-turn native admission contract is missing" in error for error in errors)
+    assert f"retired two-turn admission phrase is forbidden: {relative}" in errors

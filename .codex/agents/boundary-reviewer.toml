@@ -34,7 +34,7 @@ Return evidence-backed specialist findings classified BLOCKER/HIGH/MEDIUM/LOW/NI
 paths/invariants, the exact SHA inspected, and the smallest safe closure evidence. Any BLOCKER/HIGH
 blocks progression until repaired and re-reviewed at the appropriate gate.
 
-Native read-only admission is governed by root AGENTS.md and must complete before substantive work or any tool call.
+Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

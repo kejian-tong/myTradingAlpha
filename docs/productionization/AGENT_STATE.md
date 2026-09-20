@@ -6,8 +6,8 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `14cb132a92f9177f0f22492a4708a6ed8880918a`
-- `last_reconciled_main_tree`: `1da844190e5aff3a85aabddcf0b9911b2333874c`
+- `last_reconciled_main_sha`: `93b812e654773aa1ddafe26879fae7fec0a8e4b7`
+- `last_reconciled_main_tree`: `24c149c137073aea0d9f5ca17d864638362f1ac2`
 - `roadmap_status`: `sig_02_merged_stopped`
 - `current_pr_id`: none
 - `current_phase`: none active
@@ -32,15 +32,17 @@ PAPER/live, or promotion behavior was introduced.
 
 ## Current harness policy
 
-- `harness_reconciled_through`: `HARNESS-AUD-19` / PR #84 / merge
-  `14cb132a92f9177f0f22492a4708a6ed8880918a`
-- HARNESS-AUD-20 is the closeout reconciliation based on this exact main
-  `14cb132a92f9177f0f22492a4708a6ed8880918a`; it is not merged and has no future merge SHA.
+- `harness_reconciled_through`: `HARNESS-AUD-20` / PR #85 / merge
+  `93b812e654773aa1ddafe26879fae7fec0a8e4b7`
+- `active_harness_pr`: `HARNESS-AUD-21` / PR #86 / pending. Its review-assurance policy is a
+  prospective candidate and is not active until merge, refreshed main, and a fresh session. No merge SHA
+  exists for PR #86.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
 integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane
 identity, hook manifests, and advisory stop diagnostics; #82–#84 covered Foundation CI deduplication,
-runtime-neutral collaboration terminology, and instruction ownership/compaction.
+runtime-neutral collaboration terminology, and instruction ownership/compaction; #85 completed final state
+closeout.
 
 | Harness PR | Exact merge SHA |
 | --- | --- |
@@ -55,16 +57,20 @@ runtime-neutral collaboration terminology, and instruction ownership/compaction.
 | PR #82 | `ab775c3d3d75e3a8f30c455f35c1d33fd782b389` |
 | PR #83 | `f9b6eb12425ef2e5c8933b75ba327adabd7f76af` |
 | PR #84 | `14cb132a92f9177f0f22492a4708a6ed8880918a` |
+| PR #85 | `93b812e654773aa1ddafe26879fae7fec0a8e4b7` |
 
 - Former automatic-review ruleset `23141241`: observed disabled on 2026-09-19; main-protection required contexts
   remain authoritative.
-- Post-#84 main-push CI `35472036890`: PASS; CodeQL `35472036776`: PASS.
+- Post-#85 main-push CI `35473160937`: PASS; CodeQL `35473160983`: PASS.
 
 ## Runtime limitations and watch-only features
 
-- The host permission profile is disabled/unrestricted, so native read-only admission is unavailable.
-- `DEGRADED_MASTER_REVIEW` is a per-task-authorized Harness-only fallback with lower assurance; it is not independent
-  review and cannot authorize roadmap, product, broker, PAPER/live, promotion, or critical-safety work.
+- The host permission profile is disabled/unrestricted. Under the prospective PR #86 policy, missing
+  host-origin sandbox/approval/tool-inventory facts are supplemental disclosure and do not themselves block
+  review.
+- A separate controlling review context remains mandatory and uses a detached exact-head worktree with
+  before/after SHA and cleanliness evidence; observed mutation, stale/dirty isolation, missing required
+  roles, BLOCKER/HIGH findings, and required-CI failures remain blocking.
 - Hook load/trust state is unknown and ineffective absent a host report.
 - Runtime receipt, offline verifier, and checked-in config do not authenticate host/model/isolation.
 - The writer lease is cooperative structural evidence and does not defend against same-user processes.

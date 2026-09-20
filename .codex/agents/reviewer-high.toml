@@ -20,7 +20,7 @@ review artifact containing PR ID, exact reviewed head SHA, this role name/config
 and effort, RED-evidence verdict, findings, acceptance matrix, scope-leak verdict, and final verdict
 APPROVE or REQUEST CHANGES. Do not edit implementation files and do not start the next roadmap PR.
 
-Native read-only admission is governed by root AGENTS.md and must complete before substantive work or any tool call.
+Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

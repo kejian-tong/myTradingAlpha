@@ -78,10 +78,11 @@ review artifact in the PR conversation.
 A BLOCKER or HIGH from any material review lane blocks merge until repaired and re-reviewed on the new
 exact head. An APPROVE verdict makes the PR eligible for the master gate; it does not authorize merge.
 
-Native host-enforced read-only independent review remains preferred and required for roadmap/product,
-broker, PAPER/live, promotion, externally consequential, and critical-safety work. The only lower-assurance
-exception is `DEGRADED_MASTER_REVIEW`, an explicitly per-task human-authorized path for Harness-only
-maintenance when native admission is unavailable; it is not independent review and cannot waive those gates.
+A controlling reviewer remains a fresh context separate from the writer, retains configured read-only
+intent, and uses detached exact-head isolation with before/after SHA and cleanliness checks. Missing
+host-origin sandbox/approval/tool-inventory facts are supplemental disclosure rather than a review stop;
+observed mutation, stale evidence, dirty isolation, missing required roles, BLOCKER/HIGH findings, required
+CI failure, and paper/live/promotion gates still fail closed.
 
 ## Master merge gate
 

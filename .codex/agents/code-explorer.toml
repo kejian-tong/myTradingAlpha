@@ -21,7 +21,7 @@ architecture decisions reserved for the master. Return a concise evidence report
 base/head SHA, relevant paths/symbols, current-state findings, doc/code drift, dependencies, risks, and
 unresolved questions. The master synthesizes your report with other lanes into the JIT spec.
 
-Native read-only admission is governed by root AGENTS.md and must complete before substantive work or any tool call.
+Remain separate from the writer. Do not edit files, create commits, push, merge, or delegate.
 
 Collaboration-control visibility alone is non-blocking.
 Do not invoke collaboration controls or delegate nested work.

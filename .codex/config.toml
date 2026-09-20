@@ -12,13 +12,12 @@ visibility alone is non-blocking. Do not invoke collaboration controls or delega
 attempted or completed nested delegation is a blocking policy violation. Non-master roles disable nested
 agents in their role TOMLs.
 
-Every read-only lane requires a fresh host-enforced read-only parent and post-spawn host-origin evidence of
-the effective boundary and complete tool inventory. This configuration intent is not runtime proof and
-cannot authenticate runtime isolation. If native admission is unavailable, DEGRADED_MASTER_REVIEW is an explicit per-task
-human-authorized Harness-only maintenance path, not independent review; it cannot authorize roadmap,
-broker, PAPER/live, or promotion work. Use one production writer, the writer lease, exact head evidence,
-and the root/audit/hybrid merge boundaries. These settings are prospective: refresh main and start a
-fresh session after a harness policy change.
+Review assurance requires a fresh separate reviewer context, configured read-only intent, non-mutation,
+detached exact-head isolation, RED replay, before/after SHA and cleanliness evidence, review freshness,
+required CI, and Master-only merge authority. Missing host-origin boundary/tool facts are supplemental
+disclosure, not a stop by themselves. Use one production writer, the writer lease, and the root/audit/hybrid
+merge boundaries. These settings are prospective: refresh main and start a fresh session after a harness
+policy change.
 """
 
 [agents]

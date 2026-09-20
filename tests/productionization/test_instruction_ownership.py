@@ -56,11 +56,8 @@ ALL_SURFACES = (*CORE_SURFACES, *ROLE_SURFACES)
 # uniform role prohibitions are outside this metric by design.
 MARKER_PATTERNS = {
     "master-only": re.compile(r"\bmaster-only\b", re.IGNORECASE),
-    "degraded": re.compile(r"\bDEGRADED_MASTER_REVIEW\b", re.IGNORECASE),
     "one-writer": re.compile(r"\bone-writer\b", re.IGNORECASE),
-    # The baseline audit's canonical marker is the prose form; hyphenated
-    # artifact-field names are intentionally not counted as duplicate prose.
-    "native-admission": re.compile(r"\bnative admission\b", re.IGNORECASE),
+    "review-assurance": re.compile(r"\breview assurance\b", re.IGNORECASE),
     "exact-head": re.compile(r"\bexact-head\b", re.IGNORECASE),
     "paper/live": re.compile(r"\bpaper/live\b", re.IGNORECASE),
     "GPT-6-disabled": re.compile(
@@ -82,7 +79,6 @@ SKILLS_BUDGET = 24_000
 ROLES_BUDGET = 18_000
 ROLE_BUDGET = 3_000
 MARKER_BUDGET = 65
-DEGRADED_MARKER_BUDGET = 12
 
 
 def _path(relative: Path) -> Path:
@@ -149,10 +145,6 @@ def test_duplicate_policy_markers_fit_the_compression_budget() -> None:
     total = sum(counts.values())
 
     assert total <= MARKER_BUDGET, f"duplicate critical markers {total}>{MARKER_BUDGET}: {counts}"
-    assert counts["degraded"] <= DEGRADED_MARKER_BUDGET, (
-        "DEGRADED_MASTER_REVIEW duplication exceeds its dedicated ceiling: "
-        f"{counts['degraded']}>{DEGRADED_MARKER_BUDGET}"
-    )
 
 
 def test_root_owns_global_invariants_authority_safety_routing_and_boundaries() -> None:
@@ -180,15 +172,15 @@ def test_root_owns_global_invariants_authority_safety_routing_and_boundaries() -
         assert name in text, f"root must advertise repository skill: {name}"
 
 
-def test_audit_protocol_owns_runtime_admission_and_exact_head_evidence() -> None:
+def test_audit_protocol_owns_review_assurance_and_exact_head_evidence() -> None:
     text = _text(AUDIT_SURFACE)
 
-    assert _contains(text, r"native.{0,80}admission")
+    assert _contains(text, r"review.{0,80}assurance")
     assert "host-origin evidence" in text
     assert _contains(text, r"hook runtime manifest")
     assert "host-runtime evidence" in text
-    assert "DEGRADED_MASTER_REVIEW" in text
-    assert "The durable Master-owned artifact" in text
+    assert _contains(text, r"supplemental.{0,120}(?:disclos|evidence)")
+    assert "DEGRADED_MASTER_REVIEW" not in text
     assert _contains(text, r"independent.{0,100}review.{0,100}artifact")
     assert "MASTER MERGE GATE" in text or "master merge-gate artifact" in text.lower()
     assert _contains(text, r"## 8\. Exact-head rule")
@@ -224,7 +216,7 @@ def test_config_keeps_runtime_settings_and_short_policy_references() -> None:
     ):
         assert reference in instructions, f"config must point to {reference}"
     assert _contains(instructions, r"master[- ]only", r"Master-only")
-    assert _contains(instructions, r"native[- ]admission", r"native admission")
+    assert _contains(instructions, r"review.{0,40}assurance")
     assert _contains(instructions, r"one[- ]writer", r"one.{0,20}writer", r"writer lease")
 
 
@@ -262,10 +254,7 @@ def test_role_tomls_keep_exact_routes_and_role_scoped_responsibilities() -> None
         for clause in collaboration_contract:
             assert clause in instructions, f"{name} lost uniform collaboration contract"
         if read_only:
-            assert (
-                "Native read-only admission is governed by root AGENTS.md and must complete before "
-                "substantive work or any tool call."
-            ) in instructions
+            assert "must complete before substantive work or any tool call" not in instructions
         for marker in role_markers[name]:
             assert re.search(marker, instructions, flags=re.IGNORECASE), (
                 f"{name} lost role-specific responsibility/prohibition: {marker}"
@@ -314,8 +303,8 @@ def test_detailed_model_ids_are_owned_by_root_config_and_roles_only() -> None:
 
 def test_existing_executable_contract_owners_remain_present() -> None:
     owners = {
-        "native admission": Path("tests/productionization/test_read_only_admission.py"),
-        "degraded assurance": Path("tests/productionization/test_degraded_master_review.py"),
+        "read-only role configuration": Path("tests/productionization/test_read_only_admission.py"),
+        "review assurance": Path("tests/productionization/test_review_assurance.py"),
         "one writer": Path("tests/productionization/test_writer_lease.py"),
         "exact head and collaboration": Path("tests/productionization/test_harness_contracts.py"),
         "stop hook": Path("tests/productionization/test_codex_hook_guard.py"),
@@ -381,10 +370,11 @@ def test_audit_protocol_owns_receipt_manifest_and_delegation_schema_terms() -> N
     ), "audit protocol must name the behavioral delegation evidence mode"
 
 
-def test_degraded_exact_head_skill_preserves_positive_verdict_token() -> None:
+def test_exact_head_skill_uses_independent_review_verdict_tokens() -> None:
     text = _text(Path(".agents/skills/exact-head-review/SKILL.md"))
-    assert re.search(r"DEGRADED_MASTER_REVIEW\s*\|\s*DO NOT MERGE", text), (
-        "exact-head review must preserve the positive degraded assurance verdict token"
+    assert "DEGRADED_MASTER_REVIEW" not in text
+    assert re.search(r"APPROVE\s*\|\s*REQUEST CHANGES", text), (
+        "exact-head review must preserve the independent review verdict tokens"
     )
 
 

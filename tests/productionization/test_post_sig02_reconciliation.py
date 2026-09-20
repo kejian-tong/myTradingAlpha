@@ -8,8 +8,8 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "14cb132a92f9177f0f22492a4708a6ed8880918a"
-RECONCILED_MAIN_TREE = "1da844190e5aff3a85aabddcf0b9911b2333874c"
+RECONCILED_MAIN_SHA = "93b812e654773aa1ddafe26879fae7fec0a8e4b7"
+RECONCILED_MAIN_TREE = "24c149c137073aea0d9f5ca17d864638362f1ac2"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
 RULESET_ID = "23141241"
@@ -30,6 +30,7 @@ HARNESS_MERGES = {
     82: "ab775c3d3d75e3a8f30c455f35c1d33fd782b389",
     83: "f9b6eb12425ef2e5c8933b75ba327adabd7f76af",
     84: "14cb132a92f9177f0f22492a4708a6ed8880918a",
+    85: "93b812e654773aa1ddafe26879fae7fec0a8e4b7",
 }
 
 
@@ -56,11 +57,10 @@ def test_sig02_operational_state_is_post_merge_and_stopped() -> None:
 
 def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     state = _state_text()
-    harness_marker = "`harness_reconciled_through`: `HARNESS-AUD-19` / PR #84 / merge"
+    harness_marker = "`harness_reconciled_through`: `HARNESS-AUD-20` / PR #85 / merge"
     required = (
         "## Current harness policy",
         f"{harness_marker}\n  `{RECONCILED_MAIN_SHA}`",
-        "HARNESS-AUD-20",
     )
     missing = [marker for marker in required if marker not in state]
     assert not missing, f"current Harness reconciliation is missing: {missing}"
@@ -68,17 +68,10 @@ def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     assert "Prospective harness policy" not in state
     assert "`HARNESS-V2-COLLAB-COMPAT` / PR #64 candidate" not in state
 
-    # HARNESS-AUD-20 is this closeout reconciliation, not a future merged PR.
-    assert re.search(
-        r"HARNESS-AUD-20.{0,180}(?:closeout|reconciliation).{0,180}"
-        + re.escape(RECONCILED_MAIN_SHA),
+    assert not re.search(
+        r"HARNESS-AUD-20.{0,160}(?:not merged|no future merge SHA)",
         state,
         flags=re.IGNORECASE | re.DOTALL,
-    )
-    assert not re.search(
-        r"HARNESS-AUD-20[^\n]*(?:merge|merged)[^\n]*\b[0-9a-f]{40}\b",
-        state,
-        flags=re.IGNORECASE,
     )
 
 
@@ -104,16 +97,19 @@ def test_ruleset_and_post_merge_checks_are_fresh_and_passed() -> None:
     assert "main-protection" in normalized
     assert "required contexts" in normalized
     assert "authoritative" in normalized
-    assert re.search(r"35472036890[^\n]*(?:pass|passed)", state, flags=re.IGNORECASE)
-    assert re.search(r"35472036776[^\n]*(?:pass|passed)", state, flags=re.IGNORECASE)
+    assert re.search(r"35473160937[^\n]*(?:pass|passed)", state, flags=re.IGNORECASE)
+    assert re.search(r"35473160983[^\n]*(?:pass|passed)", state, flags=re.IGNORECASE)
 
 
-def test_host_limitations_and_watch_only_boundaries_are_truthful() -> None:
+def test_review_assurance_and_watch_only_boundaries_are_truthful() -> None:
     state = _state_text()
     normalized = state.lower()
+    assert "degraded_master_review" not in normalized
+    assert "native read-only admission is unavailable" not in normalized
     required_groups = (
-        ("permission profile", "disabled", "unrestricted", "native read-only admission", "unavailable"),
-        ("degraded_master_review", "lower assurance", "not independent", "harness-only"),
+        ("permission profile", "disabled", "unrestricted"),
+        ("host-origin", "supplemental", "disclosure", "not", "block"),
+        ("separate", "review", "exact-head", "worktree"),
         ("hook", "load", "trust", "unknown", "ineffective", "host report"),
         ("runtime receipt", "offline verifier", "config", "do not authenticate", "host", "model", "isolation"),
         ("writer lease", "cooperative", "same-user"),

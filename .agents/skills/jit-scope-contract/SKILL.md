@@ -20,9 +20,10 @@ assurance path.
 
 The lane identity includes full `branch_ref`, derived `writer_lane_ref`, canonical gitdir/common-directory
 membership, bounded worktree registration, and the rule that moving candidate `HEAD` is not identity. The
-assurance path is native independent review, or `DEGRADED_MASTER_REVIEW` only with explicit per-task human
-authorization for Harness-only maintenance, unavailable native admission, missing-runtime disclosure,
-exact head Master review, and a separate degraded artifact.
+assurance path requires a fresh reviewer context separate from the writer, configured read-only intent,
+detached exact-head isolation, before/after SHA and cleanliness evidence, RED replay, review freshness,
+required CI, and a durable independent-review artifact. Record missing host-origin boundary facts as
+supplemental disclosure; they do not themselves block review or replace required evidence.
 
 For every true risk tag, add an adversarial matrix entry mapping attack/failure cases -> invariant ->
 RED/validation evidence -> expected closure verdict. In other words, for every true risk tag the matrix
