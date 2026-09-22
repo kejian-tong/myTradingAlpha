@@ -82,9 +82,9 @@
     "expected_score": "0.305000000000",
     "expected_as_of": "2024-07-02T20:00:00Z",
     "expected_bundle_hash": "sha256:75f4d075951a1c10c85d4240b0ec5369117a96f578e66922b9e720f05fde4dfd",
-    "expected_feature_hash": "sha256:910fae15197c133e5f94266e883278aec94f69f2a3b5b19028fbede8b916ea71",
+    "expected_feature_hash": "sha256:faf8d35f2c51114bdace6ea4a400d2578be01972d719ae1a4833a6600fdc7bf0",
     "expected_model_hash": "sha256:15b5ffb574cb071ef39ed22f445e8e5e248ae9031cd68560ca3c2cfb471799df",
-    "expected_signal_hash": "sha256:790b43a9f6e1fc3e282158ba75f9c618af4766a024b6fc497b6784dc3944f431",
+    "expected_signal_hash": "sha256:ddc3d13501fbb19c61eb3bc3700f2f029b8c36d163caab982f5b29bc9a0dbd2c",
     "reason_codes": [
       "instrument_not_in_bundle",
       "instrument_inactive_as_of",
