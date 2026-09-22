@@ -1,0 +1,63 @@
+{
+  "schema_version": "v1",
+  "configuration": {
+    "schema_version": "v1",
+    "configuration_id": "feature-config-sig03-v1",
+    "replay_policy": "archive_realistic",
+    "max_features": 16,
+    "max_lookback_sessions": 32,
+    "features": [
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_1d",
+        "kind": "close_return",
+        "source": "synthetic-quant-bars",
+        "calendar_id": "XNYS.synthetic.v1",
+        "universe_id": "us-liquid-v1",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 1,
+        "required": true
+      },
+      {
+        "schema_version": "v1",
+        "feature_id": "optional_volume_return_1d",
+        "kind": "volume_return",
+        "source": "synthetic-quant-bars",
+        "calendar_id": "XNYS.synthetic.v1",
+        "universe_id": "us-liquid-v1",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 1,
+        "required": false
+      }
+    ]
+  },
+  "model": {
+    "schema_version": "v1",
+    "artifact_id": "model-artifact-sig03-v1",
+    "model_version": "model-v1",
+    "feature_schema": [
+      "close_return_1d",
+      "optional_volume_return_1d"
+    ],
+    "weights": {
+      "close_return_1d": "2.000000000000",
+      "optional_volume_return_1d": "0.100000000000"
+    },
+    "defaults": {
+      "optional_volume_return_1d": "0.000000000000"
+    },
+    "bias": "0.000000000000",
+    "score_scale": "1.000000000000",
+    "max_features": 16,
+    "max_decimal_digits": 64
+  },
+  "instrument_id": "inst-survivor",
+  "as_of": "2024-07-02T20:00:00Z",
+  "horizon_sessions": 1,
+  "expected_score": "0.200000000000",
+  "expected_status": "valid",
+  "expected_model_hash": "sha256:0f0e6fa1df7e0573e1792296c25e818d69ae4ba028bab30491e9cead4e5a2911",
+  "expected_feature_hash": "sha256:6ad8d320380f37072a0f8a476efb6f9408ae7acefb02d31769707e19f777f36c"
+}
