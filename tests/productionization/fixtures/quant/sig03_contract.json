@@ -1,19 +1,19 @@
 {
-  "schema_version": "v1",
   "configuration": {
     "schema_version": "v1",
     "configuration_id": "feature-config-sig03-v1",
-    "replay_policy": "archive_realistic",
-    "max_features": 16,
-    "max_lookback_sessions": 32,
+    "configuration_version": "v1",
+    "universe_id": "us-liquid-v1",
+    "calendar_id": "XNYS.synthetic.v1",
+    "horizon_sessions": 1,
     "features": [
       {
         "schema_version": "v1",
         "feature_id": "close_return_1d",
+        "feature_version": "v1",
         "kind": "close_return",
-        "source": "synthetic-quant-bars",
-        "calendar_id": "XNYS.synthetic.v1",
-        "universe_id": "us-liquid-v1",
+        "bar_source": "synthetic-quant-bars",
+        "interval": "1d",
         "adjustment_basis": "unadjusted",
         "adjustment_version": null,
         "lookback_sessions": 1,
@@ -21,43 +21,85 @@
       },
       {
         "schema_version": "v1",
-        "feature_id": "optional_volume_return_1d",
-        "kind": "volume_return",
-        "source": "synthetic-quant-bars",
-        "calendar_id": "XNYS.synthetic.v1",
-        "universe_id": "us-liquid-v1",
+        "feature_id": "close_return_2d_optional",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-optional-bars",
+        "interval": "1d",
         "adjustment_basis": "unadjusted",
         "adjustment_version": null,
-        "lookback_sessions": 1,
+        "lookback_sessions": 2,
         "required": false
       }
-    ]
+    ],
+    "content_hash": "sha256:4861275fd6fdfd3950be94f45ae5e2b01f2980aea0b222895b437f2cba953dd2"
   },
   "model": {
     "schema_version": "v1",
-    "artifact_id": "model-artifact-sig03-v1",
-    "model_version": "model-v1",
-    "feature_schema": [
-      "close_return_1d",
-      "optional_volume_return_1d"
+    "model_id": "model-artifact-sig03-v1",
+    "model_version": "v1",
+    "horizon_sessions": 1,
+    "decimal_places": 12,
+    "score_min": "-1",
+    "score_max": "1",
+    "feature_config_hash": "sha256:4861275fd6fdfd3950be94f45ae5e2b01f2980aea0b222895b437f2cba953dd2",
+    "feature_schema_hash": "sha256:72140608f66f3651e1cc0a391033804202bb9e0e814ccc8ecb459c58a15bf03f",
+    "features": [
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_1d",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-quant-bars",
+        "interval": "1d",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 1,
+        "required": true,
+        "weight": "2.000000000000"
+      },
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_2d_optional",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-optional-bars",
+        "interval": "1d",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 2,
+        "required": false,
+        "weight": "0.500000000000",
+        "missing_value": "0.000000000000"
+      }
     ],
-    "weights": {
-      "close_return_1d": "2.000000000000",
-      "optional_volume_return_1d": "0.100000000000"
-    },
-    "defaults": {
-      "optional_volume_return_1d": "0.000000000000"
-    },
-    "bias": "0.000000000000",
-    "score_scale": "1.000000000000",
-    "max_features": 16,
-    "max_decimal_digits": 64
+    "intercept": "0.000000000000",
+    "content_hash": "sha256:df9dcb513683518ce5493d50d0f17a54c051b300322ec5539e3a0a51710362a"
   },
-  "instrument_id": "inst-survivor",
-  "as_of": "2024-07-02T20:00:00Z",
-  "horizon_sessions": 1,
-  "expected_score": "0.200000000000",
-  "expected_status": "valid",
-  "expected_model_hash": "sha256:0f0e6fa1df7e0573e1792296c25e818d69ae4ba028bab30491e9cead4e5a2911",
-  "expected_feature_hash": "sha256:6ad8d320380f37072a0f8a476efb6f9408ae7acefb02d31769707e19f777f36c"
+  "scenario": {
+    "instrument_id": "inst-survivor",
+    "run_id": "run-sig03-fixture",
+    "expected_score": "0.305000000000",
+    "expected_as_of": "2024-07-02T20:00:00Z",
+    "expected_bundle_hash": "sha256:15481c3b4c3c4da125b9ea16528c48e09585538567a6dfee1da21e71131f5e43",
+    "expected_feature_hash": "sha256:544a1a69b47b75e07ecf9f876b30c2e9707681129f0c51b04beaadbe9d8924e4",
+    "expected_model_hash": "sha256:df9dcb513683518ce5493d50d0f17a54c051b300322ec5539e3a0a51710362a",
+    "expected_signal_hash": "sha256:c8f379f99b97d2a22004eb88c3815b7e4c10f0902a8ceeed4494caa2ff8d302c",
+    "reason_codes": [
+      "instrument_not_in_bundle",
+      "instrument_inactive_as_of",
+      "instrument_not_in_universe",
+      "ambiguous_universe_membership",
+      "calendar_session_unavailable",
+      "bar_series_ambiguous",
+      "exact_session_bar_missing",
+      "insufficient_lookback",
+      "required_feature_missing",
+      "optional_feature_missing"
+    ],
+    "observation_statuses": [
+      "available",
+      "missing"
+    ]
+  }
 }
