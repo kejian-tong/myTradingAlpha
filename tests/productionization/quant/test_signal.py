@@ -884,10 +884,15 @@ def test_float_bool_nonfinite_and_extreme_decimal_inputs_are_rejected() -> None:
         (api.FeatureSpec, _config_payload()["features"][0]),
         (api.ModelFeature, _model_payload()["features"][0]),
     ):
-        for field in ("lookback_sessions", "required", "weight"):
+        invalid_values = {
+            "lookback_sessions": (0.1, True, "NaN", "Infinity", "1e100000"),
+            "required": (1, 0.1, "true", "NaN"),
+            "weight": (0.1, True, "NaN", "Infinity", "1e100000"),
+        }
+        for field, values in invalid_values.items():
             if field not in payload:
                 continue
-            for value in (0.1, True, "NaN", "Infinity", "1e100000"):
+            for value in values:
                 candidate = {**payload, field: value}
                 with pytest.raises(ValidationError):
                     model.model_validate(candidate)
@@ -1188,6 +1193,7 @@ def test_network_dns_filesystem_path_subprocess_provider_and_clock_are_not_used(
     monkeypatch.setattr(socket, "create_connection", deny)
     monkeypatch.setattr(socket, "getaddrinfo", deny)
     monkeypatch.setattr(socket, "gethostbyname", deny)
+    artifact = _artifact(api)
     monkeypatch.setattr(builtins, "open", deny)
     monkeypatch.setattr(Path, "open", deny)
     monkeypatch.setattr(Path, "read_text", deny)
@@ -1197,8 +1203,8 @@ def test_network_dns_filesystem_path_subprocess_provider_and_clock_are_not_used(
         for name in ("clock", "now", "utcnow", "provider", "model_provider", "data_provider"):
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, deny)
-    first = api.QuantSignalModel(_artifact(api)).score(feature_set, run_id="run-sig03-fixture")
-    second = api.QuantSignalModel(_artifact(api)).score(feature_set, run_id="run-sig03-fixture")
+    first = api.QuantSignalModel(artifact).score(feature_set, run_id="run-sig03-fixture")
+    second = api.QuantSignalModel(artifact).score(feature_set, run_id="run-sig03-fixture")
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
