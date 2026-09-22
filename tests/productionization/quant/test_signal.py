@@ -904,7 +904,7 @@ def test_float_bool_nonfinite_and_extreme_decimal_inputs_are_rejected() -> None:
                 candidate = {**payload, field: value}
                 with pytest.raises(ValidationError):
                     model.model_validate(candidate)
-    with pytest.raises(ValidationError):
+    with pytest.raises(api.QuantInputError):
         api.ModelArtifact.model_validate({**_model_payload(), "intercept": 0.1})
 
 
