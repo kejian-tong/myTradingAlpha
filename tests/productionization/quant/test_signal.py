@@ -338,7 +338,7 @@ def _matching_artifact(api: SimpleNamespace, configuration: Any) -> Any:
     schema_payload = []
     for spec in configuration.features:
         payload = spec.model_dump(mode="json")
-        schema_payload.append(payload)
+        schema_payload.append(deepcopy(payload))
         payload["weight"] = (
             "2.000000000000" if spec.feature_id == "close_return_1d" else "0.500000000000"
         )
@@ -859,8 +859,16 @@ def test_score_is_exact_decimal_half_even_bounded_and_requires_run_id() -> None:
     assert -1 <= signal.score <= 1
     with pytest.raises(TypeError):
         api.QuantSignalModel(_artifact(api)).score(_features(api))
-    clipped = _artifact(
-        api,
+    base_artifact = _artifact(api)
+    clipped = api.ModelArtifact.create(
+        model_id=base_artifact.model_id,
+        model_version=base_artifact.model_version,
+        horizon_sessions=base_artifact.horizon_sessions,
+        decimal_places=base_artifact.decimal_places,
+        score_min=base_artifact.score_min,
+        score_max=base_artifact.score_max,
+        feature_config_hash=base_artifact.feature_config_hash,
+        feature_schema_hash=base_artifact.feature_schema_hash,
         features=tuple(
             item.model_copy(
                 update={
@@ -869,9 +877,9 @@ def test_score_is_exact_decimal_half_even_bounded_and_requires_run_id() -> None:
                     else item.weight
                 }
             )
-            for item in _artifact(api).features
+            for item in base_artifact.features
         ),
-        intercept="0.0000000000005",
+        intercept=Decimal("0.0000000000005"),
     )
     clipped_signal = _score(api, artifact=clipped)
     assert clipped_signal.score == Decimal("1.000000000000")
