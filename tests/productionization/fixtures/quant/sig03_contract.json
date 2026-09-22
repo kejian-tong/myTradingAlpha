@@ -32,7 +32,7 @@
         "required": false
       }
     ],
-    "content_hash": "sha256:4861275fd6fdfd3950be94f45ae5e2b01f2980aea0b222895b437f2cba953dd2"
+    "content_hash": "sha256:ba8219aa8c99bdeb9775774db3a1929d7e80c6620ec0cb185dc017398cfbeb13"
   },
   "model": {
     "schema_version": "v1",
@@ -42,8 +42,8 @@
     "decimal_places": 12,
     "score_min": "-1",
     "score_max": "1",
-    "feature_config_hash": "sha256:4861275fd6fdfd3950be94f45ae5e2b01f2980aea0b222895b437f2cba953dd2",
-    "feature_schema_hash": "sha256:72140608f66f3651e1cc0a391033804202bb9e0e814ccc8ecb459c58a15bf03f",
+    "feature_config_hash": "sha256:ba8219aa8c99bdeb9775774db3a1929d7e80c6620ec0cb185dc017398cfbeb13",
+    "feature_schema_hash": "sha256:81f6784f180c32b0bea169207467dd34aec4f940a92097c62d4c7d3dd3232848",
     "features": [
       {
         "schema_version": "v1",
@@ -74,17 +74,17 @@
       }
     ],
     "intercept": "0.000000000000",
-    "content_hash": "sha256:df9dcb513683518ce5493d50d0f17a54c051b300322ec5539e3a0a51710362a"
+    "content_hash": "sha256:15b5ffb574cb071ef39ed22f445e8e5e248ae9031cd68560ca3c2cfb471799df"
   },
   "scenario": {
     "instrument_id": "inst-survivor",
     "run_id": "run-sig03-fixture",
     "expected_score": "0.305000000000",
     "expected_as_of": "2024-07-02T20:00:00Z",
-    "expected_bundle_hash": "sha256:15481c3b4c3c4da125b9ea16528c48e09585538567a6dfee1da21e71131f5e43",
-    "expected_feature_hash": "sha256:544a1a69b47b75e07ecf9f876b30c2e9707681129f0c51b04beaadbe9d8924e4",
-    "expected_model_hash": "sha256:df9dcb513683518ce5493d50d0f17a54c051b300322ec5539e3a0a51710362a",
-    "expected_signal_hash": "sha256:c8f379f99b97d2a22004eb88c3815b7e4c10f0902a8ceeed4494caa2ff8d302c",
+    "expected_bundle_hash": "sha256:75f4d075951a1c10c85d4240b0ec5369117a96f578e66922b9e720f05fde4dfd",
+    "expected_feature_hash": "sha256:910fae15197c133e5f94266e883278aec94f69f2a3b5b19028fbede8b916ea71",
+    "expected_model_hash": "sha256:15b5ffb574cb071ef39ed22f445e8e5e248ae9031cd68560ca3c2cfb471799df",
+    "expected_signal_hash": "sha256:790b43a9f6e1fc3e282158ba75f9c618af4766a024b6fc497b6784dc3944f431",
     "reason_codes": [
       "instrument_not_in_bundle",
       "instrument_inactive_as_of",

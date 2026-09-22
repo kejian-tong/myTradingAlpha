@@ -12,6 +12,7 @@ import builtins
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -161,12 +162,17 @@ def _bar(
     *,
     source: str = "synthetic-quant-bars",
     revision: int = 0,
+    adjustment_basis: AdjustmentBasis = AdjustmentBasis.UNADJUSTED,
+    adjustment_version: str | None = None,
     available_offset_minutes: int = 1,
     ingestion_offset_minutes: int = 3,
 ) -> DailyBar:
     return DailyBar(
         schema_version="v1",
-        bar_id=f"bar-inst-survivor-{source}-{session_date}-r{revision}",
+        bar_id=(
+            f"bar-inst-survivor-{source}-{session_date}-"
+            f"{adjustment_basis.value}-{adjustment_version or 'none'}-r{revision}"
+        ),
         instrument_id="inst-survivor",
         calendar_id="XNYS.synthetic.v1",
         session_date=session_date,
@@ -176,8 +182,8 @@ def _bar(
         low=close,
         close=close,
         volume=1_000_000,
-        adjustment_basis=AdjustmentBasis.UNADJUSTED,
-        adjustment_version=None,
+        adjustment_basis=adjustment_basis,
+        adjustment_version=adjustment_version,
         finality=BarFinality.FINAL,
         manifest=_manifest(
             session_date,
@@ -282,6 +288,7 @@ def _api() -> SimpleNamespace:
             FeatureObservation,
             FeatureSet,
             FeatureSpec,
+            QuantInputError,
         )
         from mytradingalpha.quant.models import ModelArtifact, ModelFeature
         from mytradingalpha.quant.signal import QuantSignalModel
@@ -294,6 +301,7 @@ def _api() -> SimpleNamespace:
         FeatureSpec=FeatureSpec,
         ModelArtifact=ModelArtifact,
         ModelFeature=ModelFeature,
+        QuantInputError=QuantInputError,
         QuantSignal=QuantSignal,
         QuantSignalModel=QuantSignalModel,
         QuantSignalStatus=QuantSignalStatus,
@@ -323,6 +331,36 @@ def _artifact(api: SimpleNamespace, **overrides: Any) -> Any:
     fields["features"] = tuple(api.ModelFeature.model_validate(item) for item in fields["features"])
     fields.update(overrides)
     return api.ModelArtifact.model_validate(fields)
+
+
+def _matching_artifact(api: SimpleNamespace, configuration: Any) -> Any:
+    model_features = []
+    schema_payload = []
+    for spec in configuration.features:
+        payload = spec.model_dump(mode="json")
+        schema_payload.append(payload)
+        payload["weight"] = (
+            "2.000000000000" if spec.feature_id == "close_return_1d" else "0.500000000000"
+        )
+        if not spec.required:
+            payload["missing_value"] = "0.000000000000"
+        model_features.append(api.ModelFeature.model_validate(payload))
+    feature_schema_hash = _canonical_hash(
+        HASH_DOMAINS["feature_schema"],
+        sorted(schema_payload, key=lambda item: item["feature_id"]),
+    )
+    return api.ModelArtifact.create(
+        model_id="model-artifact-matching-v1",
+        model_version="v1",
+        horizon_sessions=configuration.horizon_sessions,
+        decimal_places=12,
+        score_min=Decimal("-1"),
+        score_max=Decimal("1"),
+        feature_config_hash=configuration.content_hash,
+        feature_schema_hash=feature_schema_hash,
+        features=tuple(model_features),
+        intercept=Decimal("0.000000000000"),
+    )
 
 
 def _features(
@@ -362,14 +400,24 @@ def _codes(value: Any) -> tuple[str, ...]:
     return tuple(getattr(item, "value", item) for item in value.reason_codes)
 
 
-def _canonical_hash(payload: object) -> str:
+HASH_DOMAINS = {
+    "feature_configuration": "mytradingalpha:sig03:feature-configuration:v1\0",
+    "feature_schema": "mytradingalpha:sig03:feature-schema:v1\0",
+    "feature_set": "mytradingalpha:sig03:feature-set:v1\0",
+    "model_artifact": "mytradingalpha:sig03:model-artifact:v1\0",
+    "quant_signal": "mytradingalpha:sig03:quant-signal:v1\0",
+}
+
+
+def _canonical_hash(domain: str, payload: object) -> str:
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+    canonical = domain.encode("utf-8") + encoded
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
 
 
 def _assert_plain_data_model(model: Any) -> None:
@@ -435,9 +483,11 @@ def test_quant_signal_wire_status_reason_and_shadow_authority_are_exact() -> Non
     assert signal.score == Decimal(_fixture()["scenario"]["expected_score"])
     assert signal.as_of == datetime(2024, 7, 2, 20, tzinfo=timezone.utc)
     assert signal.horizon_sessions == 1
+    assert re.fullmatch(r"quant-signal:[0-9a-f]{64}", signal.signal_id)
     signal_payload = signal.model_dump(mode="json")
     signal_payload.pop("signal_id")
-    assert _canonical_hash(signal_payload) == _fixture()["scenario"]["expected_signal_hash"]
+    assert _canonical_hash(HASH_DOMAINS["quant_signal"], signal_payload) == _fixture()["scenario"]["expected_signal_hash"]
+    assert signal.signal_id == "quant-signal:" + _fixture()["scenario"]["expected_signal_hash"].removeprefix("sha256:")
     assert not hasattr(signal, "target_weight")
     _assert_no_authority_fields(api.QuantSignal)
 
@@ -448,6 +498,7 @@ def test_reason_enum_values_and_feature_set_wire_are_exact() -> None:
     assert set(api.FeatureObservation.model_fields) == {
         "schema_version",
         "feature_id",
+        "feature_version",
         "value",
         "required",
         "status",
@@ -455,6 +506,7 @@ def test_reason_enum_values_and_feature_set_wire_are_exact() -> None:
         "as_of",
         "anchor_session",
         "lookback_sessions",
+        "lookback_session",
         "latest_available_at",
         "source_bar_ids",
         "source_manifest_ids",
@@ -487,6 +539,14 @@ def test_reason_enum_values_and_feature_set_wire_are_exact() -> None:
 
 def test_feature_spec_and_configuration_exact_fields_and_hashes() -> None:
     api = _api()
+    exported_domains = {
+        "feature_configuration": api.features_module.HASH_DOMAIN_FEATURE_CONFIGURATION,
+        "feature_schema": api.features_module.HASH_DOMAIN_FEATURE_SCHEMA,
+        "feature_set": api.features_module.HASH_DOMAIN_FEATURE_SET,
+        "model_artifact": api.models_module.HASH_DOMAIN_MODEL_ARTIFACT,
+        "quant_signal": api.signal_module.HASH_DOMAIN_QUANT_SIGNAL,
+    }
+    assert exported_domains == HASH_DOMAINS
     assert set(api.FeatureSpec.model_fields) == {
         "schema_version",
         "feature_id",
@@ -511,6 +571,15 @@ def test_feature_spec_and_configuration_exact_fields_and_hashes() -> None:
     }
     config = _configuration(api)
     assert config.content_hash == _config_payload()["content_hash"]
+    config_semantic = _config_payload()
+    config_hash = config_semantic.pop("content_hash")
+    assert _canonical_hash(HASH_DOMAINS["feature_configuration"], config_semantic) == config_hash
+    schema_semantic = sorted(
+        config_semantic["features"], key=lambda item: item["feature_id"]
+    )
+    assert _canonical_hash(HASH_DOMAINS["feature_schema"], schema_semantic) == _model_payload()[
+        "feature_schema_hash"
+    ]
     assert tuple(item.feature_id for item in config.features) == (
         "close_return_1d",
         "close_return_2d_optional",
@@ -564,6 +633,14 @@ def test_feature_configuration_create_is_canonical_and_order_invariant() -> None
 
 def test_observations_bind_exact_sessions_availability_and_sorted_provenance() -> None:
     api = _api()
+    with pytest.raises(TypeError):
+        api.FeatureSet.compute(
+            bundle=_bundle(),
+            configuration=_configuration(api),
+            instrument_id="inst-survivor",
+            as_of="2024-01-01T00:00:00Z",
+            horizon_sessions=99,
+        )
     feature_set = _features(api)
     assert feature_set.as_of == datetime(2024, 7, 2, 20, tzinfo=timezone.utc)
     assert feature_set.knowledge_cutoff == _bundle().knowledge_cutoff
@@ -574,6 +651,8 @@ def test_observations_bind_exact_sessions_availability_and_sorted_provenance() -
     required, optional = feature_set.observations
     assert required.value == Decimal("0.100000000000")
     assert optional.value == Decimal("0.210000000000")
+    assert required.feature_version == "v1"
+    assert optional.feature_version == "v1"
     assert required.required is True
     assert optional.required is False
     assert required.status == "available"
@@ -584,17 +663,38 @@ def test_observations_bind_exact_sessions_availability_and_sorted_provenance() -
     assert optional.anchor_session == "2024-07-02"
     assert required.lookback_sessions == 1
     assert optional.lookback_sessions == 2
+    assert required.lookback_session == "2024-03-11"
+    assert optional.lookback_session == "2024-03-08"
     assert required.latest_available_at == datetime(2024, 7, 2, 20, 1, tzinfo=timezone.utc)
     assert optional.latest_available_at == datetime(2024, 7, 2, 20, 1, tzinfo=timezone.utc)
-    assert tuple(required.source_bar_ids) == tuple(sorted(required.source_bar_ids))
-    assert tuple(required.source_manifest_ids) == tuple(sorted(required.source_manifest_ids))
+    assert tuple(required.source_bar_ids) == (
+        "bar-inst-survivor-synthetic-quant-bars-2024-03-11-unadjusted-none-r0",
+        "bar-inst-survivor-synthetic-quant-bars-2024-07-02-unadjusted-none-r0",
+    )
+    assert tuple(required.source_manifest_ids) == (
+        "synthetic-quant-bars-2024-03-11-r0",
+        "synthetic-quant-bars-2024-07-02-r0",
+    )
     assert tuple(required.source_revisions) == (0, 0)
+    assert tuple(optional.source_bar_ids) == (
+        "bar-inst-survivor-synthetic-optional-bars-2024-03-08-unadjusted-none-r0",
+        "bar-inst-survivor-synthetic-optional-bars-2024-03-11-unadjusted-none-r0",
+        "bar-inst-survivor-synthetic-optional-bars-2024-07-02-unadjusted-none-r0",
+    )
+    assert tuple(optional.source_manifest_ids) == (
+        "synthetic-optional-bars-2024-03-08-r0",
+        "synthetic-optional-bars-2024-03-11-r0",
+        "synthetic-optional-bars-2024-07-02-r0",
+    )
     assert tuple(optional.source_revisions) == (0, 0, 0)
     assert feature_set.missing_required_feature_ids == ()
     assert feature_set.missing_optional_feature_ids == ()
     assert _status(feature_set) == "valid"
     assert _codes(feature_set) == ()
     assert feature_set.feature_hash == _fixture()["scenario"]["expected_feature_hash"]
+    feature_semantic = feature_set.model_dump(mode="json")
+    feature_semantic.pop("feature_hash")
+    assert _canonical_hash(HASH_DOMAINS["feature_set"], feature_semantic) == feature_set.feature_hash
 
 
 def test_exact_session_lookback_has_no_gap_fallback() -> None:
@@ -611,8 +711,10 @@ def test_exact_session_lookback_has_no_gap_fallback() -> None:
     assert _codes(feature_set) == ("insufficient_lookback", "required_feature_missing")
     assert feature_set.observations[0].value is None
     assert feature_set.observations[0].reason_code == "insufficient_lookback"
+    assert feature_set.observations[0].lookback_session is None
     assert feature_set.observations[1].value is None
     assert feature_set.observations[1].reason_code == "insufficient_lookback"
+    assert feature_set.observations[1].lookback_session is None
 
 
 def test_availability_and_archive_realistic_replay_boundaries_are_distinct() -> None:
@@ -620,6 +722,8 @@ def test_availability_and_archive_realistic_replay_boundaries_are_distinct() -> 
     cutoff = "2024-07-02T20:02:00Z"
     availability = _bundle(cutoff=cutoff, replay_policy="availability")
     archive = _bundle(cutoff=cutoff, replay_policy="archive_realistic")
+    assert availability.validate_sealed_bundle() is availability
+    assert archive.validate_sealed_bundle() is archive
     available = _features(api, bundle=availability)
     archived = _features(api, bundle=archive)
     assert _status(available) == "valid"
@@ -627,6 +731,32 @@ def test_availability_and_archive_realistic_replay_boundaries_are_distinct() -> 
     assert _status(archived) == "invalid"
     assert "exact_session_bar_missing" in _codes(archived)
     assert archived.observations[0].value is None
+
+
+def test_revision_and_cutoff_boundary_selection_stays_sealed_and_deterministic() -> None:
+    api = _api()
+    revised = _bar(
+        "2024-07-02",
+        "122.00",
+        revision=1,
+        available_offset_minutes=2,
+        ingestion_offset_minutes=4,
+    )
+    revised_bundle = _bundle(
+        bars=tuple(item for item in _bars() if not (
+            item.manifest.source == "synthetic-quant-bars"
+            and item.session_date == datetime(2024, 7, 2).date()
+        )) + (revised,),
+        cutoff="2024-07-02T20:04:00Z",
+    )
+    assert revised_bundle.validate_sealed_bundle() is revised_bundle
+    revised_features = _features(api, bundle=revised_bundle)
+    assert revised_features.observations[0].value == Decimal("0.109090909091")
+    boundary = _bundle(cutoff="2024-07-02T20:01:00Z", replay_policy="availability")
+    assert boundary.validate_sealed_bundle() is boundary
+    assert _features(api, bundle=boundary).observations[0].value == Decimal("0.100000000000")
+    with pytest.raises(api.QuantInputError):
+        _features(api, bundle=boundary.model_copy(update={"bars": (*boundary.bars, revised)}))
 
 
 def test_model_feature_and_model_artifact_plain_data_contract_is_exact() -> None:
@@ -661,6 +791,9 @@ def test_model_feature_and_model_artifact_plain_data_contract_is_exact() -> None
     }
     artifact = _artifact(api)
     assert artifact.content_hash == _model_payload()["content_hash"]
+    model_semantic = _model_payload()
+    model_hash = model_semantic.pop("content_hash")
+    assert _canonical_hash(HASH_DOMAINS["model_artifact"], model_semantic) == model_hash
     assert artifact.decimal_places == 12
     assert artifact.score_min == Decimal("-1")
     assert artifact.score_max == Decimal("1")
@@ -793,6 +926,28 @@ def test_fixed_resource_caps_are_not_caller_configurable() -> None:
         api.FeatureSpec.model_validate(
             {**_config_payload()["features"][0], "lookback_sessions": 253}
         )
+    with pytest.raises((ValidationError, TypeError, ValueError)):
+        api.FeatureConfiguration.create(
+            configuration_id="config-horizon-too-large",
+            configuration_version="v1",
+            universe_id="us-liquid-v1",
+            calendar_id="XNYS.synthetic.v1",
+            horizon_sessions=253,
+            features=_configuration(api).features,
+        )
+    with pytest.raises((ValidationError, TypeError, ValueError)):
+        api.FeatureSpec.model_validate(
+            {**_config_payload()["features"][0], "feature_id": "x" * 129}
+        )
+    baseline = _bundle()
+    hostile_bars = (*baseline.bars, *([baseline.bars[0]] * 4091))
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=baseline.model_copy(update={"bars": hostile_bars}))
+    assert "hostile" not in str(exc_info.value)
+    for value in ("NaN", "Infinity", "-Infinity", "1e100000"):
+        with pytest.raises((ValidationError, ValueError)) as exc_info:
+            api.ModelArtifact.model_validate({**_model_payload(), "intercept": value})
+        assert value not in str(exc_info.value)
 
 
 def test_required_invalid_optional_degraded_and_missing_ids_are_distinct() -> None:
@@ -812,6 +967,15 @@ def test_required_invalid_optional_degraded_and_missing_ids_are_distinct() -> No
     assert _status(invalid) == "invalid"
     assert invalid.missing_required_feature_ids == ("close_return_1d",)
     assert "required_feature_missing" in _codes(invalid)
+    invalid_signal = _score(
+        api,
+        feature_set=invalid,
+        artifact=_matching_artifact(api, required_config),
+    )
+    assert _status(invalid_signal) == "invalid"
+    assert invalid_signal.score is None
+    assert invalid_signal.missing_required_feature_ids == ("close_return_1d",)
+    assert "required_feature_missing" in _codes(invalid_signal)
     optional_specs = list(_configuration(api).features)
     optional_specs[1] = optional_specs[1].model_copy(
         update={"bar_source": "missing-optional-source"}
@@ -829,72 +993,69 @@ def test_required_invalid_optional_degraded_and_missing_ids_are_distinct() -> No
     assert degraded.missing_required_feature_ids == ()
     assert degraded.missing_optional_feature_ids == ("close_return_2d_optional",)
     assert "optional_feature_missing" in _codes(degraded)
+    degraded_signal = _score(
+        api,
+        feature_set=degraded,
+        artifact=_matching_artifact(api, optional_config),
+    )
+    assert _status(degraded_signal) == "degraded"
+    assert degraded_signal.score == Decimal("0.200000000000")
+    assert degraded_signal.missing_required_feature_ids == ()
+    assert degraded_signal.missing_optional_feature_ids == ("close_return_2d_optional",)
+    assert "optional_feature_missing" in _codes(degraded_signal)
 
 
-def test_all_reason_codes_are_emitted_by_fail_closed_input_resolution() -> None:
+def test_reason_codes_remain_stable_without_manufacturing_invalid_bundle_states() -> None:
     api = _api()
     baseline = _bundle()
-    memberships = list(baseline.memberships)
-    memberships.append(
-        memberships[-1].model_copy(
-            update={
-                "membership_id": "membership-ambiguous",
-                "universe_id": "us-liquid-v1",
-                "valid_from": "2024-01-01",
-                "valid_to": None,
-            }
-        )
+    assert set(REASON_CODES) == set(_fixture()["scenario"]["reason_codes"])
+    assert _status(_features(api, instrument_id="not-in-bundle")) == "invalid"
+    assert "instrument_not_in_bundle" in _codes(_features(api, instrument_id="not-in-bundle"))
+    assert "instrument_inactive_as_of" in _codes(_features(api, instrument_id="inst-acme"))
+    no_membership = tuple(
+        item for item in baseline.memberships if item.instrument_id != "inst-survivor"
     )
-    duplicate_bar = _bar("2024-07-02", "121.00")
-    cases = (
-        (_features(api, instrument_id="not-in-bundle"), "instrument_not_in_bundle"),
-        (_features(api, instrument_id="inst-acme"), "instrument_inactive_as_of"),
-        (
-            _features(
-                api,
-                bundle=baseline.model_copy(
-                    update={"memberships": tuple(item for item in memberships[:-1] if item.instrument_id != "inst-survivor")}
-                ),
-            ),
-            "instrument_not_in_universe",
-        ),
-        (
-            _features(api, bundle=baseline.model_copy(update={"memberships": tuple(memberships)})),
-            "ambiguous_universe_membership",
-        ),
-        (
-            _features(api, configuration=_configuration(api, calendar_id="other-calendar")),
-            "calendar_session_unavailable",
-        ),
-        (
-            _features(
-                api,
-                bundle=baseline.model_copy(update={"bars": (*baseline.bars, duplicate_bar)}),
-            ),
-            "bar_series_ambiguous",
-        ),
-        (
-            _features(
-                api,
-                bundle=baseline.model_copy(
-                    update={"bars": tuple(item for item in baseline.bars if item.session_date != datetime(2024, 7, 2).date())}
-                ),
-            ),
-            "exact_session_bar_missing",
-        ),
-        (
-            _features(
-                api,
-                bundle=baseline.model_copy(
-                    update={"bars": tuple(item for item in baseline.bars if item.session_date != datetime(2024, 3, 11).date())}
-                ),
-            ),
-            "insufficient_lookback",
+    result = _features(api, bundle=_bundle(memberships=no_membership))
+    assert _status(result) == "invalid"
+    assert "instrument_not_in_universe" in _codes(result)
+    calendar_config = api.FeatureConfiguration.create(
+        configuration_id="config-calendar-mismatch",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id="other-calendar",
+        horizon_sessions=1,
+        features=_configuration(api).features,
+    )
+    calendar_result = _features(api, configuration=calendar_config)
+    assert _status(calendar_result) == "invalid"
+    assert "calendar_session_unavailable" in _codes(calendar_result)
+    other_series = (*baseline.bars, _bar(
+        "2024-07-02",
+        "121.00",
+        source="unrelated-bars",
+        adjustment_basis=AdjustmentBasis.PROVIDER_ADJUSTED,
+        adjustment_version="provider-v1",
+    ))
+    unaffected = _features(api, bundle=_bundle(bars=other_series))
+    assert _status(unaffected) == "valid"
+    absent_source = api.FeatureConfiguration.create(
+        configuration_id="config-absent-source",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id="XNYS.synthetic.v1",
+        horizon_sessions=1,
+        features=(
+            _configuration(api).features[0].model_copy(update={"bar_source": "absent-source"}),
+            _configuration(api).features[1],
         ),
     )
-    for result, expected in cases:
-        assert expected in _codes(result), (expected, _codes(result))
-        assert _status(result) == "invalid"
+    absent = _features(api, configuration=absent_source)
+    assert _status(absent) == "invalid"
+    assert "exact_session_bar_missing" in _codes(absent)
+    with pytest.raises(api.QuantInputError):
+        _features(api, bundle=baseline.model_copy(update={"memberships": no_membership + (baseline.memberships[0],)}))
+    with pytest.raises(api.QuantInputError):
+        _features(api, bundle=baseline.model_copy(update={"bars": (*baseline.bars, baseline.bars[0])}))
 
 
 def test_config_and_model_hash_mismatch_is_generic_quant_input_error() -> None:
@@ -903,15 +1064,15 @@ def test_config_and_model_hash_mismatch_is_generic_quant_input_error() -> None:
     feature_set = _features(api)
     bad_artifact = _model_payload()
     bad_artifact["feature_config_hash"] = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(api.QuantInputError):
         api.ModelArtifact.model_validate(bad_artifact)
-    assert type(exc_info.value).__name__ == "QuantInputError"
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(ValidationError):
+        api.ModelArtifact.model_validate({**_model_payload(), "content_hash": "sha256:bad"})
+    with pytest.raises(api.QuantInputError):
         api.QuantSignalModel(_artifact(api)).score(
             feature_set.model_copy(update={"feature_config_hash": "sha256:bad"}),
             run_id="run-sig03-fixture",
         )
-    assert type(exc_info.value).__name__ == "QuantInputError"
     assert feature_set.feature_config_hash == config.content_hash
 
 
@@ -925,6 +1086,13 @@ def test_hostile_subclasses_callbacks_custom_containers_and_deep_mutation_fail_c
         def __iter__(self):
             raise AssertionError("custom container executed")
 
+    callback_state = {"called": False}
+
+    class HostileBundle(EvidenceBundle):
+        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            callback_state["called"] = True
+            raise AssertionError("hostile model_dump executed")
+
     with pytest.raises((ValidationError, TypeError, ValueError)):
         api.FeatureSpec.model_validate(
             FeatureSpecSubclass.model_validate(_config_payload()["features"][0])
@@ -935,11 +1103,31 @@ def test_hostile_subclasses_callbacks_custom_containers_and_deep_mutation_fail_c
         api.FeatureConfiguration.model_validate(
             {**_config_payload(), "features": CallbackDict({"feature": _config_payload()["features"][0]})}
         )
+    hostile_bundle = HostileBundle.model_validate(_bundle().model_dump(mode="python"))
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=hostile_bundle)
+    assert not callback_state["called"]
+    assert "hostile" not in str(exc_info.value)
+    tampered_bundle = _bundle()
+    object.__setattr__(tampered_bundle.bars[0], "close", Decimal("999.00"))
+    with pytest.raises(api.QuantInputError):
+        _features(api, bundle=tampered_bundle)
+    tampered_manifest_bundle = _bundle()
+    object.__setattr__(tampered_manifest_bundle.bars[0].manifest, "source", "secret-provider")
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=tampered_manifest_bundle)
+    assert "secret-provider" not in str(exc_info.value)
     feature_set = _features(api)
     hash_before = feature_set.feature_hash
     with pytest.raises((TypeError, ValidationError, AttributeError)):
         feature_set.observations[0].value = Decimal("9")
     assert feature_set.feature_hash == hash_before
+    artifact = _artifact(api)
+    artifact_hash = artifact.content_hash
+    object.__setattr__(artifact.features[0], "weight", Decimal("999"))
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(artifact).score(feature_set, run_id="run-sig03-fixture")
+    assert artifact.content_hash == artifact_hash
     with pytest.raises((TypeError, ValidationError, AttributeError)):
         feature_set.observations[0].source_bar_ids[0] = "mutated"
     assert feature_set.feature_hash == hash_before
@@ -1005,13 +1193,20 @@ def test_network_dns_filesystem_path_subprocess_provider_and_clock_are_not_used(
     monkeypatch.setattr(Path, "read_text", deny)
     monkeypatch.setattr(subprocess, "run", deny)
     monkeypatch.setattr(subprocess, "Popen", deny)
+    for module in (api.features_module, api.models_module, api.signal_module):
+        for name in ("clock", "now", "utcnow", "provider", "model_provider", "data_provider"):
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, deny)
     first = api.QuantSignalModel(_artifact(api)).score(feature_set, run_id="run-sig03-fixture")
     second = api.QuantSignalModel(_artifact(api)).score(feature_set, run_id="run-sig03-fixture")
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
 def test_static_quant_dependency_direction_and_no_later_authority() -> None:
-    paths = [* (ROOT / "mytradingalpha" / "quant").glob("*.py"), ROOT / "mytradingalpha" / "contracts" / "signals.py"]
+    paths = [
+        *(ROOT / "mytradingalpha" / "quant").glob("*.py"),
+        ROOT / "mytradingalpha" / "contracts" / "signals.py",
+    ]
     forbidden_modules = {
         "mytradingalpha.research",
         "mytradingalpha.portfolio",
@@ -1025,6 +1220,12 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
         "subprocess",
         "pickle",
         "cloudpickle",
+        "os",
+        "pathlib",
+        "time",
+        "datetime",
+        "random",
+        "importlib",
     }
     forbidden_names = {
         "target_weight",
@@ -1043,12 +1244,23 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
         if not path.exists():
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        path_forbidden_modules = forbidden_modules
+        if path.parent.name == "contracts":
+            path_forbidden_modules = forbidden_modules - {"datetime"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                assert all(alias.name not in forbidden_modules for alias in node.names)
+                assert all(alias.name not in path_forbidden_modules for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
-                assert node.module not in forbidden_modules
+                assert node.module not in path_forbidden_modules
             elif isinstance(node, ast.Name):
                 assert node.id not in forbidden_names
             elif isinstance(node, ast.Attribute):
                 assert node.attr not in forbidden_names
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                assert node.func.id not in {
+                    "open",
+                    "eval",
+                    "exec",
+                    "compile",
+                    "__import__",
+                }
