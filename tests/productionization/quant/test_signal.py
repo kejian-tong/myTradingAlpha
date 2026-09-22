@@ -1270,3 +1270,183 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
                     "compile",
                     "__import__",
                 }
+
+
+def _rekey_signal_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    payload = deepcopy(payload)
+    payload.pop("signal_id", None)
+    payload["signal_id"] = "quant-signal:" + _canonical_hash(
+        HASH_DOMAINS["quant_signal"],
+        {key: value for key, value in payload.items() if key != "signal_id"},
+    ).removeprefix("sha256:")
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("intercept", "0.000000000001"),
+        ("horizon_sessions", 2),
+    ),
+)
+def test_serialized_model_artifact_semantic_change_never_recomputes_old_hash(
+    field: str,
+    value: object,
+) -> None:
+    api = _api()
+    payload = _model_payload()
+    payload[field] = value
+    with pytest.raises(api.QuantInputError):
+        api.ModelArtifact.model_validate(payload)
+
+
+def test_model_feature_schema_hash_binding_has_no_valid_sha_fallback() -> None:
+    api = _api()
+    feature_set = _features(api)
+    artifact = _artifact(api)
+    full_schema_hash = api.models_module._model_feature_full_hash(artifact.features)
+    payload = feature_set.model_dump(mode="json")
+    payload["feature_schema_hash"] = full_schema_hash
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    tampered = api.FeatureSet.model_validate(payload)
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(artifact).score(tampered, run_id="run-sig03-fixture")
+
+
+def test_intrinsic_signal_status_and_direct_score_invariants_are_fail_closed() -> None:
+    api = _api()
+    valid = _score(api)
+    base = valid.model_dump(mode="json")
+    invalid_payload = _rekey_signal_payload(
+        {
+            **base,
+            "status": "invalid",
+            "score": "0.100000000000",
+            "reason_codes": ["required_feature_missing"],
+        }
+    )
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(invalid_payload)
+    valid_missing = _rekey_signal_payload(
+        {**base, "missing_optional_feature_ids": ["close_return_2d_optional"]}
+    )
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(valid_missing)
+    degraded = _rekey_signal_payload(
+        {
+            **base,
+            "status": "degraded",
+            "missing_optional_feature_ids": ["close_return_2d_optional"],
+            "reason_codes": ["optional_feature_missing"],
+        }
+    )
+    assert api.QuantSignal.model_validate(degraded).status.value == "degraded"
+    invalid = _rekey_signal_payload(
+        {
+            **base,
+            "status": "invalid",
+            "score": None,
+            "reason_codes": ["required_feature_missing"],
+            "missing_required_feature_ids": ["close_return_1d"],
+        }
+    )
+    assert api.QuantSignal.model_validate(invalid).score is None
+    for score in (0.1, True, "NaN", "Infinity", "1.1", "0.1"):
+        with pytest.raises(ValidationError):
+            api.QuantSignal.model_validate(_rekey_signal_payload({**base, "score": score}))
+    mismatch = dict(base)
+    mismatch["signal_id"] = "quant-signal:" + "0" * 64
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(mismatch)
+
+
+def test_observation_and_feature_set_intrinsic_consistency_is_enforced() -> None:
+    api = _api()
+    observation = _features(api).observations[0].model_dump(mode="json")
+    for mutation in (
+        {"status": "available", "value": None},
+        {"status": "available", "reason_code": "required_feature_missing"},
+        {"status": "available", "lookback_session": None},
+        {"status": "missing", "value": "0.100000000000"},
+        {"status": "missing", "source_bar_ids": ["bar-only"]},
+    ):
+        with pytest.raises(ValidationError):
+            api.FeatureObservation.model_validate({**observation, **mutation})
+    feature_set = _features(api)
+    duplicate = feature_set.model_dump(mode="json")
+    duplicate["observations"] = [*duplicate["observations"], duplicate["observations"][0]]
+    duplicate.pop("feature_hash")
+    duplicate["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], duplicate)
+    with pytest.raises(ValidationError):
+        api.FeatureSet.model_validate(duplicate)
+    mismatch = feature_set.model_dump(mode="json")
+    mismatch["missing_required_feature_ids"] = ["close_return_1d"]
+    mismatch.pop("feature_hash")
+    mismatch["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], mismatch)
+    with pytest.raises(ValidationError):
+        api.FeatureSet.model_validate(mismatch)
+
+
+def test_exact_tuple_subclass_and_nested_hostile_models_are_rejected_without_callbacks() -> None:
+    api = _api()
+
+    class EvilTuple(tuple):
+        def __len__(self) -> int:
+            raise AssertionError("tuple callback executed")
+
+        def __iter__(self):
+            raise AssertionError("tuple callback executed")
+
+    bundle = _bundle()
+    object.__setattr__(bundle, "bars", EvilTuple(tuple(bundle.bars)))
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=bundle)
+    assert "tuple callback" not in str(exc_info.value)
+
+    class EvilFeatureSpec(api.FeatureSpec):
+        pass
+
+    config = _configuration(api)
+    object.__setattr__(
+        config,
+        "features",
+        (
+            EvilFeatureSpec.model_validate(config.features[0].model_dump(mode="python")),
+            config.features[1],
+        ),
+    )
+    with pytest.raises(api.QuantInputError):
+        _features(api, configuration=config)
+
+    class CanaryKey(str):
+        def __hash__(self) -> int:
+            return hash(str(self))
+
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("hostile key comparison executed")
+
+    artifact = _artifact(api)
+    storage = dict(object.__getattribute__(artifact, "__dict__"))
+    storage[CanaryKey("model_id")] = storage.pop("model_id")
+    object.__setattr__(artifact, "__dict__", storage)
+    with pytest.raises(api.QuantInputError) as exc_info:
+        api.QuantSignalModel(artifact)
+    assert "hostile key" not in str(exc_info.value)
+
+
+def test_decimal_subclasses_are_rejected_and_negative_zero_is_normalized() -> None:
+    api = _api()
+
+    class DecimalSubclass(Decimal):
+        pass
+
+    with pytest.raises(ValidationError):
+        api.ModelFeature.model_validate(
+            {**_model_payload()["features"][0], "weight": DecimalSubclass("1")}
+        )
+    feature = api.ModelFeature.model_validate(
+        {**_model_payload()["features"][0], "weight": "-0.000000000000"}
+    )
+    assert feature.weight == Decimal("0.000000000000")
+    assert feature.weight.as_tuple().sign == 0
