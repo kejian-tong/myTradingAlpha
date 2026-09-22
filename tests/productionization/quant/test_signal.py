@@ -1458,3 +1458,22 @@ def test_decimal_subclasses_are_rejected_and_negative_zero_is_normalized() -> No
     )
     assert feature.weight == Decimal("0.000000000000")
     assert feature.weight.as_tuple().sign == 0
+
+
+def test_sensitive_identifier_canary_is_rejected_without_error_or_canonical_echo() -> None:
+    api = _api()
+    canary = "api-key-CANARY-DO-NOT-ECHO"
+    cases = (
+        (api.FeatureSpec, {**_config_payload()["features"][0], "feature_id": canary}),
+        (api.FeatureConfiguration, {**_config_payload(), "configuration_id": canary}),
+        (api.FeatureObservation, {**_features(api).observations[0].model_dump(mode="json"), "feature_id": canary}),
+        (api.FeatureSet, {**_features(api).model_dump(mode="json"), "instrument_id": canary}),
+        (api.ModelFeature, {**_model_payload()["features"][0], "feature_id": canary}),
+        (api.ModelArtifact, {**_model_payload(), "model_id": canary}),
+        (api.QuantSignal, {**_score(api).model_dump(mode="json"), "run_id": canary}),
+    )
+    for model, payload in cases:
+        with pytest.raises(ValidationError) as exc_info:
+            model.model_validate(payload)
+        assert canary not in str(exc_info.value)
+        assert canary not in json.dumps(payload, ensure_ascii=False, sort_keys=True)
