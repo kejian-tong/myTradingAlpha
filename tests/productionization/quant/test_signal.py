@@ -4187,6 +4187,7 @@ def test_feature_schema_hash_caps_collection_before_nested_copy(
         raise AssertionError("nested feature copy executed")
 
     monkeypatch.setattr(api.features_module, "_copy_feature_spec", tripwire)
+    monkeypatch.setattr(api.features_module, "_spec_payload", tripwire)
     with pytest.raises(api.QuantInputError):
         api.features_module.feature_schema_hash(features)
     assert calls["count"] == 0
@@ -4211,6 +4212,7 @@ def test_feature_configuration_hash_caps_features_before_sensitive_walk(
         raise AssertionError("sensitive traversal executed")
 
     monkeypatch.setattr(api.features_module, "_prevalidate_sensitive", tripwire)
+    monkeypatch.setattr(api.features_module, "_spec_payload", tripwire)
     with pytest.raises(api.QuantInputError):
         api.features_module.feature_configuration_hash(configuration)
     assert calls["count"] == 0
@@ -4247,6 +4249,7 @@ def test_feature_set_hash_caps_collections_before_sensitive_walk(
         raise AssertionError("sensitive traversal executed")
 
     monkeypatch.setattr(api.features_module, "_prevalidate_sensitive", tripwire)
+    monkeypatch.setattr(api.features_module, "_feature_set_payload", tripwire)
     with pytest.raises(api.QuantInputError):
         api.features_module.feature_set_hash(feature_set)
     assert calls["count"] == 0
@@ -4267,6 +4270,7 @@ def test_model_artifact_hash_caps_features_before_sensitive_walk(
         raise AssertionError("sensitive traversal executed")
 
     monkeypatch.setattr(api.models_module, "_prevalidate_model_sensitive", tripwire)
+    monkeypatch.setattr(api.models_module, "_artifact_payload", tripwire)
     with pytest.raises(api.QuantInputError):
         api.models_module.model_artifact_hash(artifact)
     assert calls["count"] == 0
