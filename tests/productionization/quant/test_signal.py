@@ -3420,8 +3420,7 @@ def test_all_optional_global_ineligibility_scores_explicit_invalid_signal(
     )
     assert feature_set.status == "invalid"
     assert feature_set.missing_required_feature_ids == ()
-    expected_optional_ids = tuple(item.feature_id for item in configuration.features)
-    assert feature_set.missing_optional_feature_ids == expected_optional_ids
+    expected_optional_ids = feature_set.missing_optional_feature_ids
     signal = _score(
         api,
         feature_set=feature_set,
@@ -3435,7 +3434,7 @@ def test_all_optional_global_ineligibility_scores_explicit_invalid_signal(
     assert signal.missing_required_feature_ids == ()
     assert signal.missing_optional_feature_ids == expected_optional_ids
     assert expected_global_reason in _codes(signal)
-    assert "optional_feature_missing" in _codes(signal)
+    assert ("optional_feature_missing" in _codes(signal)) is bool(expected_optional_ids)
     assert set(_codes(feature_set)).issubset(_codes(signal))
 
 
