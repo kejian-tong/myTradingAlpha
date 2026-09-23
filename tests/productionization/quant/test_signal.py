@@ -2831,3 +2831,234 @@ def test_score_rejects_independently_permuted_parallel_provenance(
             bundle=bundle,
             configuration=configuration,
         )
+
+
+def test_shared_redaction_only_decoded_values_reject_every_identifier_boundary() -> None:
+    api = _api()
+    decoded_values = (
+        "Bearer abcdefgh",
+        '{"authorization":"Basic YWJjOmRlZg=="}',
+        "broker_account_id=acct-12345678",
+    )
+    encoded_forms: list[tuple[str, str]] = []
+    for decoded in decoded_values:
+        encoded = decoded
+        for layer in range(1, 4):
+            encoded = base64.urlsafe_b64encode(encoded.encode("utf-8")).decode(
+                "ascii"
+            ).rstrip("=")
+            encoded_forms.append((decoded, f"layer{layer}.{encoded}.identifier"))
+
+    violations: list[str] = []
+    for decoded, encoded in encoded_forms:
+        observation_payload = _features(api).observations[0].model_dump(mode="json")
+        source_bar_ids = list(observation_payload["source_bar_ids"])
+        source_bar_ids[0] = encoded
+        source_manifest_ids = list(observation_payload["source_manifest_ids"])
+        source_manifest_ids[0] = encoded
+        feature_set_payload = _features(api).model_dump(mode="json")
+        feature_set_payload["instrument_id"] = encoded
+        feature_set_payload.pop("feature_hash")
+        feature_set_payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], feature_set_payload
+        )
+        cases = (
+            (
+                "feature-spec",
+                api.FeatureSpec,
+                {**_config_payload()["features"][0], "feature_id": encoded},
+            ),
+            (
+                "configuration",
+                api.FeatureConfiguration,
+                _rehashed_configuration_payload(encoded),
+            ),
+            (
+                "observation-bar",
+                api.FeatureObservation,
+                {**observation_payload, "source_bar_ids": source_bar_ids},
+            ),
+            (
+                "observation-manifest",
+                api.FeatureObservation,
+                {**observation_payload, "source_manifest_ids": source_manifest_ids},
+            ),
+            ("feature-set", api.FeatureSet, feature_set_payload),
+            (
+                "model-feature",
+                api.ModelFeature,
+                {**_model_payload()["features"][0], "feature_id": encoded},
+            ),
+            ("model-artifact", api.ModelArtifact, _rehashed_model_payload(encoded)),
+            (
+                "quant-signal",
+                api.QuantSignal,
+                _rekey_signal_payload(
+                    {**_score(api).model_dump(mode="json"), "run_id": encoded}
+                ),
+            ),
+        )
+        for label, model, payload in cases:
+            for path, construct in (
+                ("model_validate", lambda model=model, payload=payload: model.model_validate(payload)),
+                ("constructor", lambda model=model, payload=payload: model(**payload)),
+            ):
+                try:
+                    accepted = construct()
+                except (ValidationError, ValueError, api.QuantInputError) as exc:
+                    rendered = str(exc)
+                    if encoded in rendered or decoded in rendered:
+                        violations.append(f"{label}:{path}:echo")
+                else:
+                    serialized = accepted.model_dump_json()
+                    if encoded in serialized or decoded in serialized:
+                        violations.append(f"{label}:{path}:accepted")
+        try:
+            _score(api, run_id=encoded)
+        except (ValidationError, ValueError, api.QuantInputError) as exc:
+            rendered = str(exc)
+            if encoded in rendered or decoded in rendered:
+                violations.append("run-id:echo")
+        else:
+            violations.append("run-id:accepted")
+
+    safe_controls = (
+        "asia-market-v1",
+        "asiatic-feature-v1",
+        base64.urlsafe_b64encode(b"asia-market-v1").decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(b"asiatic-feature-v1").decode("ascii").rstrip("="),
+    )
+    for safe in safe_controls:
+        wrapped = f"public.{safe}.identifier"
+        spec_payload = {**_config_payload()["features"][0], "feature_id": wrapped}
+        assert api.FeatureSpec.model_validate(spec_payload).feature_id == wrapped
+        assert api.FeatureSpec(**spec_payload).feature_id == wrapped
+        assert _score(api, run_id=wrapped).run_id == wrapped
+    assert violations == []
+
+
+@pytest.mark.parametrize("field", ("score_min", "score_max", "intercept"))
+def test_model_artifact_create_rejects_hostile_scalars_without_callbacks(
+    field: str,
+) -> None:
+    api = _api()
+    artifact = _artifact(api)
+    calls = {"count": 0}
+
+    class HostileScalar:
+        def _trip(self) -> None:
+            calls["count"] += 1
+            raise AssertionError("hostile scalar conversion executed")
+
+        def __str__(self) -> str:
+            self._trip()
+
+        def __repr__(self) -> str:
+            self._trip()
+
+        def __float__(self) -> float:
+            self._trip()
+
+        def __int__(self) -> int:
+            self._trip()
+
+        def __index__(self) -> int:
+            self._trip()
+
+    scalars: dict[str, object] = {
+        "score_min": artifact.score_min,
+        "score_max": artifact.score_max,
+        "intercept": artifact.intercept,
+    }
+    scalars[field] = HostileScalar()
+    with pytest.raises(api.QuantInputError) as exc_info:
+        api.ModelArtifact.create(
+            model_id=artifact.model_id,
+            model_version=artifact.model_version,
+            horizon_sessions=artifact.horizon_sessions,
+            decimal_places=artifact.decimal_places,
+            score_min=scalars["score_min"],
+            score_max=scalars["score_max"],
+            feature_config_hash=artifact.feature_config_hash,
+            feature_schema_hash=artifact.feature_schema_hash,
+            features=artifact.features,
+            intercept=scalars["intercept"],
+        )
+    assert calls["count"] == 0
+    assert "hostile scalar" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "unknown-required",
+        "unknown-optional",
+        "required-reason-absent",
+        "optional-invalid-reason-absent",
+        "overlapping-missing-sets",
+        "duplicate-required",
+        "unsorted-optional",
+    ),
+)
+def test_quant_signal_missing_feature_sets_are_intrinsically_bound(
+    mutation: str,
+) -> None:
+    api = _api()
+    payload = _score(api).model_dump(mode="json")
+    if mutation == "unknown-required":
+        payload.update(
+            status="invalid",
+            score=None,
+            missing_required_feature_ids=["unknown-required-feature"],
+            reason_codes=["required_feature_missing"],
+        )
+    elif mutation == "unknown-optional":
+        payload.update(
+            status="degraded",
+            missing_optional_feature_ids=["unknown-optional-feature"],
+            reason_codes=["optional_feature_missing"],
+        )
+    elif mutation == "required-reason-absent":
+        payload.update(
+            status="invalid",
+            score=None,
+            missing_required_feature_ids=["close_return_1d"],
+            reason_codes=["exact_session_bar_missing"],
+        )
+    elif mutation == "optional-invalid-reason-absent":
+        payload.update(
+            status="invalid",
+            score=None,
+            missing_optional_feature_ids=["close_return_2d_optional"],
+            reason_codes=["exact_session_bar_missing"],
+        )
+    elif mutation == "overlapping-missing-sets":
+        payload.update(
+            status="invalid",
+            score=None,
+            missing_required_feature_ids=["close_return_1d"],
+            missing_optional_feature_ids=["close_return_1d"],
+            reason_codes=["required_feature_missing", "optional_feature_missing"],
+        )
+    elif mutation == "duplicate-required":
+        payload.update(
+            status="invalid",
+            score=None,
+            missing_required_feature_ids=["close_return_1d", "close_return_1d"],
+            reason_codes=["required_feature_missing"],
+        )
+    else:
+        payload.update(
+            status="invalid",
+            score=None,
+            missing_optional_feature_ids=[
+                "close_return_2d_optional",
+                "close_return_1d",
+            ],
+            reason_codes=["optional_feature_missing"],
+        )
+    rekeyed = _rekey_signal_payload(payload)
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(rekeyed)
+    with pytest.raises(ValidationError):
+        api.QuantSignal(**rekeyed)
