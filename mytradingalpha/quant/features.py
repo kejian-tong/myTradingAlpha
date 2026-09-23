@@ -8,6 +8,7 @@ from decimal import (
     ROUND_HALF_EVEN,
     Context,
     Decimal,
+    DecimalException,
     Inexact,
     InvalidOperation,
     Rounded,
@@ -1292,7 +1293,11 @@ def _safe_bundle_value(
     if value_type in (int, bool, type(None)):
         return value
     if value_type is Decimal:
-        if not value.is_finite() or len(value.as_tuple().digits) > 64:
+        if (
+            not value.is_finite()
+            or abs(value.as_tuple().exponent) > 64
+            or len(value.as_tuple().digits) > 64
+        ):
             raise QuantInputError("quant decimal exceeds structural bounds")
         return value
     if value_type is float:
@@ -1583,8 +1588,11 @@ def _compute_observation(
     selected = tuple(by_date[item.session_date][0] for item in selected_sessions)
     lag = selected[0]
     anchor = selected[-1]
-    with localcontext(_fixed_decimal_context()):
-        value = _decimal((anchor.close / lag.close) - Decimal(1))
+    try:
+        with localcontext(_fixed_decimal_context()):
+            value = _decimal((anchor.close / lag.close) - Decimal(1))
+    except DecimalException as exc:
+        raise QuantInputError("feature arithmetic is invalid") from exc
     return FeatureObservation(
         schema_version=CURRENT_SCHEMA_VERSION,
         feature_id=spec.feature_id,
