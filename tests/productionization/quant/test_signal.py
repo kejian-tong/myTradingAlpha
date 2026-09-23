@@ -2154,3 +2154,235 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
         else:
             violations.append("rehashed-feature-set-scored")
     assert violations == []
+
+
+def _recursive_base64url(value: str, layers: int) -> str:
+    encoded = value
+    for _ in range(layers):
+        encoded = base64.urlsafe_b64encode(encoded.encode("utf-8")).decode("ascii").rstrip("=")
+    return encoded
+
+
+def _rehashed_feature_set_payload(api: SimpleNamespace) -> dict[str, Any]:
+    payload = _features(api).model_dump(mode="json")
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    return payload
+
+
+def _rehashed_configuration_payload(secret_value: str) -> dict[str, Any]:
+    payload = _config_payload()
+    payload["configuration_id"] = secret_value
+    payload.pop("content_hash")
+    payload["content_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_configuration"], payload
+    )
+    return payload
+
+
+def _rehashed_model_payload(secret_value: str) -> dict[str, Any]:
+    payload = _model_payload()
+    payload["model_id"] = secret_value
+    payload.pop("content_hash")
+    payload["content_hash"] = _canonical_hash(HASH_DOMAINS["model_artifact"], payload)
+    return payload
+
+
+def test_round3_recursive_embedded_secrets_reject_across_all_construction_paths() -> None:
+    api = _api()
+    canary = "secret"
+    single = _recursive_base64url(canary, 1)
+    five_layers = _recursive_base64url(canary, 5)
+    maximum_within_cap = canary
+    while True:
+        candidate = _recursive_base64url(maximum_within_cap, 1)
+        if len(candidate.encode("utf-8")) > 128:
+            break
+        maximum_within_cap = candidate
+    raw = canary.encode("utf-8")
+    unicode_encoded = "".join(
+        "\\u" + format(ord(character), "04x") for character in canary
+    )
+    encodings = (
+        five_layers,
+        maximum_within_cap,
+        f"public.{single}.identifier",
+        f"public{single}identifier",
+        base64.b64encode(raw).decode("ascii"),
+        _recursive_base64url(canary, 2),
+        f"public:{''.join(f'%{byte:02X}' for byte in raw)}:identifier",
+        f"public-{unicode_encoded}-identifier",
+        f"public_{raw.hex()}_identifier",
+    )
+    assert len(five_layers.encode("utf-8")) <= 128
+    assert len(maximum_within_cap.encode("utf-8")) <= 128
+    assert len(_recursive_base64url(maximum_within_cap, 1).encode("utf-8")) > 128
+
+    violations: list[str] = []
+    for encoded in encodings:
+        feature_set_payload = _features(api).model_dump(mode="json")
+        feature_set_payload["instrument_id"] = encoded
+        feature_set_payload.pop("feature_hash")
+        feature_set_payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], feature_set_payload
+        )
+        signal_payload = _rekey_signal_payload(
+            {**_score(api).model_dump(mode="json"), "run_id": encoded}
+        )
+        cases = (
+            (
+                "FeatureSpec",
+                api.FeatureSpec,
+                {**_config_payload()["features"][0], "feature_id": encoded},
+            ),
+            (
+                "FeatureConfiguration",
+                api.FeatureConfiguration,
+                _rehashed_configuration_payload(encoded),
+            ),
+            (
+                "FeatureObservation",
+                api.FeatureObservation,
+                {
+                    **_features(api).observations[0].model_dump(mode="json"),
+                    "feature_id": encoded,
+                },
+            ),
+            ("FeatureSet", api.FeatureSet, feature_set_payload),
+            (
+                "ModelFeature",
+                api.ModelFeature,
+                {**_model_payload()["features"][0], "feature_id": encoded},
+            ),
+            ("ModelArtifact", api.ModelArtifact, _rehashed_model_payload(encoded)),
+            ("QuantSignal", api.QuantSignal, signal_payload),
+        )
+        for label, model, payload in cases:
+            for path, construct in (
+                ("model_validate", lambda model=model, payload=payload: model.model_validate(payload)),
+                ("constructor", lambda model=model, payload=payload: model(**payload)),
+            ):
+                try:
+                    accepted = construct()
+                except (ValidationError, ValueError, api.QuantInputError) as exc:
+                    rendered = str(exc)
+                    if encoded in rendered or canary in rendered:
+                        violations.append(f"{label}:{path}:echo")
+                else:
+                    rendered = accepted.model_dump_json()
+                    if encoded in rendered or canary in rendered:
+                        violations.append(f"{label}:{path}:accepted")
+        try:
+            _score(api, run_id=encoded)
+        except (ValidationError, ValueError, api.QuantInputError) as exc:
+            rendered = str(exc)
+            if encoded in rendered or canary in rendered:
+                violations.append("run_id:echo")
+        else:
+            violations.append("run_id:accepted")
+
+    for safe in (
+        f"public.{_recursive_base64url('public-id', 1)}.identifier",
+        f"public{_recursive_base64url('public-id', 1)}identifier",
+    ):
+        spec_payload = {**_config_payload()["features"][0], "feature_id": safe}
+        assert api.FeatureSpec.model_validate(spec_payload).feature_id == safe
+        assert api.FeatureSpec(**spec_payload).feature_id == safe
+        assert _score(api, run_id=safe).run_id == safe
+    assert violations == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "latest_after_cutoff",
+        "observation_as_of_mismatch",
+        "observation_as_of_future",
+        "negative_revision",
+        "duplicate_bar_id",
+        "duplicate_manifest_id",
+        "reversed_sessions",
+        "equal_sessions",
+        "anchor_after_as_of",
+    ),
+)
+def test_round3_rehashed_feature_set_rejects_invalid_provenance_semantics(
+    mutation: str,
+) -> None:
+    api = _api()
+    payload = _features(api).model_dump(mode="json")
+    observation = payload["observations"][0]
+    if mutation == "latest_after_cutoff":
+        observation["latest_available_at"] = "2024-07-02T20:05:00Z"
+    elif mutation == "observation_as_of_mismatch":
+        observation["as_of"] = "2024-07-02T19:59:00Z"
+    elif mutation == "observation_as_of_future":
+        observation["as_of"] = "2024-07-02T20:05:00Z"
+    elif mutation == "negative_revision":
+        observation["source_revisions"][0] = -1
+    elif mutation == "duplicate_bar_id":
+        observation["source_bar_ids"][0] = observation["source_bar_ids"][1]
+    elif mutation == "duplicate_manifest_id":
+        observation["source_manifest_ids"][0] = observation["source_manifest_ids"][1]
+    elif mutation == "reversed_sessions":
+        observation["lookback_session"] = "2024-07-03"
+    elif mutation == "equal_sessions":
+        observation["lookback_session"] = observation["anchor_session"]
+    elif mutation == "anchor_after_as_of":
+        observation["anchor_session"] = "2024-07-03"
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    assert payload["feature_hash"] == _canonical_hash(
+        HASH_DOMAINS["feature_set"],
+        {key: value for key, value in payload.items() if key != "feature_hash"},
+    )
+    with pytest.raises((ValidationError, api.QuantInputError)):
+        api.FeatureSet.model_validate(payload)
+
+
+@pytest.mark.parametrize("mutation", ("feature_version", "required", "lookback"))
+def test_round3_rehashed_feature_schema_mismatch_is_typed_before_scoring(
+    mutation: str,
+) -> None:
+    api = _api()
+    payload = _features(api).model_dump(mode="json")
+    observation = payload["observations"][0]
+    if mutation == "feature_version":
+        observation["feature_version"] = "v2"
+    elif mutation == "required":
+        observation["required"] = False
+    else:
+        observation["lookback_sessions"] = 2
+        observation["lookback_session"] = "2024-03-08"
+        observation["source_bar_ids"].insert(0, "bar-extra-schema-mismatch")
+        observation["source_manifest_ids"].insert(0, "manifest-extra-schema-mismatch")
+        observation["source_revisions"].insert(0, 0)
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    candidate = api.FeatureSet.model_validate(payload)
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(_artifact(api)).score(
+            candidate,
+            run_id=f"run-schema-mismatch-{mutation}",
+        )
+
+
+def test_round3_pathological_builtin_identifier_is_capped_before_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    calls = {"count": 0}
+
+    def decode_tripwire(value: str) -> tuple[str, ...]:
+        calls["count"] += 1
+        raise AssertionError("decode helper reached for over-cap identifier")
+
+    monkeypatch.setattr(
+        signal_contracts,
+        "_decoded_identifier_candidates",
+        decode_tripwire,
+    )
+    with pytest.raises(ValueError):
+        signal_contracts.validate_sig03_identifier("x" * 4_000_000)
+    assert calls["count"] == 0
