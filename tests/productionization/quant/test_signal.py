@@ -1987,3 +1987,170 @@ def test_no_closed_calendar_session_returns_canonical_invalid_feature_set() -> N
     assert result.as_of == bundle.knowledge_cutoff
     assert all(item.anchor_session is None for item in result.observations)
     assert all(item.lookback_session is None for item in result.observations)
+
+
+def test_recursive_and_embedded_secret_encodings_reject_without_echo() -> None:
+    api = _api()
+    canary = "secret-canary-SIG03-8d92a6"
+    raw = canary.encode("utf-8")
+    padded_base64 = base64.b64encode(raw).decode("ascii")
+    base64url = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    double_base64url = base64.urlsafe_b64encode(base64url.encode("ascii")).decode(
+        "ascii"
+    ).rstrip("=")
+    percent = "".join(f"%{byte:02X}" for byte in raw)
+    unicode_escape = "".join(f"\\u{ord(character):04x}" for character in canary)
+    hexadecimal = raw.hex()
+    embedded = tuple(
+        (f"{kind}-{prefix or 'plain'}", f"{prefix}{encoded}")
+        for kind, encoded in (
+            ("base64url", base64url),
+            ("percent", percent),
+            ("unicode", unicode_escape),
+            ("hex", hexadecimal),
+        )
+        for prefix in ("id:", "id.", "id-")
+    )
+    encoded_forms = (
+        ("padded-base64", padded_base64),
+        ("double-base64url", double_base64url),
+        *embedded,
+    )
+    assert base64.b64decode(padded_base64).decode("utf-8") == canary
+    first_layer = base64.urlsafe_b64decode(
+        double_base64url + "=" * (-len(double_base64url) % 4)
+    ).decode("ascii")
+    assert first_layer == base64url
+    assert base64.urlsafe_b64decode(
+        first_layer + "=" * (-len(first_layer) % 4)
+    ).decode("utf-8") == canary
+
+    violations: list[str] = []
+    for label, encoded in encoded_forms:
+        boundaries = (
+            (
+                "feature",
+                lambda encoded=encoded: api.FeatureSpec.model_validate(
+                    {**_config_payload()["features"][0], "feature_id": encoded}
+                ),
+            ),
+            ("run", lambda encoded=encoded: _score(api, run_id=encoded)),
+        )
+        for boundary, construct in boundaries:
+            try:
+                accepted = construct()
+            except (ValidationError, ValueError, api.QuantInputError) as exc:
+                rendered = str(exc)
+                if encoded in rendered or canary in rendered:
+                    violations.append(f"{label}:{boundary}:echo")
+            else:
+                serialized = accepted.model_dump_json()
+                if encoded in serialized or canary in serialized:
+                    violations.append(f"{label}:{boundary}:accepted")
+
+    safe_controls = (
+        base64.urlsafe_b64encode(b"public-id").decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(b"\x00\xff\x00").decode("ascii").rstrip("="),
+        b"public-id".hex(),
+        b"\x00\xff\x00".hex(),
+    )
+    for safe in safe_controls:
+        assert (
+            api.FeatureSpec.model_validate(
+                {**_config_payload()["features"][0], "feature_id": safe}
+            ).feature_id
+            == safe
+        )
+        assert _score(api, run_id=safe).run_id == safe
+    assert violations == []
+
+
+def test_feature_observation_provenance_cardinality_and_early_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    base = _features(api).observations[0].model_dump(mode="json")
+
+    def payload_with_count(count: int) -> dict[str, Any]:
+        return {
+            **base,
+            "source_bar_ids": [f"bar-provenance-{index}" for index in range(count)],
+            "source_manifest_ids": [
+                f"manifest-provenance-{index}" for index in range(count)
+            ],
+            "source_revisions": list(range(count)),
+        }
+
+    exact = api.FeatureObservation.model_validate(payload_with_count(2))
+    assert exact.lookback_sessions == 1
+    assert len(exact.source_bar_ids) == exact.lookback_sessions + 1
+    violations: list[str] = []
+    for count in (1, 3, 254, 10_000):
+        try:
+            api.FeatureObservation.model_validate(payload_with_count(count))
+        except (ValidationError, ValueError, api.QuantInputError):
+            pass
+        else:
+            violations.append(f"available-count-{count}")
+    mismatched = payload_with_count(2)
+    mismatched["source_manifest_ids"] = mismatched["source_manifest_ids"][:1]
+    with pytest.raises(ValidationError):
+        api.FeatureObservation.model_validate(mismatched)
+
+    missing = {
+        **base,
+        "value": None,
+        "status": "missing",
+        "reason_code": "insufficient_lookback",
+        "lookback_session": None,
+        "latest_available_at": None,
+        "source_bar_ids": [],
+        "source_manifest_ids": [],
+        "source_revisions": [],
+    }
+    assert api.FeatureObservation.model_validate(missing).source_bar_ids == ()
+    nonempty_missing = {
+        **missing,
+        "source_bar_ids": ["bar-provenance-0"],
+        "source_manifest_ids": ["manifest-provenance-0"],
+        "source_revisions": [0],
+    }
+    with pytest.raises(ValidationError):
+        api.FeatureObservation.model_validate(nonempty_missing)
+
+    callback_calls = {"count": 0}
+
+    def tripwire(value: object) -> str:
+        callback_calls["count"] += 1
+        raise AssertionError("provenance element callback executed")
+
+    monkeypatch.setattr(api.features_module, "validate_sig03_identifier", tripwire)
+    try:
+        with pytest.raises((ValidationError, ValueError, api.QuantInputError)):
+            api.FeatureObservation.model_validate(payload_with_count(254))
+    finally:
+        monkeypatch.undo()
+    if callback_calls["count"] != 0:
+        violations.append("over-cap-element-callback")
+
+    feature_set_payload = _features(api).model_dump(mode="json")
+    feature_set_payload["observations"][0] = payload_with_count(3)
+    feature_set_payload.pop("feature_hash")
+    feature_set_payload["feature_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_set"], feature_set_payload
+    )
+    try:
+        fabricated = api.FeatureSet.model_validate(feature_set_payload)
+    except (ValidationError, ValueError, api.QuantInputError):
+        pass
+    else:
+        try:
+            api.QuantSignalModel(_artifact(api)).score(
+                fabricated,
+                run_id="run-fabricated-provenance",
+            )
+        except api.QuantInputError:
+            pass
+        else:
+            violations.append("rehashed-feature-set-scored")
+    assert violations == []
