@@ -4168,3 +4168,105 @@ def test_exported_hash_helpers_accept_normal_exact_instances() -> None:
     )
     assert api.features_module.feature_set_hash(feature_set) == feature_set.feature_hash
     assert api.models_module.model_artifact_hash(artifact) == artifact.content_hash
+
+
+@pytest.mark.parametrize("container_type", (tuple, list))
+@pytest.mark.parametrize("count", (33, 10_000))
+def test_feature_schema_hash_caps_collection_before_nested_copy(
+    container_type: type[tuple[Any, ...]] | type[list[Any]],
+    count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    spec = _configuration(api).features[0]
+    features = container_type([spec] * count)
+    calls = {"count": 0}
+
+    def tripwire(*args: Any, **kwargs: Any) -> Any:
+        calls["count"] += 1
+        raise AssertionError("nested feature copy executed")
+
+    monkeypatch.setattr(api.features_module, "_copy_feature_spec", tripwire)
+    with pytest.raises(api.QuantInputError):
+        api.features_module.feature_schema_hash(features)
+    assert calls["count"] == 0
+
+
+@pytest.mark.parametrize("count", (33, 10_000))
+def test_feature_configuration_hash_caps_features_before_sensitive_walk(
+    count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    configuration = _configuration(api)
+    object.__setattr__(
+        configuration,
+        "features",
+        (configuration.features[0],) * count,
+    )
+    calls = {"count": 0}
+
+    def tripwire(*args: Any, **kwargs: Any) -> None:
+        calls["count"] += 1
+        raise AssertionError("sensitive traversal executed")
+
+    monkeypatch.setattr(api.features_module, "_prevalidate_sensitive", tripwire)
+    with pytest.raises(api.QuantInputError):
+        api.features_module.feature_configuration_hash(configuration)
+    assert calls["count"] == 0
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "observations",
+        "missing_required_feature_ids",
+        "missing_optional_feature_ids",
+        "reason_codes",
+    ),
+)
+@pytest.mark.parametrize("count", (33, 10_000))
+def test_feature_set_hash_caps_collections_before_sensitive_walk(
+    field: str,
+    count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    feature_set = _features(api)
+    if field == "observations":
+        value: tuple[Any, ...] = (feature_set.observations[0],) * count
+    elif field == "reason_codes":
+        value = ("optional_feature_missing",) * count
+    else:
+        value = ("safe-feature-id",) * count
+    object.__setattr__(feature_set, field, value)
+    calls = {"count": 0}
+
+    def tripwire(*args: Any, **kwargs: Any) -> None:
+        calls["count"] += 1
+        raise AssertionError("sensitive traversal executed")
+
+    monkeypatch.setattr(api.features_module, "_prevalidate_sensitive", tripwire)
+    with pytest.raises(api.QuantInputError):
+        api.features_module.feature_set_hash(feature_set)
+    assert calls["count"] == 0
+
+
+@pytest.mark.parametrize("count", (33, 10_000))
+def test_model_artifact_hash_caps_features_before_sensitive_walk(
+    count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    artifact = _artifact(api)
+    object.__setattr__(artifact, "features", (artifact.features[0],) * count)
+    calls = {"count": 0}
+
+    def tripwire(*args: Any, **kwargs: Any) -> None:
+        calls["count"] += 1
+        raise AssertionError("sensitive traversal executed")
+
+    monkeypatch.setattr(api.models_module, "_prevalidate_model_sensitive", tripwire)
+    with pytest.raises(api.QuantInputError):
+        api.models_module.model_artifact_hash(artifact)
+    assert calls["count"] == 0
