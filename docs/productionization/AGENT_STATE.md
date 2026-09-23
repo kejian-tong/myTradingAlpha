@@ -76,8 +76,12 @@ arithmetic, and bundle-text bounds GREEN candidate was produced; durable Round-f
 is recorded in PR evidence. Round-fifteen repair started from candidate
 `a7a7b6a1c70d079d9867817df6c3ccbdf21a61d1`; its tests-only RED is
 `367ed11e5d5924b8eb8494eccd51775921e7953f`. The bounded bundle Decimal exponent and
-arithmetic-exception GREEN candidate was produced; durable Round-fifteen lease release will be recorded
-in PR evidence before fresh review.
+arithmetic-exception GREEN candidate was produced; durable Round-fifteen lease release is recorded in
+PR evidence. Round-sixteen repair started from candidate
+`45f39754c45fe3483a5ebeaf861058752ae1f84f`; its tests-only RED is
+`04d5a6f4a208a4b1f7516e68a4366a9d01a088cb`. The bounded timezone-independent sealed-bundle replay
+GREEN candidate was produced; durable Round-sixteen lease release will be recorded in PR evidence
+before fresh review.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

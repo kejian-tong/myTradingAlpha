@@ -15,7 +15,6 @@ from decimal import (
     localcontext,
 )
 from typing import Any, Literal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     ConfigDict,
@@ -60,6 +59,7 @@ from mytradingalpha.data.bundle import (
     EvidenceDomain,
     EvidenceRequirement,
     MissingEvidence,
+    _semantic_hash as _bundle_semantic_hash,
 )
 from mytradingalpha.data.calendar import (
     CalendarClosure,
@@ -1249,6 +1249,23 @@ _SAFE_ENUM_TYPES = (
     StatementType,
     UnitScale,
 )
+_BUNDLE_SEMANTIC_FIELDS = (
+    "schema_version",
+    "knowledge_cutoff",
+    "replay_policy",
+    "requirements",
+    "missing_optional",
+    "calendar",
+    "instruments",
+    "aliases",
+    "memberships",
+    "actions",
+    "bars",
+    "filings",
+    "events",
+    "social_posts",
+    "macro_observations",
+)
 
 
 def _raw_fields(value: object, expected: type[object]) -> dict[str, object]:
@@ -1365,20 +1382,39 @@ def _validated_bundle(bundle: EvidenceBundle) -> EvidenceBundle:
     if type(bundle) is not EvidenceBundle:
         raise QuantInputError("evidence bundle requires exact sealed type")
     root_fields = _raw_fields(bundle, EvidenceBundle)
-    payload = _safe_bundle_value(root_fields, seen=set(), depth=0, nodes=[0])
-    if type(payload) is not dict:
-        raise QuantInputError("evidence bundle did not normalize to an object")
-    if type(payload.get("bars")) is not tuple or len(payload["bars"]) > MAX_BARS:
+    walk_nodes = [0]
+    _safe_bundle_value(root_fields, seen=set(), depth=0, nodes=walk_nodes)
+    bars = root_fields["bars"]
+    if type(bars) is not tuple or len(bars) > MAX_BARS:
         raise QuantInputError("bar count exceeds SIG-03 bound")
     try:
-        validated = EvidenceBundle.model_validate(payload)
+        expected_hash = _bundle_semantic_hash(
+            **{field: root_fields[field] for field in _BUNDLE_SEMANTIC_FIELDS}
+        )
     except QuantInputError:
         raise
     except Exception as exc:
-        raise QuantInputError("sealed evidence bundle failed defensive validation") from exc
-    if validated.bundle_hash != root_fields["bundle_hash"]:
+        raise QuantInputError("sealed evidence bundle hash is invalid") from exc
+    if root_fields["bundle_hash"] != expected_hash:
         raise QuantInputError("sealed evidence bundle hash changed")
-    return validated
+    try:
+        copied = bundle.model_copy(deep=True)
+    except Exception as exc:
+        raise QuantInputError("sealed evidence bundle copy failed") from exc
+    copied_fields = _raw_fields(copied, EvidenceBundle)
+    _safe_bundle_value(copied_fields, seen=set(), depth=0, nodes=walk_nodes)
+    copied_bars = copied_fields["bars"]
+    if type(copied_bars) is not tuple or len(copied_bars) > MAX_BARS:
+        raise QuantInputError("bar count exceeds SIG-03 bound")
+    try:
+        copied_hash = _bundle_semantic_hash(
+            **{field: copied_fields[field] for field in _BUNDLE_SEMANTIC_FIELDS}
+        )
+    except Exception as exc:
+        raise QuantInputError("sealed evidence bundle copy hash is invalid") from exc
+    if copied_fields["bundle_hash"] != copied_hash or copied_hash != expected_hash:
+        raise QuantInputError("sealed evidence bundle copy hash changed")
+    return copied
 
 
 def _copy_local_model(value: object, expected: type[object], fields: tuple[str, ...]) -> dict[str, object]:
@@ -1466,30 +1502,19 @@ def _copy_feature_set(value: object) -> FeatureSet:
 
 def _anchor(bundle: EvidenceBundle) -> tuple[Any | None, Any | None, QuantSignalReasonCode | None]:
     calendar = bundle.calendar
-    try:
-        cutoff_date = bundle.knowledge_cutoff.astimezone(
-            ZoneInfo(calendar.timezone)
-        ).date()
-    except (ValueError, ZoneInfoNotFoundError):
-        return (
-            bundle.knowledge_cutoff,
-            None,
-            QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
-        )
-    coverage_range = next(
-        (
-            item
-            for item in calendar.coverage_ranges
-            if item.start <= cutoff_date <= item.end
-        ),
-        None,
+    cutoff_date = bundle.knowledge_cutoff.date()
+    matching_ranges = tuple(
+        item
+        for item in calendar.coverage_ranges
+        if item.start <= cutoff_date <= item.end
     )
-    if coverage_range is None:
+    if len(matching_ranges) != 1:
         return (
             bundle.knowledge_cutoff,
             None,
             QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
         )
+    coverage_range = matching_ranges[0]
     try:
         eligible = tuple(
             session
