@@ -3193,6 +3193,34 @@ def test_identifier_validation_has_no_process_global_raw_or_decoded_cache() -> N
     )
 
 
+def test_shared_sensitive_key_wrappers_are_rejected_without_echo() -> None:
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    decoded_values = (
+        "account_number=12345678",
+        "source_locator=s3://private/path",
+        "terms=private-value",
+    )
+    violations: list[str] = []
+    for decoded in decoded_values:
+        encoded = base64.urlsafe_b64encode(decoded.encode("utf-8")).decode(
+            "ascii"
+        ).rstrip("=")
+        for label, wrapped in (
+            ("ordinary", f"public.{encoded}.identifier"),
+            ("embedded", f"public{encoded}identifier"),
+        ):
+            try:
+                accepted = signal_contracts.validate_sig03_identifier(wrapped)
+            except ValueError as exc:
+                rendered = str(exc)
+                if encoded in rendered or decoded in rendered:
+                    violations.append(f"{label}:echo")
+            else:
+                violations.append(f"{label}:accepted:{accepted}")
+    assert violations == []
+
+
 @pytest.mark.parametrize("entrypoint", ("create", "model_validate"))
 @pytest.mark.parametrize("hash_field", ("feature_config_hash", "feature_schema_hash"))
 def test_model_artifact_hash_inputs_reject_subclasses_without_callbacks(
