@@ -3843,3 +3843,328 @@ def test_safe_128_byte_identifier_has_outward_constructor_parity(
         else model(**payload)
     )
     assert getattr(validated, identity_field) == safe_identifier
+
+
+def _safe_identifier_validation_case(
+    api: SimpleNamespace,
+    target: str,
+) -> tuple[Any, str]:
+    safe_identifier = "Z" * 128
+    if target == "FeatureSpec.model_validate":
+        payload = {
+            **_config_payload()["features"][0],
+            "feature_id": safe_identifier,
+        }
+        return lambda: api.FeatureSpec.model_validate(payload), "feature_id"
+    if target == "FeatureSpec.constructor":
+        payload = {
+            **_config_payload()["features"][0],
+            "feature_id": safe_identifier,
+        }
+        return lambda: api.FeatureSpec(**payload), "feature_id"
+    if target.startswith("FeatureConfiguration."):
+        payload = _rehashed_configuration_payload(safe_identifier)
+        if target.endswith("model_validate"):
+            return lambda: api.FeatureConfiguration.model_validate(payload), "configuration_id"
+        if target.endswith("constructor"):
+            return lambda: api.FeatureConfiguration(**payload), "configuration_id"
+        configuration = _configuration(api)
+        return (
+            lambda: api.FeatureConfiguration.create(
+                configuration_id=safe_identifier,
+                configuration_version=configuration.configuration_version,
+                universe_id=configuration.universe_id,
+                calendar_id=configuration.calendar_id,
+                horizon_sessions=configuration.horizon_sessions,
+                features=configuration.features,
+            ),
+            "configuration_id",
+        )
+    if target.startswith("FeatureObservation."):
+        payload = {
+            **_features(api).observations[0].model_dump(mode="json"),
+            "feature_id": safe_identifier,
+        }
+        construct = (
+            (lambda: api.FeatureObservation.model_validate(payload))
+            if target.endswith("model_validate")
+            else (lambda: api.FeatureObservation(**payload))
+        )
+        return construct, "feature_id"
+    if target.startswith("FeatureSet."):
+        payload = _features(api).model_dump(mode="json")
+        payload["instrument_id"] = safe_identifier
+        payload.pop("feature_hash")
+        payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], payload
+        )
+        construct = (
+            (lambda: api.FeatureSet.model_validate(payload))
+            if target.endswith("model_validate")
+            else (lambda: api.FeatureSet(**payload))
+        )
+        return construct, "instrument_id"
+    if target.startswith("ModelFeature."):
+        payload = {
+            **_model_payload()["features"][0],
+            "feature_id": safe_identifier,
+        }
+        construct = (
+            (lambda: api.ModelFeature.model_validate(payload))
+            if target.endswith("model_validate")
+            else (lambda: api.ModelFeature(**payload))
+        )
+        return construct, "feature_id"
+    if target.startswith("ModelArtifact."):
+        payload = _rehashed_model_payload(safe_identifier)
+        if target.endswith("model_validate"):
+            return lambda: api.ModelArtifact.model_validate(payload), "model_id"
+        if target.endswith("constructor"):
+            return lambda: api.ModelArtifact(**payload), "model_id"
+        artifact = _artifact(api)
+        return (
+            lambda: api.ModelArtifact.create(
+                model_id=safe_identifier,
+                model_version=artifact.model_version,
+                horizon_sessions=artifact.horizon_sessions,
+                decimal_places=artifact.decimal_places,
+                score_min=artifact.score_min,
+                score_max=artifact.score_max,
+                feature_config_hash=artifact.feature_config_hash,
+                feature_schema_hash=artifact.feature_schema_hash,
+                features=artifact.features,
+                intercept=artifact.intercept,
+            ),
+            "model_id",
+        )
+    payload = _rekey_signal_payload(
+        {**_score(api).model_dump(mode="json"), "run_id": safe_identifier}
+    )
+    construct = (
+        (lambda: api.QuantSignal.model_validate(payload))
+        if target.endswith("model_validate")
+        else (lambda: api.QuantSignal(**payload))
+    )
+    return construct, "run_id"
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "FeatureSpec.model_validate",
+        "FeatureSpec.constructor",
+        "FeatureConfiguration.model_validate",
+        "FeatureConfiguration.constructor",
+        "FeatureConfiguration.create",
+        "FeatureObservation.model_validate",
+        "FeatureObservation.constructor",
+        "FeatureSet.model_validate",
+        "FeatureSet.constructor",
+        "ModelFeature.model_validate",
+        "ModelFeature.constructor",
+        "ModelArtifact.model_validate",
+        "ModelArtifact.constructor",
+        "ModelArtifact.create",
+        "QuantSignal.model_validate",
+        "QuantSignal.constructor",
+    ),
+)
+def test_safe_128_byte_identifier_request_budget_covers_complete_entrypoint(
+    target: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    construct, identity_field = _safe_identifier_validation_case(api, target)
+    calls = {"count": 0}
+    original_decode = signal_contracts.base64.b64decode
+
+    def counted_decode(*args: Any, **kwargs: Any) -> bytes:
+        calls["count"] += 1
+        return original_decode(*args, **kwargs)
+
+    monkeypatch.setattr(signal_contracts.base64, "b64decode", counted_decode)
+    validated = construct()
+    assert getattr(validated, identity_field) == "Z" * 128
+    assert 0 < calls["count"] <= 6_001
+
+
+def _armed_model_subclass(
+    parent: type[Any],
+    payload: dict[str, Any],
+    state: dict[str, Any],
+) -> Any:
+    class Armed(parent):
+        def __getattribute__(self, name: str) -> Any:
+            if state["armed"] and name != "__class__":
+                state["calls"] += 1
+                raise AssertionError(state["canary"])
+            return super().__getattribute__(name)
+
+    value = Armed.model_validate(payload)
+    state["armed"] = True
+    return value
+
+
+@pytest.mark.parametrize(
+    "hash_name",
+    (
+        "feature_configuration_hash",
+        "feature_schema_hash",
+        "feature_set_hash",
+        "model_artifact_hash",
+    ),
+)
+def test_exported_hash_helpers_require_exact_parent_type_without_callbacks(
+    hash_name: str,
+) -> None:
+    api = _api()
+    state = {"armed": False, "calls": 0, "canary": "HOSTILE-PARENT-CANARY"}
+    if hash_name == "feature_configuration_hash":
+        parent = api.FeatureConfiguration
+        payload = _configuration(api).model_dump(mode="python")
+        hash_helper = api.features_module.feature_configuration_hash
+    elif hash_name == "feature_schema_hash":
+        parent = api.FeatureSpec
+        payload = _configuration(api).features[0].model_dump(mode="python")
+
+        def hash_helper(value: object) -> str:
+            return api.features_module.feature_schema_hash((value,))
+    elif hash_name == "feature_set_hash":
+        parent = api.FeatureSet
+        payload = _features(api).model_dump(mode="python")
+        hash_helper = api.features_module.feature_set_hash
+    else:
+        parent = api.ModelArtifact
+        payload = _artifact(api).model_dump(mode="python")
+        hash_helper = api.models_module.model_artifact_hash
+    hostile = _armed_model_subclass(parent, payload, state)
+    with pytest.raises(api.QuantInputError) as exc_info:
+        hash_helper(hostile)
+    assert state["calls"] == 0
+    assert state["canary"] not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "hash_name",
+    (
+        "feature_configuration_hash",
+        "feature_schema_hash",
+        "feature_set_hash",
+        "model_artifact_hash",
+    ),
+)
+def test_exported_hash_helpers_reject_outer_container_subclasses_without_callbacks(
+    hash_name: str,
+) -> None:
+    api = _api()
+    state = {"calls": 0, "canary": "HOSTILE-CONTAINER-CANARY"}
+
+    class HostileDict(dict):
+        def __getitem__(self, key: object) -> object:
+            state["calls"] += 1
+            raise AssertionError(state["canary"])
+
+        def __iter__(self):
+            state["calls"] += 1
+            raise AssertionError(state["canary"])
+
+    class HostileList(list):
+        def __iter__(self):
+            state["calls"] += 1
+            raise AssertionError(state["canary"])
+
+    if hash_name == "feature_configuration_hash":
+        hostile: object = HostileDict(_config_payload())
+        hash_helper = api.features_module.feature_configuration_hash
+    elif hash_name == "feature_schema_hash":
+        hostile = HostileList(_configuration(api).features)
+        hash_helper = api.features_module.feature_schema_hash
+    elif hash_name == "feature_set_hash":
+        hostile = HostileDict(_features(api).model_dump(mode="python"))
+        hash_helper = api.features_module.feature_set_hash
+    else:
+        hostile = HostileDict(_model_payload())
+        hash_helper = api.models_module.model_artifact_hash
+    with pytest.raises(api.QuantInputError) as exc_info:
+        hash_helper(hostile)
+    assert state["calls"] == 0
+    assert state["canary"] not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "hash_name",
+    (
+        "feature_configuration_hash",
+        "feature_schema_hash",
+        "feature_set_hash",
+        "model_artifact_hash",
+    ),
+)
+def test_exported_hash_helpers_reject_hostile_nested_models_without_callbacks(
+    hash_name: str,
+) -> None:
+    api = _api()
+    state = {"armed": False, "calls": 0, "canary": "HOSTILE-NESTED-CANARY"}
+    if hash_name in {"feature_configuration_hash", "feature_schema_hash"}:
+        parent = api.FeatureSpec
+        payload = _configuration(api).features[0].model_dump(mode="python")
+    elif hash_name == "feature_set_hash":
+        parent = api.FeatureObservation
+        payload = _features(api).observations[0].model_dump(mode="python")
+    else:
+        parent = api.ModelFeature
+        payload = _artifact(api).features[0].model_dump(mode="python")
+    hostile = _armed_model_subclass(parent, payload, state)
+    if hash_name == "feature_configuration_hash":
+        exact_parent = _configuration(api)
+        object.__setattr__(
+            exact_parent,
+            "features",
+            (hostile, *exact_parent.features[1:]),
+        )
+        hash_helper = api.features_module.feature_configuration_hash
+        value: object = exact_parent
+    elif hash_name == "feature_schema_hash":
+        hash_helper = api.features_module.feature_schema_hash
+        value = (hostile,)
+    elif hash_name == "feature_set_hash":
+        exact_parent = _features(api)
+        object.__setattr__(
+            exact_parent,
+            "observations",
+            (hostile, *exact_parent.observations[1:]),
+        )
+        hash_helper = api.features_module.feature_set_hash
+        value = exact_parent
+    else:
+        exact_parent = _artifact(api)
+        object.__setattr__(
+            exact_parent,
+            "features",
+            (hostile, *exact_parent.features[1:]),
+        )
+        hash_helper = api.models_module.model_artifact_hash
+        value = exact_parent
+    with pytest.raises(api.QuantInputError) as exc_info:
+        hash_helper(value)
+    assert state["calls"] == 0
+    assert state["canary"] not in str(exc_info.value)
+
+
+def test_exported_hash_helpers_accept_normal_exact_instances() -> None:
+    api = _api()
+    configuration = _configuration(api)
+    feature_set = _features(api)
+    artifact = _artifact(api)
+    assert (
+        api.features_module.feature_configuration_hash(configuration)
+        == configuration.content_hash
+    )
+    assert (
+        api.features_module.feature_schema_hash(configuration.features)
+        == artifact.feature_schema_hash
+    )
+    assert api.features_module.feature_set_hash(feature_set) == feature_set.feature_hash
+    assert api.models_module.model_artifact_hash(artifact) == artifact.content_hash
