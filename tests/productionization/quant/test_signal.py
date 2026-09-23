@@ -8,6 +8,7 @@ missing API until the production implementation is added.
 from __future__ import annotations
 
 import ast
+import base64
 import builtins
 import hashlib
 import json
@@ -19,7 +20,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, getcontext
+from decimal import ROUND_UP, Decimal, Inexact, Rounded, getcontext, setcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -31,6 +32,7 @@ from mytradingalpha.data.actions import CorporateAction
 from mytradingalpha.data.bars import AdjustmentBasis, BarFinality, DailyBar
 from mytradingalpha.data.bundle import (
     EvidenceBundle,
+    EvidenceDomain,
     EvidenceRequirement,
     MissingEvidence,
     build_evidence_bundle,
@@ -1312,7 +1314,17 @@ def test_model_feature_schema_hash_binding_has_no_valid_sha_fallback() -> None:
     api = _api()
     feature_set = _features(api)
     artifact = _artifact(api)
-    full_schema_hash = api.models_module._model_feature_full_hash(artifact.features)
+    full_schema_payload = []
+    for feature in artifact.features:
+        payload = feature.model_dump(mode="json", exclude_none=True)
+        payload["weight"] = format(feature.weight, ".12f")
+        if feature.missing_value is not None:
+            payload["missing_value"] = format(feature.missing_value, ".12f")
+        full_schema_payload.append(payload)
+    full_schema_hash = _canonical_hash(
+        HASH_DOMAINS["feature_schema"],
+        full_schema_payload,
+    )
     payload = feature_set.model_dump(mode="json")
     payload["feature_schema_hash"] = full_schema_hash
     payload.pop("feature_hash")
@@ -1478,3 +1490,500 @@ def test_sensitive_identifier_canary_is_rejected_without_error_or_canonical_echo
             model.model_validate(payload)
         assert canary not in str(exc_info.value)
         assert payload == original_payload
+
+
+def test_feature_compute_ignores_hostile_ambient_decimal_contexts() -> None:
+    api = _api()
+    baseline = _features(api).model_dump(mode="json")
+
+    def compute_with_context(*, precision: int, hostile: bool) -> dict[str, Any]:
+        previous = getcontext().copy()
+        try:
+            context = getcontext()
+            context.prec = precision
+            context.rounding = ROUND_UP
+            context.traps[Inexact] = hostile
+            context.traps[Rounded] = hostile
+            context.clear_flags()
+            return _features(api).model_dump(mode="json")
+        finally:
+            setcontext(previous)
+
+    assert compute_with_context(precision=28, hostile=False) == baseline
+    assert compute_with_context(precision=7, hostile=False) == baseline
+    assert compute_with_context(precision=1, hostile=True) == baseline
+    assert compute_with_context(precision=28, hostile=False) == baseline
+    assert compute_with_context(precision=1, hostile=True) == baseline
+    contexts = tuple((1, True) if index % 2 else (7, False) for index in range(16))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outputs = list(
+            pool.map(
+                lambda settings: compute_with_context(
+                    precision=settings[0], hostile=settings[1]
+                ),
+                contexts,
+            )
+        )
+    assert outputs == [baseline] * len(contexts)
+
+
+def test_public_plain_dict_boundaries_reject_hostile_string_keys_without_callbacks() -> None:
+    api = _api()
+    state = {"armed": False, "calls": 0}
+
+    class HostileKey(str):
+        def _trip(self) -> None:
+            if state["armed"]:
+                state["calls"] += 1
+                raise AssertionError("hostile key callback executed")
+
+        def __hash__(self) -> int:
+            self._trip()
+            return str.__hash__(self)
+
+        def __eq__(self, other: object) -> bool:
+            self._trip()
+            return str.__eq__(self, other)
+
+        def __str__(self) -> str:
+            self._trip()
+            return str.__str__(self)
+
+        def __iter__(self):
+            self._trip()
+            return iter(())
+
+        def casefold(self) -> str:
+            self._trip()
+            return str.casefold(self)
+
+        def encode(self, *args: Any, **kwargs: Any) -> bytes:
+            self._trip()
+            return str.encode(self, *args, **kwargs)
+
+    cases = (
+        (api.FeatureSpec, _config_payload()["features"][0], "feature_id"),
+        (api.FeatureConfiguration, _config_payload(), "configuration_id"),
+        (
+            api.FeatureObservation,
+            _features(api).observations[0].model_dump(mode="json"),
+            "feature_id",
+        ),
+        (api.FeatureSet, _features(api).model_dump(mode="json"), "instrument_id"),
+        (api.ModelFeature, _model_payload()["features"][0], "feature_id"),
+        (api.ModelArtifact, _model_payload(), "feature_config_hash"),
+        (api.QuantSignal, _score(api).model_dump(mode="json"), "run_id"),
+    )
+    for model, source, field in cases:
+        payload = deepcopy(source)
+        field_value = payload.pop(field)
+        key = HostileKey(field)
+        payload[key] = field_value
+        state["calls"] = 0
+        state["armed"] = True
+        try:
+            with pytest.raises((ValidationError, ValueError, api.QuantInputError)):
+                model.model_validate(payload)
+        finally:
+            state["armed"] = False
+        assert state["calls"] == 0
+
+
+def test_quant_signal_direct_wire_enforces_exact_score_range() -> None:
+    api = _api()
+    base = _score(api).model_dump(mode="json")
+    for score in ("-1.000000000000", "1.000000000000"):
+        validated = api.QuantSignal.model_validate(
+            _rekey_signal_payload({**base, "score": score})
+        )
+        assert validated.score == Decimal(score)
+    for score in ("-1.000000000001", "1.000000000001"):
+        with pytest.raises(ValidationError):
+            api.QuantSignal.model_validate(
+                _rekey_signal_payload({**base, "score": score})
+            )
+
+
+def test_feature_observation_direct_wire_requires_canonical_fixed_decimal() -> None:
+    api = _api()
+    base = _features(api).observations[0].model_dump(mode="json")
+    canonical = api.FeatureObservation.model_validate(
+        {**base, "value": "0.100000000000"}
+    )
+    negative_zero = api.FeatureObservation.model_validate(
+        {**base, "value": "-0.000000000000"}
+    )
+    positive_zero = api.FeatureObservation.model_validate(
+        {**base, "value": "0.000000000000"}
+    )
+    assert canonical.value == Decimal("0.100000000000")
+    assert canonical.value.as_tuple().exponent == -12
+    assert negative_zero.value == Decimal("0.000000000000")
+    assert negative_zero.value.as_tuple().sign == 0
+    assert negative_zero.model_dump_json() == positive_zero.model_dump_json()
+    for value in (
+        "0.1",
+        "0.1000000000009",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1E+100000",
+        "1E-100000",
+    ):
+        with pytest.raises((ValidationError, api.QuantInputError)):
+            api.FeatureObservation.model_validate({**base, "value": value})
+
+
+@pytest.mark.parametrize("value", ("0.1000000000009", "1E+100000"))
+def test_rehashed_feature_set_rejects_bad_decimal_before_scoring(value: str) -> None:
+    api = _api()
+    payload = _features(api).model_dump(mode="json")
+    payload["observations"][0]["value"] = value
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    try:
+        candidate = api.FeatureSet.model_validate(payload)
+    except (ValidationError, api.QuantInputError):
+        return
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(_artifact(api)).score(
+            candidate,
+            run_id="run-bad-feature-decimal",
+        )
+
+
+def test_quant_signal_direct_resource_limits_are_exact_and_not_truncated() -> None:
+    api = _api()
+    base = _score(api).model_dump(mode="json")
+    run_at_cap = "r" * 128
+    run_over_cap = "r" * 129
+    ids_at_cap = tuple(f"feature-{index:02d}" for index in range(32))
+    at_cap = api.QuantSignal.model_validate(
+        _rekey_signal_payload(
+            {**base, "run_id": run_at_cap, "feature_ids": list(ids_at_cap)}
+        )
+    )
+    assert at_cap.run_id == run_at_cap
+    assert at_cap.feature_ids == ids_at_cap
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(
+            _rekey_signal_payload({**base, "run_id": run_over_cap})
+        )
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(
+            _rekey_signal_payload(
+                {
+                    **base,
+                    "feature_ids": [*ids_at_cap, "feature-32"],
+                }
+            )
+        )
+
+
+def test_public_feature_and_model_constructors_check_count_before_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    specs = tuple(
+        api.FeatureSpec.model_validate(
+            {
+                **_config_payload()["features"][0],
+                "feature_id": f"bounded-feature-{index:02d}",
+            }
+        )
+        for index in range(32)
+    )
+    configuration = api.FeatureConfiguration.create(
+        configuration_id="config-at-feature-cap",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id="XNYS.synthetic.v1",
+        horizon_sessions=1,
+        features=specs,
+    )
+    assert len(configuration.features) == 32
+    model_features = tuple(
+        api.ModelFeature.model_validate(
+            {
+                **spec.model_dump(mode="json"),
+                "weight": "0.000000000000",
+            }
+        )
+        for spec in specs
+    )
+    schema_hash = _canonical_hash(
+        HASH_DOMAINS["feature_schema"],
+        [spec.model_dump(mode="json") for spec in specs],
+    )
+    artifact = api.ModelArtifact.create(
+        model_id="model-at-feature-cap",
+        model_version="v1",
+        horizon_sessions=1,
+        decimal_places=12,
+        score_min=Decimal("-1"),
+        score_max=Decimal("1"),
+        feature_config_hash=configuration.content_hash,
+        feature_schema_hash=schema_hash,
+        features=model_features,
+        intercept=Decimal("0.000000000000"),
+    )
+    assert len(artifact.features) == 32
+
+    spec_calls = {"count": 0}
+
+    def feature_tripwire(cls: type[Any], value: object, *args: Any, **kwargs: Any) -> Any:
+        spec_calls["count"] += 1
+        raise AssertionError("feature element callback executed")
+
+    monkeypatch.setattr(api.FeatureSpec, "model_validate", classmethod(feature_tripwire))
+    with pytest.raises((ValidationError, ValueError, api.QuantInputError)):
+        api.FeatureConfiguration.create(
+            configuration_id="config-over-feature-cap",
+            configuration_version="v1",
+            universe_id="us-liquid-v1",
+            calendar_id="XNYS.synthetic.v1",
+            horizon_sessions=1,
+            features=(*specs, specs[0]),
+        )
+    assert spec_calls["count"] == 0
+    monkeypatch.undo()
+
+    model_calls = {"count": 0}
+
+    def model_tripwire(cls: type[Any], value: object, *args: Any, **kwargs: Any) -> Any:
+        model_calls["count"] += 1
+        raise AssertionError("model element callback executed")
+
+    monkeypatch.setattr(api.ModelFeature, "model_validate", classmethod(model_tripwire))
+    with pytest.raises((ValidationError, ValueError, api.QuantInputError)):
+        api.ModelArtifact.create(
+            model_id="model-over-feature-cap",
+            model_version="v1",
+            horizon_sessions=1,
+            decimal_places=12,
+            score_min=Decimal("-1"),
+            score_max=Decimal("1"),
+            feature_config_hash=configuration.content_hash,
+            feature_schema_hash=schema_hash,
+            features=(*model_features, model_features[0]),
+            intercept=Decimal("0.000000000000"),
+        )
+    assert model_calls["count"] == 0
+
+
+def test_structural_and_canonical_limits_have_exact_cap_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    spec_payload = _config_payload()["features"][0]
+    monkeypatch.setattr(api.features_module, "MAX_NESTING_DEPTH", 1)
+    assert api.FeatureSpec.model_validate(spec_payload).feature_id == spec_payload["feature_id"]
+    monkeypatch.setattr(api.features_module, "MAX_NESTING_DEPTH", 0)
+    with pytest.raises(ValidationError):
+        api.FeatureSpec.model_validate(spec_payload)
+    monkeypatch.undo()
+
+    payload = {"probe": "canonical-boundary"}
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    canonical_size = len(HASH_DOMAINS["quant_signal"].encode("utf-8") + encoded)
+    expected = _canonical_hash(HASH_DOMAINS["quant_signal"], payload)
+    monkeypatch.setattr(api.signal_module, "MAX_CANONICAL_BYTES", canonical_size)
+    assert api.signal_module._canonical_hash(payload) == expected
+    monkeypatch.setattr(api.signal_module, "MAX_CANONICAL_BYTES", canonical_size - 1)
+    with pytest.raises(api.QuantInputError):
+        api.signal_module._canonical_hash(payload)
+    monkeypatch.undo()
+
+    original_walk = api.features_module._safe_bundle_value
+    calls = {"count": 0}
+
+    def counted_walk(*args: Any, **kwargs: Any) -> object:
+        calls["count"] += 1
+        return original_walk(*args, **kwargs)
+
+    monkeypatch.setattr(api.features_module, "_MAX_BUNDLE_WALK_NODES", 1_000_000)
+    monkeypatch.setattr(api.features_module, "_safe_bundle_value", counted_walk)
+    baseline = _features(api).model_dump(mode="json")
+    node_count = calls["count"]
+    assert node_count > 0
+    monkeypatch.setattr(api.features_module, "_safe_bundle_value", original_walk)
+    monkeypatch.setattr(api.features_module, "_MAX_BUNDLE_WALK_NODES", node_count)
+    assert _features(api).model_dump(mode="json") == baseline
+    monkeypatch.setattr(api.features_module, "_MAX_BUNDLE_WALK_NODES", node_count - 1)
+    with pytest.raises(api.QuantInputError):
+        _features(api)
+
+
+@pytest.mark.parametrize("mutation", ("weight", "missing_value"))
+def test_stored_model_artifact_mutation_cannot_change_subsequent_scores(
+    mutation: str,
+) -> None:
+    api = _api()
+    if mutation == "weight":
+        feature_set = _features(api)
+        artifact = _artifact(api)
+        feature_index = 0
+        replacement = Decimal("9.000000000000")
+    else:
+        specs = list(_configuration(api).features)
+        specs[1] = specs[1].model_copy(update={"bar_source": "missing-optional-source"})
+        configuration = api.FeatureConfiguration.create(
+            configuration_id="config-mutated-default",
+            configuration_version="v1",
+            universe_id="us-liquid-v1",
+            calendar_id="XNYS.synthetic.v1",
+            horizon_sessions=1,
+            features=tuple(specs),
+        )
+        feature_set = _features(api, configuration=configuration)
+        artifact = _matching_artifact(api, configuration)
+        feature_index = 1
+        replacement = Decimal("0.900000000000")
+    model = api.QuantSignalModel(artifact)
+    baseline = model.score(feature_set, run_id="run-stored-model-mutation").model_dump(
+        mode="json"
+    )
+    stored_artifact = object.__getattribute__(model, "_artifact")
+    object.__setattr__(
+        stored_artifact.features[feature_index],
+        mutation,
+        replacement,
+    )
+
+    def score_or_typed_error(_: int) -> dict[str, Any] | str:
+        try:
+            return model.score(
+                feature_set,
+                run_id="run-stored-model-mutation",
+            ).model_dump(mode="json")
+        except api.QuantInputError:
+            return "typed-rejection"
+
+    repeated = [score_or_typed_error(index) for index in range(4)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        concurrent = list(pool.map(score_or_typed_error, range(16)))
+    assert all(item == "typed-rejection" or item == baseline for item in repeated)
+    assert all(item == "typed-rejection" or item == baseline for item in concurrent)
+
+
+def test_encoded_secret_canaries_are_rejected_without_canonical_or_error_echo() -> None:
+    api = _api()
+    canary = "secret-canary-SIG03-8d92a6"
+    raw = canary.encode("utf-8")
+    encodings = (
+        base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+        "".join(f"%{byte:02X}" for byte in raw),
+        "".join(f"\\u{ord(character):04x}" for character in canary),
+        raw.hex(),
+    )
+    assert base64.urlsafe_b64decode(encodings[0] + "=" * (-len(encodings[0]) % 4)).decode() == canary
+    assert bytes(int(encodings[1][index + 1 : index + 3], 16) for index in range(0, len(encodings[1]), 3)).decode() == canary
+    assert "".join(chr(int(encodings[2][index + 2 : index + 6], 16)) for index in range(0, len(encodings[2]), 6)) == canary
+    assert bytes.fromhex(encodings[3]).decode() == canary
+
+    for encoded in encodings:
+        base_signal = _score(api).model_dump(mode="json")
+        cases = (
+            lambda encoded=encoded: api.FeatureSpec.model_validate(
+                {**_config_payload()["features"][0], "feature_id": encoded}
+            ),
+            lambda encoded=encoded: api.FeatureConfiguration.create(
+                configuration_id=encoded,
+                configuration_version="v1",
+                universe_id="us-liquid-v1",
+                calendar_id="XNYS.synthetic.v1",
+                horizon_sessions=1,
+                features=_configuration(api).features,
+            ),
+            lambda encoded=encoded: api.ModelFeature.model_validate(
+                {**_model_payload()["features"][0], "feature_id": encoded}
+            ),
+            lambda encoded=encoded: api.ModelArtifact.create(
+                model_id=encoded,
+                model_version=_artifact(api).model_version,
+                horizon_sessions=_artifact(api).horizon_sessions,
+                decimal_places=12,
+                score_min=Decimal("-1"),
+                score_max=Decimal("1"),
+                feature_config_hash=_artifact(api).feature_config_hash,
+                feature_schema_hash=_artifact(api).feature_schema_hash,
+                features=_artifact(api).features,
+                intercept=_artifact(api).intercept,
+            ),
+            lambda encoded=encoded: _score(api, run_id=encoded),
+            lambda encoded=encoded, base_signal=base_signal: api.QuantSignal.model_validate(
+                _rekey_signal_payload({**base_signal, "instrument_id": encoded})
+            ),
+        )
+        for construct in cases:
+            try:
+                accepted = construct()
+            except (ValidationError, ValueError, api.QuantInputError) as exc:
+                rendered = str(exc)
+                assert encoded not in rendered
+                assert canary not in rendered
+            else:
+                serialized = accepted.model_dump_json()
+                assert encoded not in serialized
+                assert canary not in serialized
+                pytest.fail("encoded secret identifier was accepted")
+
+
+def test_no_closed_calendar_session_returns_canonical_invalid_feature_set() -> None:
+    api = _api()
+    requirements = tuple(
+        EvidenceRequirement(schema_version="v1", domain=domain, required=False)
+        for domain in EvidenceDomain
+    )
+    absent_domains = (
+        EvidenceDomain.ACTIONS,
+        EvidenceDomain.BARS,
+        EvidenceDomain.FILINGS,
+        EvidenceDomain.EVENTS,
+        EvidenceDomain.SOCIAL,
+        EvidenceDomain.MACRO,
+    )
+    missing_optional = tuple(
+        MissingEvidence(
+            schema_version="v1",
+            domain=domain,
+            reason="optional_before_first_close",
+        )
+        for domain in absent_domains
+    )
+    bundle = build_evidence_bundle(
+        schema_version="v1",
+        bundle_id="bundle-before-first-close",
+        created_at="2030-01-01T00:00:00Z",
+        knowledge_cutoff="2024-03-08T20:59:59Z",
+        replay_policy="archive_realistic",
+        requirements=requirements,
+        missing_optional=missing_optional,
+        calendar=_calendar(),
+        instrument_candidates=(
+            *_models("universe_actions", "instruments", Instrument),
+            *_additional_instruments(),
+        ),
+        alias_candidates=_models("universe_actions", "aliases", SymbolAlias),
+        membership_candidates=_models(
+            "universe_actions", "memberships", UniverseMembership
+        ),
+        action_candidates=(),
+        bar_candidates=(),
+        filing_candidates=(),
+        event_candidates=(),
+        social_post_candidates=(),
+        macro_observation_candidates=(),
+    )
+    result = _features(api, bundle=bundle)
+    assert _status(result) == "invalid"
+    assert "calendar_session_unavailable" in _codes(result)
+    assert result.as_of == bundle.knowledge_cutoff
+    assert all(item.anchor_session is None for item in result.observations)
+    assert all(item.lookback_session is None for item in result.observations)
