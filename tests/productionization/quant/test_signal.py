@@ -3079,6 +3079,20 @@ def test_malformed_decoded_secret_wrappers_reject_every_outward_identifier_path(
                 "ascii"
             ).rstrip("=")
             encoded_forms.append((decoded, f"malformed{layer}.{encoded}.wrapper"))
+    embedded_decoded = "{Bearer abcdefgh"
+    embedded_encoded = base64.urlsafe_b64encode(
+        embedded_decoded.encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    encoded_forms.append(
+        (embedded_decoded, f"public{embedded_encoded}identifier")
+    )
+    unicode_decoded = "Ｂｅａｒｅｒ abcdefgh"
+    unicode_encoded = base64.urlsafe_b64encode(
+        unicode_decoded.encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    encoded_forms.append(
+        (unicode_decoded, f"unicode.{unicode_encoded}.wrapper")
+    )
 
     violations: list[str] = []
     for decoded, encoded in encoded_forms:
