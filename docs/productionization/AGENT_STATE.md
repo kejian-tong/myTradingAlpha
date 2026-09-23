@@ -53,8 +53,14 @@ lease release is recorded in PR evidence. Round-ten repair started from candidat
 `e2bbdb4dc9f4fba89bee0b23368d760a7d9a9d57`; its tests-only RED is
 `c7687d570d5be5cda3dec018bdb441752f4bd79e`; its tests-only measurement guard is
 `7fc83c4e460342e68820519534b79c97aa165397`. The bounded GREEN candidate was produced; durable lease
-release will be recorded in PR evidence before fresh review. Independent review, required CI, and merge
-remain pending.
+release is recorded in PR evidence. Independent review, required CI, and merge
+remain pending. Round-eleven repair started from candidate
+`2962fa991bd7a68fb86234c7ce8f53b4bb79fdad`; its tests-only RED is
+`9c974ac81599948d0f1335b4a066590cc1ff2b51`; supplemental hash-cap RED evidence is
+`159d4684b68e66728bc48bcc275ddbc2a3bcb751` and
+`5e84436e09c1c7c83b22d08f9f4c4495b5f3b67d`. The bounded request-context and defensive-hash GREEN
+candidate was produced, including intrinsic public-hash and defensive-copy collection caps; durable
+Round-eleven lease release will be recorded in PR evidence before fresh review.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

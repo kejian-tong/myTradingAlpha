@@ -18,6 +18,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -93,6 +94,7 @@ _HEX_RUN = re.compile(r"[0-9A-Fa-f]{10,}")
 _MAX_DECODE_CANDIDATES = 100_000
 _MAX_IDENTIFIER_DECODE_ATTEMPTS = 6_000
 _MAX_PREVALIDATION_DECODE_ATTEMPTS = 6_000
+_VALIDATION_BUDGET_KEY = "sig03_decode_budget"
 
 
 class _DecodeBudget:
@@ -111,6 +113,68 @@ class _DecodeBudget:
 
 def _new_sensitive_prevalidation_budget() -> _DecodeBudget:
     return _DecodeBudget(_MAX_PREVALIDATION_DECODE_ATTEMPTS)
+
+
+def _new_sig03_validation_context() -> dict[str, object]:
+    return {_VALIDATION_BUDGET_KEY: _new_sensitive_prevalidation_budget()}
+
+
+def _decode_budget_from_context(context: object) -> _DecodeBudget:
+    if type(context) is dict:
+        budget = dict.get(context, _VALIDATION_BUDGET_KEY)
+        if type(budget) is _DecodeBudget:
+            return budget
+        budget = _new_sensitive_prevalidation_budget()
+        dict.__setitem__(context, _VALIDATION_BUDGET_KEY, budget)
+        return budget
+    return _new_sensitive_prevalidation_budget()
+
+
+def _initialize_sig03_model(instance: object, data: dict[str, object]) -> None:
+    type(instance).__pydantic_validator__.validate_python(  # type: ignore[attr-defined]
+        data,
+        self_instance=instance,
+        context=_new_sig03_validation_context(),
+    )
+
+
+def _validate_sig03_model(
+    model: type[object],
+    value: object,
+    *,
+    strict: bool | None = None,
+    extra: object = None,
+    from_attributes: bool | None = None,
+    context: object = None,
+    by_alias: bool | None = None,
+    by_name: bool | None = None,
+) -> object:
+    """Validate without re-entering the public constructor or losing its request context."""
+
+    if type(value) is model:
+        storage = object.__getattribute__(value, "__dict__")
+        if type(storage) is not dict:
+            raise ValueError("SIG-03 model storage must be exact plain data")
+        keys = tuple(dict.keys(storage))
+        if any(type(key) is not str for key in keys):
+            raise ValueError("SIG-03 model storage must be exact plain data")
+        value = {key: dict.__getitem__(storage, key) for key in keys}
+    validation_context = context
+    if type(validation_context) is not dict:
+        validation_context = _new_sig03_validation_context()
+    else:
+        _decode_budget_from_context(validation_context)
+    instance = object.__new__(model)
+    return model.__pydantic_validator__.validate_python(  # type: ignore[attr-defined]
+        value,
+        strict=strict,
+        extra=extra,
+        from_attributes=from_attributes,
+        context=validation_context,
+        by_alias=by_alias,
+        by_name=by_name,
+        self_instance=instance,
+    )
 
 
 def _compact_text_is_sensitive(
@@ -392,9 +456,12 @@ def _plain_mapping(
     return {key: dict.__getitem__(value, key) for key in keys}
 
 
-def _prevalidate_sensitive(value: object, model_name: str) -> None:
+def _prevalidate_sensitive(
+    value: object,
+    model_name: str,
+    budget: _DecodeBudget,
+) -> None:
     seen: set[int] = set()
-    budget = _new_sensitive_prevalidation_budget()
 
     def walk(item: object, depth: int = 0) -> None:
         if depth > MAX_NESTING_DEPTH:
@@ -518,15 +585,24 @@ class QuantSignal(ContractModel):
         hide_input_in_errors=True,
     )
 
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
+
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> QuantSignal:
         if type(obj) not in (dict, cls):
             raise ValueError("QuantSignal requires exact plain data")
-        return super().model_validate(obj, *args, **kwargs)
+        if args:
+            raise TypeError("model_validate options must be keyword arguments")
+        return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
 
     @model_validator(mode="before")
     @classmethod
-    def require_bounded_plain_data(cls, value: object) -> object:
+    def require_bounded_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         if type(value) is cls:
             storage = object.__getattribute__(value, "__dict__")
             if type(storage) is not dict:
@@ -547,7 +623,11 @@ class QuantSignal(ContractModel):
                 collection = dict.__getitem__(plain, field)
                 if type(collection) not in (tuple, list) or len(collection) > MAX_FEATURES:
                     raise _validation_error(cls.__name__)
-        _prevalidate_sensitive(plain, cls.__name__)
+        _prevalidate_sensitive(
+            plain,
+            cls.__name__,
+            _decode_budget_from_context(info.context),
+        )
         return plain
 
     @field_validator(
@@ -566,13 +646,23 @@ class QuantSignal(ContractModel):
         "missing_optional_feature_ids",
     )
     @classmethod
-    def validate_bounded_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(validate_sig03_identifier(item) for item in value)
+    def validate_bounded_ids(
+        cls,
+        value: tuple[str, ...],
+        info: ValidationInfo,
+    ) -> tuple[str, ...]:
+        budget = _decode_budget_from_context(info.context)
+        return tuple(
+            validate_sig03_identifier(item, _decode_budget=budget) for item in value
+        )
 
     @field_validator("run_id", "bundle_id", "instrument_id", "model_id", "model_version")
     @classmethod
-    def validate_scalar_ids(cls, value: str) -> str:
-        return validate_sig03_identifier(value)
+    def validate_scalar_ids(cls, value: str, info: ValidationInfo) -> str:
+        return validate_sig03_identifier(
+            value,
+            _decode_budget=_decode_budget_from_context(info.context),
+        )
 
     @field_validator("reason_codes", mode="before")
     @classmethod

@@ -21,6 +21,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -28,7 +29,10 @@ from pydantic import (
 from mytradingalpha.contracts.common import CanonicalChecksum, StableId
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.signals import (
-    _new_sensitive_prevalidation_budget,
+    _decode_budget_from_context,
+    _initialize_sig03_model,
+    _new_sig03_validation_context,
+    _validate_sig03_model,
     validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
@@ -51,8 +55,13 @@ HASH_DOMAIN_MODEL_ARTIFACT = "mytradingalpha:sig03:model-artifact:v1\0"
 _LOWER_HEX = frozenset("0123456789abcdef")
 
 
-def _safe_identifier(value: object) -> str:
-    return validate_sig03_identifier(value)
+def _safe_identifier(value: object, *, context: object = None) -> str:
+    if context is None:
+        return validate_sig03_identifier(value)
+    return validate_sig03_identifier(
+        value,
+        _decode_budget=_decode_budget_from_context(context),
+    )
 
 
 def _exact_canonical_checksum(value: object) -> str:
@@ -73,9 +82,12 @@ def _fixed_decimal_context() -> Context:
     return context
 
 
-def _prevalidate_model_sensitive(model: type[object], value: object) -> None:
+def _prevalidate_model_sensitive(
+    model: type[object],
+    value: object,
+    budget: object,
+) -> None:
     seen: set[int] = set()
-    budget = _new_sensitive_prevalidation_budget()
 
     def walk(item: object, depth: int = 0) -> None:
         if depth > MAX_NESTING_DEPTH:
@@ -196,31 +208,46 @@ class ModelFeature(ContractModel):
     weight: Decimal
     missing_value: Decimal | None = None
     model_config = ConfigDict(
-        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+        extra="forbid", frozen=True, revalidate_instances="never", hide_input_in_errors=True
     )
+
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelFeature:
         if type(obj) not in (dict, cls):
             raise ValueError("ModelFeature requires exact plain data")
-        return super().model_validate(obj, *args, **kwargs)
+        if args:
+            raise TypeError("model_validate options must be keyword arguments")
+        return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
 
     @model_validator(mode="before")
     @classmethod
-    def require_plain_data(cls, value: object) -> object:
+    def require_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         plain = _plain_model_input(cls, value)
-        _prevalidate_model_sensitive(cls, plain)
+        _prevalidate_model_sensitive(
+            cls, plain, _decode_budget_from_context(info.context)
+        )
         return plain
 
     @field_validator("feature_id", "feature_version", "bar_source")
     @classmethod
-    def validate_ids(cls, value: str) -> str:
-        return _safe_identifier(value)
+    def validate_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _safe_identifier(value, context=info.context)
 
     @field_validator("adjustment_version")
     @classmethod
-    def validate_adjustment_version(cls, value: str | None) -> str | None:
-        return None if value is None else _safe_identifier(value)
+    def validate_adjustment_version(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        return None if value is None else _safe_identifier(value, context=info.context)
 
     @field_validator("weight", "missing_value", mode="before")
     @classmethod
@@ -259,12 +286,17 @@ class ModelArtifact(ContractModel):
         extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
     )
 
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
+
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelArtifact:
         if type(obj) not in (dict, cls):
             raise ValueError("ModelArtifact requires exact plain data")
         try:
-            return super().model_validate(obj, *args, **kwargs)
+            if args:
+                raise TypeError("model_validate options must be keyword arguments")
+            return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
         except ValidationError as exc:
             errors = exc.errors(include_input=False)
             if len(errors) == 1 and errors[0].get("loc") == () and any(
@@ -282,7 +314,11 @@ class ModelArtifact(ContractModel):
 
     @model_validator(mode="before")
     @classmethod
-    def require_plain_data(cls, value: object) -> object:
+    def require_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         plain = _plain_model_input(cls, value)
         for field in ("feature_config_hash", "feature_schema_hash"):
             if field in plain:
@@ -321,13 +357,15 @@ class ModelArtifact(ContractModel):
                         )
                 else:
                     raise QuantInputError("model feature input is not exact plain data")
-        _prevalidate_model_sensitive(cls, plain)
+        _prevalidate_model_sensitive(
+            cls, plain, _decode_budget_from_context(info.context)
+        )
         return plain
 
     @field_validator("model_id", "model_version")
     @classmethod
-    def validate_model_ids(cls, value: str) -> str:
-        return _safe_identifier(value)
+    def validate_model_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _safe_identifier(value, context=info.context)
 
     @field_validator("score_min", "score_max", mode="before")
     @classmethod
@@ -341,12 +379,18 @@ class ModelArtifact(ContractModel):
 
     @field_validator("features", mode="before")
     @classmethod
-    def validate_model_features(cls, value: object) -> tuple[ModelFeature, ...]:
+    def validate_model_features(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> tuple[ModelFeature, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("model features require a plain sequence")
         if len(value) == 0 or len(value) > MAX_FEATURES:
             raise ValueError("model feature count exceeds SIG-03 bound")
-        features = tuple(ModelFeature.model_validate(item) for item in value)
+        features = tuple(
+            ModelFeature.model_validate(item, context=info.context) for item in value
+        )
         if tuple(item.feature_id for item in features) != tuple(
             sorted(item.feature_id for item in features)
         ):
@@ -356,7 +400,7 @@ class ModelArtifact(ContractModel):
         return features
 
     @model_validator(mode="after")
-    def validate_artifact(self) -> ModelArtifact:
+    def validate_artifact(self, info: ValidationInfo) -> ModelArtifact:
         if self.score_min != Decimal("-1") or self.score_max != Decimal("1"):
             raise ValueError("SIG-03 score range is fixed to [-1, 1]")
         if self.score_min >= self.score_max:
@@ -364,7 +408,11 @@ class ModelArtifact(ContractModel):
         expected_schema = _model_feature_schema_hash(self.features)
         if self.feature_schema_hash != expected_schema:
             raise QuantInputError("model feature schema hash mismatch")
-        expected = model_artifact_hash(self)
+        expected = (
+            _model_artifact_hash(self, context=info.context)
+            if type(self) is ModelArtifact
+            else _json_hash(HASH_DOMAIN_MODEL_ARTIFACT, _artifact_payload(self))
+        )
         if self.content_hash != expected:
             raise QuantInputError("model artifact content hash mismatch")
         return self
@@ -388,12 +436,17 @@ class ModelArtifact(ContractModel):
             raise QuantInputError("model artifact features require a plain sequence")
         if len(features) == 0 or len(features) > MAX_FEATURES:
             raise QuantInputError("model feature count exceeds SIG-03 bound")
+        context = _new_sig03_validation_context()
         try:
-            validated_model_id = _safe_identifier(model_id)
-            validated_model_version = _safe_identifier(model_version)
+            validated_model_id = _safe_identifier(model_id, context=context)
+            validated_model_version = _safe_identifier(
+                model_version, context=context
+            )
         except (TypeError, ValueError) as exc:
             raise QuantInputError("model artifact identifier is invalid") from exc
-        validated_features = tuple(ModelFeature.model_validate(item) for item in features)
+        validated_features = tuple(
+            ModelFeature.model_validate(item, context=context) for item in features
+        )
         _validate_raw_decimal(score_min)
         _validate_raw_decimal(score_max)
         _validate_raw_decimal(intercept)
@@ -418,7 +471,7 @@ class ModelArtifact(ContractModel):
             "intercept": normalized_intercept,
         }
         fields["content_hash"] = _json_hash(HASH_DOMAIN_MODEL_ARTIFACT, _artifact_payload(fields))
-        return cls.model_validate(fields)
+        return cls.model_validate(fields, context=context)
 
 
 def _model_feature_payload(feature: ModelFeature) -> dict[str, object]:
@@ -492,11 +545,43 @@ def _artifact_payload(value: ModelArtifact | dict[str, object]) -> dict[str, obj
     }
 
 
+def _model_artifact_hash(value: object, *, context: object) -> str:
+    fields = _copy_model_artifact_fields(value)
+    features = fields["features"]
+    if (
+        type(features) is not tuple
+        or len(features) == 0
+        or len(features) > MAX_FEATURES
+    ):
+        raise QuantInputError("model artifact features exceed bound")
+    if any(
+        type(item) is not ModelFeature for item in features
+    ):
+        raise QuantInputError("model artifact features are not canonical")
+    _prevalidate_model_sensitive(
+        ModelArtifact,
+        fields,
+        _decode_budget_from_context(context),
+    )
+    fields["features"] = tuple(
+        _copy_model_feature(item, context=context) for item in features
+    )
+    for field in ("score_min", "score_max", "intercept"):
+        _validate_raw_decimal(fields[field])
+    fields["feature_config_hash"] = _exact_canonical_checksum(
+        fields["feature_config_hash"]
+    )
+    fields["feature_schema_hash"] = _exact_canonical_checksum(
+        fields["feature_schema_hash"]
+    )
+    return _json_hash(HASH_DOMAIN_MODEL_ARTIFACT, _artifact_payload(fields))
+
+
 def model_artifact_hash(value: ModelArtifact) -> str:
-    return _json_hash(HASH_DOMAIN_MODEL_ARTIFACT, _artifact_payload(value))
+    return _model_artifact_hash(value, context=_new_sig03_validation_context())
 
 
-def _copy_model_feature(value: object) -> ModelFeature:
+def _copy_model_feature(value: object, *, context: object = None) -> ModelFeature:
     if type(value) is not ModelFeature:
         raise QuantInputError("model feature requires exact type")
     try:
@@ -507,10 +592,13 @@ def _copy_model_feature(value: object) -> ModelFeature:
     keys = tuple(dict.keys(storage)) if type(storage) is dict else ()
     if type(storage) is not dict or any(type(key) is not str for key in keys) or set(keys) != set(fields):
         raise QuantInputError("model feature storage is not canonical")
-    return ModelFeature.model_validate({field: dict.__getitem__(storage, field) for field in fields})
+    return ModelFeature.model_validate(
+        {field: dict.__getitem__(storage, field) for field in fields},
+        context=context,
+    )
 
 
-def _copy_model_artifact(value: object) -> ModelArtifact:
+def _copy_model_artifact_fields(value: object) -> dict[str, object]:
     if type(value) is not ModelArtifact:
         raise QuantInputError("model artifact requires exact type")
     try:
@@ -519,16 +607,31 @@ def _copy_model_artifact(value: object) -> ModelArtifact:
         raise QuantInputError("model artifact storage is unavailable") from exc
     fields = tuple(ModelArtifact.model_fields)
     keys = tuple(dict.keys(storage)) if type(storage) is dict else ()
-    if type(storage) is not dict or any(type(key) is not str for key in keys) or set(keys) != set(fields):
+    if (
+        type(storage) is not dict
+        or any(type(key) is not str for key in keys)
+        or set(keys) != set(fields)
+    ):
         raise QuantInputError("model artifact storage is not canonical")
-    payload = {field: dict.__getitem__(storage, field) for field in fields}
+    return {field: dict.__getitem__(storage, field) for field in fields}
+
+
+def _copy_model_artifact(value: object) -> ModelArtifact:
+    context = _new_sig03_validation_context()
+    payload = _copy_model_artifact_fields(value)
     features = payload["features"]
-    if type(features) is not tuple:
-        raise QuantInputError("model artifact features are not canonical")
-    payload["features"] = tuple(_copy_model_feature(item) for item in features)
+    if (
+        type(features) is not tuple
+        or len(features) == 0
+        or len(features) > MAX_FEATURES
+    ):
+        raise QuantInputError("model artifact features exceed bound")
+    payload["features"] = tuple(
+        _copy_model_feature(item, context=context) for item in features
+    )
     original_hash = payload["content_hash"]
     try:
-        validated = ModelArtifact.model_validate(payload)
+        validated = ModelArtifact.model_validate(payload, context=context)
     except QuantInputError:
         raise
     except Exception as exc:

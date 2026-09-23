@@ -21,6 +21,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -35,7 +36,10 @@ from mytradingalpha.contracts.common import (
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.signals import (
     QuantSignalReasonCode,
-    _new_sensitive_prevalidation_budget,
+    _decode_budget_from_context,
+    _initialize_sig03_model,
+    _new_sig03_validation_context,
+    _validate_sig03_model,
     validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
@@ -138,31 +142,46 @@ class FeatureSpec(ContractModel):
     lookback_sessions: StrictInt = Field(ge=1, le=MAX_LOOKBACK_SESSIONS)
     required: StrictBool
     model_config = ConfigDict(
-        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+        extra="forbid", frozen=True, revalidate_instances="never", hide_input_in_errors=True
     )
+
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSpec:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureSpec requires exact plain data")
-        return super().model_validate(obj, *args, **kwargs)
+        if args:
+            raise TypeError("model_validate options must be keyword arguments")
+        return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
 
     @model_validator(mode="before")
     @classmethod
-    def require_plain_data(cls, value: object) -> object:
+    def require_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         plain = _plain_model_input(cls, value)
-        _prevalidate_sensitive(cls, plain)
+        _prevalidate_sensitive(
+            cls, plain, _decode_budget_from_context(info.context)
+        )
         return plain
 
     @field_validator("feature_id", "feature_version", "bar_source")
     @classmethod
-    def validate_safe_selector(cls, value: str) -> str:
-        return _safe_identifier(value)
+    def validate_safe_selector(cls, value: str, info: ValidationInfo) -> str:
+        return _safe_identifier(value, context=info.context)
 
     @field_validator("adjustment_version")
     @classmethod
-    def validate_safe_adjustment_version(cls, value: str | None) -> str | None:
-        return None if value is None else _safe_identifier(value)
+    def validate_safe_adjustment_version(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        return None if value is None else _safe_identifier(value, context=info.context)
 
     @model_validator(mode="after")
     def validate_adjustment_policy(self) -> FeatureSpec:
@@ -186,15 +205,24 @@ class FeatureConfiguration(ContractModel):
         extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
     )
 
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
+
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureConfiguration:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureConfiguration requires exact plain data")
-        return super().model_validate(obj, *args, **kwargs)
+        if args:
+            raise TypeError("model_validate options must be keyword arguments")
+        return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
 
     @model_validator(mode="before")
     @classmethod
-    def require_plain_data(cls, value: object) -> object:
+    def require_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         plain = _plain_model_input(cls, value)
         if "features" in plain:
             features = dict.__getitem__(plain, "features")
@@ -204,22 +232,30 @@ class FeatureConfiguration(ContractModel):
                 or len(features) > MAX_FEATURES
             ):
                 raise ValueError("feature count exceeds SIG-03 bound")
-        _prevalidate_sensitive(cls, plain)
+        _prevalidate_sensitive(
+            cls, plain, _decode_budget_from_context(info.context)
+        )
         return plain
 
     @field_validator("configuration_id", "configuration_version", "universe_id", "calendar_id")
     @classmethod
-    def validate_ids(cls, value: str) -> str:
-        return _safe_identifier(value)
+    def validate_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _safe_identifier(value, context=info.context)
 
     @field_validator("features", mode="before")
     @classmethod
-    def validate_features(cls, value: object) -> tuple[FeatureSpec, ...]:
+    def validate_features(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> tuple[FeatureSpec, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("features require a plain sequence")
         if len(value) == 0 or len(value) > MAX_FEATURES:
             raise ValueError("feature count exceeds SIG-03 bound")
-        specs = tuple(FeatureSpec.model_validate(item) for item in value)
+        specs = tuple(
+            FeatureSpec.model_validate(item, context=info.context) for item in value
+        )
         ordered = tuple(sorted(specs, key=lambda item: item.feature_id))
         if tuple(item.feature_id for item in ordered) != tuple(item.feature_id for item in specs):
             raise ValueError("features must be supplied in canonical order")
@@ -228,8 +264,15 @@ class FeatureConfiguration(ContractModel):
         return specs
 
     @model_validator(mode="after")
-    def validate_hash(self) -> FeatureConfiguration:
-        expected = feature_configuration_hash(self)
+    def validate_hash(self, info: ValidationInfo) -> FeatureConfiguration:
+        expected = (
+            _feature_configuration_hash(self, context=info.context)
+            if type(self) is FeatureConfiguration
+            else _hash_json(
+                HASH_DOMAIN_FEATURE_CONFIGURATION,
+                _configuration_payload(self),
+            )
+        )
         if self.content_hash != expected:
             raise ValueError("feature configuration content hash mismatch")
         return self
@@ -249,7 +292,10 @@ class FeatureConfiguration(ContractModel):
             raise QuantInputError("feature configuration features require a plain sequence")
         if len(features) == 0 or len(features) > MAX_FEATURES:
             raise QuantInputError("feature count exceeds SIG-03 bound")
-        specs = tuple(FeatureSpec.model_validate(item) for item in features)
+        context = _new_sig03_validation_context()
+        specs = tuple(
+            FeatureSpec.model_validate(item, context=context) for item in features
+        )
         payload = {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "configuration_id": configuration_id,
@@ -263,7 +309,7 @@ class FeatureConfiguration(ContractModel):
             HASH_DOMAIN_FEATURE_CONFIGURATION,
             _configuration_payload(payload),
         )
-        return cls.model_validate(payload)
+        return cls.model_validate(payload, context=context)
 
 
 class FeatureObservation(ContractModel):
@@ -286,23 +332,32 @@ class FeatureObservation(ContractModel):
     source_revisions: tuple[StrictInt, ...]
     source_session_dates: tuple[str, ...]
     model_config = ConfigDict(
-        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+        extra="forbid", frozen=True, revalidate_instances="never", hide_input_in_errors=True
     )
+
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
 
     @field_validator("feature_id", "feature_version")
     @classmethod
-    def validate_feature_ids(cls, value: str) -> str:
-        return _safe_identifier(value)
+    def validate_feature_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _safe_identifier(value, context=info.context)
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureObservation:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureObservation requires exact plain data")
-        return super().model_validate(obj, *args, **kwargs)
+        if args:
+            raise TypeError("model_validate options must be keyword arguments")
+        return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
 
     @model_validator(mode="before")
     @classmethod
-    def require_bounded_plain_data(cls, value: object) -> object:
+    def require_bounded_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         plain = _plain_model_input(cls, value)
         required_fields = {
             "lookback_sessions",
@@ -340,7 +395,9 @@ class FeatureObservation(ContractModel):
         expected_length = lookback + 1 if status == "available" else 0
         if len(set(lengths)) != 1 or lengths[0] != expected_length:
             raise _sensitive_validation_error(cls.__name__)
-        _prevalidate_sensitive(cls, plain)
+        _prevalidate_sensitive(
+            cls, plain, _decode_budget_from_context(info.context)
+        )
         return plain
 
     @field_validator("value", mode="before")
@@ -383,12 +440,16 @@ class FeatureObservation(ContractModel):
 
     @field_validator("source_bar_ids", "source_manifest_ids", mode="before")
     @classmethod
-    def validate_provenance_ids(cls, value: object) -> tuple[str, ...]:
+    def validate_provenance_ids(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> tuple[str, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("feature provenance requires plain sequences")
         if len(value) > MAX_PROVENANCE_ITEMS:
             raise ValueError("feature provenance exceeds SIG-03 bound")
-        return tuple(_safe_identifier(item) for item in value)
+        return tuple(_safe_identifier(item, context=info.context) for item in value)
 
     @field_validator("source_revisions", mode="before")
     @classmethod
@@ -506,6 +567,9 @@ class FeatureSet(ContractModel):
         extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
     )
 
+    def __init__(self, **data: object) -> None:
+        _initialize_sig03_model(self, data)
+
     @field_validator(
         "bundle_id",
         "instrument_id",
@@ -513,18 +577,24 @@ class FeatureSet(ContractModel):
         "configuration_version",
     )
     @classmethod
-    def validate_scalar_ids(cls, value: str) -> str:
-        return _safe_identifier(value)
+    def validate_scalar_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _safe_identifier(value, context=info.context)
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSet:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureSet requires exact plain data")
-        return super().model_validate(obj, *args, **kwargs)
+        if args:
+            raise TypeError("model_validate options must be keyword arguments")
+        return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
 
     @model_validator(mode="before")
     @classmethod
-    def require_bounded_plain_data(cls, value: object) -> object:
+    def require_bounded_plain_data(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> object:
         plain = _plain_model_input(cls, value)
         for field in (
             "observations",
@@ -537,27 +607,40 @@ class FeatureSet(ContractModel):
             collection = dict.__getitem__(plain, field)
             if type(collection) not in (tuple, list) or len(collection) > MAX_FEATURES:
                 raise ValueError("feature set collection exceeds SIG-03 bound")
-        _prevalidate_sensitive(cls, plain)
+        _prevalidate_sensitive(
+            cls, plain, _decode_budget_from_context(info.context)
+        )
         return plain
 
     @field_validator("observations", mode="before")
     @classmethod
-    def validate_observations(cls, value: object) -> tuple[FeatureObservation, ...]:
+    def validate_observations(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> tuple[FeatureObservation, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("observations require a plain sequence")
         if len(value) > MAX_FEATURES:
             raise ValueError("observation count exceeds SIG-03 bound")
-        observations = tuple(FeatureObservation.model_validate(item) for item in value)
+        observations = tuple(
+            FeatureObservation.model_validate(item, context=info.context)
+            for item in value
+        )
         return observations
 
     @field_validator("missing_required_feature_ids", "missing_optional_feature_ids", mode="before")
     @classmethod
-    def validate_missing_ids(cls, value: object) -> tuple[object, ...]:
+    def validate_missing_ids(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> tuple[object, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("missing feature IDs require a plain sequence")
         if len(value) > MAX_FEATURES:
             raise ValueError("missing feature IDs exceed SIG-03 bound")
-        return tuple(_safe_identifier(item) for item in value)
+        return tuple(_safe_identifier(item, context=info.context) for item in value)
 
     @field_validator("reason_codes", mode="before")
     @classmethod
@@ -569,8 +652,13 @@ class FeatureSet(ContractModel):
         return tuple(value)
 
     @model_validator(mode="after")
-    def validate_hash_and_status(self) -> FeatureSet:
-        if self.feature_hash != feature_set_hash(self):
+    def validate_hash_and_status(self, info: ValidationInfo) -> FeatureSet:
+        expected_hash = (
+            _feature_set_hash(self, context=info.context)
+            if type(self) is FeatureSet
+            else _hash_json(HASH_DOMAIN_FEATURE_SET, _feature_set_payload(self))
+        )
+        if self.feature_hash != expected_hash:
             raise QuantInputError("feature set hash mismatch")
         if self.as_of > self.knowledge_cutoff:
             raise ValueError("feature set as_of exceeds knowledge cutoff")
@@ -718,8 +806,13 @@ class FeatureSet(ContractModel):
         return cls.model_validate(payload)
 
 
-def _safe_identifier(value: object) -> str:
-    return validate_sig03_identifier(value)
+def _safe_identifier(value: object, *, context: object = None) -> str:
+    if context is None:
+        return validate_sig03_identifier(value)
+    return validate_sig03_identifier(
+        value,
+        _decode_budget=_decode_budget_from_context(context),
+    )
 
 
 def _sensitive_validation_error(model_name: str) -> ValidationError:
@@ -806,12 +899,16 @@ def _scan_sensitive_plain(
     raise ValueError("artifact text is not safe")
 
 
-def _prevalidate_sensitive(model: type[object], value: object) -> None:
+def _prevalidate_sensitive(
+    model: type[object],
+    value: object,
+    budget: Any,
+) -> None:
     try:
         _scan_sensitive_plain(
             value,
             seen=set(),
-            budget=_new_sensitive_prevalidation_budget(),
+            budget=budget,
         )
     except (TypeError, ValueError) as exc:
         raise _sensitive_validation_error(model.__name__) from exc
@@ -900,14 +997,60 @@ def _configuration_payload(value: FeatureConfiguration | dict[str, object]) -> d
     return fields
 
 
+def _feature_configuration_hash(
+    value: object,
+    *,
+    context: object,
+) -> str:
+    fields = _copy_local_model(
+        value,
+        FeatureConfiguration,
+        tuple(FeatureConfiguration.model_fields),
+    )
+    features = fields["features"]
+    if (
+        type(features) is not tuple
+        or len(features) == 0
+        or len(features) > MAX_FEATURES
+    ):
+        raise QuantInputError("feature configuration features exceed bound")
+    if any(
+        type(item) is not FeatureSpec for item in features
+    ):
+        raise QuantInputError("feature configuration features are not canonical")
+    _prevalidate_sensitive(
+        FeatureConfiguration,
+        fields,
+        _decode_budget_from_context(context),
+    )
+    fields["features"] = tuple(
+        _copy_feature_spec(item, context=context) for item in features
+    )
+    return _hash_json(
+        HASH_DOMAIN_FEATURE_CONFIGURATION,
+        _configuration_payload(fields),
+    )
+
+
 def feature_configuration_hash(value: FeatureConfiguration) -> str:
-    return _hash_json(HASH_DOMAIN_FEATURE_CONFIGURATION, _configuration_payload(value))
+    return _feature_configuration_hash(
+        value,
+        context=_new_sig03_validation_context(),
+    )
 
 
 def feature_schema_hash(features: tuple[FeatureSpec, ...] | list[FeatureSpec]) -> str:
+    if (
+        type(features) not in (tuple, list)
+        or len(features) == 0
+        or len(features) > MAX_FEATURES
+    ):
+        raise QuantInputError("feature schema exceeds bound")
+    context = _new_sig03_validation_context()
+    copied = tuple(_copy_feature_spec(item, context=context) for item in features)
     return _hash_json(
         HASH_DOMAIN_FEATURE_SCHEMA,
-        [_spec_payload(item) for item in sorted(features, key=lambda item: item.feature_id)],
+        [_spec_payload(item) for item in sorted(copied, key=lambda item: item.feature_id)],
     )
 
 
@@ -956,8 +1099,42 @@ def _feature_set_payload(value: FeatureSet | dict[str, object]) -> dict[str, obj
     return fields
 
 
+def _feature_set_hash(value: object, *, context: object) -> str:
+    fields = _copy_local_model(value, FeatureSet, tuple(FeatureSet.model_fields))
+    for field in (
+        "observations",
+        "missing_required_feature_ids",
+        "missing_optional_feature_ids",
+        "reason_codes",
+    ):
+        collection = fields[field]
+        if type(collection) is not tuple or len(collection) > MAX_FEATURES:
+            raise QuantInputError("feature set collection exceeds bound")
+    observations = fields["observations"]
+    if any(
+        type(item) is not FeatureObservation for item in observations
+    ):
+        raise QuantInputError("feature set observations are not canonical")
+    _prevalidate_sensitive(
+        FeatureSet,
+        fields,
+        _decode_budget_from_context(context),
+    )
+    fields["observations"] = tuple(
+        FeatureObservation.model_construct(
+            **_copy_local_model(
+                item,
+                FeatureObservation,
+                tuple(FeatureObservation.model_fields),
+            )
+        )
+        for item in observations
+    )
+    return _hash_json(HASH_DOMAIN_FEATURE_SET, _feature_set_payload(fields))
+
+
 def feature_set_hash(value: FeatureSet) -> str:
-    return _hash_json(HASH_DOMAIN_FEATURE_SET, _feature_set_payload(value))
+    return _feature_set_hash(value, context=_new_sig03_validation_context())
 
 
 _MAX_BUNDLE_WALK_NODES = 100_000
@@ -1132,40 +1309,52 @@ def _copy_local_model(value: object, expected: type[object], fields: tuple[str, 
     return {field: dict.__getitem__(storage, field) for field in fields}
 
 
-def _copy_feature_spec(value: object) -> FeatureSpec:
+def _copy_feature_spec(value: object, *, context: object = None) -> FeatureSpec:
     fields = _copy_local_model(value, FeatureSpec, tuple(FeatureSpec.model_fields))
-    return FeatureSpec.model_validate(fields)
+    return FeatureSpec.model_validate(fields, context=context)
 
 
 def _copy_feature_configuration(value: object) -> FeatureConfiguration:
+    context = _new_sig03_validation_context()
     fields = _copy_local_model(value, FeatureConfiguration, tuple(FeatureConfiguration.model_fields))
     features = fields["features"]
-    if type(features) is not tuple:
-        raise QuantInputError("feature configuration features are not canonical")
-    fields["features"] = tuple(_copy_feature_spec(item) for item in features)
+    if (
+        type(features) is not tuple
+        or len(features) == 0
+        or len(features) > MAX_FEATURES
+    ):
+        raise QuantInputError("feature configuration features exceed bound")
+    fields["features"] = tuple(
+        _copy_feature_spec(item, context=context) for item in features
+    )
     try:
-        return FeatureConfiguration.model_validate(fields)
+        return FeatureConfiguration.model_validate(fields, context=context)
     except QuantInputError:
         raise
     except Exception as exc:
         raise QuantInputError("feature configuration failed defensive validation") from exc
 
 
-def _copy_feature_observation(value: object) -> FeatureObservation:
+def _copy_feature_observation(
+    value: object,
+    *,
+    context: object = None,
+) -> FeatureObservation:
     fields = _copy_local_model(value, FeatureObservation, tuple(FeatureObservation.model_fields))
-    return FeatureObservation.model_validate(fields)
+    return FeatureObservation.model_validate(fields, context=context)
 
 
 def _copy_feature_set(value: object) -> FeatureSet:
+    context = _new_sig03_validation_context()
     fields = _copy_local_model(value, FeatureSet, tuple(FeatureSet.model_fields))
     observations = fields["observations"]
-    if type(observations) is not tuple:
-        raise QuantInputError("feature set observations are not canonical")
+    if type(observations) is not tuple or len(observations) > MAX_FEATURES:
+        raise QuantInputError("feature set observations exceed bound")
     try:
         fields["observations"] = tuple(
-            _copy_feature_observation(item) for item in observations
+            _copy_feature_observation(item, context=context) for item in observations
         )
-        return FeatureSet.model_validate(fields)
+        return FeatureSet.model_validate(fields, context=context)
     except QuantInputError:
         raise
     except Exception as exc:
