@@ -95,6 +95,7 @@ _MAX_DECODE_CANDIDATES = 100_000
 _MAX_IDENTIFIER_DECODE_ATTEMPTS = 6_000
 _MAX_PREVALIDATION_DECODE_ATTEMPTS = 6_000
 _VALIDATION_BUDGET_KEY = "sig03_decode_budget"
+_VALIDATION_CONTEXT_MARKER = object()
 
 
 class _DecodeBudget:
@@ -115,17 +116,47 @@ def _new_sensitive_prevalidation_budget() -> _DecodeBudget:
     return _DecodeBudget(_MAX_PREVALIDATION_DECODE_ATTEMPTS)
 
 
-def _new_sig03_validation_context() -> dict[str, object]:
-    return {_VALIDATION_BUDGET_KEY: _new_sensitive_prevalidation_budget()}
+def _is_internal_validation_context(context: object) -> bool:
+    return (
+        type(context) is dict
+        and dict.get(context, _VALIDATION_CONTEXT_MARKER)
+        is _VALIDATION_CONTEXT_MARKER
+        and type(dict.get(context, _VALIDATION_BUDGET_KEY)) is _DecodeBudget
+    )
+
+
+def _new_sig03_validation_context(
+    caller_context: object = None,
+) -> dict[object, object]:
+    context: dict[object, object] = {}
+    if type(caller_context) is dict:
+        for key in tuple(dict.keys(caller_context)):
+            if key is _VALIDATION_CONTEXT_MARKER or (
+                type(key) is str and key == _VALIDATION_BUDGET_KEY
+            ):
+                continue
+            dict.__setitem__(
+                context,
+                key,
+                dict.__getitem__(caller_context, key),
+            )
+    dict.__setitem__(
+        context,
+        _VALIDATION_CONTEXT_MARKER,
+        _VALIDATION_CONTEXT_MARKER,
+    )
+    dict.__setitem__(
+        context,
+        _VALIDATION_BUDGET_KEY,
+        _new_sensitive_prevalidation_budget(),
+    )
+    return context
 
 
 def _decode_budget_from_context(context: object) -> _DecodeBudget:
-    if type(context) is dict:
+    if _is_internal_validation_context(context):
         budget = dict.get(context, _VALIDATION_BUDGET_KEY)
-        if type(budget) is _DecodeBudget:
-            return budget
-        budget = _new_sensitive_prevalidation_budget()
-        dict.__setitem__(context, _VALIDATION_BUDGET_KEY, budget)
+        assert type(budget) is _DecodeBudget
         return budget
     return _new_sensitive_prevalidation_budget()
 
@@ -149,7 +180,49 @@ def _validate_sig03_model(
     by_alias: bool | None = None,
     by_name: bool | None = None,
 ) -> object:
-    """Validate without re-entering the public constructor or losing its request context."""
+    """Validate one public request without trusting or mutating caller context."""
+
+    return _validate_sig03_model_with_context(
+        model,
+        value,
+        strict=strict,
+        extra=extra,
+        from_attributes=from_attributes,
+        context=_new_sig03_validation_context(context),
+        by_alias=by_alias,
+        by_name=by_name,
+    )
+
+
+def _validate_sig03_nested_model(
+    model: type[object],
+    value: object,
+    *,
+    context: object,
+) -> object:
+    """Reuse only a validation context created inside the current request."""
+
+    if not _is_internal_validation_context(context):
+        raise ValueError("nested SIG-03 validation requires private request context")
+    return _validate_sig03_model_with_context(
+        model,
+        value,
+        context=context,
+    )
+
+
+def _validate_sig03_model_with_context(
+    model: type[object],
+    value: object,
+    *,
+    strict: bool | None = None,
+    extra: object = None,
+    from_attributes: bool | None = None,
+    context: object,
+    by_alias: bool | None = None,
+    by_name: bool | None = None,
+) -> object:
+    """Run the Pydantic validator with an already isolated request context."""
 
     if type(value) is model:
         storage = object.__getattribute__(value, "__dict__")
@@ -159,18 +232,13 @@ def _validate_sig03_model(
         if any(type(key) is not str for key in keys):
             raise ValueError("SIG-03 model storage must be exact plain data")
         value = {key: dict.__getitem__(storage, key) for key in keys}
-    validation_context = context
-    if type(validation_context) is not dict:
-        validation_context = _new_sig03_validation_context()
-    else:
-        _decode_budget_from_context(validation_context)
     instance = object.__new__(model)
     return model.__pydantic_validator__.validate_python(  # type: ignore[attr-defined]
         value,
         strict=strict,
         extra=extra,
         from_attributes=from_attributes,
-        context=validation_context,
+        context=context,
         by_alias=by_alias,
         by_name=by_name,
         self_instance=instance,

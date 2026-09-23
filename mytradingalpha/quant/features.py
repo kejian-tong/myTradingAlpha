@@ -14,6 +14,7 @@ from decimal import (
     localcontext,
 )
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     ConfigDict,
@@ -40,6 +41,7 @@ from mytradingalpha.contracts.signals import (
     _initialize_sig03_model,
     _new_sig03_validation_context,
     _validate_sig03_model,
+    _validate_sig03_nested_model,
     validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
@@ -61,6 +63,7 @@ from mytradingalpha.data.bundle import (
 from mytradingalpha.data.calendar import (
     CalendarClosure,
     CalendarCoverageRange,
+    CalendarError,
     SessionType,
     TradingCalendar,
     TradingSession,
@@ -254,7 +257,12 @@ class FeatureConfiguration(ContractModel):
         if len(value) == 0 or len(value) > MAX_FEATURES:
             raise ValueError("feature count exceeds SIG-03 bound")
         specs = tuple(
-            FeatureSpec.model_validate(item, context=info.context) for item in value
+            _validate_sig03_nested_model(
+                FeatureSpec,
+                item,
+                context=info.context,
+            )
+            for item in value
         )
         ordered = tuple(sorted(specs, key=lambda item: item.feature_id))
         if tuple(item.feature_id for item in ordered) != tuple(item.feature_id for item in specs):
@@ -294,7 +302,12 @@ class FeatureConfiguration(ContractModel):
             raise QuantInputError("feature count exceeds SIG-03 bound")
         context = _new_sig03_validation_context()
         specs = tuple(
-            FeatureSpec.model_validate(item, context=context) for item in features
+            _validate_sig03_nested_model(
+                FeatureSpec,
+                item,
+                context=context,
+            )
+            for item in features
         )
         payload = {
             "schema_version": CURRENT_SCHEMA_VERSION,
@@ -309,7 +322,7 @@ class FeatureConfiguration(ContractModel):
             HASH_DOMAIN_FEATURE_CONFIGURATION,
             _configuration_payload(payload),
         )
-        return cls.model_validate(payload, context=context)
+        return _validate_sig03_nested_model(cls, payload, context=context)  # type: ignore[return-value]
 
 
 class FeatureObservation(ContractModel):
@@ -624,7 +637,11 @@ class FeatureSet(ContractModel):
         if len(value) > MAX_FEATURES:
             raise ValueError("observation count exceeds SIG-03 bound")
         observations = tuple(
-            FeatureObservation.model_validate(item, context=info.context)
+            _validate_sig03_nested_model(
+                FeatureObservation,
+                item,
+                context=info.context,
+            )
             for item in value
         )
         return observations
@@ -731,7 +748,7 @@ class FeatureSet(ContractModel):
             and item.valid_from <= anchor_session.session_date
             and (item.valid_to is None or anchor_session.session_date < item.valid_to)
         )
-        if instrument is not None and not memberships:
+        if instrument is not None and anchor_session is not None and not memberships:
             reasons.add(QuantSignalReasonCode.INSTRUMENT_NOT_IN_UNIVERSE)
         elif len(memberships) > 1:
             reasons.add(QuantSignalReasonCode.AMBIGUOUS_UNIVERSE_MEMBERSHIP)
@@ -1311,7 +1328,11 @@ def _copy_local_model(value: object, expected: type[object], fields: tuple[str, 
 
 def _copy_feature_spec(value: object, *, context: object = None) -> FeatureSpec:
     fields = _copy_local_model(value, FeatureSpec, tuple(FeatureSpec.model_fields))
-    return FeatureSpec.model_validate(fields, context=context)
+    return _validate_sig03_nested_model(  # type: ignore[return-value]
+        FeatureSpec,
+        fields,
+        context=context,
+    )
 
 
 def _copy_feature_configuration(value: object) -> FeatureConfiguration:
@@ -1328,7 +1349,11 @@ def _copy_feature_configuration(value: object) -> FeatureConfiguration:
         _copy_feature_spec(item, context=context) for item in features
     )
     try:
-        return FeatureConfiguration.model_validate(fields, context=context)
+        return _validate_sig03_nested_model(  # type: ignore[return-value]
+            FeatureConfiguration,
+            fields,
+            context=context,
+        )
     except QuantInputError:
         raise
     except Exception as exc:
@@ -1341,7 +1366,11 @@ def _copy_feature_observation(
     context: object = None,
 ) -> FeatureObservation:
     fields = _copy_local_model(value, FeatureObservation, tuple(FeatureObservation.model_fields))
-    return FeatureObservation.model_validate(fields, context=context)
+    return _validate_sig03_nested_model(  # type: ignore[return-value]
+        FeatureObservation,
+        fields,
+        context=context,
+    )
 
 
 def _copy_feature_set(value: object) -> FeatureSet:
@@ -1354,7 +1383,11 @@ def _copy_feature_set(value: object) -> FeatureSet:
         fields["observations"] = tuple(
             _copy_feature_observation(item, context=context) for item in observations
         )
-        return FeatureSet.model_validate(fields, context=context)
+        return _validate_sig03_nested_model(  # type: ignore[return-value]
+            FeatureSet,
+            fields,
+            context=context,
+        )
     except QuantInputError:
         raise
     except Exception as exc:
@@ -1362,11 +1395,39 @@ def _copy_feature_set(value: object) -> FeatureSet:
 
 
 def _anchor(bundle: EvidenceBundle) -> tuple[Any | None, Any | None, QuantSignalReasonCode | None]:
-    eligible = tuple(
-        session
-        for session in bundle.calendar.schedule
-        if session.close_at <= bundle.knowledge_cutoff
+    calendar = bundle.calendar
+    try:
+        cutoff_date = bundle.knowledge_cutoff.astimezone(
+            ZoneInfo(calendar.timezone)
+        ).date()
+    except (ValueError, ZoneInfoNotFoundError):
+        return (
+            bundle.knowledge_cutoff,
+            None,
+            QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
+        )
+    coverage_range = next(
+        (
+            item
+            for item in calendar.coverage_ranges
+            if item.start <= cutoff_date <= item.end
+        ),
+        None,
     )
+    if coverage_range is None:
+        return (
+            bundle.knowledge_cutoff,
+            None,
+            QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
+        )
+    try:
+        eligible = tuple(
+            session
+            for session in calendar.sessions(coverage_range.start, cutoff_date)
+            if session.close_at <= bundle.knowledge_cutoff
+        )
+    except CalendarError:
+        eligible = ()
     if not eligible:
         return (
             bundle.knowledge_cutoff,
@@ -1407,7 +1468,25 @@ def _compute_observation(
             reason=QuantSignalReasonCode.INSUFFICIENT_LOOKBACK,
         )
     lag_session = sessions[lag_index]
-    selected_sessions = sessions[lag_index : anchor_index + 1]
+    try:
+        distance = bundle.calendar.session_distance(
+            lag_session.session_date,
+            anchor_session.session_date,
+        )
+        selected_sessions = bundle.calendar.sessions(
+            lag_session.session_date,
+            anchor_session.session_date,
+        )
+    except CalendarError:
+        distance = -1
+        selected_sessions = ()
+    if distance != spec.lookback_sessions:
+        return _missing_observation(
+            spec,
+            as_of=as_of,
+            anchor_session=anchor_session.session_date.isoformat(),
+            reason=QuantSignalReasonCode.INSUFFICIENT_LOOKBACK,
+        )
     candidates = tuple(
         bar
         for bar in bundle.bars

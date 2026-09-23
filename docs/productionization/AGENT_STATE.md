@@ -60,7 +60,12 @@ remain pending. Round-eleven repair started from candidate
 `159d4684b68e66728bc48bcc275ddbc2a3bcb751` and
 `5e84436e09c1c7c83b22d08f9f4c4495b5f3b67d`. The bounded request-context and defensive-hash GREEN
 candidate was produced, including intrinsic public-hash and defensive-copy collection caps; durable
-Round-eleven lease release will be recorded in PR evidence before fresh review.
+Round-eleven lease release is recorded in PR evidence. Round-twelve repair started from candidate
+`ae5fe31237d4595368889a79417d3802ead22121`; its tests-only RED is
+`3f42e26438b1945a9a0c75a0528ece3aac1f9ad1` and its contiguous golden baseline is
+`a4f463902474f94cd9ac394003e3dce1f2d878c0`. The bounded caller-context isolation and
+verified-calendar continuity GREEN candidate was produced; durable Round-twelve lease release will be
+recorded in PR evidence before fresh review.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

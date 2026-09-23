@@ -33,6 +33,7 @@ from mytradingalpha.contracts.signals import (
     _initialize_sig03_model,
     _new_sig03_validation_context,
     _validate_sig03_model,
+    _validate_sig03_nested_model,
     validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
@@ -389,7 +390,12 @@ class ModelArtifact(ContractModel):
         if len(value) == 0 or len(value) > MAX_FEATURES:
             raise ValueError("model feature count exceeds SIG-03 bound")
         features = tuple(
-            ModelFeature.model_validate(item, context=info.context) for item in value
+            _validate_sig03_nested_model(
+                ModelFeature,
+                item,
+                context=info.context,
+            )
+            for item in value
         )
         if tuple(item.feature_id for item in features) != tuple(
             sorted(item.feature_id for item in features)
@@ -445,7 +451,12 @@ class ModelArtifact(ContractModel):
         except (TypeError, ValueError) as exc:
             raise QuantInputError("model artifact identifier is invalid") from exc
         validated_features = tuple(
-            ModelFeature.model_validate(item, context=context) for item in features
+            _validate_sig03_nested_model(
+                ModelFeature,
+                item,
+                context=context,
+            )
+            for item in features
         )
         _validate_raw_decimal(score_min)
         _validate_raw_decimal(score_max)
@@ -471,7 +482,7 @@ class ModelArtifact(ContractModel):
             "intercept": normalized_intercept,
         }
         fields["content_hash"] = _json_hash(HASH_DOMAIN_MODEL_ARTIFACT, _artifact_payload(fields))
-        return cls.model_validate(fields, context=context)
+        return _validate_sig03_nested_model(cls, fields, context=context)  # type: ignore[return-value]
 
 
 def _model_feature_payload(feature: ModelFeature) -> dict[str, object]:
@@ -592,7 +603,8 @@ def _copy_model_feature(value: object, *, context: object = None) -> ModelFeatur
     keys = tuple(dict.keys(storage)) if type(storage) is dict else ()
     if type(storage) is not dict or any(type(key) is not str for key in keys) or set(keys) != set(fields):
         raise QuantInputError("model feature storage is not canonical")
-    return ModelFeature.model_validate(
+    return _validate_sig03_nested_model(  # type: ignore[return-value]
+        ModelFeature,
         {field: dict.__getitem__(storage, field) for field in fields},
         context=context,
     )
@@ -631,7 +643,11 @@ def _copy_model_artifact(value: object) -> ModelArtifact:
     )
     original_hash = payload["content_hash"]
     try:
-        validated = ModelArtifact.model_validate(payload, context=context)
+        validated = _validate_sig03_nested_model(
+            ModelArtifact,
+            payload,
+            context=context,
+        )
     except QuantInputError:
         raise
     except Exception as exc:
