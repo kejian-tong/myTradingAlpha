@@ -10,7 +10,9 @@ from __future__ import annotations
 import ast
 import base64
 import builtins
+import dis
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -4686,3 +4688,322 @@ def test_same_range_weekend_closures_preserve_valid_lookback() -> None:
     observation = feature_set.observations[0]
     assert observation.value == Decimal("0.100000000000")
     assert observation.source_session_dates == ("2024-03-08", "2024-03-11")
+
+
+class _ArmedContextKey:
+    def __init__(self, state: dict[str, Any]) -> None:
+        self._state = state
+
+    def __hash__(self) -> int:
+        if self._state["armed"]:
+            self._state["calls"] += 1
+            raise AssertionError("caller-context key callback executed")
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        if self._state["armed"]:
+            self._state["calls"] += 1
+            raise AssertionError("caller-context key callback executed")
+        return self is other
+
+
+@pytest.mark.parametrize("model_name", _CONTEXT_MODEL_NAMES)
+def test_model_validate_ignores_hostile_nonstring_caller_context_keys(
+    model_name: str,
+) -> None:
+    api = _api()
+    model, payload, identity_field = _context_validation_case(
+        api,
+        model_name,
+        _CONTEXT_SAFE_IDENTIFIER,
+    )
+    state = {"armed": False, "calls": 0}
+    key = _ArmedContextKey(state)
+    sentinel = object()
+    context = {key: sentinel}
+    state["armed"] = True
+    validated = model.model_validate(payload, context=context)
+    assert getattr(validated, identity_field) == _CONTEXT_SAFE_IDENTIFIER
+    assert state["calls"] == 0
+    assert dict.__len__(context) == 1
+    assert tuple(dict.keys(context)) == (key,)
+    assert tuple(dict.values(context)) == (sentinel,)
+
+
+def test_large_irrelevant_caller_context_has_constant_entry_work() -> None:
+    api = _api()
+    model, payload, identity_field = _context_validation_case(
+        api,
+        "FeatureSpec",
+        _CONTEXT_SAFE_IDENTIFIER,
+    )
+    states = [{"armed": False, "calls": 0} for _ in range(10_000)]
+    keys = tuple(_ArmedContextKey(state) for state in states)
+    sentinel = object()
+    context = dict.fromkeys(keys, sentinel)
+    for state in states:
+        state["armed"] = True
+    validated = model.model_validate(payload, context=context)
+    assert getattr(validated, identity_field) == _CONTEXT_SAFE_IDENTIFIER
+    assert sum(state["calls"] for state in states) == 0
+    assert dict.__len__(context) == len(keys)
+    instructions = tuple(
+        instruction.opname
+        for instruction in dis.get_instructions(
+            api.features_module._new_sig03_validation_context
+        )
+    )
+    assert "FOR_ITER" not in instructions
+
+
+@pytest.mark.parametrize(
+    ("module_name", "function_name", "mapping_name"),
+    (
+        ("signals", "_plain_mapping", "value"),
+        ("features", "_plain_model_input", "value"),
+        ("features", "_raw_fields", "storage"),
+        ("features", "_copy_local_model", "storage"),
+        ("models", "_copy_model_feature", "storage"),
+        ("models", "_copy_model_artifact_fields", "storage"),
+        ("signals", "_prevalidate_sensitive", "item"),
+        ("features", "_scan_sensitive_plain", "value"),
+        ("models", "_prevalidate_model_sensitive", "item"),
+        ("features", "_safe_bundle_value", "value"),
+    ),
+)
+def test_exact_mapping_cardinality_gate_precedes_key_materialization(
+    module_name: str,
+    function_name: str,
+    mapping_name: str,
+) -> None:
+    api = _api()
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    module = {
+        "signals": signal_contracts,
+        "features": api.features_module,
+        "models": api.models_module,
+    }[module_name]
+    source = inspect.getsource(getattr(module, function_name))
+    length_gate = source.find(f"dict.__len__({mapping_name})")
+    key_materialization = source.find(f"tuple(dict.keys({mapping_name}))")
+    assert length_gate >= 0
+    assert key_materialization >= 0
+    assert length_gate < key_materialization
+
+
+@pytest.mark.parametrize("model_name", _CONTEXT_MODEL_NAMES)
+def test_oversized_public_mapping_rejects_before_hostile_key_callback(
+    model_name: str,
+) -> None:
+    api = _api()
+    model, payload, _ = _context_validation_case(
+        api,
+        model_name,
+        _CONTEXT_SAFE_IDENTIFIER,
+    )
+    state = {"armed": False, "calls": 0}
+    key = _ArmedContextKey(state)
+    payload[key] = "unused"
+    for index in range(100):
+        payload[f"oversized-{index}"] = "unused"
+    state["armed"] = True
+    with pytest.raises((ValidationError, api.QuantInputError, ValueError)):
+        model.model_validate(payload)
+    assert state["calls"] == 0
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    (
+        "raw_fields",
+        "copy_local_model",
+        "copy_model_feature",
+        "copy_model_artifact_fields",
+    ),
+)
+def test_mutated_exact_storage_rejects_before_hostile_key_callback(
+    boundary: str,
+) -> None:
+    api = _api()
+    state = {"armed": False, "calls": 0}
+    key = _ArmedContextKey(state)
+    if boundary == "raw_fields":
+        value: Any = _bundle()
+        invoke = lambda: api.features_module._raw_fields(  # noqa: E731
+            value,
+            EvidenceBundle,
+        )
+    elif boundary == "copy_local_model":
+        value = _configuration(api)
+        invoke = lambda: api.features_module._copy_local_model(  # noqa: E731
+            value,
+            api.FeatureConfiguration,
+            tuple(api.FeatureConfiguration.model_fields),
+        )
+    elif boundary == "copy_model_feature":
+        value = _artifact(api).features[0]
+        context = api.models_module._new_sig03_validation_context()
+        invoke = lambda: api.models_module._copy_model_feature(  # noqa: E731
+            value,
+            context=context,
+        )
+    else:
+        value = _artifact(api)
+        invoke = lambda: api.models_module._copy_model_artifact_fields(value)  # noqa: E731
+    storage = object.__getattribute__(value, "__dict__")
+    dict.__setitem__(storage, key, "unused")
+    state["armed"] = True
+    with pytest.raises(api.QuantInputError):
+        invoke()
+    assert state["calls"] == 0
+
+
+def _feature_set_with_missing_source(api: SimpleNamespace, *, required: bool) -> Any:
+    specs = list(_configuration(api).features)
+    index = 0 if required else 1
+    specs[index] = specs[index].model_copy(
+        update={"bar_source": f"missing-{'required' if required else 'optional'}-source"}
+    )
+    configuration = api.FeatureConfiguration.create(
+        configuration_id=f"missing-{'required' if required else 'optional'}-config",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id="XNYS.synthetic.v1",
+        horizon_sessions=1,
+        features=tuple(specs),
+    )
+    return _features(api, configuration=configuration)
+
+
+def _global_invalid_feature_set(api: SimpleNamespace) -> Any:
+    bundle = _bundle()
+    return _features(
+        api,
+        bundle=_bundle(
+            memberships=tuple(
+                item
+                for item in bundle.memberships
+                if item.instrument_id != "inst-survivor"
+            )
+        ),
+    )
+
+
+def _rehashed_feature_set_wire(payload: dict[str, Any]) -> dict[str, Any]:
+    payload = deepcopy(payload)
+    payload.pop("feature_hash", None)
+    payload["feature_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_set"],
+        payload,
+    )
+    return payload
+
+
+def _feature_set_reason_mutation(api: SimpleNamespace, mutation: str) -> dict[str, Any]:
+    valid = _features(api).model_dump(mode="json")
+    degraded = _feature_set_with_missing_source(
+        api,
+        required=False,
+    ).model_dump(mode="json")
+    required = _feature_set_with_missing_source(
+        api,
+        required=True,
+    ).model_dump(mode="json")
+    global_invalid = _global_invalid_feature_set(api).model_dump(mode="json")
+    if mutation == "duplicate_reasons":
+        payload = global_invalid
+        payload["reason_codes"] = [
+            "instrument_not_in_universe",
+            "instrument_not_in_universe",
+        ]
+    elif mutation == "valid_with_reason":
+        payload = valid
+        payload["reason_codes"] = ["instrument_not_in_universe"]
+    elif mutation == "degraded_with_global_reason":
+        payload = degraded
+        payload["reason_codes"] = [
+            "instrument_not_in_universe",
+            "exact_session_bar_missing",
+            "optional_feature_missing",
+        ]
+    elif mutation == "degraded_with_required_reason":
+        payload = degraded
+        payload["reason_codes"] = [
+            "exact_session_bar_missing",
+            "required_feature_missing",
+            "optional_feature_missing",
+        ]
+    elif mutation == "degraded_missing_optional_reason":
+        payload = degraded
+        payload["reason_codes"] = ["exact_session_bar_missing"]
+    elif mutation == "invalid_unexplained_feature_reason":
+        payload = valid
+        payload["status"] = "invalid"
+        payload["reason_codes"] = [
+            "instrument_not_in_universe",
+            "insufficient_lookback",
+        ]
+    elif mutation == "observation_reason_not_preserved":
+        payload = degraded
+        payload["reason_codes"] = ["optional_feature_missing"]
+    elif mutation == "required_ids_without_reason":
+        payload = required
+        payload["reason_codes"] = ["exact_session_bar_missing"]
+    else:
+        payload = valid
+        payload["status"] = "invalid"
+        payload["reason_codes"] = [
+            "instrument_not_in_universe",
+            "required_feature_missing",
+        ]
+    return _rehashed_feature_set_wire(payload)
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "duplicate_reasons",
+        "valid_with_reason",
+        "degraded_with_global_reason",
+        "degraded_with_required_reason",
+        "degraded_missing_optional_reason",
+        "invalid_unexplained_feature_reason",
+        "observation_reason_not_preserved",
+        "required_ids_without_reason",
+        "required_reason_without_ids",
+    ),
+)
+def test_feature_set_rejects_impossible_reason_status_missingness_semantics(
+    mutation: str,
+    entrypoint: str,
+) -> None:
+    api = _api()
+    payload = _feature_set_reason_mutation(api, mutation)
+    with pytest.raises((ValidationError, api.QuantInputError, ValueError)):
+        if entrypoint == "model_validate":
+            api.FeatureSet.model_validate(payload)
+        else:
+            api.FeatureSet(**payload)
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+def test_feature_set_accepts_stable_unique_compute_semantics(entrypoint: str) -> None:
+    api = _api()
+    cases = (
+        _features(api),
+        _feature_set_with_missing_source(api, required=False),
+        _global_invalid_feature_set(api),
+    )
+    for feature_set in cases:
+        payload = feature_set.model_dump(mode="json")
+        validated = (
+            api.FeatureSet.model_validate(payload)
+            if entrypoint == "model_validate"
+            else api.FeatureSet(**payload)
+        )
+        reasons = _codes(validated)
+        assert len(reasons) == len(set(reasons))
+        assert reasons == _codes(feature_set)
+        assert _status(validated) == _status(feature_set)
