@@ -76,6 +76,7 @@ from mytradingalpha.data.universe import AssetClass, Instrument, SymbolAlias, Un
 
 MAX_FEATURES = 32
 MAX_LOOKBACK_SESSIONS = 252
+MAX_PROVENANCE_ITEMS = MAX_LOOKBACK_SESSIONS + 1
 MAX_HORIZON_SESSIONS = 252
 MAX_BARS = 4096
 MAX_BUNDLE_WALK_NODES = 100_000
@@ -299,6 +300,36 @@ class FeatureObservation(ContractModel):
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureObservation requires exact plain data")
         plain = _plain_model_input(cls, obj)
+        required_fields = {
+            "lookback_sessions",
+            "status",
+            "source_bar_ids",
+            "source_manifest_ids",
+            "source_revisions",
+        }
+        if not required_fields.issubset(plain):
+            raise _sensitive_validation_error(cls.__name__)
+        lookback = dict.__getitem__(plain, "lookback_sessions")
+        status = dict.__getitem__(plain, "status")
+        if (
+            type(lookback) is not int
+            or not 1 <= lookback <= MAX_LOOKBACK_SESSIONS
+            or type(status) is not str
+            or status not in {"available", "missing"}
+        ):
+            raise _sensitive_validation_error(cls.__name__)
+        lengths: list[int] = []
+        for field in ("source_bar_ids", "source_manifest_ids", "source_revisions"):
+            collection = dict.__getitem__(plain, field)
+            if (
+                type(collection) not in (tuple, list)
+                or len(collection) > MAX_PROVENANCE_ITEMS
+            ):
+                raise _sensitive_validation_error(cls.__name__)
+            lengths.append(len(collection))
+        expected_length = lookback + 1 if status == "available" else 0
+        if len(set(lengths)) != 1 or lengths[0] != expected_length:
+            raise _sensitive_validation_error(cls.__name__)
         _prevalidate_sensitive(cls, plain)
         return super().model_validate(plain, *args, **kwargs)
 
@@ -330,6 +361,8 @@ class FeatureObservation(ContractModel):
     def validate_provenance_sequences(cls, value: object) -> tuple[object, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("feature provenance requires plain sequences")
+        if len(value) > MAX_PROVENANCE_ITEMS:
+            raise ValueError("feature provenance exceeds SIG-03 bound")
         return tuple(value)
 
     @model_validator(mode="after")
@@ -346,19 +379,21 @@ class FeatureObservation(ContractModel):
                 or self.reason_code is not None
                 or self.lookback_session is None
                 or self.latest_available_at is None
-                or not self.source_bar_ids
-                or not self.source_manifest_ids
-                or not self.source_revisions
+                or len(self.source_bar_ids) != self.lookback_sessions + 1
+                or len(self.source_manifest_ids) != self.lookback_sessions + 1
+                or len(self.source_revisions) != self.lookback_sessions + 1
             ):
-                raise ValueError("available observations require value and lookback session")
+                raise ValueError(
+                    "available observations require exact lookback provenance"
+                )
         elif (
             self.value is not None
             or self.reason_code is None
             or self.lookback_session is not None
             or self.latest_available_at is not None
-            or self.source_bar_ids
-            or self.source_manifest_ids
-            or self.source_revisions
+            or len(self.source_bar_ids) != 0
+            or len(self.source_manifest_ids) != 0
+            or len(self.source_revisions) != 0
         ):
             raise ValueError("missing observations require only an explicit reason")
         return self
@@ -1134,6 +1169,7 @@ __all__ = [
     "MAX_HORIZON_SESSIONS",
     "MAX_IDENTIFIER_LENGTH",
     "MAX_LOOKBACK_SESSIONS",
+    "MAX_PROVENANCE_ITEMS",
     "MAX_NESTING_DEPTH",
     "QuantInputError",
     "_copy_feature_configuration",

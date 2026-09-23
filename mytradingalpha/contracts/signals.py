@@ -53,8 +53,10 @@ MAX_NESTING_DEPTH = 64
 _SENSITIVE_WORDS = ("api-key", "apikey", "credential", "password", "secret", "token")
 _PERCENT_ENCODED = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
 _UNICODE_ESCAPED = re.compile(r"(?:\\u[0-9A-Fa-f]{4})+")
-_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
+_BASE64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
 _HEX = re.compile(r"[0-9A-Fa-f]+")
+_IDENTIFIER_DELIMITERS = frozenset("._:-")
+_MAX_DECODE_DEPTH = 4
 
 
 def _artifact_text_is_sensitive(value: str) -> bool:
@@ -66,9 +68,19 @@ def _artifact_text_is_sensitive(value: str) -> bool:
         return True
 
 
+def _identifier_segments(value: str) -> tuple[str, ...]:
+    candidates = [value]
+    candidates.extend(
+        value[index + 1 :]
+        for index, character in enumerate(value)
+        if character in _IDENTIFIER_DELIMITERS and index + 1 < len(value)
+    )
+    return tuple(dict.fromkeys(candidates))
+
+
 def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     candidates: list[str] = []
-    if len(value) <= MAX_IDENTIFIER_LENGTH * 3 and _PERCENT_ENCODED.fullmatch(value):
+    if len(value) <= MAX_IDENTIFIER_LENGTH and _PERCENT_ENCODED.fullmatch(value):
         with suppress(UnicodeDecodeError, ValueError):
             candidates.append(
                 bytes(
@@ -76,7 +88,7 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                     for index in range(0, len(value), 3)
                 ).decode("utf-8")
             )
-    if len(value) <= MAX_IDENTIFIER_LENGTH * 6 and _UNICODE_ESCAPED.fullmatch(value):
+    if len(value) <= MAX_IDENTIFIER_LENGTH and _UNICODE_ESCAPED.fullmatch(value):
         with suppress(ValueError):
             candidates.append(
                 "".join(
@@ -84,14 +96,16 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                     for index in range(0, len(value), 6)
                 )
             )
-    if 8 <= len(value) <= MAX_IDENTIFIER_LENGTH and _BASE64URL.fullmatch(value):
-        padded = value + "=" * (-len(value) % 4)
-        with suppress(UnicodeDecodeError, ValueError):
-            candidates.append(
-                base64.b64decode(
-                    padded.encode("ascii"), altchars=b"-_", validate=True
-                ).decode("utf-8")
-            )
+    if 8 <= len(value) <= MAX_IDENTIFIER_LENGTH and _BASE64.fullmatch(value):
+        unpadded = value.rstrip("=")
+        if len(unpadded) % 4 != 1:
+            padded = unpadded + "=" * (-len(unpadded) % 4)
+            with suppress(UnicodeDecodeError, ValueError):
+                candidates.append(
+                    base64.b64decode(
+                        padded.encode("ascii"), altchars=b"-_", validate=True
+                    ).decode("utf-8")
+                )
     if (
         2 <= len(value) <= MAX_IDENTIFIER_LENGTH * 2
         and len(value) % 2 == 0
@@ -100,6 +114,31 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
         with suppress(UnicodeDecodeError, ValueError):
             candidates.append(bytes.fromhex(value).decode("utf-8"))
     return tuple(candidates)
+
+
+def _identifier_contains_sensitive_candidate(value: str) -> bool:
+    pending = [(segment, 0) for segment in _identifier_segments(value)]
+    seen: set[str] = set()
+    while pending:
+        candidate, depth = pending.pop()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _artifact_text_is_sensitive(candidate):
+            return True
+        if depth >= _MAX_DECODE_DEPTH:
+            continue
+        for decoded in _decoded_identifier_candidates(candidate):
+            try:
+                encoded = decoded.encode("utf-8", "strict")
+            except UnicodeError:
+                continue
+            if not encoded or len(encoded) > MAX_IDENTIFIER_LENGTH:
+                continue
+            pending.extend(
+                (segment, depth + 1) for segment in _identifier_segments(decoded)
+            )
+    return False
 
 
 def validate_sig03_identifier(value: object) -> str:
@@ -113,10 +152,7 @@ def validate_sig03_identifier(value: object) -> str:
         raise ValueError("identifier is not artifact-safe") from exc
     if not encoded or len(encoded) > MAX_IDENTIFIER_LENGTH:
         raise ValueError("identifier exceeds SIG-03 bound")
-    if _artifact_text_is_sensitive(value) or any(
-        _artifact_text_is_sensitive(candidate)
-        for candidate in _decoded_identifier_candidates(value)
-    ):
+    if _identifier_contains_sensitive_candidate(value):
         raise ValueError("identifier is not artifact-safe")
     return value
 
