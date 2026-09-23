@@ -3062,3 +3062,245 @@ def test_quant_signal_missing_feature_sets_are_intrinsically_bound(
         api.QuantSignal.model_validate(rekeyed)
     with pytest.raises(ValidationError):
         api.QuantSignal(**rekeyed)
+
+
+def test_malformed_decoded_secret_wrappers_reject_every_outward_identifier_path() -> None:
+    api = _api()
+    decoded_values = (
+        '{"authorization":"Bearer abcdefgh"',
+        'prefix{"broker_account_id":"acct-12345678"',
+        '"api_key":"abcdefgh"}suffix',
+    )
+    encoded_forms: list[tuple[str, str]] = []
+    for decoded in decoded_values:
+        encoded = decoded
+        for layer in range(1, 4):
+            encoded = base64.urlsafe_b64encode(encoded.encode("utf-8")).decode(
+                "ascii"
+            ).rstrip("=")
+            encoded_forms.append((decoded, f"malformed{layer}.{encoded}.wrapper"))
+
+    violations: list[str] = []
+    for decoded, encoded in encoded_forms:
+        observation_payload = _features(api).observations[0].model_dump(mode="json")
+        source_bar_ids = list(observation_payload["source_bar_ids"])
+        source_bar_ids[0] = encoded
+        source_manifest_ids = list(observation_payload["source_manifest_ids"])
+        source_manifest_ids[0] = encoded
+        feature_set_payload = _features(api).model_dump(mode="json")
+        feature_set_payload["instrument_id"] = encoded
+        feature_set_payload.pop("feature_hash")
+        feature_set_payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], feature_set_payload
+        )
+        cases = (
+            (
+                "feature-spec",
+                api.FeatureSpec,
+                {**_config_payload()["features"][0], "feature_id": encoded},
+            ),
+            (
+                "configuration",
+                api.FeatureConfiguration,
+                _rehashed_configuration_payload(encoded),
+            ),
+            (
+                "observation-bar",
+                api.FeatureObservation,
+                {**observation_payload, "source_bar_ids": source_bar_ids},
+            ),
+            (
+                "observation-manifest",
+                api.FeatureObservation,
+                {**observation_payload, "source_manifest_ids": source_manifest_ids},
+            ),
+            ("feature-set", api.FeatureSet, feature_set_payload),
+            (
+                "model-feature",
+                api.ModelFeature,
+                {**_model_payload()["features"][0], "feature_id": encoded},
+            ),
+            ("model-artifact", api.ModelArtifact, _rehashed_model_payload(encoded)),
+            (
+                "quant-signal",
+                api.QuantSignal,
+                _rekey_signal_payload(
+                    {**_score(api).model_dump(mode="json"), "run_id": encoded}
+                ),
+            ),
+        )
+        for label, model, payload in cases:
+            for path, construct in (
+                ("model_validate", lambda model=model, payload=payload: model.model_validate(payload)),
+                ("constructor", lambda model=model, payload=payload: model(**payload)),
+            ):
+                try:
+                    accepted = construct()
+                except (ValidationError, ValueError, api.QuantInputError) as exc:
+                    rendered = str(exc)
+                    if encoded in rendered or decoded in rendered:
+                        violations.append(f"{label}:{path}:echo")
+                else:
+                    serialized = accepted.model_dump_json()
+                    if encoded in serialized or decoded in serialized:
+                        violations.append(f"{label}:{path}:accepted")
+        try:
+            _score(api, run_id=encoded)
+        except (ValidationError, ValueError, api.QuantInputError) as exc:
+            rendered = str(exc)
+            if encoded in rendered or decoded in rendered:
+                violations.append("run-id:echo")
+        else:
+            violations.append("run-id:accepted")
+    assert violations == []
+
+
+def test_identifier_validation_has_no_process_global_raw_or_decoded_cache() -> None:
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    for callable_value in (
+        signal_contracts._decoded_identifier_candidates,
+        signal_contracts._identifier_contains_sensitive_candidate,
+    ):
+        assert not hasattr(callable_value, "cache_info")
+        assert not hasattr(callable_value, "cache_clear")
+    source = (ROOT / "mytradingalpha" / "contracts" / "signals.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "functools"
+        and any(alias.name == "lru_cache" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "lru_cache" for node in ast.walk(tree)
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ("create", "model_validate"))
+@pytest.mark.parametrize("hash_field", ("feature_config_hash", "feature_schema_hash"))
+def test_model_artifact_hash_inputs_reject_subclasses_without_callbacks(
+    entrypoint: str,
+    hash_field: str,
+) -> None:
+    api = _api()
+    artifact = _artifact(api)
+    calls = {"count": 0}
+
+    class HostileHash(str):
+        def _trip(self) -> None:
+            calls["count"] += 1
+            raise AssertionError("hostile hash callback executed")
+
+        def __eq__(self, other: object) -> bool:
+            self._trip()
+
+        def __hash__(self) -> int:
+            self._trip()
+
+        def __str__(self) -> str:
+            self._trip()
+
+        def __repr__(self) -> str:
+            self._trip()
+
+        def casefold(self) -> str:
+            self._trip()
+
+        def encode(self, *args: Any, **kwargs: Any) -> bytes:
+            self._trip()
+
+    hostile = HostileHash("sha256:" + "a" * 64)
+    with pytest.raises(api.QuantInputError) as exc_info:
+        if entrypoint == "create":
+            kwargs = {
+                "model_id": artifact.model_id,
+                "model_version": artifact.model_version,
+                "horizon_sessions": artifact.horizon_sessions,
+                "decimal_places": artifact.decimal_places,
+                "score_min": artifact.score_min,
+                "score_max": artifact.score_max,
+                "feature_config_hash": artifact.feature_config_hash,
+                "feature_schema_hash": artifact.feature_schema_hash,
+                "features": artifact.features,
+                "intercept": artifact.intercept,
+            }
+            kwargs[hash_field] = hostile
+            api.ModelArtifact.create(**kwargs)
+        else:
+            payload = artifact.model_dump(mode="python")
+            payload[hash_field] = hostile
+            api.ModelArtifact.model_validate(payload)
+    assert calls["count"] == 0
+    assert "hostile hash" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "missing_required", "missing_optional", "reasons"),
+    (
+        (
+            "degraded",
+            [],
+            ["close_return_2d_optional"],
+            ["exact_session_bar_missing", "optional_feature_missing"],
+        ),
+        (
+            "degraded",
+            [],
+            ["close_return_2d_optional"],
+            ["instrument_not_in_bundle", "optional_feature_missing"],
+        ),
+        (
+            "invalid",
+            [],
+            ["close_return_2d_optional"],
+            ["optional_feature_missing"],
+        ),
+        ("invalid", [], [], ["bar_series_ambiguous"]),
+        ("invalid", [], [], ["exact_session_bar_missing"]),
+        ("invalid", [], [], ["insufficient_lookback"]),
+    ),
+)
+def test_quant_signal_rejects_impossible_status_reason_missingness_cross_product(
+    status: str,
+    missing_required: list[str],
+    missing_optional: list[str],
+    reasons: list[str],
+) -> None:
+    api = _api()
+    payload = _score(api).model_dump(mode="json")
+    payload.update(
+        status=status,
+        score=None if status == "invalid" else payload["score"],
+        missing_required_feature_ids=missing_required,
+        missing_optional_feature_ids=missing_optional,
+        reason_codes=reasons,
+    )
+    rekeyed = _rekey_signal_payload(payload)
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(rekeyed)
+    with pytest.raises(ValidationError):
+        api.QuantSignal(**rekeyed)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    (
+        "instrument_not_in_bundle",
+        "instrument_inactive_as_of",
+        "instrument_not_in_universe",
+        "ambiguous_universe_membership",
+        "calendar_session_unavailable",
+    ),
+)
+def test_quant_signal_global_eligibility_reason_can_invalidate_without_missing_ids(
+    reason: str,
+) -> None:
+    api = _api()
+    payload = _score(api).model_dump(mode="json")
+    payload.update(status="invalid", score=None, reason_codes=[reason])
+    rekeyed = _rekey_signal_payload(payload)
+    assert api.QuantSignal.model_validate(rekeyed).status.value == "invalid"
+    assert api.QuantSignal(**rekeyed).status.value == "invalid"
