@@ -100,6 +100,21 @@ HASH_DOMAIN_FEATURE_SCHEMA = "mytradingalpha:sig03:feature-schema:v1\0"
 HASH_DOMAIN_FEATURE_SET = "mytradingalpha:sig03:feature-set:v1\0"
 
 _REASON_ORDER = {item.value: index for index, item in enumerate(QuantSignalReasonCode)}
+_GLOBAL_FAILURE_REASONS = frozenset(
+    {
+        QuantSignalReasonCode.INSTRUMENT_NOT_IN_BUNDLE,
+        QuantSignalReasonCode.INSTRUMENT_INACTIVE_AS_OF,
+        QuantSignalReasonCode.INSTRUMENT_NOT_IN_UNIVERSE,
+        QuantSignalReasonCode.AMBIGUOUS_UNIVERSE_MEMBERSHIP,
+        QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
+    }
+)
+_MISSINGNESS_REASONS = frozenset(
+    {
+        QuantSignalReasonCode.REQUIRED_FEATURE_MISSING,
+        QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING,
+    }
+)
 
 
 class QuantInputError(ValueError):
@@ -114,9 +129,11 @@ def _plain_model_input(model: type[object], value: object) -> dict[str, object]:
             raise _sensitive_validation_error(model.__name__) from exc
     if type(value) is not dict:
         raise _sensitive_validation_error(model.__name__)
-    keys = tuple(dict.keys(value))
     fields = tuple(model.model_fields)  # type: ignore[attr-defined]
-    if len(keys) > len(fields) or any(type(key) is not str for key in keys):
+    if dict.__len__(value) > len(fields):
+        raise _sensitive_validation_error(model.__name__)
+    keys = tuple(dict.keys(value))
+    if any(type(key) is not str for key in keys):
         raise _sensitive_validation_error(model.__name__)
     allowed = set(fields)
     if any(key not in allowed for key in keys):
@@ -696,16 +713,55 @@ class FeatureSet(ContractModel):
         if self.missing_required_feature_ids != expected_required or self.missing_optional_feature_ids != expected_optional:
             raise ValueError("feature missing IDs do not match observations")
         reason_values = tuple(item.value for item in self.reason_codes)
-        if reason_values != tuple(sorted(reason_values, key=lambda item: _REASON_ORDER[item])):
-            raise ValueError("reason codes must be canonical")
-        if self.status == "valid" and (self.missing_required_feature_ids or self.missing_optional_feature_ids):
-            raise ValueError("valid feature set cannot have missing features")
+        if len(reason_values) != len(set(reason_values)) or reason_values != tuple(
+            sorted(reason_values, key=lambda item: _REASON_ORDER[item])
+        ):
+            raise ValueError("reason codes must be canonical and unique")
+        reasons = frozenset(self.reason_codes)
+        observation_reasons = frozenset(
+            item.reason_code
+            for item in self.observations
+            if item.reason_code is not None
+        )
+        if not observation_reasons.issubset(reasons):
+            raise ValueError("observation reasons must be preserved")
+        global_reasons = reasons.intersection(_GLOBAL_FAILURE_REASONS)
+        feature_reasons = reasons.difference(
+            _GLOBAL_FAILURE_REASONS | _MISSINGNESS_REASONS
+        )
+        if not feature_reasons.issubset(observation_reasons):
+            raise ValueError("feature reasons must be explained by observations")
+        has_required_missing = bool(self.missing_required_feature_ids)
+        has_optional_missing = bool(self.missing_optional_feature_ids)
+        has_required_reason = QuantSignalReasonCode.REQUIRED_FEATURE_MISSING in reasons
+        has_optional_reason = QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING in reasons
+        if has_required_reason != has_required_missing:
+            raise ValueError("required missingness reason does not match feature IDs")
+        expected_optional_reason = (
+            has_optional_missing
+            and not has_required_missing
+            and not global_reasons
+        )
+        if has_optional_reason != expected_optional_reason:
+            raise ValueError("optional missingness reason does not match feature IDs")
+        if feature_reasons and not (has_required_missing or has_optional_missing):
+            raise ValueError("feature reasons require missing feature IDs")
+        if self.status == "valid" and (
+            has_required_missing or has_optional_missing or reasons
+        ):
+            raise ValueError("valid feature set cannot have missingness or reasons")
         if self.status == "degraded" and (
-            self.missing_required_feature_ids or not self.missing_optional_feature_ids
+            has_required_missing
+            or not has_optional_missing
+            or global_reasons
+            or has_required_reason
+            or not has_optional_reason
         ):
             raise ValueError("degraded feature set requires optional missingness only")
-        if self.status == "invalid" and self.missing_required_feature_ids == () and not self.reason_codes:
-            raise ValueError("invalid feature set requires a reason")
+        if self.status == "invalid" and not (
+            global_reasons or has_required_missing
+        ):
+            raise ValueError("invalid feature set requires global or required failure")
         return self
 
     @classmethod
@@ -786,18 +842,11 @@ class FeatureSet(ContractModel):
             for reason in reasons
         ):
             reasons.add(QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING)
-        global_failure_reasons = {
-            QuantSignalReasonCode.INSTRUMENT_NOT_IN_BUNDLE,
-            QuantSignalReasonCode.INSTRUMENT_INACTIVE_AS_OF,
-            QuantSignalReasonCode.INSTRUMENT_NOT_IN_UNIVERSE,
-            QuantSignalReasonCode.AMBIGUOUS_UNIVERSE_MEMBERSHIP,
-            QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
-        }
         required_feature_failure = any(
             item.required and item.value is None and item.reason_code is not None
             for item in observations
         )
-        status = "invalid" if missing_required or reasons.intersection(global_failure_reasons) or required_feature_failure else (
+        status = "invalid" if missing_required or reasons.intersection(_GLOBAL_FAILURE_REASONS) or required_feature_failure else (
             "degraded" if missing_optional else "valid"
         )
         reason_codes = tuple(sorted(reasons, key=lambda item: _REASON_ORDER[item.value]))
@@ -874,8 +923,10 @@ def _scan_sensitive_plain(
         seen.add(identity)
         try:
             if type(value) is dict:
+                if dict.__len__(value) > 64:
+                    raise ValueError("artifact text is not safe")
                 keys = tuple(dict.keys(value))
-                if len(keys) > 64 or any(type(key) is not str for key in keys):
+                if any(type(key) is not str for key in keys):
                     raise ValueError("artifact text is not safe")
                 for key in keys:
                     _scan_sensitive_plain(
@@ -1209,6 +1260,8 @@ def _raw_fields(value: object, expected: type[object]) -> dict[str, object]:
     if type(storage) is not dict:
         raise QuantInputError("quant input storage is not plain data")
     fields = _MODEL_FIELDS[expected]
+    if dict.__len__(storage) != len(fields):
+        raise QuantInputError("quant input fields are not canonical")
     keys = tuple(dict.keys(storage))
     if any(type(key) is not str for key in keys) or set(keys) != set(fields):
         raise QuantInputError("quant input fields are not canonical")
@@ -1271,6 +1324,8 @@ def _safe_bundle_value(
         finally:
             seen.remove(identity)
     if value_type is dict:
+        if dict.__len__(value) > (_MAX_BUNDLE_WALK_NODES - nodes[0]) // 2:
+            raise QuantInputError("quant evidence exceeds structural bounds")
         identity = id(value)
         if identity in seen:
             raise QuantInputError("quant evidence contains a cycle")
@@ -1320,8 +1375,10 @@ def _copy_local_model(value: object, expected: type[object], fields: tuple[str, 
         storage = object.__getattribute__(value, "__dict__")
     except (AttributeError, TypeError) as exc:
         raise QuantInputError("quant model storage is unavailable") from exc
-    keys = tuple(dict.keys(storage)) if type(storage) is dict else ()
-    if type(storage) is not dict or any(type(key) is not str for key in keys) or set(keys) != set(fields):
+    if type(storage) is not dict or dict.__len__(storage) != len(fields):
+        raise QuantInputError("quant model storage is not canonical")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(fields):
         raise QuantInputError("quant model storage is not canonical")
     return {field: dict.__getitem__(storage, field) for field in fields}
 

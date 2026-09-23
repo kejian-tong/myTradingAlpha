@@ -126,20 +126,9 @@ def _is_internal_validation_context(context: object) -> bool:
 
 
 def _new_sig03_validation_context(
-    caller_context: object = None,
+    _caller_context: object = None,
 ) -> dict[object, object]:
     context: dict[object, object] = {}
-    if type(caller_context) is dict:
-        for key in tuple(dict.keys(caller_context)):
-            if key is _VALIDATION_CONTEXT_MARKER or (
-                type(key) is str and key == _VALIDATION_BUDGET_KEY
-            ):
-                continue
-            dict.__setitem__(
-                context,
-                key,
-                dict.__getitem__(caller_context, key),
-            )
     dict.__setitem__(
         context,
         _VALIDATION_CONTEXT_MARKER,
@@ -228,8 +217,11 @@ def _validate_sig03_model_with_context(
         storage = object.__getattribute__(value, "__dict__")
         if type(storage) is not dict:
             raise ValueError("SIG-03 model storage must be exact plain data")
+        fields = tuple(model.model_fields)  # type: ignore[attr-defined]
+        if dict.__len__(storage) != len(fields):
+            raise ValueError("SIG-03 model storage must be exact plain data")
         keys = tuple(dict.keys(storage))
-        if any(type(key) is not str for key in keys):
+        if any(type(key) is not str for key in keys) or set(keys) != set(fields):
             raise ValueError("SIG-03 model storage must be exact plain data")
         value = {key: dict.__getitem__(storage, key) for key in keys}
     instance = object.__new__(model)
@@ -515,8 +507,10 @@ def _plain_mapping(
 ) -> dict[str, object]:
     if type(value) is not dict:
         raise _validation_error(model_name)
+    if dict.__len__(value) > len(allowed_fields):
+        raise _validation_error(model_name)
     keys = tuple(dict.keys(value))
-    if len(keys) > len(allowed_fields) or any(type(key) is not str for key in keys):
+    if any(type(key) is not str for key in keys):
         raise _validation_error(model_name)
     allowed = set(allowed_fields)
     if any(key not in allowed for key in keys):
@@ -552,8 +546,10 @@ def _prevalidate_sensitive(
             seen.add(identity)
             try:
                 if type(item) is dict:
+                    if dict.__len__(item) > 64:
+                        raise ValueError
                     keys = tuple(dict.keys(item))
-                    if len(keys) > 64 or any(type(key) is not str for key in keys):
+                    if any(type(key) is not str for key in keys):
                         raise ValueError
                     for key in keys:
                         walk(key, depth + 1)

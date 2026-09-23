@@ -105,8 +105,10 @@ def _prevalidate_model_sensitive(
             seen.add(identity)
             try:
                 if type(item) is dict:
+                    if dict.__len__(item) > 64:
+                        raise ValueError
                     keys = tuple(dict.keys(item))
-                    if len(keys) > 64 or any(type(key) is not str for key in keys):
+                    if any(type(key) is not str for key in keys):
                         raise ValueError
                     for key in keys:
                         walk(key, depth + 1)
@@ -600,8 +602,10 @@ def _copy_model_feature(value: object, *, context: object = None) -> ModelFeatur
     except (AttributeError, TypeError) as exc:
         raise QuantInputError("model feature storage is unavailable") from exc
     fields = tuple(ModelFeature.model_fields)
-    keys = tuple(dict.keys(storage)) if type(storage) is dict else ()
-    if type(storage) is not dict or any(type(key) is not str for key in keys) or set(keys) != set(fields):
+    if type(storage) is not dict or dict.__len__(storage) != len(fields):
+        raise QuantInputError("model feature storage is not canonical")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(fields):
         raise QuantInputError("model feature storage is not canonical")
     return _validate_sig03_nested_model(  # type: ignore[return-value]
         ModelFeature,
@@ -618,12 +622,13 @@ def _copy_model_artifact_fields(value: object) -> dict[str, object]:
     except (AttributeError, TypeError) as exc:
         raise QuantInputError("model artifact storage is unavailable") from exc
     fields = tuple(ModelArtifact.model_fields)
-    keys = tuple(dict.keys(storage)) if type(storage) is dict else ()
     if (
         type(storage) is not dict
-        or any(type(key) is not str for key in keys)
-        or set(keys) != set(fields)
+        or dict.__len__(storage) != len(fields)
     ):
+        raise QuantInputError("model artifact storage is not canonical")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(fields):
         raise QuantInputError("model artifact storage is not canonical")
     return {field: dict.__getitem__(storage, field) for field in fields}
 
