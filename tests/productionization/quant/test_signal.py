@@ -1473,7 +1473,8 @@ def test_sensitive_identifier_canary_is_rejected_without_error_or_canonical_echo
         (api.QuantSignal, {**_score(api).model_dump(mode="json"), "run_id": canary}),
     )
     for model, payload in cases:
+        original_payload = deepcopy(payload)
         with pytest.raises(ValidationError) as exc_info:
             model.model_validate(payload)
         assert canary not in str(exc_info.value)
-        assert canary not in json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        assert payload == original_payload
