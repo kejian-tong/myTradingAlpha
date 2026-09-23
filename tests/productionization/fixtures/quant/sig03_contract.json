@@ -81,10 +81,10 @@
     "run_id": "run-sig03-fixture",
     "expected_score": "0.305000000000",
     "expected_as_of": "2024-07-02T20:00:00Z",
-    "expected_bundle_hash": "sha256:75f4d075951a1c10c85d4240b0ec5369117a96f578e66922b9e720f05fde4dfd",
-    "expected_feature_hash": "sha256:7b7e01c4a244a400633da9bac87aa4e1fad689d6e93776f6828d521c8709d0fb",
+    "expected_bundle_hash": "sha256:6e8b06b8bc40c1b7aabf3c3af027a1ce6e6ccd2bc31bf4502a4b73fe1001cec7",
+    "expected_feature_hash": "sha256:8c7c77e7f1946ac6fe22b7a90ae73948238a821f887937e0c284a37527a65904",
     "expected_model_hash": "sha256:15b5ffb574cb071ef39ed22f445e8e5e248ae9031cd68560ca3c2cfb471799df",
-    "expected_signal_hash": "sha256:8a729bb4aaf276e68ff4d59d6699effc9d50d6e68ecaf5147aea50c2d20e7926",
+    "expected_signal_hash": "sha256:838ff6ce38013258c67514603d7985c77ed2729cb8e042360620907a9d0b47fc",
     "reason_codes": [
       "instrument_not_in_bundle",
       "instrument_inactive_as_of",

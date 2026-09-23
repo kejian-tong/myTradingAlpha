@@ -95,6 +95,45 @@ def _pit_source(name: str) -> dict[str, Any]:
 
 def _calendar() -> TradingCalendar:
     payload = _pit_source("calendar")
+    payload["coverage_ranges"][1]["start"] = "2024-06-28"
+    payload["closures"].extend(
+        (
+            {
+                "schema_version": "v1",
+                "calendar_id": "XNYS.synthetic.v1",
+                "date": "2024-06-29",
+                "reason": "weekend",
+            },
+            {
+                "schema_version": "v1",
+                "calendar_id": "XNYS.synthetic.v1",
+                "date": "2024-06-30",
+                "reason": "weekend",
+            },
+        )
+    )
+    payload["closures"].sort(key=lambda item: item["date"])
+    payload["sessions"].extend(
+        (
+            {
+                "schema_version": "v1",
+                "calendar_id": "XNYS.synthetic.v1",
+                "session_date": "2024-06-28",
+                "open_at": "2024-06-28T13:30:00Z",
+                "close_at": "2024-06-28T20:00:00Z",
+                "session_type": "regular",
+            },
+            {
+                "schema_version": "v1",
+                "calendar_id": "XNYS.synthetic.v1",
+                "session_date": "2024-07-01",
+                "open_at": "2024-07-01T13:30:00Z",
+                "close_at": "2024-07-01T20:00:00Z",
+                "session_type": "regular",
+            },
+        )
+    )
+    payload["sessions"].sort(key=lambda item: item["session_date"])
     return TradingCalendar(
         schema_version=payload["schema_version"],
         calendar_id=payload["calendar_id"],
@@ -256,6 +295,30 @@ def _bar(
 
 
 def _bars() -> tuple[DailyBar, ...]:
+    required = tuple(
+        _bar(session, close)
+        for session, close in (
+            ("2024-03-08", "100.00"),
+            ("2024-03-11", "110.00"),
+            ("2024-06-28", "100.00"),
+            ("2024-07-01", "110.00"),
+            ("2024-07-02", "121.00"),
+        )
+    )
+    optional = tuple(
+        _bar(session, close, source="synthetic-optional-bars")
+        for session, close in (
+            ("2024-03-08", "200.00"),
+            ("2024-03-11", "220.00"),
+            ("2024-06-28", "200.00"),
+            ("2024-07-01", "220.00"),
+            ("2024-07-02", "242.00"),
+        )
+    )
+    return (*required, *optional)
+
+
+def _gapped_bars() -> tuple[DailyBar, ...]:
     required = tuple(
         _bar(session, close)
         for session, close in (
@@ -497,10 +560,10 @@ def _intended_feature_payload_with_session_lineage(api: SimpleNamespace) -> dict
 
     payload = _features(api).model_dump(mode="json")
     expected_dates = {
-        "close_return_1d": ["2024-03-11", "2024-07-02"],
+        "close_return_1d": ["2024-07-01", "2024-07-02"],
         "close_return_2d_optional": [
-            "2024-03-08",
-            "2024-03-11",
+            "2024-06-28",
+            "2024-07-01",
             "2024-07-02",
         ],
     }
@@ -770,37 +833,37 @@ def test_observations_bind_exact_sessions_availability_and_sorted_provenance() -
     assert optional.anchor_session == "2024-07-02"
     assert required.lookback_sessions == 1
     assert optional.lookback_sessions == 2
-    assert required.lookback_session == "2024-03-11"
-    assert optional.lookback_session == "2024-03-08"
+    assert required.lookback_session == "2024-07-01"
+    assert optional.lookback_session == "2024-06-28"
     assert required.latest_available_at == datetime(2024, 7, 2, 20, 1, tzinfo=timezone.utc)
     assert optional.latest_available_at == datetime(2024, 7, 2, 20, 1, tzinfo=timezone.utc)
     assert tuple(required.source_bar_ids) == (
-        "bar-inst-survivor-synthetic-quant-bars-2024-03-11-unadjusted-none-r0",
+        "bar-inst-survivor-synthetic-quant-bars-2024-07-01-unadjusted-none-r0",
         "bar-inst-survivor-synthetic-quant-bars-2024-07-02-unadjusted-none-r0",
     )
     assert tuple(required.source_manifest_ids) == (
-        "synthetic-quant-bars-2024-03-11-r0",
+        "synthetic-quant-bars-2024-07-01-r0",
         "synthetic-quant-bars-2024-07-02-r0",
     )
     assert tuple(required.source_revisions) == (0, 0)
     assert tuple(required.source_session_dates) == (
-        "2024-03-11",
+        "2024-07-01",
         "2024-07-02",
     )
     assert tuple(optional.source_bar_ids) == (
-        "bar-inst-survivor-synthetic-optional-bars-2024-03-08-unadjusted-none-r0",
-        "bar-inst-survivor-synthetic-optional-bars-2024-03-11-unadjusted-none-r0",
+        "bar-inst-survivor-synthetic-optional-bars-2024-06-28-unadjusted-none-r0",
+        "bar-inst-survivor-synthetic-optional-bars-2024-07-01-unadjusted-none-r0",
         "bar-inst-survivor-synthetic-optional-bars-2024-07-02-unadjusted-none-r0",
     )
     assert tuple(optional.source_manifest_ids) == (
-        "synthetic-optional-bars-2024-03-08-r0",
-        "synthetic-optional-bars-2024-03-11-r0",
+        "synthetic-optional-bars-2024-06-28-r0",
+        "synthetic-optional-bars-2024-07-01-r0",
         "synthetic-optional-bars-2024-07-02-r0",
     )
     assert tuple(optional.source_revisions) == (0, 0, 0)
     assert tuple(optional.source_session_dates) == (
-        "2024-03-08",
-        "2024-03-11",
+        "2024-06-28",
+        "2024-07-01",
         "2024-07-02",
     )
     assert feature_set.missing_required_feature_ids == ()
@@ -823,7 +886,7 @@ def test_exact_session_lookback_has_no_gap_fallback() -> None:
         bars=tuple(
             item
             for item in _bars()
-            if item.session_date != datetime(2024, 3, 11).date()
+            if item.session_date != datetime(2024, 7, 1).date()
         )
     )
     feature_set = _features(api, bundle=missing_expected)
@@ -2293,9 +2356,9 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
 
     def payload_with_count(count: int) -> dict[str, Any]:
         source_session_dates = (
-            ["2024-03-11", "2024-07-02"]
+            ["2024-07-01", "2024-07-02"]
             if count == 2
-            else ["2024-03-11"] * count
+            else ["2024-07-01"] * count
         )
         return {
             **base,
@@ -2578,7 +2641,7 @@ def test_round3_rehashed_feature_schema_mismatch_is_typed_before_scoring(
     payload = _features(api).model_dump(mode="json")
     observation = payload["observations"][0]
     observation.setdefault(
-        "source_session_dates", ["2024-03-11", "2024-07-02"]
+        "source_session_dates", ["2024-07-01", "2024-07-02"]
     )
     if mutation == "feature_version":
         observation["feature_version"] = "v2"
@@ -2586,11 +2649,11 @@ def test_round3_rehashed_feature_schema_mismatch_is_typed_before_scoring(
         observation["required"] = False
     else:
         observation["lookback_sessions"] = 2
-        observation["lookback_session"] = "2024-03-08"
+        observation["lookback_session"] = "2024-06-28"
         observation["source_bar_ids"].insert(0, "bar-extra-schema-mismatch")
         observation["source_manifest_ids"].insert(0, "manifest-extra-schema-mismatch")
         observation["source_revisions"].insert(0, 0)
-        observation["source_session_dates"].insert(0, "2024-03-08")
+        observation["source_session_dates"].insert(0, "2024-06-28")
     payload.pop("feature_hash")
     payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
     candidate = api.FeatureSet.model_validate(payload)
@@ -2752,17 +2815,17 @@ def test_feature_observation_wire_records_exact_source_session_lineage() -> None
     assert "source_session_dates" in api.FeatureObservation.model_fields
     observations = _features(api).observations
     assert observations[0].source_session_dates == (
-        "2024-03-11",
+        "2024-07-01",
         "2024-07-02",
     )
     assert observations[1].source_session_dates == (
-        "2024-03-08",
-        "2024-03-11",
+        "2024-06-28",
+        "2024-07-01",
         "2024-07-02",
     )
     missing_bundle = _bundle(
         bars=tuple(
-            item for item in _bars() if item.session_date != datetime(2024, 3, 11).date()
+            item for item in _bars() if item.session_date != datetime(2024, 7, 1).date()
         )
     )
     missing = _features(api, bundle=missing_bundle)
@@ -2791,13 +2854,13 @@ def test_rehashed_feature_set_rejects_invalid_source_session_lineage(
             reversed(observation["source_session_dates"])
         )
     elif mutation == "duplicate":
-        observation["source_session_dates"] = ["2024-03-11", "2024-03-11"]
+        observation["source_session_dates"] = ["2024-07-01", "2024-07-01"]
     elif mutation == "first_mismatch":
-        observation["source_session_dates"][0] = "2024-03-08"
+        observation["source_session_dates"][0] = "2024-06-28"
     elif mutation == "last_mismatch":
         observation["source_session_dates"][-1] = "2024-07-01"
     elif mutation == "noncanonical":
-        observation["source_session_dates"][0] = "2024-3-11"
+        observation["source_session_dates"][0] = "2024-7-01"
     else:
         observation["source_session_dates"] = observation["source_session_dates"][:1]
     payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
@@ -2846,6 +2909,8 @@ def _bundle_with_distinct_optional_revisions() -> EvidenceBundle:
             (
                 ("2024-03-08", "200.00"),
                 ("2024-03-11", "220.00"),
+                ("2024-06-28", "200.00"),
+                ("2024-07-01", "220.00"),
                 ("2024-07-02", "242.00"),
             )
         )
@@ -2862,7 +2927,7 @@ def test_score_rejects_rehashed_noncalendar_intermediate_session() -> None:
         bundle=bundle,
         configuration=configuration,
     ).model_dump(mode="json")
-    payload["observations"][1]["source_session_dates"][1] = "2024-03-09"
+    payload["observations"][1]["source_session_dates"][1] = "2024-06-29"
     payload.pop("feature_hash")
     payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
     fabricated = api.FeatureSet.model_validate(payload)
@@ -4536,7 +4601,10 @@ def test_gapped_calendar_never_turns_cross_range_lookback_available() -> None:
     api = _api()
     feature_set = _features(
         api,
-        bundle=_bundle(calendar=_gapped_quant_calendar()),
+        bundle=_bundle(
+            calendar=_gapped_quant_calendar(),
+            bars=_gapped_bars(),
+        ),
     )
     observations = {item.feature_id: item for item in feature_set.observations}
     assert _status(feature_set) == "invalid"
@@ -4568,7 +4636,11 @@ def test_cutoff_without_verified_calendar_coverage_is_unavailable(
     api = _api()
     feature_set = _features(
         api,
-        bundle=_bundle(calendar=_gapped_quant_calendar(), cutoff=cutoff),
+        bundle=_bundle(
+            calendar=_gapped_quant_calendar(),
+            bars=_gapped_bars(),
+            cutoff=cutoff,
+        ),
     )
     assert _status(feature_set) == "invalid"
     assert feature_set.missing_required_feature_ids == ("close_return_1d",)
@@ -4602,6 +4674,7 @@ def test_same_range_weekend_closures_preserve_valid_lookback() -> None:
         configuration=configuration,
         bundle=_bundle(
             calendar=_gapped_quant_calendar(),
+            bars=_gapped_bars(),
             cutoff="2024-03-11T20:04:00Z",
         ),
     )
