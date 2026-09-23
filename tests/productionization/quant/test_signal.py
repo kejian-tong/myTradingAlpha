@@ -3564,3 +3564,211 @@ def test_secret_word_prefix_labels_are_safe_but_exact_secrets_reject_without_ech
                 signal_contracts.validate_sig03_identifier(candidate)
             assert candidate not in str(exc_info.value)
             assert secret not in str(exc_info.value)
+
+
+def _aggregate_feature_configuration_payload(
+    feature_ids: list[str],
+) -> dict[str, Any]:
+    base_spec = _config_payload()["features"][0]
+    payload: dict[str, Any] = {
+        "schema_version": "v1",
+        "configuration_id": "aggregate-budget-config",
+        "configuration_version": "v1",
+        "universe_id": "us-liquid-v1",
+        "calendar_id": "XNYS.synthetic.v1",
+        "horizon_sessions": 1,
+        "features": [
+            {**base_spec, "feature_id": feature_id} for feature_id in feature_ids
+        ],
+    }
+    payload["content_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_configuration"], payload
+    )
+    return payload
+
+
+def _aggregate_feature_set_payload(
+    api: SimpleNamespace,
+    feature_ids: list[str],
+) -> dict[str, Any]:
+    payload = _features(api).model_dump(mode="json")
+    template = payload["observations"][0]
+    payload["observations"] = [
+        {**deepcopy(template), "feature_id": feature_id}
+        for feature_id in feature_ids
+    ]
+    payload["missing_required_feature_ids"] = []
+    payload["missing_optional_feature_ids"] = []
+    payload["status"] = "valid"
+    payload["reason_codes"] = []
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    return payload
+
+
+def _aggregate_model_artifact_payload(feature_ids: list[str]) -> dict[str, Any]:
+    base_feature = _model_payload()["features"][0]
+    features = [
+        {**base_feature, "feature_id": feature_id} for feature_id in feature_ids
+    ]
+    schema_payload = [
+        {
+            key: value
+            for key, value in feature.items()
+            if key not in {"weight", "missing_value"}
+        }
+        for feature in features
+    ]
+    payload: dict[str, Any] = {
+        "schema_version": "v1",
+        "model_id": "aggregate-budget-model",
+        "model_version": "v1",
+        "horizon_sessions": 1,
+        "decimal_places": 12,
+        "score_min": "-1",
+        "score_max": "1",
+        "feature_config_hash": "sha256:" + "1" * 64,
+        "feature_schema_hash": _canonical_hash(
+            HASH_DOMAINS["feature_schema"], schema_payload
+        ),
+        "features": features,
+        "intercept": "0.000000000000",
+    }
+    payload["content_hash"] = _canonical_hash(HASH_DOMAINS["model_artifact"], payload)
+    return payload
+
+
+def _aggregate_quant_signal_payload(
+    api: SimpleNamespace,
+    feature_ids: list[str],
+) -> dict[str, Any]:
+    payload = _score(api).model_dump(mode="json")
+    payload["feature_ids"] = feature_ids
+    payload["missing_required_feature_ids"] = []
+    payload["missing_optional_feature_ids"] = []
+    payload["status"] = "valid"
+    payload["reason_codes"] = []
+    return _rekey_signal_payload(payload)
+
+
+def _aggregate_payload(
+    api: SimpleNamespace,
+    model_name: str,
+    feature_ids: list[str],
+) -> tuple[type[Any], dict[str, Any]]:
+    if model_name == "FeatureConfiguration":
+        return api.FeatureConfiguration, _aggregate_feature_configuration_payload(
+            feature_ids
+        )
+    if model_name == "FeatureSet":
+        return api.FeatureSet, _aggregate_feature_set_payload(api, feature_ids)
+    if model_name == "ModelArtifact":
+        return api.ModelArtifact, _aggregate_model_artifact_payload(feature_ids)
+    return api.QuantSignal, _aggregate_quant_signal_payload(api, feature_ids)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ("FeatureConfiguration", "FeatureSet", "ModelArtifact", "QuantSignal"),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+def test_pathological_aggregate_identifiers_share_outer_decode_budget(
+    model_name: str,
+    entrypoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    calls = {"count": 0}
+
+    def counted_decode(*args: Any, **kwargs: Any) -> bytes:
+        calls["count"] += 1
+        return b""
+
+    monkeypatch.setattr(signal_contracts.base64, "b64decode", counted_decode)
+    feature_ids = [f"{index:04d}" + "Z" * 124 for index in range(32)]
+    model, payload = _aggregate_payload(api, model_name, feature_ids)
+    with pytest.raises((ValidationError, api.QuantInputError, ValueError)):
+        if entrypoint == "model_validate":
+            model.model_validate(payload)
+        else:
+            model(**payload)
+    assert 0 < calls["count"] <= 65_537
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ("FeatureConfiguration", "FeatureSet", "ModelArtifact", "QuantSignal"),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+def test_normal_cap_payload_has_constructor_validation_parity(
+    model_name: str,
+    entrypoint: str,
+) -> None:
+    api = _api()
+    feature_ids = [f"normal-feature-{index:02d}" for index in range(32)]
+    model, payload = _aggregate_payload(api, model_name, feature_ids)
+    validated = (
+        model.model_validate(payload)
+        if entrypoint == "model_validate"
+        else model(**payload)
+    )
+    if model_name == "FeatureConfiguration":
+        assert len(validated.features) == 32
+    elif model_name == "FeatureSet":
+        assert len(validated.observations) == 32
+    elif model_name == "ModelArtifact":
+        assert len(validated.features) == 32
+    else:
+        assert len(validated.feature_ids) == 32
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "observations",
+        "missing_required_feature_ids",
+        "missing_optional_feature_ids",
+        "reason_codes",
+    ),
+)
+@pytest.mark.parametrize("count", (33, 10_000))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+def test_feature_set_collection_caps_reject_before_sensitive_elements(
+    field: str,
+    count: int,
+    entrypoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    payload = _features(api).model_dump(mode="json")
+    if field == "observations":
+        payload[field] = [deepcopy(payload[field][0]) for _ in range(count)]
+    elif field == "reason_codes":
+        payload[field] = ["optional_feature_missing"] * count
+    else:
+        payload[field] = [f"overcap-feature-{index}" for index in range(count)]
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+
+    callbacks = {"count": 0}
+    original_identifier = api.features_module.validate_sig03_identifier
+
+    def guarded_identifier(value: object, *args: Any, **kwargs: Any) -> str:
+        if type(value) is str and value.startswith("overcap-feature-"):
+            callbacks["count"] += 1
+            raise AssertionError("over-cap element validation executed")
+        return original_identifier(value, *args, **kwargs)
+
+    monkeypatch.setattr(
+        api.features_module,
+        "validate_sig03_identifier",
+        guarded_identifier,
+    )
+    with pytest.raises((ValidationError, api.QuantInputError, ValueError)):
+        if entrypoint == "model_validate":
+            api.FeatureSet.model_validate(payload)
+        else:
+            api.FeatureSet(**payload)
+    assert callbacks["count"] == 0
