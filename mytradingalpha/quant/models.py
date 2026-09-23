@@ -27,7 +27,10 @@ from pydantic import (
 
 from mytradingalpha.contracts.common import CanonicalChecksum, StableId
 from mytradingalpha.contracts.schemas import ContractModel
-from mytradingalpha.contracts.signals import validate_sig03_identifier
+from mytradingalpha.contracts.signals import (
+    _new_sensitive_prevalidation_budget,
+    validate_sig03_identifier,
+)
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 from mytradingalpha.data.bars import AdjustmentBasis
 
@@ -72,12 +75,13 @@ def _fixed_decimal_context() -> Context:
 
 def _prevalidate_model_sensitive(model: type[object], value: object) -> None:
     seen: set[int] = set()
+    budget = _new_sensitive_prevalidation_budget()
 
     def walk(item: object, depth: int = 0) -> None:
         if depth > MAX_NESTING_DEPTH:
             raise ValueError
         if type(item) is str:
-            validate_sig03_identifier(item)
+            validate_sig03_identifier(item, _decode_budget=budget)
             return
         if type(item) in (int, bool, type(None), Decimal, AdjustmentBasis):
             return

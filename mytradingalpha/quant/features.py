@@ -35,6 +35,7 @@ from mytradingalpha.contracts.common import (
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.signals import (
     QuantSignalReasonCode,
+    _new_sensitive_prevalidation_budget,
     validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
@@ -728,12 +729,18 @@ def _sensitive_validation_error(model_name: str) -> ValidationError:
     )
 
 
-def _scan_sensitive_plain(value: object, *, seen: set[int], depth: int = 0) -> None:
+def _scan_sensitive_plain(
+    value: object,
+    *,
+    seen: set[int],
+    budget: Any,
+    depth: int = 0,
+) -> None:
     if depth > MAX_NESTING_DEPTH:
         raise ValueError("artifact text is not safe")
     if type(value) is str:
         try:
-            validate_sig03_identifier(value)
+            validate_sig03_identifier(value, _decode_budget=budget)
         except (TypeError, ValueError) as exc:
             raise ValueError("artifact text is not safe") from exc
         return
@@ -754,13 +761,20 @@ def _scan_sensitive_plain(value: object, *, seen: set[int], depth: int = 0) -> N
                 if len(keys) > 64 or any(type(key) is not str for key in keys):
                     raise ValueError("artifact text is not safe")
                 for key in keys:
-                    _scan_sensitive_plain(key, seen=seen, depth=depth + 1)
                     _scan_sensitive_plain(
-                        dict.__getitem__(value, key), seen=seen, depth=depth + 1
+                        key, seen=seen, budget=budget, depth=depth + 1
+                    )
+                    _scan_sensitive_plain(
+                        dict.__getitem__(value, key),
+                        seen=seen,
+                        budget=budget,
+                        depth=depth + 1,
                     )
             else:
                 for item in value:
-                    _scan_sensitive_plain(item, seen=seen, depth=depth + 1)
+                    _scan_sensitive_plain(
+                        item, seen=seen, budget=budget, depth=depth + 1
+                    )
         finally:
             seen.remove(identity)
         return
@@ -778,14 +792,20 @@ def _scan_sensitive_plain(value: object, *, seen: set[int], depth: int = 0) -> N
         storage = object.__getattribute__(value, "__dict__")
         if type(storage) is not dict:
             raise ValueError("artifact text is not safe")
-        _scan_sensitive_plain(storage, seen=seen, depth=depth + 1)
+        _scan_sensitive_plain(
+            storage, seen=seen, budget=budget, depth=depth + 1
+        )
         return
     raise ValueError("artifact text is not safe")
 
 
 def _prevalidate_sensitive(model: type[object], value: object) -> None:
     try:
-        _scan_sensitive_plain(value, seen=set())
+        _scan_sensitive_plain(
+            value,
+            seen=set(),
+            budget=_new_sensitive_prevalidation_budget(),
+        )
     except (TypeError, ValueError) as exc:
         raise _sensitive_validation_error(model.__name__) from exc
 

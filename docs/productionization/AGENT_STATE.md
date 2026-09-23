@@ -43,7 +43,12 @@ on that head. Round-seven RED evidence is `9db53e8c79cb040f946f9c2a915061db401fd
 `10f622a8642ee12082beb946674dc930b6aa95ef`, and `da115b0432ac6790c996dfe547c74b9607b49287`;
 the tests-only safe-label compatibility guard is `3d62828c9587508de83f641e9fcbedc91fac315f`.
 The bounded GREEN candidate was produced. Durable lease release will be recorded in PR evidence before
-fresh review; independent review, required CI, and merge remain pending.
+fresh review. Round-eight repair started from candidate
+`95ca3698ebc014860fb82bd450f8792f3d7a6703`; its tests-only commits are
+`f8ff012c2b6425fac086dac2df5b900ec1d07c5a`, `de40e2ea920848bef83364b333e22cdae4379822`,
+and `ff3a5fa7429aa6b5b6ecb25126c57d78d2c976f3`. The bounded GREEN candidate was produced, and durable
+lease release will be recorded in PR evidence before fresh review. Independent review, required CI,
+and merge remain pending.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
@@ -92,7 +97,7 @@ closeout.
 
 ## Runtime limitations and watch-only features
 
-- The host permission profile is disabled/unrestricted. Under the prospective PR #86 policy, missing
+- The host permission profile is disabled/unrestricted. Under the PR #86 policy, missing
   host-origin sandbox/approval/tool-inventory facts are supplemental disclosure and do not themselves block
   review.
 - A separate controlling review context remains mandatory and uses a detached exact-head worktree with

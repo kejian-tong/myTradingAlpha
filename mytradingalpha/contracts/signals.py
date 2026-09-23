@@ -83,6 +83,7 @@ _DECODED_SENSITIVE_WORDS = (
     "terms",
 )
 _AWS_ACCESS_KEY = re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])")
+_SK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}")
 _BASE64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
 _HEX = re.compile(r"[0-9A-Fa-f]+")
 _BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
@@ -90,6 +91,26 @@ _PERCENT_RUN = re.compile(r"(?:%[0-9A-Fa-f]{2}){5,}")
 _UNICODE_RUN = re.compile(r"(?:\\u[0-9A-Fa-f]{4}){5,}")
 _HEX_RUN = re.compile(r"[0-9A-Fa-f]{10,}")
 _MAX_DECODE_CANDIDATES = 100_000
+_MAX_IDENTIFIER_DECODE_ATTEMPTS = 6_000
+_MAX_PREVALIDATION_DECODE_ATTEMPTS = 65_536
+
+
+class _DecodeBudget:
+    __slots__ = ("attempts", "limit", "memo")
+
+    def __init__(self, limit: int) -> None:
+        self.attempts = 0
+        self.limit = limit
+        self.memo: dict[str, bool] = {}
+
+    def consume(self) -> None:
+        if self.attempts >= self.limit:
+            raise ValueError("identifier decode work exceeds bound")
+        self.attempts += 1
+
+
+def _new_sensitive_prevalidation_budget() -> _DecodeBudget:
+    return _DecodeBudget(_MAX_PREVALIDATION_DECODE_ATTEMPTS)
 
 
 def _compact_text_is_sensitive(
@@ -98,11 +119,15 @@ def _compact_text_is_sensitive(
     markers: tuple[str, ...] = _DIRECT_SENSITIVE_WORDS,
 ) -> bool:
     normalized = unicodedata.normalize("NFKC", value).casefold()
-    compact = "".join(character for character in normalized if character.isalnum())
-    return any(
-        "".join(character for character in marker if character.isalnum()) in compact
-        for marker in markers
-    )
+    parts = tuple(re.findall(r"[a-z0-9]+", normalized))
+    for marker in markers:
+        marker_parts = tuple(re.findall(r"[a-z0-9]+", marker.casefold()))
+        if marker_parts and any(
+            parts[index : index + len(marker_parts)] == marker_parts
+            for index in range(len(parts) - len(marker_parts) + 1)
+        ):
+            return True
+    return False
 
 
 def _artifact_text_is_sensitive(value: str) -> bool:
@@ -124,6 +149,7 @@ def _decoded_artifact_is_sensitive(value: str) -> bool:
         redaction_rejected = True
     return redaction_rejected and (
         _AWS_ACCESS_KEY.search(value) is not None
+        or _SK_TOKEN.search(value) is not None
         or _compact_text_is_sensitive(value, markers=_DECODED_SENSITIVE_WORDS)
     )
 
@@ -135,6 +161,8 @@ def _decoded_candidate_is_relevant(value: str) -> bool:
         value, markers=_DECODED_SENSITIVE_WORDS
     ):
         return True
+    if re.fullmatch(r"[a-z][a-z0-9]*(?:[-._:][a-z0-9]+)+", value):
+        return False
     return bool(
         (len(value) >= 7 and _BASE64.fullmatch(value))
         or _PERCENT_RUN.fullmatch(value)
@@ -155,7 +183,10 @@ def _decoded_text_is_candidate(value: str) -> bool:
     return True
 
 
-def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
+def _decoded_identifier_candidates(
+    value: str,
+    budget: _DecodeBudget,
+) -> tuple[str, ...]:
     candidates: list[str] = []
 
     def append_if_relevant(decoded: str) -> bool:
@@ -172,6 +203,7 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
 
     for match in _PERCENT_RUN.finditer(value):
         encoded = match.group(0)
+        budget.consume()
         with suppress(UnicodeDecodeError, ValueError):
             decoded = bytes(
                     int(encoded[index + 1 : index + 3], 16)
@@ -181,6 +213,7 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                 return tuple(dict.fromkeys(candidates))
     for match in _UNICODE_RUN.finditer(value):
         encoded = match.group(0)
+        budget.consume()
         with suppress(ValueError):
             decoded = "".join(
                     chr(int(encoded[index + 2 : index + 6], 16))
@@ -190,11 +223,34 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                 return tuple(dict.fromkeys(candidates))
     for match in _BASE64_RUN.finditer(value):
         run = match.group(0).rstrip("=")
+        if len(run) >= 7 and len(run) % 4 != 1:
+            budget.consume()
+            padded_run = run + "=" * (-len(run) % 4)
+            try:
+                decoded_run = base64.b64decode(
+                    padded_run.encode("ascii"), altchars=b"-_", validate=True
+                ).decode("utf-8")
+            except (UnicodeDecodeError, ValueError):
+                decoded_run = None
+            if decoded_run is not None:
+                candidate_count = len(candidates)
+                if append_if_relevant(decoded_run):
+                    return tuple(dict.fromkeys(candidates))
+                if len(candidates) > candidate_count:
+                    return tuple(dict.fromkeys(candidates))
+                if (
+                    _decoded_text_is_candidate(decoded_run)
+                    and not _decoded_candidate_is_relevant(decoded_run)
+                ):
+                    continue
         for start in range(len(run)):
             for end in range(start + 7, len(run) + 1):
+                if start == 0 and end == len(run):
+                    continue
                 encoded = run[start:end]
                 if len(encoded) % 4 == 1 or _BASE64.fullmatch(encoded) is None:
                     continue
+                budget.consume()
                 padded = encoded + "=" * (-len(encoded) % 4)
                 with suppress(UnicodeDecodeError, ValueError):
                     decoded = base64.b64decode(
@@ -204,11 +260,31 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                         return tuple(dict.fromkeys(candidates))
     for match in _HEX_RUN.finditer(value):
         run = match.group(0)
+        if len(run) % 2 == 0:
+            budget.consume()
+            try:
+                decoded_run = bytes.fromhex(run).decode("utf-8")
+            except (UnicodeDecodeError, ValueError):
+                decoded_run = None
+            if decoded_run is not None:
+                candidate_count = len(candidates)
+                if append_if_relevant(decoded_run):
+                    return tuple(dict.fromkeys(candidates))
+                if len(candidates) > candidate_count:
+                    return tuple(dict.fromkeys(candidates))
+                if (
+                    _decoded_text_is_candidate(decoded_run)
+                    and not _decoded_candidate_is_relevant(decoded_run)
+                ):
+                    continue
         for start in range(len(run)):
             for end in range(start + 10, len(run) + 1):
+                if start == 0 and end == len(run):
+                    continue
                 encoded = run[start:end]
                 if len(encoded) % 2 != 0 or _HEX.fullmatch(encoded) is None:
                     continue
+                budget.consume()
                 with suppress(UnicodeDecodeError, ValueError):
                     decoded = bytes.fromhex(encoded).decode("utf-8")
                     if append_if_relevant(decoded):
@@ -216,7 +292,10 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
-def _identifier_contains_sensitive_candidate(value: str) -> bool:
+def _identifier_contains_sensitive_candidate(
+    value: str,
+    budget: _DecodeBudget,
+) -> bool:
     try:
         if validate_artifact_text(value) != value:
             return True
@@ -235,7 +314,7 @@ def _identifier_contains_sensitive_candidate(value: str) -> bool:
             return True
         if _artifact_text_is_sensitive(candidate):
             return True
-        for decoded in _decoded_identifier_candidates(candidate):
+        for decoded in _decoded_identifier_candidates(candidate, budget):
             if _artifact_text_is_sensitive(decoded):
                 return True
             try:
@@ -253,7 +332,11 @@ def _identifier_contains_sensitive_candidate(value: str) -> bool:
     return False
 
 
-def validate_sig03_identifier(value: object) -> str:
+def validate_sig03_identifier(
+    value: object,
+    *,
+    _decode_budget: _DecodeBudget | None = None,
+) -> str:
     """Validate one bounded identifier without echoing hostile or secret input."""
 
     if type(value) is not str:
@@ -266,7 +349,12 @@ def validate_sig03_identifier(value: object) -> str:
         raise ValueError("identifier is not artifact-safe") from exc
     if len(encoded) > MAX_IDENTIFIER_LENGTH:
         raise ValueError("identifier exceeds SIG-03 bound")
-    if _identifier_contains_sensitive_candidate(value):
+    budget = _decode_budget or _DecodeBudget(_MAX_IDENTIFIER_DECODE_ATTEMPTS)
+    cached = budget.memo.get(value)
+    if cached is None:
+        cached = _identifier_contains_sensitive_candidate(value, budget)
+        budget.memo[value] = cached
+    if cached:
         raise ValueError("identifier is not artifact-safe")
     return value
 
@@ -304,12 +392,13 @@ def _plain_mapping(
 
 def _prevalidate_sensitive(value: object, model_name: str) -> None:
     seen: set[int] = set()
+    budget = _new_sensitive_prevalidation_budget()
 
     def walk(item: object, depth: int = 0) -> None:
         if depth > MAX_NESTING_DEPTH:
             raise ValueError
         if type(item) is str:
-            validate_sig03_identifier(item)
+            validate_sig03_identifier(item, _decode_budget=budget)
             return
         if type(item) in (int, bool, type(None), Decimal):
             return
@@ -562,8 +651,6 @@ class QuantSignal(ContractModel):
         else:
             if self.score is not None or not self.reason_codes:
                 raise ValueError("invalid signals require a reason and no score")
-            if missing_optional and not missing_required:
-                raise ValueError("optional-only missingness cannot invalidate a signal")
             global_invalid_reasons = {
                 QuantSignalReasonCode.INSTRUMENT_NOT_IN_BUNDLE,
                 QuantSignalReasonCode.INSTRUMENT_INACTIVE_AS_OF,
@@ -576,10 +663,18 @@ class QuantSignal(ContractModel):
                 QuantSignalReasonCode.EXACT_SESSION_BAR_MISSING,
                 QuantSignalReasonCode.INSUFFICIENT_LOOKBACK,
             }
+            has_global_invalid_reason = bool(
+                global_invalid_reasons.intersection(self.reason_codes)
+            )
+            if (
+                missing_optional
+                and not missing_required
+                and not has_global_invalid_reason
+            ):
+                raise ValueError("optional-only missingness cannot invalidate a signal")
             if (
                 feature_invalid_reasons.intersection(self.reason_codes)
-                and not missing_required
-                and not global_invalid_reasons.intersection(self.reason_codes)
+                and not (missing_required or missing_optional)
             ):
                 raise ValueError(
                     "feature-level invalid reasons require required missingness"
