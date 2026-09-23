@@ -5298,3 +5298,88 @@ def test_feature_arithmetic_decimal_exception_is_translated(
             instrument_id="inst-survivor",
         )
     assert "ARITHMETIC-DECIMAL-CANARY" not in str(exc_info.value)
+
+
+def test_quant_replay_is_independent_of_host_timezone_database(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    import zoneinfo
+
+    bundle = _bundle()
+    configuration = _configuration(api)
+    artifact = _artifact(api)
+    model = api.QuantSignalModel(artifact)
+    baseline = _features(
+        api,
+        bundle=bundle,
+        configuration=configuration,
+    )
+    baseline_signal = model.score(
+        baseline,
+        run_id="timezone-independent-run",
+        bundle=bundle,
+        configuration=configuration,
+    )
+    baseline_payload = baseline.model_dump(mode="json")
+    baseline_signal_payload = baseline_signal.model_dump(mode="json")
+    original_tzpath = tuple(zoneinfo.TZPATH)
+    empty_tzpath = tmp_path / "empty-tzpath"
+    empty_tzpath.mkdir()
+    try:
+        zoneinfo.ZoneInfo.clear_cache()
+        zoneinfo.reset_tzpath((str(empty_tzpath),))
+        zoneinfo.ZoneInfo.clear_cache()
+        replayed = _features(
+            api,
+            bundle=bundle,
+            configuration=configuration,
+        )
+        replayed_signal = model.score(
+            replayed,
+            run_id="timezone-independent-run",
+            bundle=bundle,
+            configuration=configuration,
+        )
+    finally:
+        zoneinfo.reset_tzpath(original_tzpath)
+        zoneinfo.ZoneInfo.clear_cache()
+    assert replayed.model_dump(mode="json") == baseline_payload
+    assert replayed.feature_hash == baseline.feature_hash
+    assert replayed_signal.model_dump(mode="json") == baseline_signal_payload
+
+
+def test_quant_compute_never_invokes_zoneinfo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    bundle = _bundle()
+    configuration = _configuration(api)
+    calls = {"count": 0}
+
+    def tripwire(*args: Any, **kwargs: Any) -> Any:
+        calls["count"] += 1
+        raise AssertionError("ZoneInfo callback executed")
+
+    monkeypatch.setattr(api.features_module, "ZoneInfo", tripwire, raising=False)
+    feature_set = _features(
+        api,
+        bundle=bundle,
+        configuration=configuration,
+    )
+    assert feature_set.feature_hash == _fixture()["scenario"]["expected_feature_hash"]
+    assert calls["count"] == 0
+
+
+def test_quant_features_has_no_zoneinfo_import_or_use() -> None:
+    api = _api()
+    source = inspect.getsource(api.features_module)
+    tree = ast.parse(source)
+    assert all(
+        not isinstance(node, ast.ImportFrom) or node.module != "zoneinfo"
+        for node in ast.walk(tree)
+    )
+    assert all(
+        not isinstance(node, ast.Name) or node.id not in {"ZoneInfo", "ZoneInfoNotFoundError"}
+        for node in ast.walk(tree)
+    )
