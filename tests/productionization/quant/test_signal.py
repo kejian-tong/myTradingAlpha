@@ -22,7 +22,15 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_UP, Decimal, Inexact, Rounded, getcontext, setcontext
+from decimal import (
+    ROUND_UP,
+    Decimal,
+    Inexact,
+    InvalidOperation,
+    Rounded,
+    getcontext,
+    setcontext,
+)
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -5130,14 +5138,11 @@ def test_maximum_decimal_weights_clamp_before_fixed_scale_quantization(
     expected: Decimal,
 ) -> None:
     api = _api()
-    try:
-        artifact, feature_set, bundle, configuration = _maximum_weight_scoring_case(
-            api,
-            negative=negative,
-        )
-        scorer = api.QuantSignalModel(artifact)
-    except (ValidationError, api.QuantInputError, ValueError):
-        return
+    artifact, feature_set, bundle, configuration = _maximum_weight_scoring_case(
+        api,
+        negative=negative,
+    )
+    scorer = api.QuantSignalModel(artifact)
 
     def score(_: int) -> Any:
         return scorer.score(
@@ -5216,3 +5221,80 @@ def test_bundle_text_character_bound_precedes_utf8_encoding() -> None:
     assert character_gate >= 0
     assert encoding >= 0
     assert character_gate < encoding
+
+
+def _bars_at_decimal_exponent(value: str) -> tuple[DailyBar, ...]:
+    required = tuple(
+        _bar(session, value)
+        for session in (
+            "2024-03-08",
+            "2024-03-11",
+            "2024-06-28",
+            "2024-07-01",
+            "2024-07-02",
+        )
+    )
+    optional = tuple(
+        _bar(session, value, source="synthetic-optional-bars")
+        for session in (
+            "2024-03-08",
+            "2024-03-11",
+            "2024-06-28",
+            "2024-07-01",
+            "2024-07-02",
+        )
+    )
+    return (*required, *optional)
+
+
+@pytest.mark.parametrize("value", ("1E+64", "1E-64"))
+def test_bundle_decimal_exact_exponent_cap_is_deterministic(value: str) -> None:
+    api = _api()
+    bundle = _bundle(bars=_bars_at_decimal_exponent(value))
+    first = _features(api, bundle=bundle)
+    second = _features(api, bundle=bundle)
+    assert _status(first) == "valid"
+    assert first.feature_hash == second.feature_hash
+    assert tuple(item.value for item in first.observations) == (
+        Decimal("0.000000000000"),
+        Decimal("0.000000000000"),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "1E+65",
+        "1E-65",
+        "1E+1000000000",
+        "1E-1000000000",
+    ),
+)
+def test_bundle_decimal_exponent_overflow_fails_typed_without_echo(
+    value: str,
+) -> None:
+    api = _api()
+    bundle = _bundle(bars=_bars_at_decimal_exponent(value))
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=bundle)
+    assert value not in str(exc_info.value)
+
+
+def test_feature_arithmetic_decimal_exception_is_translated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    bundle = _bundle()
+    configuration = _configuration(api)
+
+    def fail_decimal(*args: Any, **kwargs: Any) -> Decimal:
+        raise InvalidOperation("ARITHMETIC-DECIMAL-CANARY")
+
+    monkeypatch.setattr(api.features_module, "_decimal", fail_decimal)
+    with pytest.raises(api.QuantInputError) as exc_info:
+        api.FeatureSet.compute(
+            bundle=bundle,
+            configuration=configuration,
+            instrument_id="inst-survivor",
+        )
+    assert "ARITHMETIC-DECIMAL-CANARY" not in str(exc_info.value)
