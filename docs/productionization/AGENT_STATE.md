@@ -69,7 +69,11 @@ recorded in PR evidence. Round-thirteen repair started from candidate
 `69692b488dfc6254a0b9107635b5eb83b7485f1d`; its tests-only RED is
 `791ece8993b7e13dc779b441f9c5aa048fd5605e`. The bounded caller-context work isolation,
 pre-materialization cardinality, and FeatureSet reason-semantics GREEN candidate was produced; durable
-Round-thirteen lease release will be recorded in PR evidence before fresh review.
+Round-thirteen lease release is recorded in PR evidence. Round-fourteen repair started from candidate
+`1cd6edd141f4c35f47d3c24d3a39009b0a6922be`; its tests-only RED is
+`61248a21924ff3ff48f2f3eb33b3373ffb28f7a4`. The bounded nested-model storage, saturating Decimal
+arithmetic, and bundle-text bounds GREEN candidate was produced; durable Round-fourteen lease release
+will be recorded in PR evidence before fresh review.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

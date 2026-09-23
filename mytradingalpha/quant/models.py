@@ -178,6 +178,21 @@ def _validate_raw_decimal(value: object, *, allow_none: bool = False) -> None:
         raise QuantInputError("model decimal input exceeds bound")
 
 
+def _is_artifact_integrity_validation_error(exc: ValidationError) -> bool:
+    errors = exc.errors(include_input=False)
+    return len(errors) == 1 and errors[0].get("loc") == () and any(
+        marker in str(errors[0].get("msg", ""))
+        for marker in (
+            "model artifact content hash mismatch",
+            "model feature schema hash mismatch",
+            "model artifact checksum input is invalid",
+            "model configuration hash is not bound",
+            "model decimal input",
+            "model feature storage",
+        )
+    )
+
+
 def _json_hash(domain: str, payload: object) -> str:
     try:
         encoded = json.dumps(
@@ -290,7 +305,12 @@ class ModelArtifact(ContractModel):
     )
 
     def __init__(self, **data: object) -> None:
-        _initialize_sig03_model(self, data)
+        try:
+            _initialize_sig03_model(self, data)
+        except ValidationError as exc:
+            if _is_artifact_integrity_validation_error(exc):
+                raise QuantInputError("model artifact integrity mismatch") from exc
+            raise
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelArtifact:
@@ -301,17 +321,7 @@ class ModelArtifact(ContractModel):
                 raise TypeError("model_validate options must be keyword arguments")
             return _validate_sig03_model(cls, obj, **kwargs)  # type: ignore[return-value]
         except ValidationError as exc:
-            errors = exc.errors(include_input=False)
-            if len(errors) == 1 and errors[0].get("loc") == () and any(
-                marker in str(errors[0].get("msg", ""))
-                for marker in (
-                    "model artifact content hash mismatch",
-                    "model feature schema hash mismatch",
-                    "model artifact checksum input is invalid",
-                    "model configuration hash is not bound",
-                    "model decimal input",
-                )
-            ):
+            if _is_artifact_integrity_validation_error(exc):
                 raise QuantInputError("model artifact integrity mismatch") from exc
             raise
 
@@ -343,8 +353,15 @@ class ModelArtifact(ContractModel):
             for feature in features:
                 if type(feature) is ModelFeature:
                     storage = object.__getattribute__(feature, "__dict__")
-                    if type(storage) is not dict:
+                    fields = tuple(ModelFeature.model_fields)
+                    if (
+                        type(storage) is not dict
+                        or dict.__len__(storage) != len(fields)
+                    ):
                         raise QuantInputError("model feature storage is not plain data")
+                    keys = tuple(dict.keys(storage))
+                    if any(type(key) is not str for key in keys) or set(keys) != set(fields):
+                        raise QuantInputError("model feature storage is not canonical")
                     _validate_raw_decimal(dict.__getitem__(storage, "weight"))
                     _validate_raw_decimal(
                         dict.__getitem__(storage, "missing_value"), allow_none=True

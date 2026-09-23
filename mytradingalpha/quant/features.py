@@ -1279,9 +1279,17 @@ def _safe_bundle_value(
     if nodes[0] > _MAX_BUNDLE_WALK_NODES or depth > MAX_NESTING_DEPTH:
         raise QuantInputError("quant evidence exceeds structural bounds")
     value_type = type(value)
-    if value_type in (str, int, bool, type(None)):
-        if value_type is str and len(value.encode("utf-8", "strict")) > MAX_IDENTIFIER_LENGTH * 32:
+    if value_type is str:
+        if len(value) > MAX_IDENTIFIER_LENGTH * 32:
             raise QuantInputError("quant text exceeds structural bounds")
+        try:
+            encoded = value.encode("utf-8", "strict")
+        except UnicodeError as exc:
+            raise QuantInputError("quant text is not valid UTF-8") from exc
+        if len(encoded) > MAX_IDENTIFIER_LENGTH * 32:
+            raise QuantInputError("quant text exceeds structural bounds")
+        return value
+    if value_type in (int, bool, type(None)):
         return value
     if value_type is Decimal:
         if not value.is_finite() or len(value.as_tuple().digits) > 64:

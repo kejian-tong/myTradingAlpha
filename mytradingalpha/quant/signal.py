@@ -206,9 +206,15 @@ class QuantSignalModel:
                         total += value * feature.weight  # type: ignore[operator]
                     else:
                         quantum = Decimal(1).scaleb(-DECIMAL_PLACES)
+                        if not total.is_finite():
+                            raise QuantInputError("quant score decimal input is invalid")
+                        total = max(
+                            artifact.score_min,
+                            min(artifact.score_max, total),
+                        )
                         score = total.quantize(quantum)
-                        score = max(artifact.score_min, min(artifact.score_max, score))
-                        score = score.quantize(quantum)
+                        if score == 0:
+                            score = Decimal(0).quantize(quantum)
             except DecimalException as exc:
                 raise QuantInputError("quant score decimal input is invalid") from exc
         if missing_optional:
