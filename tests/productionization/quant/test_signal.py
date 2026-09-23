@@ -3686,15 +3686,15 @@ def test_pathological_aggregate_identifiers_share_outer_decode_budget(
         calls["count"] += 1
         return b""
 
-    monkeypatch.setattr(signal_contracts.base64, "b64decode", counted_decode)
     feature_ids = [f"{index:04d}" + "Z" * 124 for index in range(32)]
     model, payload = _aggregate_payload(api, model_name, feature_ids)
+    monkeypatch.setattr(signal_contracts.base64, "b64decode", counted_decode)
     with pytest.raises((ValidationError, api.QuantInputError, ValueError)):
         if entrypoint == "model_validate":
             model.model_validate(payload)
         else:
             model(**payload)
-    assert 0 < calls["count"] <= 65_537
+    assert 0 < calls["count"] <= 6_001
 
 
 @pytest.mark.parametrize(
