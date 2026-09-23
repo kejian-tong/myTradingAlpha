@@ -422,6 +422,36 @@ def _canonical_hash(domain: str, payload: object) -> str:
     return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
 
 
+def _intended_feature_payload_with_session_lineage(api: SimpleNamespace) -> dict[str, Any]:
+    """Build the intended wire payload independently of production hashing code."""
+
+    payload = _features(api).model_dump(mode="json")
+    expected_dates = {
+        "close_return_1d": ["2024-03-11", "2024-07-02"],
+        "close_return_2d_optional": [
+            "2024-03-08",
+            "2024-03-11",
+            "2024-07-02",
+        ],
+    }
+    for observation in payload["observations"]:
+        observation["source_session_dates"] = expected_dates[observation["feature_id"]]
+    payload.pop("feature_hash")
+    return payload
+
+
+def _intended_signal_payload_with_session_lineage(api: SimpleNamespace) -> dict[str, Any]:
+    """Bind the independently computed feature hash into the intended signal payload."""
+
+    payload = _score(api).model_dump(mode="json")
+    payload.pop("signal_id")
+    payload["feature_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_set"],
+        _intended_feature_payload_with_session_lineage(api),
+    )
+    return payload
+
+
 def _assert_plain_data_model(model: Any) -> None:
     assert model.model_config.get("extra") == "forbid"
     assert model.model_config.get("frozen") is True
@@ -488,6 +518,10 @@ def test_quant_signal_wire_status_reason_and_shadow_authority_are_exact() -> Non
     assert re.fullmatch(r"quant-signal:[0-9a-f]{64}", signal.signal_id)
     signal_payload = signal.model_dump(mode="json")
     signal_payload.pop("signal_id")
+    intended_signal_payload = _intended_signal_payload_with_session_lineage(api)
+    assert _canonical_hash(
+        HASH_DOMAINS["quant_signal"], intended_signal_payload
+    ) == _fixture()["scenario"]["expected_signal_hash"]
     assert _canonical_hash(HASH_DOMAINS["quant_signal"], signal_payload) == _fixture()["scenario"]["expected_signal_hash"]
     assert signal.signal_id == "quant-signal:" + _fixture()["scenario"]["expected_signal_hash"].removeprefix("sha256:")
     assert not hasattr(signal, "target_weight")
@@ -513,6 +547,7 @@ def test_reason_enum_values_and_feature_set_wire_are_exact() -> None:
         "source_bar_ids",
         "source_manifest_ids",
         "source_revisions",
+        "source_session_dates",
     }
     assert set(api.FeatureSet.model_fields) == {
         "schema_version",
@@ -678,6 +713,10 @@ def test_observations_bind_exact_sessions_availability_and_sorted_provenance() -
         "synthetic-quant-bars-2024-07-02-r0",
     )
     assert tuple(required.source_revisions) == (0, 0)
+    assert tuple(required.source_session_dates) == (
+        "2024-03-11",
+        "2024-07-02",
+    )
     assert tuple(optional.source_bar_ids) == (
         "bar-inst-survivor-synthetic-optional-bars-2024-03-08-unadjusted-none-r0",
         "bar-inst-survivor-synthetic-optional-bars-2024-03-11-unadjusted-none-r0",
@@ -689,10 +728,19 @@ def test_observations_bind_exact_sessions_availability_and_sorted_provenance() -
         "synthetic-optional-bars-2024-07-02-r0",
     )
     assert tuple(optional.source_revisions) == (0, 0, 0)
+    assert tuple(optional.source_session_dates) == (
+        "2024-03-08",
+        "2024-03-11",
+        "2024-07-02",
+    )
     assert feature_set.missing_required_feature_ids == ()
     assert feature_set.missing_optional_feature_ids == ()
     assert _status(feature_set) == "valid"
     assert _codes(feature_set) == ()
+    intended_payload = _intended_feature_payload_with_session_lineage(api)
+    assert _canonical_hash(
+        HASH_DOMAINS["feature_set"], intended_payload
+    ) == _fixture()["scenario"]["expected_feature_hash"]
     assert feature_set.feature_hash == _fixture()["scenario"]["expected_feature_hash"]
     feature_semantic = feature_set.model_dump(mode="json")
     feature_semantic.pop("feature_hash")
@@ -2072,6 +2120,11 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
     base = _features(api).observations[0].model_dump(mode="json")
 
     def payload_with_count(count: int) -> dict[str, Any]:
+        source_session_dates = (
+            ["2024-03-11", "2024-07-02"]
+            if count == 2
+            else ["2024-03-11"] * count
+        )
         return {
             **base,
             "source_bar_ids": [f"bar-provenance-{index}" for index in range(count)],
@@ -2079,6 +2132,7 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
                 f"manifest-provenance-{index}" for index in range(count)
             ],
             "source_revisions": list(range(count)),
+            "source_session_dates": source_session_dates,
         }
 
     exact = api.FeatureObservation.model_validate(payload_with_count(2))
@@ -2107,6 +2161,7 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
         "source_bar_ids": [],
         "source_manifest_ids": [],
         "source_revisions": [],
+        "source_session_dates": [],
     }
     assert api.FeatureObservation.model_validate(missing).source_bar_ids == ()
     nonempty_missing = {
@@ -2114,6 +2169,7 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
         "source_bar_ids": ["bar-provenance-0"],
         "source_manifest_ids": ["manifest-provenance-0"],
         "source_revisions": [0],
+        "source_session_dates": ["2024-03-11"],
     }
     with pytest.raises(ValidationError):
         api.FeatureObservation.model_validate(nonempty_missing)
@@ -2347,6 +2403,9 @@ def test_round3_rehashed_feature_schema_mismatch_is_typed_before_scoring(
     api = _api()
     payload = _features(api).model_dump(mode="json")
     observation = payload["observations"][0]
+    observation.setdefault(
+        "source_session_dates", ["2024-03-11", "2024-07-02"]
+    )
     if mutation == "feature_version":
         observation["feature_version"] = "v2"
     elif mutation == "required":
@@ -2357,6 +2416,7 @@ def test_round3_rehashed_feature_schema_mismatch_is_typed_before_scoring(
         observation["source_bar_ids"].insert(0, "bar-extra-schema-mismatch")
         observation["source_manifest_ids"].insert(0, "manifest-extra-schema-mismatch")
         observation["source_revisions"].insert(0, 0)
+        observation["source_session_dates"].insert(0, "2024-03-08")
     payload.pop("feature_hash")
     payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
     candidate = api.FeatureSet.model_validate(payload)
@@ -2386,3 +2446,191 @@ def test_round3_pathological_builtin_identifier_is_capped_before_decode(
     with pytest.raises(ValueError):
         signal_contracts.validate_sig03_identifier("x" * 4_000_000)
     assert calls["count"] == 0
+
+
+def test_decoded_sensitive_wrappers_reject_all_outward_identifier_paths_without_echo() -> None:
+    api = _api()
+    decoded_values = (
+        "api key",
+        "Bearer secret-value",
+        '{"api_key":"value"}',
+    )
+    encoded_forms: list[tuple[str, str]] = []
+    for index, decoded in enumerate(decoded_values):
+        encoded = base64.urlsafe_b64encode(decoded.encode("utf-8")).decode("ascii").rstrip("=")
+        wrapped = f"public.{encoded}.identifier" if index != 1 else f"public{encoded}identifier"
+        encoded_forms.append((decoded, wrapped))
+        encoded_forms.append(
+            (
+                decoded,
+                f"layer.{base64.urlsafe_b64encode(encoded.encode('ascii')).decode('ascii').rstrip('=')}.v1",
+            )
+        )
+    percent_decoded = "api key"
+    percent_encoded = "".join(f"%{byte:02X}" for byte in percent_decoded.encode("utf-8"))
+    encoded_forms.append((percent_decoded, f"public{percent_encoded}identifier"))
+
+    violations: list[str] = []
+    for decoded, encoded in encoded_forms:
+        observation_payload = _features(api).observations[0].model_dump(mode="json")
+        source_bar_ids = list(observation_payload["source_bar_ids"])
+        source_bar_ids[0] = encoded
+        source_manifest_ids = list(observation_payload["source_manifest_ids"])
+        source_manifest_ids[0] = encoded
+        feature_set_payload = _features(api).model_dump(mode="json")
+        feature_set_payload["instrument_id"] = encoded
+        feature_set_payload.pop("feature_hash")
+        feature_set_payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], feature_set_payload
+        )
+        cases = (
+            (
+                "feature-spec",
+                api.FeatureSpec,
+                {**_config_payload()["features"][0], "feature_id": encoded},
+            ),
+            (
+                "configuration",
+                api.FeatureConfiguration,
+                _rehashed_configuration_payload(encoded),
+            ),
+            (
+                "observation-bar",
+                api.FeatureObservation,
+                {**observation_payload, "source_bar_ids": source_bar_ids},
+            ),
+            (
+                "observation-manifest",
+                api.FeatureObservation,
+                {**observation_payload, "source_manifest_ids": source_manifest_ids},
+            ),
+            ("feature-set", api.FeatureSet, feature_set_payload),
+            (
+                "model-feature",
+                api.ModelFeature,
+                {**_model_payload()["features"][0], "feature_id": encoded},
+            ),
+            ("model-artifact", api.ModelArtifact, _rehashed_model_payload(encoded)),
+            (
+                "quant-signal",
+                api.QuantSignal,
+                _rekey_signal_payload(
+                    {**_score(api).model_dump(mode="json"), "run_id": encoded}
+                ),
+            ),
+        )
+        for label, model, payload in cases:
+            for path, construct in (
+                ("model_validate", lambda model=model, payload=payload: model.model_validate(payload)),
+                ("constructor", lambda model=model, payload=payload: model(**payload)),
+            ):
+                try:
+                    accepted = construct()
+                except (ValidationError, ValueError, api.QuantInputError) as exc:
+                    rendered = str(exc)
+                    if encoded in rendered or decoded in rendered:
+                        violations.append(f"{label}:{path}:echo")
+                else:
+                    serialized = accepted.model_dump_json()
+                    if encoded in serialized or decoded in serialized:
+                        violations.append(f"{label}:{path}:accepted")
+        try:
+            _score(api, run_id=encoded)
+        except (ValidationError, ValueError, api.QuantInputError) as exc:
+            rendered = str(exc)
+            if encoded in rendered or decoded in rendered:
+                violations.append("run-id:echo")
+        else:
+            violations.append("run-id:accepted")
+
+    safe_controls = (
+        base64.urlsafe_b64encode(b"public label").decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(b'{"label":"value"}').decode("ascii").rstrip("="),
+    )
+    for safe in safe_controls:
+        wrapped = f"public.{safe}.identifier"
+        spec_payload = {**_config_payload()["features"][0], "feature_id": wrapped}
+        assert api.FeatureSpec.model_validate(spec_payload).feature_id == wrapped
+        assert api.FeatureSpec(**spec_payload).feature_id == wrapped
+        assert _score(api, run_id=wrapped).run_id == wrapped
+    assert violations == []
+
+
+def test_feature_observation_wire_records_exact_source_session_lineage() -> None:
+    api = _api()
+    assert "source_session_dates" in api.FeatureObservation.model_fields
+    observations = _features(api).observations
+    assert observations[0].source_session_dates == (
+        "2024-03-11",
+        "2024-07-02",
+    )
+    assert observations[1].source_session_dates == (
+        "2024-03-08",
+        "2024-03-11",
+        "2024-07-02",
+    )
+    missing_bundle = _bundle(
+        bars=tuple(
+            item for item in _bars() if item.session_date != datetime(2024, 3, 11).date()
+        )
+    )
+    missing = _features(api, bundle=missing_bundle)
+    assert all(item.source_session_dates == () for item in missing.observations)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "reversed",
+        "duplicate",
+        "first_mismatch",
+        "last_mismatch",
+        "noncanonical",
+        "count_mismatch",
+    ),
+)
+def test_rehashed_feature_set_rejects_invalid_source_session_lineage(
+    mutation: str,
+) -> None:
+    api = _api()
+    payload = _intended_feature_payload_with_session_lineage(api)
+    observation = payload["observations"][0]
+    if mutation == "reversed":
+        observation["source_session_dates"] = list(
+            reversed(observation["source_session_dates"])
+        )
+    elif mutation == "duplicate":
+        observation["source_session_dates"] = ["2024-03-11", "2024-03-11"]
+    elif mutation == "first_mismatch":
+        observation["source_session_dates"][0] = "2024-03-08"
+    elif mutation == "last_mismatch":
+        observation["source_session_dates"][-1] = "2024-07-01"
+    elif mutation == "noncanonical":
+        observation["source_session_dates"][0] = "2024-3-11"
+    else:
+        observation["source_session_dates"] = observation["source_session_dates"][:1]
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    with pytest.raises((ValidationError, api.QuantInputError)):
+        api.FeatureSet.model_validate(payload)
+
+
+def test_scoring_defensively_rejects_rehashed_session_lineage_mutation() -> None:
+    api = _api()
+    assert "source_session_dates" in api.FeatureObservation.model_fields
+    feature_set = _features(api)
+    observation = feature_set.observations[0]
+    object.__setattr__(
+        observation,
+        "source_session_dates",
+        tuple(reversed(observation.source_session_dates)),
+    )
+    object.__setattr__(
+        feature_set,
+        "feature_hash",
+        api.features_module.feature_set_hash(feature_set),
+    )
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(_artifact(api)).score(
+            feature_set,
+            run_id="run-invalid-source-session-lineage",
+        )
