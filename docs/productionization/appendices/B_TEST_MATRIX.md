@@ -36,7 +36,7 @@ not enabled by the presence of a credential. These actual paths supersede old pl
 | Area | Test module/fixture | Required assertions | Planned command |
 | --- | --- | --- | --- |
 | Evidence citations | `research/test_evidence_tools.py` | Every note cites IDs; prompt-injection text remains data; provenance retained | `pytest -q tests/productionization/research` |
-| Quant | `quant/test_signal.py` | Fixed bundle/config/model yields same score; missing feature status explicit | `pytest -q tests/productionization/quant` |
+| Quant | `quant/test_signal.py` | SIG-03 fixed bundle/config/model yields deterministic domain-separated hashes and score; exact PIT selectors, provenance, missingness, Decimal bounds, hostile-input and side-effect boundaries | `uv run --no-sync pytest -q tests/productionization/quant` |
 | Overlay | `research/test_overlay.py` | Optional overlay; attenuate/veto plus abstain; multiplier [0,1]; timeout/error/abstain no trade; forbidden fields rejected | same |
 | Variants | `quant/test_envelope_variants.py` | Quant-only separate from Quant+LLM; no dynamic fallback | same |
 | Clock/events | `backtest/test_clock_events.py` | Close decision and earliest next-session execution; ordered events; restart sequence | `pytest -q tests/productionization/backtest` |

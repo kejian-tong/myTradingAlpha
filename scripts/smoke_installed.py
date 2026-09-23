@@ -17,6 +17,7 @@ MODULES = (
     "mytradingalpha.contracts",
     "mytradingalpha.contracts.redaction",
     "mytradingalpha.contracts.research",
+    "mytradingalpha.contracts.signals",
     "mytradingalpha.ops.config",
     "mytradingalpha.data.bundle",
     "mytradingalpha.data.replay_guard",
@@ -24,6 +25,9 @@ MODULES = (
     "mytradingalpha.research.evidence_tools",
     "mytradingalpha.research.notes",
     "mytradingalpha.research.tradingagents_adapter",
+    "mytradingalpha.quant.features",
+    "mytradingalpha.quant.models",
+    "mytradingalpha.quant.signal",
     "tradingagents.graph.historical",
     "cli.main",
 )

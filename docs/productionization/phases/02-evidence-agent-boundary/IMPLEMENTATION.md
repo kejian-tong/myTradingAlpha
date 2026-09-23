@@ -1,6 +1,6 @@
 # Phase 02 — Evidence and Agent Boundary Implementation
 
-SIG-01 is implemented; SIG-02 through SIG-05 remain planned. Commands are plans until their PR records exact output; the current research tests exist, while later quant/evidence-tool paths do not.
+SIG-01 and SIG-02 are implemented; SIG-03 is implemented in active PR #87 pending review and merge; SIG-04/SIG-05 remain planned. Commands are plans until their PR records exact output.
 
 ## Ordered PR/work packages
 
