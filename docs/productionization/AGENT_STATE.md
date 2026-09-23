@@ -48,7 +48,11 @@ Round-seven GREEN was produced and durable lease release is recorded in PR evide
 and `ff3a5fa7429aa6b5b6ecb25126c57d78d2c976f3`. Round-eight GREEN was produced and durable lease
 release is recorded in PR evidence. Round-nine repair started from candidate
 `78db7ced724d85a8e8dc9867388526285df2e009`; its tests-only RED is
-`a5e4b7820357c19f0bcb25b06c26791bb40f06c3`. The bounded GREEN candidate was produced; durable lease
+`a5e4b7820357c19f0bcb25b06c26791bb40f06c3`. The bounded GREEN candidate was produced and durable
+lease release is recorded in PR evidence. Round-ten repair started from candidate
+`e2bbdb4dc9f4fba89bee0b23368d760a7d9a9d57`; its tests-only RED is
+`c7687d570d5be5cda3dec018bdb441752f4bd79e`; its tests-only measurement guard is
+`7fc83c4e460342e68820519534b79c97aa165397`. The bounded GREEN candidate was produced; durable lease
 release will be recorded in PR evidence before fresh review. Independent review, required CI, and merge
 remain pending.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
