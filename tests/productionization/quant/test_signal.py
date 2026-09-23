@@ -3358,3 +3358,209 @@ def test_quant_signal_global_eligibility_reason_can_invalidate_without_missing_i
     rekeyed = _rekey_signal_payload(payload)
     assert api.QuantSignal.model_validate(rekeyed).status.value == "invalid"
     assert api.QuantSignal(**rekeyed).status.value == "invalid"
+
+
+def _all_optional_configuration(
+    api: SimpleNamespace,
+    *,
+    calendar_id: str = "XNYS.synthetic.v1",
+) -> Any:
+    specs = tuple(
+        api.FeatureSpec.model_validate(
+            {**spec.model_dump(mode="json"), "required": False}
+        )
+        for spec in _configuration(api).features
+    )
+    return api.FeatureConfiguration.create(
+        configuration_id=f"all-optional-{calendar_id.replace('.', '-')}",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id=calendar_id,
+        horizon_sessions=1,
+        features=specs,
+    )
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_global_reason"),
+    (
+        ("wrong-instrument", "instrument_not_in_bundle"),
+        ("inactive", "instrument_inactive_as_of"),
+        ("nonmember", "instrument_not_in_universe"),
+        ("calendar", "calendar_session_unavailable"),
+    ),
+)
+def test_all_optional_global_ineligibility_scores_explicit_invalid_signal(
+    scenario: str,
+    expected_global_reason: str,
+) -> None:
+    api = _api()
+    bundle = _bundle()
+    configuration = _all_optional_configuration(api)
+    instrument_id = "inst-survivor"
+    if scenario == "wrong-instrument":
+        instrument_id = "not-in-bundle"
+    elif scenario == "inactive":
+        instrument_id = "inst-acme"
+    elif scenario == "nonmember":
+        bundle = _bundle(
+            memberships=tuple(
+                item
+                for item in bundle.memberships
+                if item.instrument_id != "inst-survivor"
+            )
+        )
+    else:
+        configuration = _all_optional_configuration(api, calendar_id="other-calendar")
+    feature_set = _features(
+        api,
+        bundle=bundle,
+        configuration=configuration,
+        instrument_id=instrument_id,
+    )
+    assert feature_set.status == "invalid"
+    assert feature_set.missing_required_feature_ids == ()
+    expected_optional_ids = tuple(item.feature_id for item in configuration.features)
+    assert feature_set.missing_optional_feature_ids == expected_optional_ids
+    signal = _score(
+        api,
+        feature_set=feature_set,
+        artifact=_matching_artifact(api, configuration),
+        bundle=bundle,
+        configuration=configuration,
+        run_id=f"run-all-optional-{scenario}",
+    )
+    assert signal.status.value == "invalid"
+    assert signal.score is None
+    assert signal.missing_required_feature_ids == ()
+    assert signal.missing_optional_feature_ids == expected_optional_ids
+    assert expected_global_reason in _codes(signal)
+    assert "optional_feature_missing" in _codes(signal)
+
+
+@pytest.mark.parametrize(
+    ("feature_reason", "global_reason"),
+    (
+        ("bar_series_ambiguous", None),
+        ("exact_session_bar_missing", None),
+        ("insufficient_lookback", None),
+        ("bar_series_ambiguous", "instrument_not_in_bundle"),
+        ("exact_session_bar_missing", "instrument_not_in_bundle"),
+        ("insufficient_lookback", "instrument_not_in_bundle"),
+    ),
+)
+def test_quant_signal_feature_reason_requires_explained_missing_feature(
+    feature_reason: str,
+    global_reason: str | None,
+) -> None:
+    api = _api()
+    payload = _score(api).model_dump(mode="json")
+    reasons = [feature_reason]
+    if global_reason is not None:
+        reasons.insert(0, global_reason)
+    payload.update(status="invalid", score=None, reason_codes=reasons)
+    rekeyed = _rekey_signal_payload(payload)
+    with pytest.raises(ValidationError):
+        api.QuantSignal.model_validate(rekeyed)
+    with pytest.raises(ValidationError):
+        api.QuantSignal(**rekeyed)
+
+
+def test_safe_128_byte_identifier_stays_within_per_identifier_decode_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    calls = {"count": 0}
+    original_decode = signal_contracts.base64.b64decode
+
+    def counted_decode(*args: Any, **kwargs: Any) -> bytes:
+        calls["count"] += 1
+        return original_decode(*args, **kwargs)
+
+    monkeypatch.setattr(signal_contracts.base64, "b64decode", counted_decode)
+    identifier = "Z" * 128
+    assert signal_contracts.validate_sig03_identifier(identifier) == identifier
+    assert 0 < calls["count"] <= 6_000
+
+
+def test_pathological_at_cap_model_payload_exhausts_shared_decode_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    calls = {"count": 0}
+
+    def counted_decode(*args: Any, **kwargs: Any) -> bytes:
+        calls["count"] += 1
+        return b""
+
+    monkeypatch.setattr(signal_contracts.base64, "b64decode", counted_decode)
+    base_spec = _config_payload()["features"][0]
+    features = [
+        {**base_spec, "feature_id": f"{index:04d}" + "Z" * 124}
+        for index in range(32)
+    ]
+    payload = {
+        "schema_version": "v1",
+        "configuration_id": "pathological-at-cap-config",
+        "configuration_version": "v1",
+        "universe_id": "us-liquid-v1",
+        "calendar_id": "XNYS.synthetic.v1",
+        "horizon_sessions": 1,
+        "features": features,
+    }
+    payload["content_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_configuration"], payload
+    )
+    with pytest.raises((ValidationError, api.QuantInputError)):
+        api.FeatureConfiguration.model_validate(payload)
+    assert 0 < calls["count"] <= 65_537
+
+
+def test_normal_at_cap_short_feature_payload_remains_accepted() -> None:
+    api = _api()
+    base_spec = _config_payload()["features"][0]
+    features = [
+        {**base_spec, "feature_id": f"normal-cap-feature-{index:02d}"}
+        for index in range(32)
+    ]
+    payload = {
+        "schema_version": "v1",
+        "configuration_id": "normal-at-cap-config",
+        "configuration_version": "v1",
+        "universe_id": "us-liquid-v1",
+        "calendar_id": "XNYS.synthetic.v1",
+        "horizon_sessions": 1,
+        "features": features,
+    }
+    payload["content_hash"] = _canonical_hash(
+        HASH_DOMAINS["feature_configuration"], payload
+    )
+    validated = api.FeatureConfiguration.model_validate(payload)
+    assert len(validated.features) == 32
+
+
+def test_secret_word_prefix_labels_are_safe_but_exact_secrets_reject_without_echo() -> None:
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    def encoded_forms(value: str) -> tuple[str, ...]:
+        raw = value.encode("utf-8")
+        return (
+            value,
+            base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+            raw.hex(),
+            "".join(f"%{byte:02X}" for byte in raw),
+        )
+
+    for safe in ("tokenomics-v1", "secretary-model-v1"):
+        for candidate in encoded_forms(safe):
+            assert signal_contracts.validate_sig03_identifier(candidate) == candidate
+
+    for secret in ("token", "secret", "api-key"):
+        for candidate in encoded_forms(secret):
+            with pytest.raises(ValueError) as exc_info:
+                signal_contracts.validate_sig03_identifier(candidate)
+            assert candidate not in str(exc_info.value)
+            assert secret not in str(exc_info.value)
