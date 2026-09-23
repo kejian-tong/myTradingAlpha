@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, localcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    Inexact,
+    InvalidOperation,
+    Rounded,
+    localcontext,
+)
 from typing import Any, Literal
 
 from pydantic import (
@@ -24,9 +32,11 @@ from mytradingalpha.contracts.common import (
     datetime as _DateTime,
     timezone as _Timezone,
 )
-from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.contracts.schemas import ContractModel
-from mytradingalpha.contracts.signals import QuantSignalReasonCode
+from mytradingalpha.contracts.signals import (
+    QuantSignalReasonCode,
+    validate_sig03_identifier,
+)
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 from mytradingalpha.data.actions import (
     ActionType,
@@ -81,11 +91,35 @@ HASH_DOMAIN_FEATURE_SCHEMA = "mytradingalpha:sig03:feature-schema:v1\0"
 HASH_DOMAIN_FEATURE_SET = "mytradingalpha:sig03:feature-set:v1\0"
 
 _REASON_ORDER = {item.value: index for index, item in enumerate(QuantSignalReasonCode)}
-_SENSITIVE_WORDS = ("api-key", "apikey", "credential", "password", "secret", "token")
 
 
 class QuantInputError(ValueError):
     """Raised when a quant input is malformed, tampered, or outside fixed bounds."""
+
+
+def _plain_model_input(model: type[object], value: object) -> dict[str, object]:
+    if type(value) is model:
+        try:
+            value = object.__getattribute__(value, "__dict__")
+        except (AttributeError, TypeError) as exc:
+            raise _sensitive_validation_error(model.__name__) from exc
+    if type(value) is not dict:
+        raise _sensitive_validation_error(model.__name__)
+    keys = tuple(dict.keys(value))
+    fields = tuple(model.model_fields)  # type: ignore[attr-defined]
+    if len(keys) > len(fields) or any(type(key) is not str for key in keys):
+        raise _sensitive_validation_error(model.__name__)
+    allowed = set(fields)
+    if any(key not in allowed for key in keys):
+        raise _sensitive_validation_error(model.__name__)
+    return {key: dict.__getitem__(value, key) for key in keys}
+
+
+def _fixed_decimal_context() -> Context:
+    context = Context(prec=DECIMAL_PRECISION, rounding=DECIMAL_ROUNDING)
+    context.traps[Inexact] = False
+    context.traps[Rounded] = False
+    return context
 
 
 class FeatureSpec(ContractModel):
@@ -107,8 +141,9 @@ class FeatureSpec(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSpec:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureSpec requires exact plain data")
-        _prevalidate_sensitive(cls, obj)
-        return super().model_validate(obj, *args, **kwargs)
+        plain = _plain_model_input(cls, obj)
+        _prevalidate_sensitive(cls, plain)
+        return super().model_validate(plain, *args, **kwargs)
 
     @model_validator(mode="before")
     @classmethod
@@ -156,8 +191,17 @@ class FeatureConfiguration(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureConfiguration:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureConfiguration requires exact plain data")
-        _prevalidate_sensitive(cls, obj)
-        return super().model_validate(obj, *args, **kwargs)
+        plain = _plain_model_input(cls, obj)
+        if "features" in plain:
+            features = dict.__getitem__(plain, "features")
+            if (
+                type(features) not in (tuple, list)
+                or len(features) == 0
+                or len(features) > MAX_FEATURES
+            ):
+                raise ValueError("feature count exceeds SIG-03 bound")
+        _prevalidate_sensitive(cls, plain)
+        return super().model_validate(plain, *args, **kwargs)
 
     @model_validator(mode="before")
     @classmethod
@@ -211,6 +255,8 @@ class FeatureConfiguration(ContractModel):
     ) -> FeatureConfiguration:
         if type(features) not in (tuple, list):
             raise QuantInputError("feature configuration features require a plain sequence")
+        if len(features) == 0 or len(features) > MAX_FEATURES:
+            raise QuantInputError("feature count exceeds SIG-03 bound")
         specs = tuple(FeatureSpec.model_validate(item) for item in features)
         payload = {
             "schema_version": CURRENT_SCHEMA_VERSION,
@@ -239,7 +285,7 @@ class FeatureObservation(ContractModel):
     status: Literal["available", "missing"]
     reason_code: QuantSignalReasonCode | None
     as_of: UtcDateTime
-    anchor_session: str
+    anchor_session: str | None
     lookback_sessions: StrictInt = Field(ge=1, le=MAX_LOOKBACK_SESSIONS)
     lookback_session: str | None
     latest_available_at: UtcDateTime | None
@@ -252,8 +298,32 @@ class FeatureObservation(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureObservation:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureObservation requires exact plain data")
-        _prevalidate_sensitive(cls, obj)
-        return super().model_validate(obj, *args, **kwargs)
+        plain = _plain_model_input(cls, obj)
+        _prevalidate_sensitive(cls, plain)
+        return super().model_validate(plain, *args, **kwargs)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def validate_value(cls, value: object) -> Decimal | None:
+        if value is None:
+            return None
+        if type(value) not in (Decimal, str):
+            raise ValueError("feature value requires an exact Decimal or string")
+        try:
+            decimal = value if type(value) is Decimal else Decimal(value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("feature value is invalid") from exc
+        parts = decimal.as_tuple()
+        if (
+            not decimal.is_finite()
+            or parts.exponent != -DECIMAL_PLACES
+            or len(parts.digits) > DECIMAL_PRECISION
+        ):
+            raise ValueError("feature value must be a bounded twelve-place decimal")
+        if decimal == 0:
+            with localcontext(_fixed_decimal_context()):
+                return Decimal(0).quantize(Decimal(1).scaleb(-DECIMAL_PLACES))
+        return decimal
 
     @field_validator("source_bar_ids", "source_manifest_ids", "source_revisions", mode="before")
     @classmethod
@@ -320,8 +390,13 @@ class FeatureSet(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSet:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureSet requires exact plain data")
-        _prevalidate_sensitive(cls, obj)
-        return super().model_validate(obj, *args, **kwargs)
+        plain = _plain_model_input(cls, obj)
+        if "observations" in plain:
+            observations = dict.__getitem__(plain, "observations")
+            if type(observations) not in (tuple, list) or len(observations) > MAX_FEATURES:
+                raise ValueError("observation count exceeds SIG-03 bound")
+        _prevalidate_sensitive(cls, plain)
+        return super().model_validate(plain, *args, **kwargs)
 
     @field_validator("observations", mode="before")
     @classmethod
@@ -487,18 +562,7 @@ class FeatureSet(ContractModel):
 
 
 def _safe_identifier(value: object) -> str:
-    if type(value) is not str:
-        raise ValueError("identifier requires an exact string")
-    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
-        raise ValueError("identifier contains a surrogate")
-    if not value or len(value.encode("utf-8")) > MAX_IDENTIFIER_LENGTH:
-        raise ValueError("identifier exceeds SIG-03 bound")
-    if any(word in value.casefold() for word in _SENSITIVE_WORDS):
-        raise ValueError("identifier is not artifact-safe")
-    try:
-        return validate_artifact_text(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("identifier is not artifact-safe") from exc
+    return validate_sig03_identifier(value)
 
 
 def _sensitive_validation_error(model_name: str) -> ValidationError:
@@ -519,12 +583,8 @@ def _scan_sensitive_plain(value: object, *, seen: set[int], depth: int = 0) -> N
     if depth > MAX_NESTING_DEPTH:
         raise ValueError("artifact text is not safe")
     if type(value) is str:
-        lowered = value.casefold()
-        if any(marker in lowered for marker in _SENSITIVE_WORDS):
-            raise ValueError("artifact text is not safe")
         try:
-            if validate_artifact_text(value) != value:
-                raise ValueError("artifact text is not safe")
+            validate_sig03_identifier(value)
         except (TypeError, ValueError) as exc:
             raise ValueError("artifact text is not safe") from exc
         return
@@ -541,11 +601,14 @@ def _scan_sensitive_plain(value: object, *, seen: set[int], depth: int = 0) -> N
         seen.add(identity)
         try:
             if type(value) is dict:
-                for key, item in value.items():
-                    if type(key) is not str:
-                        raise ValueError("artifact text is not safe")
+                keys = tuple(dict.keys(value))
+                if len(keys) > 64 or any(type(key) is not str for key in keys):
+                    raise ValueError("artifact text is not safe")
+                for key in keys:
                     _scan_sensitive_plain(key, seen=seen, depth=depth + 1)
-                    _scan_sensitive_plain(item, seen=seen, depth=depth + 1)
+                    _scan_sensitive_plain(
+                        dict.__getitem__(value, key), seen=seen, depth=depth + 1
+                    )
             else:
                 for item in value:
                     _scan_sensitive_plain(item, seen=seen, depth=depth + 1)
@@ -587,9 +650,7 @@ def _decimal(value: object, *, places: int = DECIMAL_PLACES) -> Decimal:
         raise QuantInputError("invalid decimal input") from exc
     if not decimal.is_finite() or abs(decimal.as_tuple().exponent) > 64 or len(decimal.as_tuple().digits) > 64:
         raise QuantInputError("decimal input exceeds SIG-03 bound")
-    with localcontext() as context:
-        context.prec = DECIMAL_PRECISION
-        context.rounding = DECIMAL_ROUNDING
+    with localcontext(_fixed_decimal_context()):
         try:
             result = decimal.quantize(Decimal(1).scaleb(-places))
         except InvalidOperation as exc:
@@ -845,11 +906,17 @@ def _safe_bundle_value(
             raise QuantInputError("quant evidence contains a cycle")
         seen.add(identity)
         try:
+            keys = tuple(dict.keys(value))
+            if any(type(key) is not str for key in keys):
+                raise QuantInputError("quant mappings require exact string keys")
             result: dict[str, object] = {}
-            for key, item in value.items():
-                if type(key) is not str:
-                    raise QuantInputError("quant mappings require exact string keys")
-                result[key] = _safe_bundle_value(item, seen=seen, depth=depth + 1, nodes=nodes)
+            for key in keys:
+                result[key] = _safe_bundle_value(
+                    dict.__getitem__(value, key),
+                    seen=seen,
+                    depth=depth + 1,
+                    nodes=nodes,
+                )
             return result
         finally:
             seen.remove(identity)
@@ -934,7 +1001,11 @@ def _anchor(bundle: EvidenceBundle) -> tuple[Any | None, Any | None, QuantSignal
         if session.close_at <= bundle.knowledge_cutoff
     )
     if not eligible:
-        return None, None, QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE
+        return (
+            bundle.knowledge_cutoff,
+            None,
+            QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
+        )
     return eligible[-1].close_at, eligible[-1], None
 
 
@@ -950,7 +1021,7 @@ def _compute_observation(
         return _missing_observation(
             spec,
             as_of=as_of,
-            anchor_session="0001-01-01",
+            anchor_session=None,
             reason=QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
         )
     sessions = bundle.calendar.schedule
@@ -1001,7 +1072,8 @@ def _compute_observation(
     selected = tuple(by_date[item.session_date][0] for item in selected_sessions)
     lag = selected[0]
     anchor = selected[-1]
-    value = _decimal((anchor.close / lag.close) - Decimal(1))
+    with localcontext(_fixed_decimal_context()):
+        value = _decimal((anchor.close / lag.close) - Decimal(1))
     return FeatureObservation(
         schema_version=CURRENT_SCHEMA_VERSION,
         feature_id=spec.feature_id,
@@ -1025,7 +1097,7 @@ def _missing_observation(
     spec: FeatureSpec,
     *,
     as_of: Any,
-    anchor_session: str,
+    anchor_session: str | None,
     reason: QuantSignalReasonCode,
 ) -> FeatureObservation:
     return FeatureObservation(

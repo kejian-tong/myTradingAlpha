@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, localcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    Inexact,
+    InvalidOperation,
+    Rounded,
+    localcontext,
+)
 from typing import Literal
 
 from pydantic import (
@@ -18,8 +26,8 @@ from pydantic import (
 )
 
 from mytradingalpha.contracts.common import CanonicalChecksum, StableId
-from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.contracts.schemas import ContractModel
+from mytradingalpha.contracts.signals import validate_sig03_identifier
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 from mytradingalpha.data.bars import AdjustmentBasis
 
@@ -32,6 +40,7 @@ from .features import (
     MAX_IDENTIFIER_LENGTH,
     MAX_NESTING_DEPTH,
     QuantInputError,
+    _plain_model_input,
     _sensitive_validation_error,
 )
 
@@ -39,19 +48,14 @@ HASH_DOMAIN_MODEL_ARTIFACT = "mytradingalpha:sig03:model-artifact:v1\0"
 
 
 def _safe_identifier(value: object) -> str:
-    if type(value) is not str:
-        raise ValueError("model identifier exceeds SIG-03 bound")
-    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
-        raise ValueError("model identifier contains a surrogate")
-    if not value or len(value.encode("utf-8")) > MAX_IDENTIFIER_LENGTH:
-        raise ValueError("model identifier exceeds SIG-03 bound")
-    lowered = value.casefold()
-    if any(word in lowered for word in ("api-key", "apikey", "credential", "password", "secret", "token")):
-        raise ValueError("model identifier is not artifact-safe")
-    try:
-        return validate_artifact_text(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("model identifier is not artifact-safe") from exc
+    return validate_sig03_identifier(value)
+
+
+def _fixed_decimal_context() -> Context:
+    context = Context(prec=64, rounding=ROUND_HALF_EVEN)
+    context.traps[Inexact] = False
+    context.traps[Rounded] = False
+    return context
 
 
 def _prevalidate_model_sensitive(model: type[object], value: object) -> None:
@@ -61,13 +65,7 @@ def _prevalidate_model_sensitive(model: type[object], value: object) -> None:
         if depth > MAX_NESTING_DEPTH:
             raise ValueError
         if type(item) is str:
-            if any(marker in item.casefold() for marker in ("api-key", "apikey", "credential", "password", "secret", "token")):
-                raise ValueError
-            try:
-                if validate_artifact_text(item) != item:
-                    raise ValueError
-            except (TypeError, ValueError) as exc:
-                raise ValueError from exc
+            validate_sig03_identifier(item)
             return
         if type(item) in (int, bool, type(None), Decimal, AdjustmentBasis):
             return
@@ -78,11 +76,12 @@ def _prevalidate_model_sensitive(model: type[object], value: object) -> None:
             seen.add(identity)
             try:
                 if type(item) is dict:
-                    for key, child in item.items():
-                        if type(key) is not str:
-                            raise ValueError
+                    keys = tuple(dict.keys(item))
+                    if len(keys) > 64 or any(type(key) is not str for key in keys):
+                        raise ValueError
+                    for key in keys:
                         walk(key, depth + 1)
-                        walk(child, depth + 1)
+                        walk(dict.__getitem__(item, key), depth + 1)
                 else:
                     for child in item:
                         walk(child, depth + 1)
@@ -112,9 +111,7 @@ def _decimal(value: object, *, fixed: bool = True) -> Decimal:
         raise ValueError("invalid model decimal") from exc
     if not decimal.is_finite() or abs(decimal.as_tuple().exponent) > 64 or len(decimal.as_tuple().digits) > 64:
         raise ValueError("model decimal exceeds SIG-03 bound")
-    with localcontext() as context:
-        context.prec = 64
-        context.rounding = ROUND_HALF_EVEN
+    with localcontext(_fixed_decimal_context()):
         try:
             result = decimal.quantize(Decimal(1).scaleb(-DECIMAL_PLACES))
             return Decimal(0).quantize(Decimal(1).scaleb(-DECIMAL_PLACES)) if result == 0 else result
@@ -188,8 +185,9 @@ class ModelFeature(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelFeature:
         if type(obj) not in (dict, cls):
             raise ValueError("ModelFeature requires exact plain data")
-        _prevalidate_model_sensitive(cls, obj)
-        return super().model_validate(obj, *args, **kwargs)
+        plain = _plain_model_input(cls, obj)
+        _prevalidate_model_sensitive(cls, plain)
+        return super().model_validate(plain, *args, **kwargs)
 
     @model_validator(mode="before")
     @classmethod
@@ -247,14 +245,21 @@ class ModelArtifact(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelArtifact:
         if type(obj) not in (dict, cls):
             raise ValueError("ModelArtifact requires exact plain data")
-        if type(obj) is dict and obj.get("feature_config_hash") == "sha256:" + "0" * 64:
+        plain = _plain_model_input(cls, obj)
+        if (
+            "feature_config_hash" in plain
+            and dict.__getitem__(plain, "feature_config_hash") == "sha256:" + "0" * 64
+        ):
             raise QuantInputError("model configuration hash is not bound")
-        if type(obj) is dict:
-            for field in ("score_min", "score_max", "intercept"):
-                _validate_raw_decimal(obj.get(field))
-            features = obj.get("features")
+        for field in ("score_min", "score_max", "intercept"):
+            if field in plain:
+                _validate_raw_decimal(dict.__getitem__(plain, field))
+        if "features" in plain:
+            features = dict.__getitem__(plain, "features")
             if type(features) not in (tuple, list):
                 raise ValueError("model features require a plain sequence")
+            if len(features) == 0 or len(features) > MAX_FEATURES:
+                raise ValueError("model feature count exceeds SIG-03 bound")
             for feature in features:
                 if type(feature) is ModelFeature:
                     storage = object.__getattribute__(feature, "__dict__")
@@ -263,13 +268,19 @@ class ModelArtifact(ContractModel):
                     _validate_raw_decimal(dict.__getitem__(storage, "weight"))
                     _validate_raw_decimal(dict.__getitem__(storage, "missing_value"), allow_none=True)
                 elif type(feature) is dict:
-                    _validate_raw_decimal(feature.get("weight"))
-                    _validate_raw_decimal(feature.get("missing_value"), allow_none=True)
+                    feature_plain = _plain_model_input(ModelFeature, feature)
+                    if "weight" in feature_plain:
+                        _validate_raw_decimal(dict.__getitem__(feature_plain, "weight"))
+                    if "missing_value" in feature_plain:
+                        _validate_raw_decimal(
+                            dict.__getitem__(feature_plain, "missing_value"),
+                            allow_none=True,
+                        )
                 else:
                     raise QuantInputError("model feature input is not exact plain data")
-        _prevalidate_model_sensitive(cls, obj)
+        _prevalidate_model_sensitive(cls, plain)
         try:
-            return super().model_validate(obj, *args, **kwargs)
+            return super().model_validate(plain, *args, **kwargs)
         except ValidationError as exc:
             errors = exc.errors(include_input=False)
             if len(errors) == 1 and errors[0].get("loc") == () and any(
@@ -353,6 +364,8 @@ class ModelArtifact(ContractModel):
     ) -> ModelArtifact:
         if type(features) not in (tuple, list):
             raise QuantInputError("model artifact features require a plain sequence")
+        if len(features) == 0 or len(features) > MAX_FEATURES:
+            raise QuantInputError("model feature count exceeds SIG-03 bound")
         fields: dict[str, object] = {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "model_id": model_id,
@@ -401,14 +414,6 @@ def _model_feature_schema_hash(features: tuple[ModelFeature, ...]) -> str:
         for feature in features
     ]
     return _json_hash(HASH_DOMAIN_FEATURE_SCHEMA, payload)
-
-
-def _model_feature_full_hash(features: tuple[ModelFeature, ...]) -> str:
-    """Test/reference hash including coefficients; never accepted as schema identity."""
-    return _json_hash(
-        HASH_DOMAIN_FEATURE_SCHEMA,
-        [_model_feature_payload(feature) for feature in features],
-    )
 
 
 def _artifact_payload(value: ModelArtifact | dict[str, object]) -> dict[str, object]:

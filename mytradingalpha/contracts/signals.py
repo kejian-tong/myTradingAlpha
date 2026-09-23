@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
+from contextlib import suppress
 from decimal import Decimal
 from enum import Enum
 from typing import Literal
@@ -44,22 +46,120 @@ _REASON_ORDER = (
     "optional_feature_missing",
 )
 HASH_DOMAIN_QUANT_SIGNAL = "mytradingalpha:sig03:quant-signal:v1\0"
+MAX_FEATURES = 32
+MAX_IDENTIFIER_LENGTH = 128
+MAX_CANONICAL_BYTES = 1_048_576
+MAX_NESTING_DEPTH = 64
+_SENSITIVE_WORDS = ("api-key", "apikey", "credential", "password", "secret", "token")
+_PERCENT_ENCODED = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
+_UNICODE_ESCAPED = re.compile(r"(?:\\u[0-9A-Fa-f]{4})+")
+_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
+_HEX = re.compile(r"[0-9A-Fa-f]+")
+
+
+def _artifact_text_is_sensitive(value: str) -> bool:
+    if any(marker in value.casefold() for marker in _SENSITIVE_WORDS):
+        return True
+    try:
+        return validate_artifact_text(value) != value
+    except (TypeError, ValueError):
+        return True
+
+
+def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    if len(value) <= MAX_IDENTIFIER_LENGTH * 3 and _PERCENT_ENCODED.fullmatch(value):
+        with suppress(UnicodeDecodeError, ValueError):
+            candidates.append(
+                bytes(
+                    int(value[index + 1 : index + 3], 16)
+                    for index in range(0, len(value), 3)
+                ).decode("utf-8")
+            )
+    if len(value) <= MAX_IDENTIFIER_LENGTH * 6 and _UNICODE_ESCAPED.fullmatch(value):
+        with suppress(ValueError):
+            candidates.append(
+                "".join(
+                    chr(int(value[index + 2 : index + 6], 16))
+                    for index in range(0, len(value), 6)
+                )
+            )
+    if 8 <= len(value) <= MAX_IDENTIFIER_LENGTH and _BASE64URL.fullmatch(value):
+        padded = value + "=" * (-len(value) % 4)
+        with suppress(UnicodeDecodeError, ValueError):
+            candidates.append(
+                base64.b64decode(
+                    padded.encode("ascii"), altchars=b"-_", validate=True
+                ).decode("utf-8")
+            )
+    if (
+        2 <= len(value) <= MAX_IDENTIFIER_LENGTH * 2
+        and len(value) % 2 == 0
+        and _HEX.fullmatch(value)
+    ):
+        with suppress(UnicodeDecodeError, ValueError):
+            candidates.append(bytes.fromhex(value).decode("utf-8"))
+    return tuple(candidates)
+
+
+def validate_sig03_identifier(value: object) -> str:
+    """Validate one bounded identifier without echoing hostile or secret input."""
+
+    if type(value) is not str:
+        raise ValueError("identifier requires an exact string")
+    try:
+        encoded = value.encode("utf-8", "strict")
+    except UnicodeError as exc:
+        raise ValueError("identifier is not artifact-safe") from exc
+    if not encoded or len(encoded) > MAX_IDENTIFIER_LENGTH:
+        raise ValueError("identifier exceeds SIG-03 bound")
+    if _artifact_text_is_sensitive(value) or any(
+        _artifact_text_is_sensitive(candidate)
+        for candidate in _decoded_identifier_candidates(value)
+    ):
+        raise ValueError("identifier is not artifact-safe")
+    return value
+
+
+def _validation_error(model_name: str) -> ValidationError:
+    return ValidationError.from_exception_data(
+        model_name,
+        [
+            {
+                "type": "value_error",
+                "loc": (),
+                "input": None,
+                "ctx": {"error": ValueError("artifact input is invalid")},
+            }
+        ],
+    )
+
+
+def _plain_mapping(
+    value: object,
+    *,
+    model_name: str,
+    allowed_fields: tuple[str, ...],
+) -> dict[str, object]:
+    if type(value) is not dict:
+        raise _validation_error(model_name)
+    keys = tuple(dict.keys(value))
+    if len(keys) > len(allowed_fields) or any(type(key) is not str for key in keys):
+        raise _validation_error(model_name)
+    allowed = set(allowed_fields)
+    if any(key not in allowed for key in keys):
+        raise _validation_error(model_name)
+    return {key: dict.__getitem__(value, key) for key in keys}
 
 
 def _prevalidate_sensitive(value: object, model_name: str) -> None:
     seen: set[int] = set()
 
     def walk(item: object, depth: int = 0) -> None:
-        if depth > 64:
+        if depth > MAX_NESTING_DEPTH:
             raise ValueError
         if type(item) is str:
-            if any(marker in item.casefold() for marker in ("api-key", "apikey", "credential", "password", "secret", "token")):
-                raise ValueError
-            try:
-                if validate_artifact_text(item) != item:
-                    raise ValueError
-            except (TypeError, ValueError) as exc:
-                raise ValueError from exc
+            validate_sig03_identifier(item)
             return
         if type(item) in (int, bool, type(None), Decimal):
             return
@@ -76,11 +176,12 @@ def _prevalidate_sensitive(value: object, model_name: str) -> None:
             seen.add(identity)
             try:
                 if type(item) is dict:
-                    for key, child in item.items():
-                        if type(key) is not str:
-                            raise ValueError
+                    keys = tuple(dict.keys(item))
+                    if len(keys) > 64 or any(type(key) is not str for key in keys):
+                        raise ValueError
+                    for key in keys:
                         walk(key, depth + 1)
-                        walk(child, depth + 1)
+                        walk(dict.__getitem__(item, key), depth + 1)
                 else:
                     for child in item:
                         walk(child, depth + 1)
@@ -98,10 +199,7 @@ def _prevalidate_sensitive(value: object, model_name: str) -> None:
     try:
         walk(value)
     except (TypeError, ValueError) as exc:
-        raise ValidationError.from_exception_data(
-            model_name,
-            [{"type": "value_error", "loc": (), "input": None, "ctx": {"error": ValueError("artifact text is not safe")}}],
-        ) from exc
+        raise _validation_error(model_name) from exc
 
 
 class QuantSignalStatus(str, Enum):
@@ -130,6 +228,8 @@ class QuantSignalReasonCode(str, Enum):
 def _exact_tuple(value: object) -> tuple[object, ...]:
     if type(value) not in (tuple, list):
         raise ValueError("signal collections require a plain sequence")
+    if len(value) > MAX_FEATURES:
+        raise ValueError("signal collection exceeds SIG-03 bound")
     return tuple(value)
 
 
@@ -140,6 +240,8 @@ def _fixed_decimal(value: Decimal | None) -> Decimal | None:
         raise ValueError("signal score must be a finite Decimal")
     if value.as_tuple().exponent != -12:
         raise ValueError("signal score must use exactly twelve decimal places")
+    if not Decimal("-1.000000000000") <= value <= Decimal("1.000000000000"):
+        raise ValueError("signal score exceeds fixed range")
     return value
 
 
@@ -174,13 +276,28 @@ class QuantSignal(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> QuantSignal:
         if type(obj) not in (dict, cls):
             raise ValueError("QuantSignal requires exact plain data")
-        _prevalidate_sensitive(obj, cls.__name__)
         if type(obj) is cls:
             storage = object.__getattribute__(obj, "__dict__")
             if type(storage) is not dict:
                 raise ValueError("QuantSignal storage must be plain data")
-            obj = dict(storage)
-        return super().model_validate(obj, *args, **kwargs)
+            obj = storage
+        plain = _plain_mapping(
+            obj,
+            model_name=cls.__name__,
+            allowed_fields=tuple(cls.model_fields),
+        )
+        for field in (
+            "feature_ids",
+            "missing_required_feature_ids",
+            "missing_optional_feature_ids",
+            "reason_codes",
+        ):
+            if field in plain:
+                collection = dict.__getitem__(plain, field)
+                if type(collection) not in (tuple, list) or len(collection) > MAX_FEATURES:
+                    raise _validation_error(cls.__name__)
+        _prevalidate_sensitive(plain, cls.__name__)
+        return super().model_validate(plain, *args, **kwargs)
 
     @field_validator(
         "feature_ids",
@@ -191,6 +308,20 @@ class QuantSignal(ContractModel):
     @classmethod
     def validate_id_sequences(cls, value: object) -> tuple[object, ...]:
         return _exact_tuple(value)
+
+    @field_validator(
+        "feature_ids",
+        "missing_required_feature_ids",
+        "missing_optional_feature_ids",
+    )
+    @classmethod
+    def validate_bounded_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(validate_sig03_identifier(item) for item in value)
+
+    @field_validator("run_id", "bundle_id", "instrument_id", "model_id", "model_version")
+    @classmethod
+    def validate_scalar_ids(cls, value: str) -> str:
+        return validate_sig03_identifier(value)
 
     @field_validator("reason_codes", mode="before")
     @classmethod
@@ -265,10 +396,22 @@ class QuantSignal(ContractModel):
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
+        if len(HASH_DOMAIN_QUANT_SIGNAL.encode("utf-8") + encoded) > MAX_CANONICAL_BYTES:
+            raise ValueError("canonical signal bytes exceed bound")
         expected_id = f"quant-signal:{hashlib.sha256(HASH_DOMAIN_QUANT_SIGNAL.encode() + encoded).hexdigest()}"
         if self.signal_id != expected_id:
             raise ValueError("signal_id does not match canonical signal payload")
         return self
 
 
-__all__ = ["HASH_DOMAIN_QUANT_SIGNAL", "QuantSignal", "QuantSignalReasonCode", "QuantSignalStatus"]
+__all__ = [
+    "HASH_DOMAIN_QUANT_SIGNAL",
+    "MAX_CANONICAL_BYTES",
+    "MAX_FEATURES",
+    "MAX_IDENTIFIER_LENGTH",
+    "MAX_NESTING_DEPTH",
+    "QuantSignal",
+    "QuantSignalReasonCode",
+    "QuantSignalStatus",
+    "validate_sig03_identifier",
+]

@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import ROUND_HALF_EVEN, Decimal, localcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DecimalException,
+    Inexact,
+    Rounded,
+    localcontext,
+)
 
-from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.contracts.signals import (
     QuantSignal,
     QuantSignalReasonCode,
     QuantSignalStatus,
+    validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 
@@ -36,6 +44,13 @@ HASH_DOMAIN_QUANT_SIGNAL = "mytradingalpha:sig03:quant-signal:v1\0"
 _REASON_ORDER = {item: index for index, item in enumerate(QuantSignalReasonCode)}
 
 
+def _fixed_decimal_context() -> Context:
+    context = Context(prec=64, rounding=ROUND_HALF_EVEN)
+    context.traps[Inexact] = False
+    context.traps[Rounded] = False
+    return context
+
+
 def _prevalidate_signal_sensitive(model: type[object], value: object) -> None:
     seen: set[int] = set()
 
@@ -43,13 +58,7 @@ def _prevalidate_signal_sensitive(model: type[object], value: object) -> None:
         if depth > MAX_NESTING_DEPTH:
             raise ValueError
         if type(item) is str:
-            if any(marker in item.casefold() for marker in ("api-key", "apikey", "credential", "password", "secret", "token")):
-                raise ValueError
-            try:
-                if validate_artifact_text(item) != item:
-                    raise ValueError
-            except (TypeError, ValueError) as exc:
-                raise ValueError from exc
+            validate_sig03_identifier(item)
             return
         if type(item) in (int, bool, type(None), Decimal):
             return
@@ -60,11 +69,12 @@ def _prevalidate_signal_sensitive(model: type[object], value: object) -> None:
             seen.add(identity)
             try:
                 if type(item) is dict:
-                    for key, child in item.items():
-                        if type(key) is not str:
-                            raise ValueError
+                    keys = tuple(dict.keys(item))
+                    if len(keys) > 64 or any(type(key) is not str for key in keys):
+                        raise ValueError
+                    for key in keys:
                         walk(key, depth + 1)
-                        walk(child, depth + 1)
+                        walk(dict.__getitem__(item, key), depth + 1)
                 else:
                     for child in item:
                         walk(child, depth + 1)
@@ -103,15 +113,10 @@ def _canonical_hash(payload: object) -> str:
 
 
 def _safe_run_id(value: object) -> str:
-    if type(value) is not str:
-        raise QuantInputError("run_id exceeds SIG-03 bound")
-    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
-        raise QuantInputError("run_id contains a surrogate")
-    if not value or len(value.encode("utf-8")) > MAX_IDENTIFIER_LENGTH:
-        raise QuantInputError("run_id exceeds SIG-03 bound")
-    if any(word in value.casefold() for word in ("api-key", "apikey", "credential", "password", "secret", "token")):
-        raise QuantInputError("run_id is not artifact-safe")
-    return value
+    try:
+        return validate_sig03_identifier(value)
+    except (TypeError, ValueError) as exc:
+        raise QuantInputError("run_id is not artifact-safe") from exc
 
 
 class QuantSignalModel:
@@ -129,7 +134,7 @@ class QuantSignalModel:
             raise QuantInputError("feature set requires exact type")
         run_id = _safe_run_id(run_id)
         features = _copy_feature_set(feature_set)
-        artifact = self._artifact
+        artifact = _copy_model_artifact(self._artifact)
         if artifact.feature_config_hash != features.feature_config_hash:
             raise QuantInputError("model/configuration hash mismatch")
         if artifact.feature_schema_hash != features.feature_schema_hash:
@@ -150,26 +155,27 @@ class QuantSignalModel:
             if missing_required:
                 reasons.add(QuantSignalReasonCode.REQUIRED_FEATURE_MISSING)
         else:
-            with localcontext() as context:
-                context.prec = 64
-                context.rounding = ROUND_HALF_EVEN
-                total = artifact.intercept
-                for feature in artifact.features:
-                    observation = observations[feature.feature_id]
-                    value = observation.value
-                    if value is None:
-                        if feature.required:
-                            score = None
-                            reasons.add(QuantSignalReasonCode.REQUIRED_FEATURE_MISSING)
-                            break
-                        value = feature.missing_value
-                        reasons.add(QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING)
-                    total += value * feature.weight  # type: ignore[operator]
-                else:
-                    quantum = Decimal(1).scaleb(-DECIMAL_PLACES)
-                    score = total.quantize(quantum)
-                    score = max(artifact.score_min, min(artifact.score_max, score))
-                    score = score.quantize(quantum)
+            try:
+                with localcontext(_fixed_decimal_context()):
+                    total = artifact.intercept
+                    for feature in artifact.features:
+                        observation = observations[feature.feature_id]
+                        value = observation.value
+                        if value is None:
+                            if feature.required:
+                                score = None
+                                reasons.add(QuantSignalReasonCode.REQUIRED_FEATURE_MISSING)
+                                break
+                            value = feature.missing_value
+                            reasons.add(QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING)
+                        total += value * feature.weight  # type: ignore[operator]
+                    else:
+                        quantum = Decimal(1).scaleb(-DECIMAL_PLACES)
+                        score = total.quantize(quantum)
+                        score = max(artifact.score_min, min(artifact.score_max, score))
+                        score = score.quantize(quantum)
+            except DecimalException as exc:
+                raise QuantInputError("quant score decimal input is invalid") from exc
         if missing_optional:
             reasons.add(QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING)
         reason_codes = tuple(sorted(reasons, key=lambda item: _REASON_ORDER[item]))
