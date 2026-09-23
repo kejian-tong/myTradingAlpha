@@ -59,11 +59,10 @@ _SENSITIVE_WORDS = (
     "password",
     "secret",
     "token",
-    "akia",
-    "asia",
     "private-key",
     "privatekey",
 )
+_AWS_ACCESS_KEY = re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
 _HEX = re.compile(r"[0-9A-Fa-f]+")
 _BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
@@ -88,6 +87,8 @@ def _artifact_text_is_sensitive(value: str) -> bool:
             return True
     except (TypeError, ValueError):
         return True
+    if _AWS_ACCESS_KEY.search(value):
+        return True
     return _compact_text_is_sensitive(value)
 
 
@@ -104,12 +105,26 @@ def _decoded_candidate_is_relevant(value: str) -> bool:
     )
 
 
+def _decoded_text_is_candidate(value: str) -> bool:
+    if not value or not value.isascii() or not value.isprintable():
+        return False
+    normalized = unicodedata.normalize("NFKC", value)
+    if any(character in normalized for character in '{}[]"'):
+        try:
+            json.loads(normalized)
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 @lru_cache(maxsize=8192)
 def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     candidates: list[str] = []
 
     def append_if_relevant(decoded: str) -> None:
-        if _decoded_candidate_is_relevant(decoded):
+        if not _decoded_text_is_candidate(decoded):
+            return
+        if _artifact_text_is_sensitive(decoded) or _decoded_candidate_is_relevant(decoded):
             candidates.append(decoded)
 
     for match in _PERCENT_RUN.finditer(value):
@@ -457,11 +472,30 @@ class QuantSignal(ContractModel):
         ):
             if tuple(values) != tuple(sorted(values)) or len(set(values)) != len(values):
                 raise ValueError("missing feature identifiers must be canonical")
+        feature_ids = set(self.feature_ids)
+        missing_required = set(self.missing_required_feature_ids)
+        missing_optional = set(self.missing_optional_feature_ids)
+        if not missing_required.issubset(feature_ids) or not missing_optional.issubset(
+            feature_ids
+        ):
+            raise ValueError("missing feature identifiers must belong to feature_ids")
+        if missing_required & missing_optional:
+            raise ValueError("required and optional missing feature sets must be disjoint")
         reason_values = tuple(item.value for item in self.reason_codes)
         if reason_values != tuple(sorted(reason_values, key=_REASON_ORDER.index)):
             raise ValueError("reason_codes must use stable canonical ordering")
         if len(set(reason_values)) != len(reason_values):
             raise ValueError("reason_codes must be unique")
+        has_required_reason = (
+            QuantSignalReasonCode.REQUIRED_FEATURE_MISSING in self.reason_codes
+        )
+        has_optional_reason = (
+            QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING in self.reason_codes
+        )
+        if bool(missing_required) is not has_required_reason:
+            raise ValueError("required missingness reason does not match missing set")
+        if bool(missing_optional) is not has_optional_reason:
+            raise ValueError("optional missingness reason does not match missing set")
         if self.status is QuantSignalStatus.VALID:
             if (
                 self.score is None

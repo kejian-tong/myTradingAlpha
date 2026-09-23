@@ -375,18 +375,32 @@ class ModelArtifact(ContractModel):
             raise QuantInputError("model artifact features require a plain sequence")
         if len(features) == 0 or len(features) > MAX_FEATURES:
             raise QuantInputError("model feature count exceeds SIG-03 bound")
+        try:
+            validated_model_id = _safe_identifier(model_id)
+            validated_model_version = _safe_identifier(model_version)
+        except (TypeError, ValueError) as exc:
+            raise QuantInputError("model artifact identifier is invalid") from exc
+        validated_features = tuple(ModelFeature.model_validate(item) for item in features)
+        _validate_raw_decimal(score_min)
+        _validate_raw_decimal(score_max)
+        _validate_raw_decimal(intercept)
+        normalized_score_min = _decimal(score_min, fixed=False)
+        normalized_score_max = _decimal(score_max, fixed=False)
+        normalized_intercept = _decimal(intercept, fixed=True)
         fields: dict[str, object] = {
             "schema_version": CURRENT_SCHEMA_VERSION,
-            "model_id": model_id,
-            "model_version": model_version,
+            "model_id": validated_model_id,
+            "model_version": validated_model_version,
             "horizon_sessions": horizon_sessions,
             "decimal_places": decimal_places,
-            "score_min": score_min,
-            "score_max": score_max,
+            "score_min": normalized_score_min,
+            "score_max": normalized_score_max,
             "feature_config_hash": feature_config_hash,
             "feature_schema_hash": feature_schema_hash,
-            "features": tuple(sorted((ModelFeature.model_validate(item) for item in features), key=lambda item: item.feature_id)),
-            "intercept": intercept,
+            "features": tuple(
+                sorted(validated_features, key=lambda item: item.feature_id)
+            ),
+            "intercept": normalized_intercept,
         }
         fields["content_hash"] = _json_hash(HASH_DOMAIN_MODEL_ARTIFACT, _artifact_payload(fields))
         return cls.model_validate(fields)

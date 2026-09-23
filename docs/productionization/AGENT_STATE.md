@@ -14,8 +14,8 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
   `376c9c044722ee37f3fa36691b576420e3b6253d`
 - `autonomy_mode`: enabled only for authorized SIG-03 implementation
-- `active_writer`: `high_implementer (architectural repair stopping; Master release required before fresh review)` /
-  `codex/sig-03-deterministic-quant`
+- `active_writer`: none
+- `last_writer_route`: `high_implementer`
 - `merge`: pending independent exact-head review, required CI, and Master gate
 
 SIG-03 is the only active roadmap slice. Base is `49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
@@ -35,8 +35,11 @@ controlling review returned REQUEST CHANGES on that head. The Round-four repair 
 `d6f37bd36bf8192d5f6de4d68c3a61ec7d35a24a`; the Round-four final semantic GREEN is implemented with
 head `0f48225c2fc7f3f96197cf0d2082c5826aa9dea6`. Round-five controlling review returned REQUEST
 CHANGES on that head. The Round-five architectural RED is `7dc44cda4f91663690446a0281199470a9e701a1`;
-the architectural GREEN is implemented with its head pending commit. Fresh independent review, required
-CI, and merge are pending after that commit.
+the architectural GREEN head is `9122f99c20d783691084139891bd8d3b07d5626e`. Round-six controlling
+review returned REQUEST CHANGES on that head. The Round-six final-contract RED is
+`62fb66468c2d73faf731e0860e2842ceaf3e8684`; the final GREEN candidate was produced. The durable lease
+release is recorded in PR evidence before review. Fresh independent review, required CI, and merge are
+pending.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
