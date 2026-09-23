@@ -1,0 +1,105 @@
+{
+  "configuration": {
+    "schema_version": "v1",
+    "configuration_id": "feature-config-sig03-v1",
+    "configuration_version": "v1",
+    "universe_id": "us-liquid-v1",
+    "calendar_id": "XNYS.synthetic.v1",
+    "horizon_sessions": 1,
+    "features": [
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_1d",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-quant-bars",
+        "interval": "1d",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 1,
+        "required": true
+      },
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_2d_optional",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-optional-bars",
+        "interval": "1d",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 2,
+        "required": false
+      }
+    ],
+    "content_hash": "sha256:ba8219aa8c99bdeb9775774db3a1929d7e80c6620ec0cb185dc017398cfbeb13"
+  },
+  "model": {
+    "schema_version": "v1",
+    "model_id": "model-artifact-sig03-v1",
+    "model_version": "v1",
+    "horizon_sessions": 1,
+    "decimal_places": 12,
+    "score_min": "-1",
+    "score_max": "1",
+    "feature_config_hash": "sha256:ba8219aa8c99bdeb9775774db3a1929d7e80c6620ec0cb185dc017398cfbeb13",
+    "feature_schema_hash": "sha256:81f6784f180c32b0bea169207467dd34aec4f940a92097c62d4c7d3dd3232848",
+    "features": [
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_1d",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-quant-bars",
+        "interval": "1d",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 1,
+        "required": true,
+        "weight": "2.000000000000"
+      },
+      {
+        "schema_version": "v1",
+        "feature_id": "close_return_2d_optional",
+        "feature_version": "v1",
+        "kind": "close_return",
+        "bar_source": "synthetic-optional-bars",
+        "interval": "1d",
+        "adjustment_basis": "unadjusted",
+        "adjustment_version": null,
+        "lookback_sessions": 2,
+        "required": false,
+        "weight": "0.500000000000",
+        "missing_value": "0.000000000000"
+      }
+    ],
+    "intercept": "0.000000000000",
+    "content_hash": "sha256:15b5ffb574cb071ef39ed22f445e8e5e248ae9031cd68560ca3c2cfb471799df"
+  },
+  "scenario": {
+    "instrument_id": "inst-survivor",
+    "run_id": "run-sig03-fixture",
+    "expected_score": "0.305000000000",
+    "expected_as_of": "2024-07-02T20:00:00Z",
+    "expected_bundle_hash": "sha256:6e8b06b8bc40c1b7aabf3c3af027a1ce6e6ccd2bc31bf4502a4b73fe1001cec7",
+    "expected_feature_hash": "sha256:8c7c77e7f1946ac6fe22b7a90ae73948238a821f887937e0c284a37527a65904",
+    "expected_model_hash": "sha256:15b5ffb574cb071ef39ed22f445e8e5e248ae9031cd68560ca3c2cfb471799df",
+    "expected_signal_hash": "sha256:838ff6ce38013258c67514603d7985c77ed2729cb8e042360620907a9d0b47fc",
+    "reason_codes": [
+      "instrument_not_in_bundle",
+      "instrument_inactive_as_of",
+      "instrument_not_in_universe",
+      "ambiguous_universe_membership",
+      "calendar_session_unavailable",
+      "bar_series_ambiguous",
+      "exact_session_bar_missing",
+      "insufficient_lookback",
+      "required_feature_missing",
+      "optional_feature_missing"
+    ],
+    "observation_statuses": [
+      "available",
+      "missing"
+    ]
+  }
+}
