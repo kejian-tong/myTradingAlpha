@@ -14,7 +14,7 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
   `376c9c044722ee37f3fa36691b576420e3b6253d`
 - `autonomy_mode`: enabled only for authorized SIG-03 implementation
-- `active_writer`: `high_implementer (second repair stopping; Master release required before fresh review)` /
+- `active_writer`: `high_implementer replacement (stopping; Master release required before fresh review)` /
   `codex/sig-03-deterministic-quant`
 - `merge`: pending independent exact-head review, required CI, and Master gate
 
@@ -26,10 +26,12 @@ contract is persisted in PR #87. RED commits are `03c29a17c9517766fbdaaf2636cd5b
 `b71ffa0ad3b3b1cee7d72a50e11c416ddc78d524`, `201a9fa3375b5bf8421fc59e028db928508eefc5`,
 `0d674c230f208ec5eb8c1dda1a8e984a5969daf0`, and `c3e15354a19bc9a2dec84a458df62d7c2cd6669b`.
 Round-one controlling review on `649d7615f72a8a6712083266043741d260c6b98e` returned REQUEST CHANGES.
-The focused repair RED is `077997894df8ccd6d01f431fb5bedb6816a6c8a7`; bounded GREEN repair is implemented
-in the dedicated high-implementer writer lane. Round-two controlling review returned REQUEST CHANGES; its
-focused RED is `3b8a6a0f38932defed36825b2ccafc30c1ff1af3`, and bounded second-cycle GREEN repair is implemented
-with its head pending commit. Fresh independent review, required CI, and merge are pending.
+The first repair RED is `077997894df8ccd6d01f431fb5bedb6816a6c8a7`; Round-two controlling review
+returned REQUEST CHANGES. Its focused RED is `3b8a6a0f38932defed36825b2ccafc30c1ff1af3`; the second-cycle
+GREEN head is `d0d325dd3b401dda7b0f720443775b81eeb9bf6a`. Round-three controlling review returned REQUEST
+CHANGES on that head. The Round-three repair RED is `5d6a2c6d74cb6a1af604941725491ab49335bb53`;
+the consolidated Round-three GREEN is implemented with its repair head pending commit. Fresh independent
+review, required CI, and merge are pending after the GREEN commit.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

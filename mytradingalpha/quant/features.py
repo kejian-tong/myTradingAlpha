@@ -136,7 +136,9 @@ class FeatureSpec(ContractModel):
     adjustment_version: StableId | None
     lookback_sessions: StrictInt = Field(ge=1, le=MAX_LOOKBACK_SESSIONS)
     required: StrictBool
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+    )
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSpec:
@@ -186,7 +188,9 @@ class FeatureConfiguration(ContractModel):
     horizon_sessions: StrictInt = Field(ge=1, le=MAX_HORIZON_SESSIONS)
     features: tuple[FeatureSpec, ...]
     content_hash: CanonicalChecksum
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+    )
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureConfiguration:
@@ -293,7 +297,14 @@ class FeatureObservation(ContractModel):
     source_bar_ids: tuple[StableId, ...]
     source_manifest_ids: tuple[StableId, ...]
     source_revisions: tuple[StrictInt, ...]
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+    )
+
+    @field_validator("feature_id", "feature_version")
+    @classmethod
+    def validate_feature_ids(cls, value: str) -> str:
+        return _safe_identifier(value)
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureObservation:
@@ -356,13 +367,39 @@ class FeatureObservation(ContractModel):
                 return Decimal(0).quantize(Decimal(1).scaleb(-DECIMAL_PLACES))
         return decimal
 
-    @field_validator("source_bar_ids", "source_manifest_ids", "source_revisions", mode="before")
+    @field_validator("anchor_session", "lookback_session", mode="before")
     @classmethod
-    def validate_provenance_sequences(cls, value: object) -> tuple[object, ...]:
+    def validate_session_dates(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if type(value) is not str:
+            raise ValueError("feature sessions require canonical ISO dates")
+        try:
+            parsed = _Date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("feature sessions require canonical ISO dates") from exc
+        if parsed.isoformat() != value:
+            raise ValueError("feature sessions require canonical ISO dates")
+        return value
+
+    @field_validator("source_bar_ids", "source_manifest_ids", mode="before")
+    @classmethod
+    def validate_provenance_ids(cls, value: object) -> tuple[str, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("feature provenance requires plain sequences")
         if len(value) > MAX_PROVENANCE_ITEMS:
             raise ValueError("feature provenance exceeds SIG-03 bound")
+        return tuple(_safe_identifier(item) for item in value)
+
+    @field_validator("source_revisions", mode="before")
+    @classmethod
+    def validate_source_revisions(cls, value: object) -> tuple[int, ...]:
+        if type(value) not in (tuple, list):
+            raise ValueError("feature provenance requires plain sequences")
+        if len(value) > MAX_PROVENANCE_ITEMS:
+            raise ValueError("feature provenance exceeds SIG-03 bound")
+        if any(type(item) is not int or item < 0 for item in value):
+            raise ValueError("feature revisions require nonnegative exact integers")
         return tuple(value)
 
     @model_validator(mode="after")
@@ -386,6 +423,14 @@ class FeatureObservation(ContractModel):
                 raise ValueError(
                     "available observations require exact lookback provenance"
                 )
+            anchor = _Date.fromisoformat(self.anchor_session)
+            lookback = _Date.fromisoformat(self.lookback_session)
+            if not lookback < anchor <= self.as_of.date():
+                raise ValueError("feature session chronology is invalid")
+            if len(set(self.source_bar_ids)) != len(self.source_bar_ids):
+                raise ValueError("source bar identifiers must be unique")
+            if len(set(self.source_manifest_ids)) != len(self.source_manifest_ids):
+                raise ValueError("source manifest identifiers must be unique")
         elif (
             self.value is not None
             or self.reason_code is None
@@ -419,7 +464,19 @@ class FeatureSet(ContractModel):
     missing_optional_feature_ids: tuple[StableId, ...]
     status: Literal["valid", "degraded", "invalid"]
     reason_codes: tuple[QuantSignalReasonCode, ...]
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+    )
+
+    @field_validator(
+        "bundle_id",
+        "instrument_id",
+        "configuration_id",
+        "configuration_version",
+    )
+    @classmethod
+    def validate_scalar_ids(cls, value: str) -> str:
+        return _safe_identifier(value)
 
     @classmethod
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSet:
@@ -448,7 +505,7 @@ class FeatureSet(ContractModel):
     def validate_missing_ids(cls, value: object) -> tuple[object, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("missing feature IDs require a plain sequence")
-        return tuple(value)
+        return tuple(_safe_identifier(item) for item in value)
 
     @field_validator("reason_codes", mode="before")
     @classmethod
@@ -461,6 +518,17 @@ class FeatureSet(ContractModel):
     def validate_hash_and_status(self) -> FeatureSet:
         if self.feature_hash != feature_set_hash(self):
             raise QuantInputError("feature set hash mismatch")
+        if self.as_of > self.knowledge_cutoff:
+            raise ValueError("feature set as_of exceeds knowledge cutoff")
+        for observation in self.observations:
+            if observation.as_of != self.as_of:
+                raise ValueError("observation as_of does not match feature set")
+            if (
+                observation.status == "available"
+                and observation.latest_available_at is not None
+                and observation.latest_available_at > self.knowledge_cutoff
+            ):
+                raise ValueError("feature availability exceeds knowledge cutoff")
         observation_ids = tuple(item.feature_id for item in self.observations)
         if observation_ids != tuple(sorted(observation_ids)) or len(set(observation_ids)) != len(observation_ids):
             raise ValueError("feature observations must be sorted and unique")

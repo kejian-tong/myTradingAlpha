@@ -179,7 +179,9 @@ class ModelFeature(ContractModel):
     required: StrictBool
     weight: Decimal
     missing_value: Decimal | None = None
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+    )
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelFeature:
@@ -205,6 +207,11 @@ class ModelFeature(ContractModel):
     @classmethod
     def validate_ids(cls, value: str) -> str:
         return _safe_identifier(value)
+
+    @field_validator("adjustment_version")
+    @classmethod
+    def validate_adjustment_version(cls, value: str | None) -> str | None:
+        return None if value is None else _safe_identifier(value)
 
     @field_validator("weight", "missing_value", mode="before")
     @classmethod
@@ -239,7 +246,9 @@ class ModelArtifact(ContractModel):
     features: tuple[ModelFeature, ...]
     intercept: Decimal
     content_hash: CanonicalChecksum
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
+    )
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelArtifact:

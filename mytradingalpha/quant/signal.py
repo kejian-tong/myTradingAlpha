@@ -146,6 +146,16 @@ class QuantSignalModel:
         feature_ids = tuple(item.feature_id for item in features.observations)
         if artifact_ids != feature_ids:
             raise QuantInputError("model/feature identifiers mismatch")
+        for model_feature, observation in zip(
+            artifact.features, features.observations, strict=True
+        ):
+            if (
+                model_feature.feature_id != observation.feature_id
+                or model_feature.feature_version != observation.feature_version
+                or model_feature.required is not observation.required
+                or model_feature.lookback_sessions != observation.lookback_sessions
+            ):
+                raise QuantInputError("model/feature schema mismatch")
         missing_required = tuple(features.missing_required_feature_ids)
         missing_optional = tuple(features.missing_optional_feature_ids)
         reasons = set(features.reason_codes)

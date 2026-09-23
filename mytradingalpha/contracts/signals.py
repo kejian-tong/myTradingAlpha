@@ -9,6 +9,7 @@ import re
 from contextlib import suppress
 from decimal import Decimal
 from enum import Enum
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import (
@@ -51,12 +52,14 @@ MAX_IDENTIFIER_LENGTH = 128
 MAX_CANONICAL_BYTES = 1_048_576
 MAX_NESTING_DEPTH = 64
 _SENSITIVE_WORDS = ("api-key", "apikey", "credential", "password", "secret", "token")
-_PERCENT_ENCODED = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
-_UNICODE_ESCAPED = re.compile(r"(?:\\u[0-9A-Fa-f]{4})+")
 _BASE64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
 _HEX = re.compile(r"[0-9A-Fa-f]+")
-_IDENTIFIER_DELIMITERS = frozenset("._:-")
-_MAX_DECODE_DEPTH = 4
+_BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
+_PERCENT_RUN = re.compile(r"(?:%[0-9A-Fa-f]{2}){5,}")
+_UNICODE_RUN = re.compile(r"(?:\\u[0-9A-Fa-f]{4}){5,}")
+_HEX_RUN = re.compile(r"[0-9A-Fa-f]{10,}")
+_DECODED_IDENTIFIER = re.compile(r"[A-Za-z0-9+._:/%\\=\-]+")
+_MAX_DECODE_CANDIDATES = 100_000
 
 
 def _artifact_text_is_sensitive(value: str) -> bool:
@@ -68,76 +71,80 @@ def _artifact_text_is_sensitive(value: str) -> bool:
         return True
 
 
-def _identifier_segments(value: str) -> tuple[str, ...]:
-    candidates = [value]
-    candidates.extend(
-        value[index + 1 :]
-        for index, character in enumerate(value)
-        if character in _IDENTIFIER_DELIMITERS and index + 1 < len(value)
-    )
-    return tuple(dict.fromkeys(candidates))
-
-
+@lru_cache(maxsize=8192)
 def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     candidates: list[str] = []
-    if len(value) <= MAX_IDENTIFIER_LENGTH and _PERCENT_ENCODED.fullmatch(value):
+    for match in _PERCENT_RUN.finditer(value):
+        encoded = match.group(0)
         with suppress(UnicodeDecodeError, ValueError):
             candidates.append(
                 bytes(
-                    int(value[index + 1 : index + 3], 16)
-                    for index in range(0, len(value), 3)
+                    int(encoded[index + 1 : index + 3], 16)
+                    for index in range(0, len(encoded), 3)
                 ).decode("utf-8")
             )
-    if len(value) <= MAX_IDENTIFIER_LENGTH and _UNICODE_ESCAPED.fullmatch(value):
+    for match in _UNICODE_RUN.finditer(value):
+        encoded = match.group(0)
         with suppress(ValueError):
             candidates.append(
                 "".join(
-                    chr(int(value[index + 2 : index + 6], 16))
-                    for index in range(0, len(value), 6)
+                    chr(int(encoded[index + 2 : index + 6], 16))
+                    for index in range(0, len(encoded), 6)
                 )
             )
-    if 8 <= len(value) <= MAX_IDENTIFIER_LENGTH and _BASE64.fullmatch(value):
-        unpadded = value.rstrip("=")
-        if len(unpadded) % 4 != 1:
-            padded = unpadded + "=" * (-len(unpadded) % 4)
-            with suppress(UnicodeDecodeError, ValueError):
-                candidates.append(
-                    base64.b64decode(
-                        padded.encode("ascii"), altchars=b"-_", validate=True
-                    ).decode("utf-8")
-                )
-    if (
-        2 <= len(value) <= MAX_IDENTIFIER_LENGTH * 2
-        and len(value) % 2 == 0
-        and _HEX.fullmatch(value)
-    ):
-        with suppress(UnicodeDecodeError, ValueError):
-            candidates.append(bytes.fromhex(value).decode("utf-8"))
-    return tuple(candidates)
+    for match in _BASE64_RUN.finditer(value):
+        run = match.group(0).rstrip("=")
+        for start in range(len(run)):
+            for end in range(start + 7, len(run) + 1):
+                encoded = run[start:end]
+                if len(encoded) % 4 == 1 or _BASE64.fullmatch(encoded) is None:
+                    continue
+                padded = encoded + "=" * (-len(encoded) % 4)
+                with suppress(UnicodeDecodeError, ValueError):
+                    candidates.append(
+                        base64.b64decode(
+                            padded.encode("ascii"), altchars=b"-_", validate=True
+                        ).decode("utf-8")
+                    )
+    for match in _HEX_RUN.finditer(value):
+        run = match.group(0)
+        for start in range(len(run)):
+            for end in range(start + 10, len(run) + 1):
+                encoded = run[start:end]
+                if len(encoded) % 2 != 0 or _HEX.fullmatch(encoded) is None:
+                    continue
+                with suppress(UnicodeDecodeError, ValueError):
+                    candidates.append(bytes.fromhex(encoded).decode("utf-8"))
+    return tuple(dict.fromkeys(candidates))
 
 
+@lru_cache(maxsize=8192)
 def _identifier_contains_sensitive_candidate(value: str) -> bool:
-    pending = [(segment, 0) for segment in _identifier_segments(value)]
+    pending = [value]
     seen: set[str] = set()
     while pending:
-        candidate, depth = pending.pop()
+        candidate = pending.pop()
         if candidate in seen:
             continue
         seen.add(candidate)
+        if len(seen) > _MAX_DECODE_CANDIDATES:
+            return True
         if _artifact_text_is_sensitive(candidate):
             return True
-        if depth >= _MAX_DECODE_DEPTH:
-            continue
         for decoded in _decoded_identifier_candidates(candidate):
             try:
                 encoded = decoded.encode("utf-8", "strict")
             except UnicodeError:
                 continue
-            if not encoded or len(encoded) > MAX_IDENTIFIER_LENGTH:
+            if (
+                not encoded
+                or len(encoded) > MAX_IDENTIFIER_LENGTH
+                or decoded == candidate
+                or len(decoded) >= len(candidate)
+                or _DECODED_IDENTIFIER.fullmatch(decoded) is None
+            ):
                 continue
-            pending.extend(
-                (segment, depth + 1) for segment in _identifier_segments(decoded)
-            )
+            pending.append(decoded)
     return False
 
 
@@ -146,11 +153,13 @@ def validate_sig03_identifier(value: object) -> str:
 
     if type(value) is not str:
         raise ValueError("identifier requires an exact string")
+    if not value or len(value) > MAX_IDENTIFIER_LENGTH:
+        raise ValueError("identifier exceeds SIG-03 bound")
     try:
         encoded = value.encode("utf-8", "strict")
     except UnicodeError as exc:
         raise ValueError("identifier is not artifact-safe") from exc
-    if not encoded or len(encoded) > MAX_IDENTIFIER_LENGTH:
+    if len(encoded) > MAX_IDENTIFIER_LENGTH:
         raise ValueError("identifier exceeds SIG-03 bound")
     if _identifier_contains_sensitive_candidate(value):
         raise ValueError("identifier is not artifact-safe")
@@ -306,7 +315,12 @@ class QuantSignal(ContractModel):
     status: QuantSignalStatus
     reason_codes: tuple[QuantSignalReasonCode, ...]
     shadow_only: StrictBool
-    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        revalidate_instances="always",
+        hide_input_in_errors=True,
+    )
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> QuantSignal:
