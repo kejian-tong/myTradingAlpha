@@ -3436,6 +3436,7 @@ def test_all_optional_global_ineligibility_scores_explicit_invalid_signal(
     assert signal.missing_optional_feature_ids == expected_optional_ids
     assert expected_global_reason in _codes(signal)
     assert "optional_feature_missing" in _codes(signal)
+    assert set(_codes(feature_set)).issubset(_codes(signal))
 
 
 @pytest.mark.parametrize(
