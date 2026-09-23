@@ -42,13 +42,15 @@ review returned REQUEST CHANGES on that head. The Round-six final-contract RED i
 on that head. Round-seven RED evidence is `9db53e8c79cb040f946f9c2a915061db401fd8c0`,
 `10f622a8642ee12082beb946674dc930b6aa95ef`, and `da115b0432ac6790c996dfe547c74b9607b49287`;
 the tests-only safe-label compatibility guard is `3d62828c9587508de83f641e9fcbedc91fac315f`.
-The bounded GREEN candidate was produced. Durable lease release will be recorded in PR evidence before
-fresh review. Round-eight repair started from candidate
+Round-seven GREEN was produced and durable lease release is recorded in PR evidence. Round-eight repair started from candidate
 `95ca3698ebc014860fb82bd450f8792f3d7a6703`; its tests-only commits are
 `f8ff012c2b6425fac086dac2df5b900ec1d07c5a`, `de40e2ea920848bef83364b333e22cdae4379822`,
-and `ff3a5fa7429aa6b5b6ecb25126c57d78d2c976f3`. The bounded GREEN candidate was produced, and durable
-lease release will be recorded in PR evidence before fresh review. Independent review, required CI,
-and merge remain pending.
+and `ff3a5fa7429aa6b5b6ecb25126c57d78d2c976f3`. Round-eight GREEN was produced and durable lease
+release is recorded in PR evidence. Round-nine repair started from candidate
+`78db7ced724d85a8e8dc9867388526285df2e009`; its tests-only RED is
+`a5e4b7820357c19f0bcb25b06c26791bb40f06c3`. The bounded GREEN candidate was produced; durable lease
+release will be recorded in PR evidence before fresh review. Independent review, required CI, and merge
+remain pending.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

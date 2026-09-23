@@ -203,21 +203,14 @@ class ModelFeature(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelFeature:
         if type(obj) not in (dict, cls):
             raise ValueError("ModelFeature requires exact plain data")
-        plain = _plain_model_input(cls, obj)
-        _prevalidate_model_sensitive(cls, plain)
-        return super().model_validate(plain, *args, **kwargs)
+        return super().model_validate(obj, *args, **kwargs)
 
     @model_validator(mode="before")
     @classmethod
     def require_plain_data(cls, value: object) -> object:
-        if type(value) is cls:
-            storage = object.__getattribute__(value, "__dict__")
-            if type(storage) is not dict:
-                raise ValueError("ModelFeature storage must be plain data")
-            return dict(storage)
-        if type(value) is not dict:
-            raise ValueError("ModelFeature requires exact plain data")
-        return value
+        plain = _plain_model_input(cls, value)
+        _prevalidate_model_sensitive(cls, plain)
+        return plain
 
     @field_validator("feature_id", "feature_version", "bar_source")
     @classmethod
@@ -270,7 +263,27 @@ class ModelArtifact(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> ModelArtifact:
         if type(obj) not in (dict, cls):
             raise ValueError("ModelArtifact requires exact plain data")
-        plain = _plain_model_input(cls, obj)
+        try:
+            return super().model_validate(obj, *args, **kwargs)
+        except ValidationError as exc:
+            errors = exc.errors(include_input=False)
+            if len(errors) == 1 and errors[0].get("loc") == () and any(
+                marker in str(errors[0].get("msg", ""))
+                for marker in (
+                    "model artifact content hash mismatch",
+                    "model feature schema hash mismatch",
+                    "model artifact checksum input is invalid",
+                    "model configuration hash is not bound",
+                    "model decimal input",
+                )
+            ):
+                raise QuantInputError("model artifact integrity mismatch") from exc
+            raise
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_plain_data(cls, value: object) -> object:
+        plain = _plain_model_input(cls, value)
         for field in ("feature_config_hash", "feature_schema_hash"):
             if field in plain:
                 plain[field] = _exact_canonical_checksum(dict.__getitem__(plain, field))
@@ -294,7 +307,9 @@ class ModelArtifact(ContractModel):
                     if type(storage) is not dict:
                         raise QuantInputError("model feature storage is not plain data")
                     _validate_raw_decimal(dict.__getitem__(storage, "weight"))
-                    _validate_raw_decimal(dict.__getitem__(storage, "missing_value"), allow_none=True)
+                    _validate_raw_decimal(
+                        dict.__getitem__(storage, "missing_value"), allow_none=True
+                    )
                 elif type(feature) is dict:
                     feature_plain = _plain_model_input(ModelFeature, feature)
                     if "weight" in feature_plain:
@@ -307,28 +322,7 @@ class ModelArtifact(ContractModel):
                 else:
                     raise QuantInputError("model feature input is not exact plain data")
         _prevalidate_model_sensitive(cls, plain)
-        try:
-            return super().model_validate(plain, *args, **kwargs)
-        except ValidationError as exc:
-            errors = exc.errors(include_input=False)
-            if len(errors) == 1 and errors[0].get("loc") == () and any(
-                marker in str(errors[0].get("msg", ""))
-                for marker in ("model artifact content hash mismatch", "model feature schema hash mismatch")
-            ):
-                raise QuantInputError("model artifact integrity mismatch") from exc
-            raise
-
-    @model_validator(mode="before")
-    @classmethod
-    def require_plain_data(cls, value: object) -> object:
-        if type(value) is cls:
-            storage = object.__getattribute__(value, "__dict__")
-            if type(storage) is not dict:
-                raise ValueError("ModelArtifact storage must be plain data")
-            return dict(storage)
-        if type(value) is not dict:
-            raise ValueError("ModelArtifact requires exact plain data")
-        return value
+        return plain
 
     @field_validator("model_id", "model_version")
     @classmethod

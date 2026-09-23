@@ -92,7 +92,7 @@ _UNICODE_RUN = re.compile(r"(?:\\u[0-9A-Fa-f]{4}){5,}")
 _HEX_RUN = re.compile(r"[0-9A-Fa-f]{10,}")
 _MAX_DECODE_CANDIDATES = 100_000
 _MAX_IDENTIFIER_DECODE_ATTEMPTS = 6_000
-_MAX_PREVALIDATION_DECODE_ATTEMPTS = 65_536
+_MAX_PREVALIDATION_DECODE_ATTEMPTS = 4_096
 
 
 class _DecodeBudget:
@@ -223,6 +223,8 @@ def _decoded_identifier_candidates(
                 return tuple(dict.fromkeys(candidates))
     for match in _BASE64_RUN.finditer(value):
         run = match.group(0).rstrip("=")
+        if re.fullmatch(r"[a-z][a-z0-9_-]*", run):
+            continue
         if len(run) >= 7 and len(run) % 4 != 1:
             budget.consume()
             padded_run = run + "=" * (-len(run) % 4)
@@ -520,13 +522,18 @@ class QuantSignal(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> QuantSignal:
         if type(obj) not in (dict, cls):
             raise ValueError("QuantSignal requires exact plain data")
-        if type(obj) is cls:
-            storage = object.__getattribute__(obj, "__dict__")
+        return super().model_validate(obj, *args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_bounded_plain_data(cls, value: object) -> object:
+        if type(value) is cls:
+            storage = object.__getattribute__(value, "__dict__")
             if type(storage) is not dict:
                 raise ValueError("QuantSignal storage must be plain data")
-            obj = storage
+            value = storage
         plain = _plain_mapping(
-            obj,
+            value,
             model_name=cls.__name__,
             allowed_fields=tuple(cls.model_fields),
         )
@@ -541,7 +548,7 @@ class QuantSignal(ContractModel):
                 if type(collection) not in (tuple, list) or len(collection) > MAX_FEATURES:
                     raise _validation_error(cls.__name__)
         _prevalidate_sensitive(plain, cls.__name__)
-        return super().model_validate(plain, *args, **kwargs)
+        return plain
 
     @field_validator(
         "feature_ids",

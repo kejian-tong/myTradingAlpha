@@ -145,21 +145,14 @@ class FeatureSpec(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSpec:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureSpec requires exact plain data")
-        plain = _plain_model_input(cls, obj)
-        _prevalidate_sensitive(cls, plain)
-        return super().model_validate(plain, *args, **kwargs)
+        return super().model_validate(obj, *args, **kwargs)
 
     @model_validator(mode="before")
     @classmethod
     def require_plain_data(cls, value: object) -> object:
-        if type(value) is cls:
-            storage = object.__getattribute__(value, "__dict__")
-            if type(storage) is not dict:
-                raise ValueError("FeatureSpec storage must be plain data")
-            return dict(storage)
-        if type(value) is not dict:
-            raise ValueError("FeatureSpec requires exact plain data")
-        return value
+        plain = _plain_model_input(cls, value)
+        _prevalidate_sensitive(cls, plain)
+        return plain
 
     @field_validator("feature_id", "feature_version", "bar_source")
     @classmethod
@@ -197,7 +190,12 @@ class FeatureConfiguration(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureConfiguration:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureConfiguration requires exact plain data")
-        plain = _plain_model_input(cls, obj)
+        return super().model_validate(obj, *args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_plain_data(cls, value: object) -> object:
+        plain = _plain_model_input(cls, value)
         if "features" in plain:
             features = dict.__getitem__(plain, "features")
             if (
@@ -207,19 +205,7 @@ class FeatureConfiguration(ContractModel):
             ):
                 raise ValueError("feature count exceeds SIG-03 bound")
         _prevalidate_sensitive(cls, plain)
-        return super().model_validate(plain, *args, **kwargs)
-
-    @model_validator(mode="before")
-    @classmethod
-    def require_plain_data(cls, value: object) -> object:
-        if type(value) is cls:
-            storage = object.__getattribute__(value, "__dict__")
-            if type(storage) is not dict:
-                raise ValueError("FeatureConfiguration storage must be plain data")
-            return dict(storage)
-        if type(value) is not dict:
-            raise ValueError("FeatureConfiguration requires exact plain data")
-        return value
+        return plain
 
     @field_validator("configuration_id", "configuration_version", "universe_id", "calendar_id")
     @classmethod
@@ -312,7 +298,12 @@ class FeatureObservation(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureObservation:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureObservation requires exact plain data")
-        plain = _plain_model_input(cls, obj)
+        return super().model_validate(obj, *args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_bounded_plain_data(cls, value: object) -> object:
+        plain = _plain_model_input(cls, value)
         required_fields = {
             "lookback_sessions",
             "status",
@@ -350,7 +341,7 @@ class FeatureObservation(ContractModel):
         if len(set(lengths)) != 1 or lengths[0] != expected_length:
             raise _sensitive_validation_error(cls.__name__)
         _prevalidate_sensitive(cls, plain)
-        return super().model_validate(plain, *args, **kwargs)
+        return plain
 
     @field_validator("value", mode="before")
     @classmethod
@@ -529,22 +520,34 @@ class FeatureSet(ContractModel):
     def model_validate(cls, obj: object, *args: Any, **kwargs: Any) -> FeatureSet:
         if type(obj) not in (dict, cls):
             raise ValueError("FeatureSet requires exact plain data")
-        plain = _plain_model_input(cls, obj)
-        if "observations" in plain:
-            observations = dict.__getitem__(plain, "observations")
-            if type(observations) not in (tuple, list) or len(observations) > MAX_FEATURES:
-                raise ValueError("observation count exceeds SIG-03 bound")
+        return super().model_validate(obj, *args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_bounded_plain_data(cls, value: object) -> object:
+        plain = _plain_model_input(cls, value)
+        for field in (
+            "observations",
+            "missing_required_feature_ids",
+            "missing_optional_feature_ids",
+            "reason_codes",
+        ):
+            if field not in plain:
+                continue
+            collection = dict.__getitem__(plain, field)
+            if type(collection) not in (tuple, list) or len(collection) > MAX_FEATURES:
+                raise ValueError("feature set collection exceeds SIG-03 bound")
         _prevalidate_sensitive(cls, plain)
-        return super().model_validate(plain, *args, **kwargs)
+        return plain
 
     @field_validator("observations", mode="before")
     @classmethod
     def validate_observations(cls, value: object) -> tuple[FeatureObservation, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("observations require a plain sequence")
-        observations = tuple(FeatureObservation.model_validate(item) for item in value)
-        if len(observations) > MAX_FEATURES:
+        if len(value) > MAX_FEATURES:
             raise ValueError("observation count exceeds SIG-03 bound")
+        observations = tuple(FeatureObservation.model_validate(item) for item in value)
         return observations
 
     @field_validator("missing_required_feature_ids", "missing_optional_feature_ids", mode="before")
@@ -552,6 +555,8 @@ class FeatureSet(ContractModel):
     def validate_missing_ids(cls, value: object) -> tuple[object, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("missing feature IDs require a plain sequence")
+        if len(value) > MAX_FEATURES:
+            raise ValueError("missing feature IDs exceed SIG-03 bound")
         return tuple(_safe_identifier(item) for item in value)
 
     @field_validator("reason_codes", mode="before")
@@ -559,6 +564,8 @@ class FeatureSet(ContractModel):
     def validate_reason_codes(cls, value: object) -> tuple[object, ...]:
         if type(value) not in (tuple, list):
             raise ValueError("reason codes require a plain sequence")
+        if len(value) > MAX_FEATURES:
+            raise ValueError("reason codes exceed SIG-03 bound")
         return tuple(value)
 
     @model_validator(mode="after")
