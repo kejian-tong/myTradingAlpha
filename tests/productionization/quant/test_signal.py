@@ -386,10 +386,21 @@ def _score(
     feature_set: Any | None = None,
     artifact: Any | None = None,
     run_id: str = "run-sig03-fixture",
+    bundle: EvidenceBundle | None = None,
+    configuration: Any | None = None,
 ) -> Any:
+    sealed_bundle = bundle or _bundle()
+    sealed_configuration = configuration or _configuration(api)
     return api.QuantSignalModel(artifact or _artifact(api)).score(
-        feature_set or _features(api),
+        feature_set
+        or _features(
+            api,
+            bundle=sealed_bundle,
+            configuration=sealed_configuration,
+        ),
         run_id=run_id,
+        bundle=sealed_bundle,
+        configuration=sealed_configuration,
     )
 
 
@@ -908,7 +919,11 @@ def test_score_is_exact_decimal_half_even_bounded_and_requires_run_id() -> None:
     assert signal.score.as_tuple().exponent == -12
     assert -1 <= signal.score <= 1
     with pytest.raises(TypeError):
-        api.QuantSignalModel(_artifact(api)).score(_features(api))
+        api.QuantSignalModel(_artifact(api)).score(
+            _features(api),
+            bundle=_bundle(),
+            configuration=_configuration(api),
+        )
     base_artifact = _artifact(api)
     clipped = api.ModelArtifact.create(
         model_id=base_artifact.model_id,
@@ -934,6 +949,69 @@ def test_score_is_exact_decimal_half_even_bounded_and_requires_run_id() -> None:
     clipped_signal = _score(api, artifact=clipped)
     assert clipped_signal.score == Decimal("1.000000000000")
     assert clipped_signal.decimal_places == 12
+
+
+def test_score_requires_exact_sealed_bundle_and_feature_configuration() -> None:
+    api = _api()
+    bundle = _bundle()
+    configuration = _configuration(api)
+    feature_set = _features(api, bundle=bundle, configuration=configuration)
+    model = api.QuantSignalModel(_artifact(api))
+    signal = model.score(
+        feature_set,
+        run_id="run-explicit-score-provenance",
+        bundle=bundle,
+        configuration=configuration,
+    )
+    assert signal.bundle_hash == bundle.bundle_hash
+    assert signal.feature_config_hash == configuration.content_hash
+
+    with pytest.raises(TypeError):
+        model.score(
+            feature_set,
+            run_id="run-missing-score-bundle",
+            configuration=configuration,
+        )
+    with pytest.raises(TypeError):
+        model.score(
+            feature_set,
+            run_id="run-missing-score-configuration",
+            bundle=bundle,
+        )
+    for wrong_bundle, wrong_configuration in (
+        (object(), configuration),
+        (bundle, object()),
+    ):
+        with pytest.raises(api.QuantInputError):
+            model.score(
+                feature_set,
+                run_id="run-wrong-score-provenance",
+                bundle=wrong_bundle,
+                configuration=wrong_configuration,
+            )
+
+    tampered_bundle = _bundle()
+    object.__setattr__(tampered_bundle, "bundle_id", "bundle-tampered-after-seal")
+    with pytest.raises(api.QuantInputError):
+        model.score(
+            feature_set,
+            run_id="run-tampered-score-bundle",
+            bundle=tampered_bundle,
+            configuration=configuration,
+        )
+    tampered_configuration = _configuration(api)
+    object.__setattr__(
+        tampered_configuration,
+        "configuration_id",
+        "configuration-tampered-after-hash",
+    )
+    with pytest.raises(api.QuantInputError):
+        model.score(
+            feature_set,
+            run_id="run-tampered-score-configuration",
+            bundle=bundle,
+            configuration=tampered_configuration,
+        )
 
 
 def test_float_bool_nonfinite_and_extreme_decimal_inputs_are_rejected() -> None:
@@ -1034,6 +1112,7 @@ def test_required_invalid_optional_degraded_and_missing_ids_are_distinct() -> No
         api,
         feature_set=invalid,
         artifact=_matching_artifact(api, required_config),
+        configuration=required_config,
     )
     assert _status(invalid_signal) == "invalid"
     assert invalid_signal.score is None
@@ -1060,6 +1139,7 @@ def test_required_invalid_optional_degraded_and_missing_ids_are_distinct() -> No
         api,
         feature_set=degraded,
         artifact=_matching_artifact(api, optional_config),
+        configuration=optional_config,
     )
     assert _status(degraded_signal) == "degraded"
     assert degraded_signal.score == Decimal("0.200000000000")
@@ -1135,6 +1215,8 @@ def test_config_and_model_hash_mismatch_is_generic_quant_input_error() -> None:
         api.QuantSignalModel(_artifact(api)).score(
             feature_set.model_copy(update={"feature_config_hash": "sha256:bad"}),
             run_id="run-sig03-fixture",
+            bundle=_bundle(),
+            configuration=config,
         )
     assert feature_set.feature_config_hash == config.content_hash
 
@@ -1189,7 +1271,12 @@ def test_hostile_subclasses_callbacks_custom_containers_and_deep_mutation_fail_c
     artifact_hash = artifact.content_hash
     object.__setattr__(artifact.features[0], "weight", Decimal("999"))
     with pytest.raises(api.QuantInputError):
-        api.QuantSignalModel(artifact).score(feature_set, run_id="run-sig03-fixture")
+        api.QuantSignalModel(artifact).score(
+            feature_set,
+            run_id="run-sig03-fixture",
+            bundle=_bundle(),
+            configuration=_configuration(api),
+        )
     assert artifact.content_hash == artifact_hash
     with pytest.raises((TypeError, ValidationError, AttributeError)):
         feature_set.observations[0].source_bar_ids[0] = "mutated"
@@ -1242,7 +1329,9 @@ def test_network_dns_filesystem_path_subprocess_provider_and_clock_are_not_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api = _api()
-    feature_set = _features(api)
+    bundle = _bundle()
+    configuration = _configuration(api)
+    feature_set = _features(api, bundle=bundle, configuration=configuration)
 
     def deny(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("SIG-03 side effect is forbidden")
@@ -1261,8 +1350,18 @@ def test_network_dns_filesystem_path_subprocess_provider_and_clock_are_not_used(
         for name in ("clock", "now", "utcnow", "provider", "model_provider", "data_provider"):
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, deny)
-    first = api.QuantSignalModel(artifact).score(feature_set, run_id="run-sig03-fixture")
-    second = api.QuantSignalModel(artifact).score(feature_set, run_id="run-sig03-fixture")
+    first = api.QuantSignalModel(artifact).score(
+        feature_set,
+        run_id="run-sig03-fixture",
+        bundle=bundle,
+        configuration=configuration,
+    )
+    second = api.QuantSignalModel(artifact).score(
+        feature_set,
+        run_id="run-sig03-fixture",
+        bundle=bundle,
+        configuration=configuration,
+    )
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
@@ -1379,7 +1478,12 @@ def test_model_feature_schema_hash_binding_has_no_valid_sha_fallback() -> None:
     payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
     tampered = api.FeatureSet.model_validate(payload)
     with pytest.raises(api.QuantInputError):
-        api.QuantSignalModel(artifact).score(tampered, run_id="run-sig03-fixture")
+        api.QuantSignalModel(artifact).score(
+            tampered,
+            run_id="run-sig03-fixture",
+            bundle=_bundle(),
+            configuration=_configuration(api),
+        )
 
 
 def test_intrinsic_signal_status_and_direct_score_invariants_are_fail_closed() -> None:
@@ -1697,6 +1801,8 @@ def test_rehashed_feature_set_rejects_bad_decimal_before_scoring(value: str) -> 
         api.QuantSignalModel(_artifact(api)).score(
             candidate,
             run_id="run-bad-feature-decimal",
+            bundle=_bundle(),
+            configuration=_configuration(api),
         )
 
 
@@ -1873,8 +1979,10 @@ def test_stored_model_artifact_mutation_cannot_change_subsequent_scores(
     mutation: str,
 ) -> None:
     api = _api()
+    bundle = _bundle()
     if mutation == "weight":
-        feature_set = _features(api)
+        configuration = _configuration(api)
+        feature_set = _features(api, bundle=bundle, configuration=configuration)
         artifact = _artifact(api)
         feature_index = 0
         replacement = Decimal("9.000000000000")
@@ -1889,14 +1997,17 @@ def test_stored_model_artifact_mutation_cannot_change_subsequent_scores(
             horizon_sessions=1,
             features=tuple(specs),
         )
-        feature_set = _features(api, configuration=configuration)
+        feature_set = _features(api, bundle=bundle, configuration=configuration)
         artifact = _matching_artifact(api, configuration)
         feature_index = 1
         replacement = Decimal("0.900000000000")
     model = api.QuantSignalModel(artifact)
-    baseline = model.score(feature_set, run_id="run-stored-model-mutation").model_dump(
-        mode="json"
-    )
+    baseline = model.score(
+        feature_set,
+        run_id="run-stored-model-mutation",
+        bundle=bundle,
+        configuration=configuration,
+    ).model_dump(mode="json")
     stored_artifact = object.__getattribute__(model, "_artifact")
     object.__setattr__(
         stored_artifact.features[feature_index],
@@ -1909,6 +2020,8 @@ def test_stored_model_artifact_mutation_cannot_change_subsequent_scores(
             return model.score(
                 feature_set,
                 run_id="run-stored-model-mutation",
+                bundle=bundle,
+                configuration=configuration,
             ).model_dump(mode="json")
         except api.QuantInputError:
             return "typed-rejection"
@@ -2204,6 +2317,8 @@ def test_feature_observation_provenance_cardinality_and_early_cap(
             api.QuantSignalModel(_artifact(api)).score(
                 fabricated,
                 run_id="run-fabricated-provenance",
+                bundle=_bundle(),
+                configuration=_configuration(api),
             )
         except api.QuantInputError:
             pass
@@ -2424,6 +2539,8 @@ def test_round3_rehashed_feature_schema_mismatch_is_typed_before_scoring(
         api.QuantSignalModel(_artifact(api)).score(
             candidate,
             run_id=f"run-schema-mismatch-{mutation}",
+            bundle=_bundle(),
+            configuration=_configuration(api),
         )
 
 
@@ -2451,9 +2568,12 @@ def test_round3_pathological_builtin_identifier_is_capped_before_decode(
 def test_decoded_sensitive_wrappers_reject_all_outward_identifier_paths_without_echo() -> None:
     api = _api()
     decoded_values = (
+        "sk-proj-testsecret",
+        "AKIAIOSFODNN7EXAMPLE",
+        "-----BEGIN PRIVATE KEY-----",
         "api key",
-        "Bearer secret-value",
-        '{"api_key":"value"}',
+        "Bearer secret",
+        '{"secret":"value"}',
     )
     encoded_forms: list[tuple[str, str]] = []
     for index, decoded in enumerate(decoded_values):
@@ -2633,4 +2753,81 @@ def test_scoring_defensively_rejects_rehashed_session_lineage_mutation() -> None
         api.QuantSignalModel(_artifact(api)).score(
             feature_set,
             run_id="run-invalid-source-session-lineage",
+            bundle=_bundle(),
+            configuration=_configuration(api),
+        )
+
+
+def _bundle_with_distinct_optional_revisions() -> EvidenceBundle:
+    required = tuple(
+        item
+        for item in _bars()
+        if item.manifest.source == "synthetic-quant-bars"
+    )
+    optional = tuple(
+        _bar(
+            session_date,
+            close,
+            source="synthetic-optional-bars",
+            revision=revision,
+        )
+        for revision, (session_date, close) in enumerate(
+            (
+                ("2024-03-08", "200.00"),
+                ("2024-03-11", "220.00"),
+                ("2024-07-02", "242.00"),
+            )
+        )
+    )
+    return _bundle(bars=(*required, *optional))
+
+
+def test_score_rejects_rehashed_noncalendar_intermediate_session() -> None:
+    api = _api()
+    bundle = _bundle()
+    configuration = _configuration(api)
+    payload = _features(
+        api,
+        bundle=bundle,
+        configuration=configuration,
+    ).model_dump(mode="json")
+    payload["observations"][1]["source_session_dates"][1] = "2024-03-09"
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    fabricated = api.FeatureSet.model_validate(payload)
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(_artifact(api)).score(
+            fabricated,
+            run_id="run-noncalendar-session-lineage",
+            bundle=bundle,
+            configuration=configuration,
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("source_bar_ids", "source_manifest_ids", "source_revisions"),
+)
+def test_score_rejects_independently_permuted_parallel_provenance(
+    field: str,
+) -> None:
+    api = _api()
+    bundle = _bundle_with_distinct_optional_revisions()
+    configuration = _configuration(api)
+    payload = _features(
+        api,
+        bundle=bundle,
+        configuration=configuration,
+    ).model_dump(mode="json")
+    provenance = payload["observations"][1][field]
+    provenance[0], provenance[1] = provenance[1], provenance[0]
+    payload.pop("feature_hash")
+    payload["feature_hash"] = _canonical_hash(HASH_DOMAINS["feature_set"], payload)
+    fabricated = api.FeatureSet.model_validate(payload)
+    with pytest.raises(api.QuantInputError):
+        api.QuantSignalModel(_artifact(api)).score(
+            fabricated,
+            run_id=f"run-permuted-{field}",
+            bundle=bundle,
+            configuration=configuration,
         )
