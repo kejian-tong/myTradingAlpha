@@ -356,6 +356,7 @@ def _bundle(
     *,
     bars: tuple[DailyBar, ...] | None = None,
     calendar: TradingCalendar | None = None,
+    events: tuple[NewsEvent, ...] | None = None,
     cutoff: str = "2024-07-02T20:04:00Z",
     replay_policy: str = "archive_realistic",
     instruments: tuple[Instrument, ...] | None = None,
@@ -393,7 +394,11 @@ def _bundle(
         ),
         bar_candidates=_bars() if bars is None else bars,
         filing_candidates=_models("financial_vintages", "filings", FinancialFiling),
-        event_candidates=_models("events_social_macro", "events", NewsEvent),
+        event_candidates=(
+            _models("events_social_macro", "events", NewsEvent)
+            if events is None
+            else events
+        ),
         social_post_candidates=(),
         macro_observation_candidates=_models(
             "events_social_macro", "macro_observations", MacroObservation
@@ -5007,3 +5012,207 @@ def test_feature_set_accepts_stable_unique_compute_semantics(entrypoint: str) ->
         assert len(reasons) == len(set(reasons))
         assert reasons == _codes(feature_set)
         assert _status(validated) == _status(feature_set)
+
+
+class _ArmedModelFeatureKey:
+    def __init__(self, target: str, state: dict[str, Any]) -> None:
+        self._target = target
+        self._state = state
+
+    def __hash__(self) -> int:
+        if self._state["armed"]:
+            self._state["calls"] += 1
+            raise AssertionError(self._state["canary"])
+        return hash(self._target)
+
+    def __eq__(self, other: object) -> bool:
+        if self._state["armed"]:
+            self._state["calls"] += 1
+            raise AssertionError(self._state["canary"])
+        return other == self._target
+
+
+@pytest.mark.parametrize("field", ("weight", "missing_value"))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+def test_model_artifact_rejects_hostile_model_feature_storage_before_getitem(
+    field: str,
+    entrypoint: str,
+) -> None:
+    api = _api()
+    artifact = _artifact(api)
+    payload = artifact.model_dump(mode="python")
+    feature = artifact.features[0]
+    storage = object.__getattribute__(feature, "__dict__")
+    value = dict.__getitem__(storage, field)
+    dict.__delitem__(storage, field)
+    state = {
+        "armed": False,
+        "calls": 0,
+        "canary": "HOSTILE-MODEL-FEATURE-KEY",
+    }
+    hostile_key = _ArmedModelFeatureKey(field, state)
+    dict.__setitem__(storage, hostile_key, value)
+    payload["features"] = (feature, *artifact.features[1:])
+    state["armed"] = True
+    with pytest.raises(api.QuantInputError) as exc_info:
+        if entrypoint == "model_validate":
+            api.ModelArtifact.model_validate(payload)
+        else:
+            api.ModelArtifact(**payload)
+    assert state["calls"] == 0
+    assert state["canary"] not in str(exc_info.value)
+
+
+def _maximum_weight_scoring_case(
+    api: SimpleNamespace,
+    *,
+    negative: bool,
+) -> tuple[Any, Any, EvidenceBundle, Any]:
+    prefix = "-" if negative else ""
+    weight = prefix + "9" * 52 + "." + "0" * 12
+    base_spec = _configuration(api).features[0]
+    specs = tuple(
+        api.FeatureSpec.model_validate(
+            {
+                **base_spec.model_dump(mode="json"),
+                "feature_id": f"cap-feature-{index:02d}",
+            }
+        )
+        for index in range(32)
+    )
+    configuration = api.FeatureConfiguration.create(
+        configuration_id=f"decimal-cap-{'negative' if negative else 'positive'}",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id="XNYS.synthetic.v1",
+        horizon_sessions=1,
+        features=specs,
+    )
+    bundle = _bundle()
+    feature_set = _features(
+        api,
+        bundle=bundle,
+        configuration=configuration,
+    )
+    model_features = tuple(
+        api.ModelFeature.model_validate(
+            {
+                **spec.model_dump(mode="json"),
+                "weight": weight,
+            }
+        )
+        for spec in specs
+    )
+    artifact = api.ModelArtifact.create(
+        model_id=f"decimal-cap-model-{'negative' if negative else 'positive'}",
+        model_version="v1",
+        horizon_sessions=1,
+        decimal_places=12,
+        score_min=Decimal("-1"),
+        score_max=Decimal("1"),
+        feature_config_hash=configuration.content_hash,
+        feature_schema_hash=api.features_module.feature_schema_hash(specs),
+        features=model_features,
+        intercept=Decimal("0.000000000000"),
+    )
+    return artifact, feature_set, bundle, configuration
+
+
+@pytest.mark.parametrize(
+    ("negative", "expected"),
+    (
+        (False, Decimal("1.000000000000")),
+        (True, Decimal("-1.000000000000")),
+    ),
+)
+def test_maximum_decimal_weights_clamp_before_fixed_scale_quantization(
+    negative: bool,
+    expected: Decimal,
+) -> None:
+    api = _api()
+    try:
+        artifact, feature_set, bundle, configuration = _maximum_weight_scoring_case(
+            api,
+            negative=negative,
+        )
+        scorer = api.QuantSignalModel(artifact)
+    except (ValidationError, api.QuantInputError, ValueError):
+        return
+
+    def score(_: int) -> Any:
+        return scorer.score(
+            feature_set,
+            run_id="decimal-cap-run",
+            bundle=bundle,
+            configuration=configuration,
+        )
+
+    sequential = tuple(score(index) for index in range(3))
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        concurrent = tuple(executor.map(score, range(16)))
+    results = (*sequential, *concurrent)
+    assert all(item.score == expected for item in results)
+    assert len({item.signal_id for item in results}) == 1
+
+
+def _bundle_with_event_body(body: str) -> EvidenceBundle:
+    events = _models("events_social_macro", "events", NewsEvent)
+    updated = tuple(
+        item.model_copy(update={"body": body}) if index == 0 else item
+        for index, item in enumerate(events)
+    )
+    return _bundle(events=updated)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "A" * 4_096,
+        "é" * 2_048,
+    ),
+)
+def test_bundle_text_exact_utf8_byte_cap_is_accepted(body: str) -> None:
+    api = _api()
+    feature_set = _features(api, bundle=_bundle_with_event_body(body))
+    assert _status(feature_set) == "valid"
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "A" * 4_097,
+        "é" * 2_048 + "A",
+        "\ud800",
+    ),
+)
+def test_bundle_text_overflow_and_invalid_unicode_fail_typed_without_echo(
+    body: str,
+) -> None:
+    api = _api()
+    bundle = _bundle()
+    object.__setattr__(bundle.events[0], "body", body)
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=bundle)
+    rendered = str(exc_info.value)
+    assert "Unicode" not in rendered
+    assert body[:32] not in rendered
+
+
+def test_bundle_text_pathological_nested_body_fails_before_encoding() -> None:
+    api = _api()
+    body = "X" * 8_000_000
+    bundle = _bundle()
+    object.__setattr__(bundle.events[0], "body", body)
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=bundle)
+    assert body[:64] not in str(exc_info.value)
+
+
+def test_bundle_text_character_bound_precedes_utf8_encoding() -> None:
+    api = _api()
+    source = inspect.getsource(api.features_module._safe_bundle_value)
+    character_gate = source.find("len(value)")
+    encoding = source.find('value.encode("utf-8", "strict")')
+    assert character_gate >= 0
+    assert encoding >= 0
+    assert character_gate < encoding
