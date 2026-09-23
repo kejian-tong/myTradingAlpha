@@ -3516,7 +3516,7 @@ def test_pathological_at_cap_model_payload_exhausts_shared_decode_budget(
     )
     with pytest.raises((ValidationError, api.QuantInputError)):
         api.FeatureConfiguration.model_validate(payload)
-    assert 0 < calls["count"] <= 65_537
+    assert 0 < calls["count"] <= 6_001
 
 
 def test_normal_at_cap_short_feature_payload_remains_accepted() -> None:
@@ -3772,3 +3772,74 @@ def test_feature_set_collection_caps_reject_before_sensitive_elements(
         else:
             api.FeatureSet(**payload)
     assert callbacks["count"] == 0
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    (
+        "FeatureSpec",
+        "FeatureConfiguration",
+        "FeatureObservation",
+        "FeatureSet",
+        "ModelFeature",
+        "ModelArtifact",
+        "QuantSignal",
+    ),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "constructor"))
+def test_safe_128_byte_identifier_has_outward_constructor_parity(
+    model_name: str,
+    entrypoint: str,
+) -> None:
+    api = _api()
+    safe_identifier = "Z" * 128
+    if model_name == "FeatureSpec":
+        model = api.FeatureSpec
+        payload = {
+            **_config_payload()["features"][0],
+            "feature_id": safe_identifier,
+        }
+        identity_field = "feature_id"
+    elif model_name == "FeatureConfiguration":
+        model = api.FeatureConfiguration
+        payload = _rehashed_configuration_payload(safe_identifier)
+        identity_field = "configuration_id"
+    elif model_name == "FeatureObservation":
+        model = api.FeatureObservation
+        payload = {
+            **_features(api).observations[0].model_dump(mode="json"),
+            "feature_id": safe_identifier,
+        }
+        identity_field = "feature_id"
+    elif model_name == "FeatureSet":
+        model = api.FeatureSet
+        payload = _features(api).model_dump(mode="json")
+        payload["instrument_id"] = safe_identifier
+        payload.pop("feature_hash")
+        payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], payload
+        )
+        identity_field = "instrument_id"
+    elif model_name == "ModelFeature":
+        model = api.ModelFeature
+        payload = {
+            **_model_payload()["features"][0],
+            "feature_id": safe_identifier,
+        }
+        identity_field = "feature_id"
+    elif model_name == "ModelArtifact":
+        model = api.ModelArtifact
+        payload = _rehashed_model_payload(safe_identifier)
+        identity_field = "model_id"
+    else:
+        model = api.QuantSignal
+        payload = _rekey_signal_payload(
+            {**_score(api).model_dump(mode="json"), "run_id": safe_identifier}
+        )
+        identity_field = "run_id"
+    validated = (
+        model.model_validate(payload)
+        if entrypoint == "model_validate"
+        else model(**payload)
+    )
+    assert getattr(validated, identity_field) == safe_identifier
