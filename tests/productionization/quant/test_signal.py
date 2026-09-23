@@ -109,6 +109,64 @@ def _calendar() -> TradingCalendar:
     )
 
 
+def _gapped_quant_calendar() -> TradingCalendar:
+    """Independent source calendar with a deliberately unverified spring gap."""
+
+    return TradingCalendar.model_validate(
+        {
+            "schema_version": "v1",
+            "calendar_id": "XNYS.synthetic.v1",
+            "timezone": "America/New_York",
+            "coverage_start": "2024-03-08",
+            "coverage_end": "2024-07-02",
+            "coverage_ranges": (
+                {"start": "2024-03-08", "end": "2024-03-11"},
+                {"start": "2024-07-02", "end": "2024-07-02"},
+            ),
+            "closures": (
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "date": "2024-03-09",
+                    "reason": "weekend",
+                },
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "date": "2024-03-10",
+                    "reason": "weekend",
+                },
+            ),
+            "schedule": (
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "session_date": "2024-03-08",
+                    "open_at": "2024-03-08T14:30:00Z",
+                    "close_at": "2024-03-08T21:00:00Z",
+                    "session_type": "regular",
+                },
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "session_date": "2024-03-11",
+                    "open_at": "2024-03-11T13:30:00Z",
+                    "close_at": "2024-03-11T20:00:00Z",
+                    "session_type": "regular",
+                },
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "session_date": "2024-07-02",
+                    "open_at": "2024-07-02T13:30:00Z",
+                    "close_at": "2024-07-02T20:00:00Z",
+                    "session_type": "regular",
+                },
+            ),
+        }
+    )
+
+
 def _indexed(source_name: str, collection: str) -> tuple[dict[str, Any], ...]:
     fixture = _pit_fixture()
     indexes = fixture["candidate_indexes"][collection]
@@ -232,6 +290,7 @@ def _missing_optional() -> tuple[MissingEvidence, ...]:
 def _bundle(
     *,
     bars: tuple[DailyBar, ...] | None = None,
+    calendar: TradingCalendar | None = None,
     cutoff: str = "2024-07-02T20:04:00Z",
     replay_policy: str = "archive_realistic",
     instruments: tuple[Instrument, ...] | None = None,
@@ -246,7 +305,7 @@ def _bundle(
         replay_policy=replay_policy,
         requirements=_requirements(),
         missing_optional=_missing_optional(),
-        calendar=_calendar(),
+        calendar=_calendar() if calendar is None else calendar,
         instrument_candidates=(
             instruments
             if instruments is not None
@@ -4274,3 +4333,283 @@ def test_model_artifact_hash_caps_features_before_sensitive_walk(
     with pytest.raises(api.QuantInputError):
         api.models_module.model_artifact_hash(artifact)
     assert calls["count"] == 0
+
+
+def _context_validation_case(
+    api: SimpleNamespace,
+    model_name: str,
+    identifier: str,
+) -> tuple[type[Any], dict[str, Any], str]:
+    if model_name == "FeatureSpec":
+        return (
+            api.FeatureSpec,
+            {**_config_payload()["features"][0], "feature_id": identifier},
+            "feature_id",
+        )
+    if model_name == "FeatureConfiguration":
+        return (
+            api.FeatureConfiguration,
+            _rehashed_configuration_payload(identifier),
+            "configuration_id",
+        )
+    if model_name == "FeatureObservation":
+        return (
+            api.FeatureObservation,
+            {
+                **_features(api).observations[0].model_dump(mode="json"),
+                "feature_id": identifier,
+            },
+            "feature_id",
+        )
+    if model_name == "FeatureSet":
+        payload = _features(api).model_dump(mode="json")
+        payload["instrument_id"] = identifier
+        payload.pop("feature_hash")
+        payload["feature_hash"] = _canonical_hash(
+            HASH_DOMAINS["feature_set"], payload
+        )
+        return api.FeatureSet, payload, "instrument_id"
+    if model_name == "ModelFeature":
+        return (
+            api.ModelFeature,
+            {**_model_payload()["features"][0], "feature_id": identifier},
+            "feature_id",
+        )
+    if model_name == "ModelArtifact":
+        return api.ModelArtifact, _rehashed_model_payload(identifier), "model_id"
+    payload = _rekey_signal_payload(
+        {**_score(api).model_dump(mode="json"), "run_id": identifier}
+    )
+    return api.QuantSignal, payload, "run_id"
+
+
+_CONTEXT_MODEL_NAMES = (
+    "FeatureSpec",
+    "FeatureConfiguration",
+    "FeatureObservation",
+    "FeatureSet",
+    "ModelFeature",
+    "ModelArtifact",
+    "QuantSignal",
+)
+_CONTEXT_SAFE_IDENTIFIER = "context-safe-identifier"
+_CONTEXT_SECRET_IDENTIFIER = "api_key=round12-secret-value"
+
+
+@pytest.mark.parametrize("model_name", _CONTEXT_MODEL_NAMES)
+@pytest.mark.parametrize("accepted", (True, False))
+def test_model_validate_never_mutates_or_retains_caller_context(
+    model_name: str,
+    accepted: bool,
+) -> None:
+    api = _api()
+    identifier = (
+        _CONTEXT_SAFE_IDENTIFIER if accepted else _CONTEXT_SECRET_IDENTIFIER
+    )
+    model, payload, identity_field = _context_validation_case(
+        api, model_name, identifier
+    )
+    sentinel = object()
+    context = {"user-sentinel": sentinel}
+    if accepted:
+        validated = model.model_validate(payload, context=context)
+        assert getattr(validated, identity_field) == identifier
+    else:
+        with pytest.raises((ValidationError, api.QuantInputError, ValueError)) as exc_info:
+            model.model_validate(payload, context=context)
+        assert identifier not in str(exc_info.value)
+    assert context == {"user-sentinel": sentinel}
+    assert _CONTEXT_SECRET_IDENTIFIER not in repr(context)
+
+
+@pytest.mark.parametrize("model_name", _CONTEXT_MODEL_NAMES)
+@pytest.mark.parametrize(
+    ("budget_state", "identifier", "accepted"),
+    (
+        ("empty-preseeded", _CONTEXT_SAFE_IDENTIFIER, True),
+        ("memo-rejects-safe", _CONTEXT_SAFE_IDENTIFIER, True),
+        ("memo-allows-secret", _CONTEXT_SECRET_IDENTIFIER, False),
+        ("raised-exhausted", _CONTEXT_SAFE_IDENTIFIER, True),
+    ),
+)
+def test_model_validate_ignores_external_private_decode_budget(
+    model_name: str,
+    budget_state: str,
+    identifier: str,
+    accepted: bool,
+) -> None:
+    api = _api()
+    import mytradingalpha.contracts.signals as signal_contracts
+
+    model, payload, identity_field = _context_validation_case(
+        api, model_name, identifier
+    )
+    budget = signal_contracts._DecodeBudget(6_000)
+    if budget_state == "memo-rejects-safe":
+        budget.memo[identifier] = True
+    elif budget_state == "memo-allows-secret":
+        budget.memo[identifier] = False
+    elif budget_state == "raised-exhausted":
+        budget = signal_contracts._DecodeBudget(1)
+        budget.consume()
+        with pytest.raises(ValueError):
+            budget.consume()
+    before = (budget.attempts, budget.limit, dict(budget.memo))
+    sentinel = object()
+    context = {
+        "user-sentinel": sentinel,
+        signal_contracts._VALIDATION_BUDGET_KEY: budget,
+    }
+    if accepted:
+        validated = model.model_validate(payload, context=context)
+        assert getattr(validated, identity_field) == identifier
+    else:
+        with pytest.raises((ValidationError, api.QuantInputError, ValueError)) as exc_info:
+            model.model_validate(payload, context=context)
+        assert identifier not in str(exc_info.value)
+    assert context == {
+        "user-sentinel": sentinel,
+        signal_contracts._VALIDATION_BUDGET_KEY: budget,
+    }
+    assert (budget.attempts, budget.limit, budget.memo) == before
+
+
+@pytest.mark.parametrize("model_name", _CONTEXT_MODEL_NAMES)
+def test_reused_caller_context_behaves_like_fresh_requests(model_name: str) -> None:
+    api = _api()
+    accepted_model, accepted_payload, identity_field = _context_validation_case(
+        api, model_name, _CONTEXT_SAFE_IDENTIFIER
+    )
+    rejected_model, rejected_payload, _ = _context_validation_case(
+        api, model_name, _CONTEXT_SECRET_IDENTIFIER
+    )
+    sentinel = object()
+    context = {"user-sentinel": sentinel}
+    for _ in range(2):
+        validated = accepted_model.model_validate(accepted_payload, context=context)
+        assert getattr(validated, identity_field) == _CONTEXT_SAFE_IDENTIFIER
+        with pytest.raises((ValidationError, api.QuantInputError, ValueError)):
+            rejected_model.model_validate(rejected_payload, context=context)
+    assert context == {"user-sentinel": sentinel}
+
+
+@pytest.mark.parametrize("model_name", _CONTEXT_MODEL_NAMES)
+def test_concurrently_reused_caller_context_has_request_isolation(
+    model_name: str,
+) -> None:
+    api = _api()
+    accepted_model, accepted_payload, identity_field = _context_validation_case(
+        api, model_name, _CONTEXT_SAFE_IDENTIFIER
+    )
+    rejected_model, rejected_payload, _ = _context_validation_case(
+        api, model_name, _CONTEXT_SECRET_IDENTIFIER
+    )
+    sentinel = object()
+    context = {"user-sentinel": sentinel}
+
+    def validate_one(accepted: bool) -> bool:
+        if accepted:
+            try:
+                validated = accepted_model.model_validate(
+                    deepcopy(accepted_payload), context=context
+                )
+            except (ValidationError, api.QuantInputError, ValueError):
+                return False
+            return getattr(validated, identity_field) == _CONTEXT_SAFE_IDENTIFIER
+        try:
+            rejected_model.model_validate(
+                deepcopy(rejected_payload), context=context
+            )
+        except (ValidationError, api.QuantInputError, ValueError):
+            return True
+        return False
+
+    expected = (True, False, True, False, True, False, True, False)
+    with ThreadPoolExecutor(max_workers=len(expected)) as executor:
+        results = tuple(executor.map(validate_one, expected))
+    assert results == (True,) * len(expected)
+    assert context == {"user-sentinel": sentinel}
+    assert _CONTEXT_SECRET_IDENTIFIER not in repr(context)
+
+
+def test_gapped_calendar_never_turns_cross_range_lookback_available() -> None:
+    api = _api()
+    feature_set = _features(
+        api,
+        bundle=_bundle(calendar=_gapped_quant_calendar()),
+    )
+    observations = {item.feature_id: item for item in feature_set.observations}
+    assert _status(feature_set) == "invalid"
+    assert feature_set.missing_required_feature_ids == ("close_return_1d",)
+    assert feature_set.missing_optional_feature_ids == (
+        "close_return_2d_optional",
+    )
+    assert _codes(feature_set) == (
+        "insufficient_lookback",
+        "required_feature_missing",
+    )
+    for observation in observations.values():
+        assert observation.status == "missing"
+        assert observation.reason_code.value == "insufficient_lookback"
+        assert observation.value is None
+        assert observation.source_session_dates == ()
+
+
+@pytest.mark.parametrize(
+    "cutoff",
+    (
+        "2024-04-01T20:04:00Z",
+        "2024-07-03T20:04:00Z",
+    ),
+)
+def test_cutoff_without_verified_calendar_coverage_is_unavailable(
+    cutoff: str,
+) -> None:
+    api = _api()
+    feature_set = _features(
+        api,
+        bundle=_bundle(calendar=_gapped_quant_calendar(), cutoff=cutoff),
+    )
+    assert _status(feature_set) == "invalid"
+    assert feature_set.missing_required_feature_ids == ("close_return_1d",)
+    assert feature_set.missing_optional_feature_ids == (
+        "close_return_2d_optional",
+    )
+    assert _codes(feature_set) == (
+        "calendar_session_unavailable",
+        "required_feature_missing",
+    )
+    assert all(
+        observation.reason_code is not None
+        and observation.reason_code.value == "calendar_session_unavailable"
+        for observation in feature_set.observations
+    )
+
+
+def test_same_range_weekend_closures_preserve_valid_lookback() -> None:
+    api = _api()
+    required_spec = _configuration(api).features[0]
+    configuration = api.FeatureConfiguration.create(
+        configuration_id="same-range-weekend-config",
+        configuration_version="v1",
+        universe_id="us-liquid-v1",
+        calendar_id="XNYS.synthetic.v1",
+        horizon_sessions=1,
+        features=(required_spec,),
+    )
+    feature_set = _features(
+        api,
+        configuration=configuration,
+        bundle=_bundle(
+            calendar=_gapped_quant_calendar(),
+            cutoff="2024-03-11T20:04:00Z",
+        ),
+    )
+    assert _status(feature_set) == "valid"
+    assert feature_set.missing_required_feature_ids == ()
+    assert feature_set.missing_optional_feature_ids == ()
+    assert _codes(feature_set) == ()
+    assert len(feature_set.observations) == 1
+    observation = feature_set.observations[0]
+    assert observation.value == Decimal("0.100000000000")
+    assert observation.source_session_dates == ("2024-03-08", "2024-03-11")
