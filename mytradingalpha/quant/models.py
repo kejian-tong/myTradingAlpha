@@ -45,10 +45,22 @@ from .features import (
 )
 
 HASH_DOMAIN_MODEL_ARTIFACT = "mytradingalpha:sig03:model-artifact:v1\0"
+_LOWER_HEX = frozenset("0123456789abcdef")
 
 
 def _safe_identifier(value: object) -> str:
     return validate_sig03_identifier(value)
+
+
+def _exact_canonical_checksum(value: object) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 71
+        or value[:7] != "sha256:"
+        or any(character not in _LOWER_HEX for character in value[7:])
+    ):
+        raise QuantInputError("model artifact checksum input is invalid")
+    return value
 
 
 def _fixed_decimal_context() -> Context:
@@ -255,6 +267,9 @@ class ModelArtifact(ContractModel):
         if type(obj) not in (dict, cls):
             raise ValueError("ModelArtifact requires exact plain data")
         plain = _plain_model_input(cls, obj)
+        for field in ("feature_config_hash", "feature_schema_hash"):
+            if field in plain:
+                plain[field] = _exact_canonical_checksum(dict.__getitem__(plain, field))
         if (
             "feature_config_hash" in plain
             and dict.__getitem__(plain, "feature_config_hash") == "sha256:" + "0" * 64
@@ -387,6 +402,8 @@ class ModelArtifact(ContractModel):
         normalized_score_min = _decimal(score_min, fixed=False)
         normalized_score_max = _decimal(score_max, fixed=False)
         normalized_intercept = _decimal(intercept, fixed=True)
+        validated_feature_config_hash = _exact_canonical_checksum(feature_config_hash)
+        validated_feature_schema_hash = _exact_canonical_checksum(feature_schema_hash)
         fields: dict[str, object] = {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "model_id": validated_model_id,
@@ -395,8 +412,8 @@ class ModelArtifact(ContractModel):
             "decimal_places": decimal_places,
             "score_min": normalized_score_min,
             "score_max": normalized_score_max,
-            "feature_config_hash": feature_config_hash,
-            "feature_schema_hash": feature_schema_hash,
+            "feature_config_hash": validated_feature_config_hash,
+            "feature_schema_hash": validated_feature_schema_hash,
             "features": tuple(
                 sorted(validated_features, key=lambda item: item.feature_id)
             ),

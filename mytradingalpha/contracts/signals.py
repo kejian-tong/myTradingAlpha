@@ -10,7 +10,6 @@ import unicodedata
 from contextlib import suppress
 from decimal import Decimal
 from enum import Enum
-from functools import lru_cache
 from typing import Literal
 
 from pydantic import (
@@ -35,6 +34,7 @@ from .schemas import ContractModel
 from .versions import CURRENT_SCHEMA_VERSION
 
 _SIGNAL_ID = re.compile(r"quant-signal:[0-9a-f]{64}")
+_CANONICAL_CHECKSUM = re.compile(r"sha256:[0-9a-f]{64}")
 _REASON_ORDER = (
     "instrument_not_in_bundle",
     "instrument_inactive_as_of",
@@ -52,7 +52,7 @@ MAX_FEATURES = 32
 MAX_IDENTIFIER_LENGTH = 128
 MAX_CANONICAL_BYTES = 1_048_576
 MAX_NESTING_DEPTH = 64
-_SENSITIVE_WORDS = (
+_DIRECT_SENSITIVE_WORDS = (
     "api-key",
     "apikey",
     "credential",
@@ -61,6 +61,26 @@ _SENSITIVE_WORDS = (
     "token",
     "private-key",
     "privatekey",
+)
+_DECODED_SENSITIVE_WORDS = (
+    *_DIRECT_SENSITIVE_WORDS,
+    "api-secret",
+    "access-token",
+    "bearer",
+    "authorization",
+    "auth-token",
+    "aws-access-key-id",
+    "aws-secret-access-key",
+    "broker-account-id",
+    "brokeraccountid",
+    "client-secret",
+    "consumer-secret",
+    "account-number",
+    "account-id",
+    "refresh-token",
+    "session-token",
+    "source-locator",
+    "terms",
 )
 _AWS_ACCESS_KEY = re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
@@ -72,12 +92,16 @@ _HEX_RUN = re.compile(r"[0-9A-Fa-f]{10,}")
 _MAX_DECODE_CANDIDATES = 100_000
 
 
-def _compact_text_is_sensitive(value: str) -> bool:
+def _compact_text_is_sensitive(
+    value: str,
+    *,
+    markers: tuple[str, ...] = _DIRECT_SENSITIVE_WORDS,
+) -> bool:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     compact = "".join(character for character in normalized if character.isalnum())
     return any(
         "".join(character for character in marker if character.isalnum()) in compact
-        for marker in _SENSITIVE_WORDS
+        for marker in markers
     )
 
 
@@ -92,10 +116,24 @@ def _artifact_text_is_sensitive(value: str) -> bool:
     return _compact_text_is_sensitive(value)
 
 
+def _decoded_artifact_is_sensitive(value: str) -> bool:
+    redaction_rejected = False
+    try:
+        redaction_rejected = validate_artifact_text(value) != value
+    except (TypeError, ValueError):
+        redaction_rejected = True
+    return redaction_rejected and (
+        _AWS_ACCESS_KEY.search(value) is not None
+        or _compact_text_is_sensitive(value, markers=_DECODED_SENSITIVE_WORDS)
+    )
+
+
 def _decoded_candidate_is_relevant(value: str) -> bool:
     if not value or not value.isprintable():
         return False
-    if _compact_text_is_sensitive(value):
+    if _AWS_ACCESS_KEY.search(value) or _compact_text_is_sensitive(
+        value, markers=_DECODED_SENSITIVE_WORDS
+    ):
         return True
     return bool(
         (len(value) >= 7 and _BASE64.fullmatch(value))
@@ -117,34 +155,39 @@ def _decoded_text_is_candidate(value: str) -> bool:
     return True
 
 
-@lru_cache(maxsize=8192)
 def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     candidates: list[str] = []
 
-    def append_if_relevant(decoded: str) -> None:
-        if not _decoded_text_is_candidate(decoded):
-            return
-        if _artifact_text_is_sensitive(decoded) or _decoded_candidate_is_relevant(decoded):
+    def append_if_relevant(decoded: str) -> bool:
+        if not decoded or not decoded.isprintable():
+            return False
+        if _decoded_artifact_is_sensitive(decoded):
             candidates.append(decoded)
+            return True
+        if not _decoded_text_is_candidate(decoded):
+            return False
+        if _decoded_candidate_is_relevant(decoded):
+            candidates.append(decoded)
+        return False
 
     for match in _PERCENT_RUN.finditer(value):
         encoded = match.group(0)
         with suppress(UnicodeDecodeError, ValueError):
-            append_if_relevant(
-                bytes(
+            decoded = bytes(
                     int(encoded[index + 1 : index + 3], 16)
                     for index in range(0, len(encoded), 3)
                 ).decode("utf-8")
-            )
+            if append_if_relevant(decoded):
+                return tuple(dict.fromkeys(candidates))
     for match in _UNICODE_RUN.finditer(value):
         encoded = match.group(0)
         with suppress(ValueError):
-            append_if_relevant(
-                "".join(
+            decoded = "".join(
                     chr(int(encoded[index + 2 : index + 6], 16))
                     for index in range(0, len(encoded), 6)
                 )
-            )
+            if append_if_relevant(decoded):
+                return tuple(dict.fromkeys(candidates))
     for match in _BASE64_RUN.finditer(value):
         run = match.group(0).rstrip("=")
         for start in range(len(run)):
@@ -154,11 +197,11 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                     continue
                 padded = encoded + "=" * (-len(encoded) % 4)
                 with suppress(UnicodeDecodeError, ValueError):
-                    append_if_relevant(
-                        base64.b64decode(
+                    decoded = base64.b64decode(
                             padded.encode("ascii"), altchars=b"-_", validate=True
                         ).decode("utf-8")
-                    )
+                    if append_if_relevant(decoded):
+                        return tuple(dict.fromkeys(candidates))
     for match in _HEX_RUN.finditer(value):
         run = match.group(0)
         for start in range(len(run)):
@@ -167,17 +210,20 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                 if len(encoded) % 2 != 0 or _HEX.fullmatch(encoded) is None:
                     continue
                 with suppress(UnicodeDecodeError, ValueError):
-                    append_if_relevant(bytes.fromhex(encoded).decode("utf-8"))
+                    decoded = bytes.fromhex(encoded).decode("utf-8")
+                    if append_if_relevant(decoded):
+                        return tuple(dict.fromkeys(candidates))
     return tuple(dict.fromkeys(candidates))
 
 
-@lru_cache(maxsize=8192)
 def _identifier_contains_sensitive_candidate(value: str) -> bool:
     try:
         if validate_artifact_text(value) != value:
             return True
     except (TypeError, ValueError):
         return True
+    if _SIGNAL_ID.fullmatch(value) or _CANONICAL_CHECKSUM.fullmatch(value):
+        return False
     pending = [value]
     seen: set[str] = set()
     while pending:
@@ -509,12 +555,35 @@ class QuantSignal(ContractModel):
                 self.score is None
                 or not self.missing_optional_feature_ids
                 or self.missing_required_feature_ids
-                or not self.reason_codes
-                or QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING not in self.reason_codes
+                or self.reason_codes
+                != (QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING,)
             ):
                 raise ValueError("degraded signals require optional missingness")
-        elif self.score is not None or not self.reason_codes:
-            raise ValueError("invalid signals require a reason and no score")
+        else:
+            if self.score is not None or not self.reason_codes:
+                raise ValueError("invalid signals require a reason and no score")
+            if missing_optional and not missing_required:
+                raise ValueError("optional-only missingness cannot invalidate a signal")
+            global_invalid_reasons = {
+                QuantSignalReasonCode.INSTRUMENT_NOT_IN_BUNDLE,
+                QuantSignalReasonCode.INSTRUMENT_INACTIVE_AS_OF,
+                QuantSignalReasonCode.INSTRUMENT_NOT_IN_UNIVERSE,
+                QuantSignalReasonCode.AMBIGUOUS_UNIVERSE_MEMBERSHIP,
+                QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
+            }
+            feature_invalid_reasons = {
+                QuantSignalReasonCode.BAR_SERIES_AMBIGUOUS,
+                QuantSignalReasonCode.EXACT_SESSION_BAR_MISSING,
+                QuantSignalReasonCode.INSUFFICIENT_LOOKBACK,
+            }
+            if (
+                feature_invalid_reasons.intersection(self.reason_codes)
+                and not missing_required
+                and not global_invalid_reasons.intersection(self.reason_codes)
+            ):
+                raise ValueError(
+                    "feature-level invalid reasons require required missingness"
+                )
         payload = self.model_dump(mode="json")
         payload.pop("signal_id", None)
         encoded = json.dumps(

@@ -37,9 +37,13 @@ head `0f48225c2fc7f3f96197cf0d2082c5826aa9dea6`. Round-five controlling review r
 CHANGES on that head. The Round-five architectural RED is `7dc44cda4f91663690446a0281199470a9e701a1`;
 the architectural GREEN head is `9122f99c20d783691084139891bd8d3b07d5626e`. Round-six controlling
 review returned REQUEST CHANGES on that head. The Round-six final-contract RED is
-`62fb66468c2d73faf731e0860e2842ceaf3e8684`; the final GREEN candidate was produced. The durable lease
-release is recorded in PR evidence before review. Fresh independent review, required CI, and merge are
-pending.
+`62fb66468c2d73faf731e0860e2842ceaf3e8684`; the final-contract GREEN head is
+`6b9673011f5f04c11a39169bfe75ea632ac91d3f`. Round-seven controlling review returned REQUEST CHANGES
+on that head. Round-seven RED evidence is `9db53e8c79cb040f946f9c2a915061db401fd8c0`,
+`10f622a8642ee12082beb946674dc930b6aa95ef`, and `da115b0432ac6790c996dfe547c74b9607b49287`;
+the tests-only safe-label compatibility guard is `3d62828c9587508de83f641e9fcbedc91fac315f`.
+The bounded GREEN candidate was produced. Durable lease release will be recorded in PR evidence before
+fresh review; independent review, required CI, and merge remain pending.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

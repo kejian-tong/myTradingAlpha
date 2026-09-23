@@ -218,6 +218,8 @@ class QuantSignalModel:
             status = QuantSignalStatus.DEGRADED
         else:
             status = QuantSignalStatus.VALID
+        if status is QuantSignalStatus.DEGRADED:
+            reason_codes = (QuantSignalReasonCode.OPTIONAL_FEATURE_MISSING,)
         payload: dict[str, object] = {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "run_id": run_id,
