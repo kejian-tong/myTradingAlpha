@@ -2673,6 +2673,18 @@ def test_decoded_sensitive_wrappers_reject_all_outward_identifier_paths_without_
         assert api.FeatureSpec.model_validate(spec_payload).feature_id == wrapped
         assert api.FeatureSpec(**spec_payload).feature_id == wrapped
         assert _score(api, run_id=wrapped).run_id == wrapped
+    direct_safe_controls = (
+        "terms-market-v1",
+        "authorization-model-v1",
+        "bearer-feature-v1",
+        "account-id-feature-v1",
+        "source-locator-model-v1",
+    )
+    for safe in direct_safe_controls:
+        spec_payload = {**_config_payload()["features"][0], "feature_id": safe}
+        assert api.FeatureSpec.model_validate(spec_payload).feature_id == safe
+        assert api.FeatureSpec(**spec_payload).feature_id == safe
+        assert _score(api, run_id=safe).run_id == safe
     assert violations == []
 
 
