@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import re
+import unicodedata
 from contextlib import suppress
 from decimal import Decimal
 from enum import Enum
@@ -63,12 +64,12 @@ _MAX_DECODE_CANDIDATES = 100_000
 
 
 def _artifact_text_is_sensitive(value: str) -> bool:
-    if any(marker in value.casefold() for marker in _SENSITIVE_WORDS):
-        return True
-    try:
-        return validate_artifact_text(value) != value
-    except (TypeError, ValueError):
-        return True
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    compact = "".join(character for character in normalized if character.isalnum())
+    return any(
+        "".join(character for character in marker if character.isalnum()) in compact
+        for marker in _SENSITIVE_WORDS
+    )
 
 
 @lru_cache(maxsize=8192)
@@ -120,6 +121,11 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
 
 @lru_cache(maxsize=8192)
 def _identifier_contains_sensitive_candidate(value: str) -> bool:
+    try:
+        if validate_artifact_text(value) != value:
+            return True
+    except (TypeError, ValueError):
+        return True
     pending = [value]
     seen: set[str] = set()
     while pending:
@@ -132,6 +138,8 @@ def _identifier_contains_sensitive_candidate(value: str) -> bool:
         if _artifact_text_is_sensitive(candidate):
             return True
         for decoded in _decoded_identifier_candidates(candidate):
+            if _artifact_text_is_sensitive(decoded):
+                return True
             try:
                 encoded = decoded.encode("utf-8", "strict")
             except UnicodeError:

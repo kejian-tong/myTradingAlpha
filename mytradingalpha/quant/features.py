@@ -297,6 +297,7 @@ class FeatureObservation(ContractModel):
     source_bar_ids: tuple[StableId, ...]
     source_manifest_ids: tuple[StableId, ...]
     source_revisions: tuple[StrictInt, ...]
+    source_session_dates: tuple[str, ...]
     model_config = ConfigDict(
         extra="forbid", frozen=True, revalidate_instances="always", hide_input_in_errors=True
     )
@@ -317,6 +318,7 @@ class FeatureObservation(ContractModel):
             "source_bar_ids",
             "source_manifest_ids",
             "source_revisions",
+            "source_session_dates",
         }
         if not required_fields.issubset(plain):
             raise _sensitive_validation_error(cls.__name__)
@@ -330,7 +332,12 @@ class FeatureObservation(ContractModel):
         ):
             raise _sensitive_validation_error(cls.__name__)
         lengths: list[int] = []
-        for field in ("source_bar_ids", "source_manifest_ids", "source_revisions"):
+        for field in (
+            "source_bar_ids",
+            "source_manifest_ids",
+            "source_revisions",
+            "source_session_dates",
+        ):
             collection = dict.__getitem__(plain, field)
             if (
                 type(collection) not in (tuple, list)
@@ -402,30 +409,68 @@ class FeatureObservation(ContractModel):
             raise ValueError("feature revisions require nonnegative exact integers")
         return tuple(value)
 
+    @field_validator("source_session_dates", mode="before")
+    @classmethod
+    def validate_source_session_dates(cls, value: object) -> tuple[str, ...]:
+        if type(value) not in (tuple, list):
+            raise ValueError("feature provenance requires plain sequences")
+        if len(value) > MAX_PROVENANCE_ITEMS:
+            raise ValueError("feature provenance exceeds SIG-03 bound")
+        parsed: list[str] = []
+        for item in value:
+            if type(item) is not str:
+                raise ValueError("source sessions require canonical ISO dates")
+            try:
+                session_date = _Date.fromisoformat(item)
+            except ValueError as exc:
+                raise ValueError("source sessions require canonical ISO dates") from exc
+            if session_date.isoformat() != item:
+                raise ValueError("source sessions require canonical ISO dates")
+            parsed.append(item)
+        return tuple(parsed)
+
     @model_validator(mode="after")
     def validate_provenance(self) -> FeatureObservation:
         if not (
             len(self.source_bar_ids)
             == len(self.source_manifest_ids)
             == len(self.source_revisions)
+            == len(self.source_session_dates)
         ):
             raise ValueError("parallel feature provenance lengths must match")
         if self.status == "available":
             if (
                 self.value is None
                 or self.reason_code is not None
+                or self.anchor_session is None
                 or self.lookback_session is None
                 or self.latest_available_at is None
                 or len(self.source_bar_ids) != self.lookback_sessions + 1
                 or len(self.source_manifest_ids) != self.lookback_sessions + 1
                 or len(self.source_revisions) != self.lookback_sessions + 1
+                or len(self.source_session_dates) != self.lookback_sessions + 1
             ):
                 raise ValueError(
                     "available observations require exact lookback provenance"
                 )
             anchor = _Date.fromisoformat(self.anchor_session)
             lookback = _Date.fromisoformat(self.lookback_session)
-            if not lookback < anchor <= self.as_of.date():
+            source_sessions = tuple(
+                _Date.fromisoformat(item) for item in self.source_session_dates
+            )
+            if (
+                not lookback < anchor
+                or anchor != self.as_of.date()
+                or source_sessions[0] != lookback
+                or source_sessions[-1] != anchor
+                or any(
+                    left >= right
+                    for left, right in zip(
+                        source_sessions, source_sessions[1:], strict=False
+                    )
+                )
+                or len(set(source_sessions)) != len(source_sessions)
+            ):
                 raise ValueError("feature session chronology is invalid")
             if len(set(self.source_bar_ids)) != len(self.source_bar_ids):
                 raise ValueError("source bar identifiers must be unique")
@@ -439,6 +484,7 @@ class FeatureObservation(ContractModel):
             or len(self.source_bar_ids) != 0
             or len(self.source_manifest_ids) != 0
             or len(self.source_revisions) != 0
+            or len(self.source_session_dates) != 0
         ):
             raise ValueError("missing observations require only an explicit reason")
         return self
@@ -1088,8 +1134,10 @@ def _copy_feature_set(value: object) -> FeatureSet:
     observations = fields["observations"]
     if type(observations) is not tuple:
         raise QuantInputError("feature set observations are not canonical")
-    fields["observations"] = tuple(_copy_feature_observation(item) for item in observations)
     try:
+        fields["observations"] = tuple(
+            _copy_feature_observation(item) for item in observations
+        )
         return FeatureSet.model_validate(fields)
     except QuantInputError:
         raise
@@ -1193,6 +1241,7 @@ def _compute_observation(
         source_bar_ids=tuple(item.bar_id for item in selected),
         source_manifest_ids=tuple(item.manifest.manifest_id for item in selected),
         source_revisions=tuple(item.manifest.revision for item in selected),
+        source_session_dates=tuple(item.session_date.isoformat() for item in selected),
     )
 
 
@@ -1219,6 +1268,7 @@ def _missing_observation(
         source_bar_ids=(),
         source_manifest_ids=(),
         source_revisions=(),
+        source_session_dates=(),
     )
 
 
