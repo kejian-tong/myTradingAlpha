@@ -52,18 +52,28 @@ MAX_FEATURES = 32
 MAX_IDENTIFIER_LENGTH = 128
 MAX_CANONICAL_BYTES = 1_048_576
 MAX_NESTING_DEPTH = 64
-_SENSITIVE_WORDS = ("api-key", "apikey", "credential", "password", "secret", "token")
+_SENSITIVE_WORDS = (
+    "api-key",
+    "apikey",
+    "credential",
+    "password",
+    "secret",
+    "token",
+    "akia",
+    "asia",
+    "private-key",
+    "privatekey",
+)
 _BASE64 = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
 _HEX = re.compile(r"[0-9A-Fa-f]+")
 _BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
 _PERCENT_RUN = re.compile(r"(?:%[0-9A-Fa-f]{2}){5,}")
 _UNICODE_RUN = re.compile(r"(?:\\u[0-9A-Fa-f]{4}){5,}")
 _HEX_RUN = re.compile(r"[0-9A-Fa-f]{10,}")
-_DECODED_IDENTIFIER = re.compile(r"[A-Za-z0-9+._:/%\\=\-]+")
 _MAX_DECODE_CANDIDATES = 100_000
 
 
-def _artifact_text_is_sensitive(value: str) -> bool:
+def _compact_text_is_sensitive(value: str) -> bool:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     compact = "".join(character for character in normalized if character.isalnum())
     return any(
@@ -72,13 +82,40 @@ def _artifact_text_is_sensitive(value: str) -> bool:
     )
 
 
+def _artifact_text_is_sensitive(value: str) -> bool:
+    try:
+        if validate_artifact_text(value) != value:
+            return True
+    except (TypeError, ValueError):
+        return True
+    return _compact_text_is_sensitive(value)
+
+
+def _decoded_candidate_is_relevant(value: str) -> bool:
+    if not value or not value.isprintable():
+        return False
+    if _compact_text_is_sensitive(value):
+        return True
+    return bool(
+        (len(value) >= 7 and _BASE64.fullmatch(value))
+        or _PERCENT_RUN.fullmatch(value)
+        or _UNICODE_RUN.fullmatch(value)
+        or _HEX_RUN.fullmatch(value)
+    )
+
+
 @lru_cache(maxsize=8192)
 def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     candidates: list[str] = []
+
+    def append_if_relevant(decoded: str) -> None:
+        if _decoded_candidate_is_relevant(decoded):
+            candidates.append(decoded)
+
     for match in _PERCENT_RUN.finditer(value):
         encoded = match.group(0)
         with suppress(UnicodeDecodeError, ValueError):
-            candidates.append(
+            append_if_relevant(
                 bytes(
                     int(encoded[index + 1 : index + 3], 16)
                     for index in range(0, len(encoded), 3)
@@ -87,7 +124,7 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
     for match in _UNICODE_RUN.finditer(value):
         encoded = match.group(0)
         with suppress(ValueError):
-            candidates.append(
+            append_if_relevant(
                 "".join(
                     chr(int(encoded[index + 2 : index + 6], 16))
                     for index in range(0, len(encoded), 6)
@@ -102,7 +139,7 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                     continue
                 padded = encoded + "=" * (-len(encoded) % 4)
                 with suppress(UnicodeDecodeError, ValueError):
-                    candidates.append(
+                    append_if_relevant(
                         base64.b64decode(
                             padded.encode("ascii"), altchars=b"-_", validate=True
                         ).decode("utf-8")
@@ -115,7 +152,7 @@ def _decoded_identifier_candidates(value: str) -> tuple[str, ...]:
                 if len(encoded) % 2 != 0 or _HEX.fullmatch(encoded) is None:
                     continue
                 with suppress(UnicodeDecodeError, ValueError):
-                    candidates.append(bytes.fromhex(encoded).decode("utf-8"))
+                    append_if_relevant(bytes.fromhex(encoded).decode("utf-8"))
     return tuple(dict.fromkeys(candidates))
 
 
@@ -149,7 +186,6 @@ def _identifier_contains_sensitive_candidate(value: str) -> bool:
                 or len(encoded) > MAX_IDENTIFIER_LENGTH
                 or decoded == candidate
                 or len(decoded) >= len(candidate)
-                or _DECODED_IDENTIFIER.fullmatch(decoded) is None
             ):
                 continue
             pending.append(decoded)

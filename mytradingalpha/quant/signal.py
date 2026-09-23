@@ -21,6 +21,7 @@ from mytradingalpha.contracts.signals import (
     validate_sig03_identifier,
 )
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
+from mytradingalpha.data.bundle import EvidenceBundle
 
 from .features import (
     DECIMAL_PLACES,
@@ -29,6 +30,7 @@ from .features import (
     MAX_HORIZON_SESSIONS,
     MAX_IDENTIFIER_LENGTH,
     MAX_NESTING_DEPTH,
+    FeatureConfiguration,
     FeatureSet,
     QuantInputError,
     _copy_feature_set,
@@ -129,11 +131,32 @@ class QuantSignalModel:
             raise QuantInputError("model artifact requires exact type")
         self._artifact = _copy_model_artifact(model_artifact)
 
-    def score(self, feature_set: FeatureSet, *, run_id: str) -> QuantSignal:
+    def score(
+        self,
+        feature_set: FeatureSet,
+        *,
+        run_id: str,
+        bundle: EvidenceBundle,
+        configuration: FeatureConfiguration,
+    ) -> QuantSignal:
         if type(feature_set) is not FeatureSet:
             raise QuantInputError("feature set requires exact type")
         run_id = _safe_run_id(run_id)
         features = _copy_feature_set(feature_set)
+        try:
+            expected_features = FeatureSet.compute(
+                bundle=bundle,
+                configuration=configuration,
+                instrument_id=features.instrument_id,
+            )
+        except Exception as exc:
+            raise QuantInputError("scoring provenance is invalid") from exc
+        if (
+            features.feature_hash != expected_features.feature_hash
+            or features.model_dump(mode="json")
+            != expected_features.model_dump(mode="json")
+        ):
+            raise QuantInputError("scoring provenance does not match sealed inputs")
         artifact = _copy_model_artifact(self._artifact)
         if artifact.feature_config_hash != features.feature_config_hash:
             raise QuantInputError("model/configuration hash mismatch")
