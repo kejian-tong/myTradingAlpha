@@ -61,9 +61,9 @@ def _row(
 def _route_rows(model: str, *, count: int = 5, effort: str | None = None, **kwargs) -> list[dict]:
     if effort is None:
         effort = {
-            "gpt-5.6-luna": "max",
+            "gpt-6-luna": "max",
             "gpt-5.6-terra": "medium",
-            "gpt-5.6-sol": "high",
+            "gpt-6-sol": "high",
             "gpt-6-astra": "xhigh",
         }[model]
     return [
@@ -104,7 +104,7 @@ def _provenance_row(
 
 def test_valid_enriched_record_preserves_frozen_task_provenance() -> None:
     benchmark = _module()
-    validated = benchmark.validate(_provenance_row("gpt-5.6-luna"))
+    validated = benchmark.validate(_provenance_row("gpt-6-luna"))
     expected = _task_provenance("exploration", "t1")
     assert {field: validated[field] for field in expected} == expected
 
@@ -112,7 +112,7 @@ def test_valid_enriched_record_preserves_frozen_task_provenance() -> None:
 @pytest.mark.parametrize("field", PROVENANCE_FIELDS)
 def test_missing_task_provenance_field_is_rejected(field: str) -> None:
     benchmark = _module()
-    row = _provenance_row("gpt-5.6-luna")
+    row = _provenance_row("gpt-6-luna")
     del row[field]
     with pytest.raises(ValueError, match="provenance"):
         benchmark.validate(row)
@@ -128,7 +128,7 @@ def test_missing_task_provenance_field_is_rejected(field: str) -> None:
 )
 def test_malformed_task_provenance_field_is_rejected(field: str, value: str) -> None:
     benchmark = _module()
-    row = _provenance_row("gpt-5.6-luna")
+    row = _provenance_row("gpt-6-luna")
     row[field] = value
     with pytest.raises(ValueError, match="provenance"):
         benchmark.validate(row)
@@ -136,10 +136,10 @@ def test_malformed_task_provenance_field_is_rejected(field: str, value: str) -> 
 
 def test_same_task_across_routes_requires_identical_provenance() -> None:
     benchmark = _module()
-    left = _provenance_row("gpt-5.6-luna", task_id="frozen-task")
+    left = _provenance_row("gpt-6-luna", task_id="frozen-task")
     mismatched = dict(_task_provenance("exploration", "frozen-task"), repository_tree_sha="d" * 40)
     right = _provenance_row(
-        "gpt-5.6-sol", task_id="frozen-task", effort="high", provenance=mismatched
+        "gpt-6-sol", task_id="frozen-task", effort="high", provenance=mismatched
     )
     with pytest.raises(ValueError, match="provenance"):
         benchmark.analyze([left, right], evaluation_date=EVAL_DATE)
@@ -148,8 +148,8 @@ def test_same_task_across_routes_requires_identical_provenance() -> None:
 def test_analyze_exposes_validated_task_provenance_for_auditable_output() -> None:
     benchmark = _module()
     rows = [
-        _provenance_row("gpt-5.6-luna", task_id="frozen-task"),
-        _provenance_row("gpt-5.6-sol", task_id="frozen-task", effort="high"),
+        _provenance_row("gpt-6-luna", task_id="frozen-task"),
+        _provenance_row("gpt-6-sol", task_id="frozen-task", effort="high"),
     ]
     result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)
     assert result["task_provenance"]["exploration"]["frozen-task"] == _task_provenance(
@@ -161,13 +161,13 @@ def test_analyze_exposes_validated_task_provenance_for_auditable_output() -> Non
 def test_validate_rejects_non_finite_quality_score(quality: float) -> None:
     benchmark = _module()
     with pytest.raises(ValueError, match="quality_score"):
-        benchmark.validate(_row("gpt-5.6-luna", quality=quality))
+        benchmark.validate(_row("gpt-6-luna", quality=quality))
 
 
 @pytest.mark.parametrize("quality", [float("nan"), float("inf"), float("-inf")])
 def test_load_jsonl_rejects_json_non_finite_quality_score(tmp_path: Path, quality: float) -> None:
     benchmark = _module()
-    row = _row("gpt-5.6-luna", quality=quality)
+    row = _row("gpt-6-luna", quality=quality)
     path = tmp_path / "non-finite.jsonl"
     path.write_text(json.dumps(row, allow_nan=True) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="quality_score"):
@@ -177,7 +177,7 @@ def test_load_jsonl_rejects_json_non_finite_quality_score(tmp_path: Path, qualit
 def test_huge_integer_quality_score_raises_value_error() -> None:
     benchmark = _module()
     with pytest.raises(ValueError, match="quality_score"):
-        benchmark.validate(_row("gpt-5.6-luna", quality=2**1024))
+        benchmark.validate(_row("gpt-6-luna", quality=2**1024))
 
 
 _INTEGER_BOUND_FIELDS = (
@@ -193,7 +193,7 @@ _INTEGER_BOUND_FIELDS = (
 @pytest.mark.parametrize("field", _INTEGER_BOUND_FIELDS)
 def test_nonnegative_integer_fields_bound_to_signed_64_bit(field: str) -> None:
     benchmark = _module()
-    row = _row("gpt-5.6-luna")
+    row = _row("gpt-6-luna")
     row[field] = 2**63 - 1
     assert benchmark.validate(row)[field] == 2**63 - 1
     row[field] = 2**63
@@ -203,7 +203,7 @@ def test_nonnegative_integer_fields_bound_to_signed_64_bit(field: str) -> None:
 
 def test_load_jsonl_rejects_oversized_integer_with_line_context(tmp_path: Path) -> None:
     benchmark = _module()
-    row = _row("gpt-5.6-luna")
+    row = _row("gpt-6-luna")
     row["duration_ms"] = 2**63
     path = tmp_path / "oversized-integer.jsonl"
     path.write_text(json.dumps(row) + "\n", encoding="utf-8")
@@ -213,7 +213,7 @@ def test_load_jsonl_rejects_oversized_integer_with_line_context(tmp_path: Path) 
 
 def test_load_jsonl_rejects_duplicate_json_object_keys(tmp_path: Path) -> None:
     benchmark = _module()
-    encoded = json.dumps(_row("gpt-5.6-luna"))
+    encoded = json.dumps(_row("gpt-6-luna"))
     duplicate = encoded.replace(
         '{"task_id": "t1"', '{"task_id": "t1", "task_id": "duplicate"', 1
     )
@@ -224,12 +224,12 @@ def test_load_jsonl_rejects_duplicate_json_object_keys(tmp_path: Path) -> None:
 
 
 _ALLOWED_MODEL_EFFORT_PAIRS = (
-    ("gpt-5.6-luna", "max"),
+    ("gpt-6-luna", "max"),
     ("gpt-5.6-terra", "medium"),
     ("gpt-5.6-terra", "high"),
     ("gpt-5.6-terra", "xhigh"),
-    ("gpt-5.6-sol", "high"),
-    ("gpt-5.6-sol", "xhigh"),
+    ("gpt-6-sol", "high"),
+    ("gpt-6-sol", "xhigh"),
     ("gpt-6-astra", "xhigh"),
 )
 
@@ -242,12 +242,12 @@ def test_benchmark_matrix_accepts_allowed_model_effort_pairs(model: str, effort:
 
 
 _DISALLOWED_MODEL_EFFORT_PAIRS = (
-    ("gpt-5.6-luna", "medium"),
-    ("gpt-5.6-luna", "high"),
-    ("gpt-5.6-luna", "xhigh"),
+    ("gpt-6-luna", "medium"),
+    ("gpt-6-luna", "high"),
+    ("gpt-6-luna", "xhigh"),
     ("gpt-5.6-terra", "max"),
-    ("gpt-5.6-sol", "max"),
-    ("gpt-5.6-sol", "medium"),
+    ("gpt-6-sol", "max"),
+    ("gpt-6-sol", "medium"),
     ("gpt-6-astra", "max"),
     ("gpt-6-astra", "medium"),
     ("gpt-6-astra", "high"),
@@ -257,18 +257,42 @@ _DISALLOWED_MODEL_EFFORT_PAIRS = (
 @pytest.mark.parametrize(("model", "effort"), _DISALLOWED_MODEL_EFFORT_PAIRS)
 def test_benchmark_matrix_rejects_disallowed_model_effort_pairs(model: str, effort: str) -> None:
     benchmark = _module()
-    with pytest.raises(ValueError, match="effort"):
+    with pytest.raises(ValueError, match="model|effort"):
+        benchmark.validate(_row(model, effort=effort))
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    (
+        ("gpt-5.6-luna", "max"),
+        ("gpt-5.6-sol", "high"),
+        ("gpt-5.6-sol", "xhigh"),
+    ),
+)
+def test_benchmark_matrix_rejects_retired_active_model_ids(model: str, effort: str) -> None:
+    benchmark = _module()
+    with pytest.raises(ValueError, match="model"):
+        benchmark.validate(_row(model, effort=effort))
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    (("gpt-6-luna-max", "max"), ("gpt-6-sol-xhigh", "xhigh")),
+)
+def test_benchmark_matrix_rejects_invented_combined_model_ids(model: str, effort: str) -> None:
+    benchmark = _module()
+    with pytest.raises(ValueError, match="model"):
         benchmark.validate(_row(model, effort=effort))
 
 
 def test_current_luna_credit_formula() -> None:
     benchmark = _module()
-    assert benchmark.token_cost(_row("gpt-5.6-luna"), benchmark.CREDIT_RATES) == 0.81
+    assert benchmark.token_cost(_row("gpt-6-luna"), benchmark.CREDIT_RATES) == 0.81
 
 
 def test_astra_credit_formula_is_two_point_five_times_sol_for_same_tokens() -> None:
     benchmark = _module()
-    sol = benchmark.token_cost(_row("gpt-5.6-sol", effort="xhigh"), benchmark.CREDIT_RATES)
+    sol = benchmark.token_cost(_row("gpt-6-sol", effort="xhigh"), benchmark.CREDIT_RATES)
     astra = benchmark.token_cost(_row("gpt-6-astra", effort="xhigh"), benchmark.CREDIT_RATES)
     assert sol == 15.2
     assert astra == 38.0
@@ -277,14 +301,14 @@ def test_astra_credit_formula_is_two_point_five_times_sol_for_same_tokens() -> N
 
 def test_reliability_gate_counts_failed_runs_instead_of_survivorship_filtering() -> None:
     benchmark = _module()
-    luna = _route_rows("gpt-5.6-luna", quality=100, duration=20)
+    luna = _route_rows("gpt-6-luna", quality=100, duration=20)
     luna[0]["acceptance_pass"] = False
     luna[0]["quality_score"] = 0
     luna[0]["duration_ms"] = 500
     terra = _route_rows("gpt-5.6-terra", quality=91, duration=90)
 
     result = benchmark.analyze([*luna, *terra], evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
-    luna_summary = next(route for route in result["routes"] if route["model"] == "gpt-5.6-luna")
+    luna_summary = next(route for route in result["routes"] if route["model"] == "gpt-6-luna")
     assert luna_summary["eligible_runs"] == 4
     assert luna_summary["acceptance_rate"] == 0.8
     assert luna_summary["quality_mean"] == 80
@@ -297,13 +321,13 @@ def test_reliability_gate_counts_failed_runs_instead_of_survivorship_filtering()
 
 def test_safety_failure_and_missed_blocker_are_hard_route_ineligibility() -> None:
     benchmark = _module()
-    luna = _route_rows("gpt-5.6-luna")
+    luna = _route_rows("gpt-6-luna")
     luna[0]["safety_gate_pass"] = False
     luna[1]["missed_blocker_high"] = 1
     terra = _route_rows("gpt-5.6-terra")
 
     result = benchmark.analyze([*luna, *terra], evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
-    summary = next(route for route in result["routes"] if route["model"] == "gpt-5.6-luna")
+    summary = next(route for route in result["routes"] if route["model"] == "gpt-6-luna")
     assert summary["safety_failures"] == 1
     assert summary["missed_blocker_high_total"] == 1
     assert summary["reliability_eligible"] is False
@@ -313,14 +337,14 @@ def test_safety_failure_and_missed_blocker_are_hard_route_ineligibility() -> Non
 
 def test_generalized_pairing_rejects_different_task_sets() -> None:
     benchmark = _module()
-    luna = _route_rows("gpt-5.6-luna")
+    luna = _route_rows("gpt-6-luna")
     terra = _route_rows("gpt-5.6-terra")
     terra[-1]["task_id"] = "different-task"
 
     result = benchmark.analyze([*luna, *terra], evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
     pairing = result["comparison_pairing"]
     assert pairing["pairing_complete"] is False
-    assert pairing["missing_task_ids"]["gpt-5.6-luna|max"] == ["different-task"]
+    assert pairing["missing_task_ids"]["gpt-6-luna|max"] == ["different-task"]
     assert pairing["missing_task_ids"]["gpt-5.6-terra|medium"] == ["t5"]
     assert result["comparison_status"] == "incomplete_pairing"
     assert result["pareto_frontier"] == []
@@ -329,7 +353,7 @@ def test_generalized_pairing_rejects_different_task_sets() -> None:
 def test_minimum_paired_sample_blocks_single_task_comparison() -> None:
     benchmark = _module()
     rows = [
-        _row("gpt-5.6-sol", task_id="hard-1", effort="xhigh"),
+        _row("gpt-6-sol", task_id="hard-1", effort="xhigh"),
         _row("gpt-6-astra", task_id="hard-1", effort="xhigh"),
     ]
     result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
@@ -342,14 +366,14 @@ def test_minimum_paired_sample_blocks_single_task_comparison() -> None:
 def test_pareto_frontier_uses_five_fully_paired_reliable_tasks() -> None:
     benchmark = _module()
     rows = [
-        *_route_rows("gpt-5.6-luna", quality=88, duration=80),
+        *_route_rows("gpt-6-luna", quality=88, duration=80),
         *_route_rows("gpt-5.6-terra", quality=94, duration=90),
-        *_route_rows("gpt-5.6-sol", quality=90, duration=120, retries=1),
+        *_route_rows("gpt-6-sol", quality=90, duration=120, retries=1),
     ]
     result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
     assert result["comparison_status"] == "complete"
     assert {item["model"] for item in result["pareto_frontier"]} == {
-        "gpt-5.6-luna",
+        "gpt-6-luna",
         "gpt-5.6-terra",
     }
     assert result["promotion_evidence_ready"] is False
@@ -358,13 +382,13 @@ def test_pareto_frontier_uses_five_fully_paired_reliable_tasks() -> None:
 def test_astra_and_sol_tradeoff_survives_paired_reliability_gate() -> None:
     benchmark = _module()
     rows = [
-        *_route_rows("gpt-5.6-sol", quality=96, duration=100, effort="xhigh"),
+        *_route_rows("gpt-6-sol", quality=96, duration=100, effort="xhigh"),
         *_route_rows("gpt-6-astra", quality=99, duration=70, effort="xhigh"),
     ]
     result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)
     frontier = result["task_classes"]["exploration"]["pareto_frontier"]
     assert {(item["model"], item["effort"]) for item in frontier} == {
-        ("gpt-5.6-sol", "xhigh"),
+        ("gpt-6-sol", "xhigh"),
         ("gpt-6-astra", "xhigh"),
     }
     pairing = result["astra_canary_pairing"]["exploration"]
@@ -375,7 +399,7 @@ def test_astra_and_sol_tradeoff_survives_paired_reliability_gate() -> None:
 
 def test_missing_token_observation_blocks_cost_frontier_for_all_reliable_routes() -> None:
     benchmark = _module()
-    luna = _route_rows("gpt-5.6-luna")
+    luna = _route_rows("gpt-6-luna")
     luna[0].pop("input_tokens")
     luna[0].pop("cached_input_tokens")
     luna[0].pop("output_tokens")
@@ -384,13 +408,13 @@ def test_missing_token_observation_blocks_cost_frontier_for_all_reliable_routes(
     result = benchmark.analyze([*luna, *terra], evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
     assert result["comparison_status"] == "incomplete_cost_observation"
     assert result["pareto_frontier"] == []
-    luna_summary = next(route for route in result["routes"] if route["model"] == "gpt-5.6-luna")
+    luna_summary = next(route for route in result["routes"] if route["model"] == "gpt-6-luna")
     assert luna_summary["credits_mean"] is None
 
 
 def test_stale_or_unchecked_rate_card_blocks_cost_frontier() -> None:
     benchmark = _module()
-    rows = [*_route_rows("gpt-5.6-luna"), *_route_rows("gpt-5.6-terra")]
+    rows = [*_route_rows("gpt-6-luna"), *_route_rows("gpt-5.6-terra")]
 
     unchecked = benchmark.analyze(rows)["task_classes"]["exploration"]
     assert unchecked["comparison_status"] == "unchecked_rate_card"
@@ -405,13 +429,13 @@ def test_stale_or_unchecked_rate_card_blocks_cost_frontier() -> None:
 
 def test_promotion_evidence_requires_ten_paired_reliable_routes() -> None:
     benchmark = _module()
-    five = [*_route_rows("gpt-5.6-luna"), *_route_rows("gpt-5.6-terra")]
+    five = [*_route_rows("gpt-6-luna"), *_route_rows("gpt-5.6-terra")]
     assert benchmark.analyze(five, evaluation_date=EVAL_DATE)["task_classes"]["exploration"][
         "promotion_evidence_ready"
     ] is False
 
     ten = [
-        *_route_rows("gpt-5.6-luna", count=10),
+        *_route_rows("gpt-6-luna", count=10),
         *_route_rows("gpt-5.6-terra", count=10),
     ]
     result = benchmark.analyze(ten, evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
@@ -421,23 +445,23 @@ def test_promotion_evidence_requires_ten_paired_reliable_routes() -> None:
 
 def test_duplicate_route_task_id_is_rejected() -> None:
     benchmark = _module()
-    duplicate = _row("gpt-5.6-luna")
+    duplicate = _row("gpt-6-luna")
     with pytest.raises(ValueError, match="duplicate task_id"):
         benchmark.analyze([duplicate, dict(duplicate)], evaluation_date=EVAL_DATE)
 
 
 def test_acceptance_floor_is_route_level_not_any_failure_is_absolute() -> None:
     benchmark = _module()
-    luna = _route_rows("gpt-5.6-luna", count=20)
+    luna = _route_rows("gpt-6-luna", count=20)
     luna[0]["acceptance_pass"] = False
     terra = _route_rows("gpt-5.6-terra", count=20)
     result = benchmark.analyze([*luna, *terra], evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
-    summary = next(route for route in result["routes"] if route["model"] == "gpt-5.6-luna")
+    summary = next(route for route in result["routes"] if route["model"] == "gpt-6-luna")
     assert summary["acceptance_rate"] == 0.95
     assert summary["reliability_eligible"] is True
 
 
 def test_missed_blocker_high_is_still_per_run_ineligible() -> None:
     benchmark = _module()
-    row = _row("gpt-5.6-luna", missed=1)
+    row = _row("gpt-6-luna", missed=1)
     assert benchmark.eligible(benchmark.validate(row)) is False

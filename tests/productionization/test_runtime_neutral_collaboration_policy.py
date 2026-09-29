@@ -14,6 +14,7 @@ _POLICY_SURFACES = (
 )
 _GENERATION_LABELS = (
     "GPT-5.6 Sol Multi-Agent V2",
+    "GPT-6 Sol Multi-Agent V2",
     "Codex Multi-Agent V2",
     "Multi-Agent V2",
 )
