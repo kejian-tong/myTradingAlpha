@@ -257,7 +257,7 @@ _DISALLOWED_MODEL_EFFORT_PAIRS = (
 @pytest.mark.parametrize(("model", "effort"), _DISALLOWED_MODEL_EFFORT_PAIRS)
 def test_benchmark_matrix_rejects_disallowed_model_effort_pairs(model: str, effort: str) -> None:
     benchmark = _module()
-    with pytest.raises(ValueError, match="model|effort"):
+    with pytest.raises(ValueError, match="effort"):
         benchmark.validate(_row(model, effort=effort))
 
 
