@@ -15,15 +15,15 @@ import re
 from pathlib import Path
 
 _ROLES = {
-    "normal_implementer": ("gpt-5.6-luna", "max", False),
-    "high_implementer": ("gpt-5.6-sol", "high", False),
-    "critical_implementer": ("gpt-5.6-sol", "xhigh", False),
-    "reviewer_high": ("gpt-5.6-sol", "high", True),
-    "reviewer_xhigh": ("gpt-5.6-sol", "xhigh", True),
-    "code_explorer": ("gpt-5.6-luna", "max", True),
-    "test_auditor": ("gpt-5.6-luna", "max", True),
-    "boundary_reviewer": ("gpt-5.6-sol", "high", True),
-    "external_spec_researcher": ("gpt-5.6-luna", "max", True),
+    "normal_implementer": ("gpt-6-luna", "max", False),
+    "high_implementer": ("gpt-6-sol", "high", False),
+    "critical_implementer": ("gpt-6-sol", "xhigh", False),
+    "reviewer_high": ("gpt-6-sol", "high", True),
+    "reviewer_xhigh": ("gpt-6-sol", "xhigh", True),
+    "code_explorer": ("gpt-6-luna", "max", True),
+    "test_auditor": ("gpt-6-luna", "max", True),
+    "boundary_reviewer": ("gpt-6-sol", "high", True),
+    "external_spec_researcher": ("gpt-6-luna", "max", True),
     "astra_canary": ("gpt-6-astra", "xhigh", True),
 }
 _SCOPED_AGENT_PATHS = (
@@ -355,7 +355,7 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
     for relative in _WRITER_LEASE_STATIC_SURFACES:
         if not (root / relative).is_file():
             errors.append(f"missing writer lease static surface: {relative}")
-    if "`astra_canary`" not in root_text or "GPT-6 production routes remain disabled" not in root_text:
+    if "`astra_canary`" not in root_text or "GPT-6 Astra production routes remain disabled" not in root_text:
         errors.append("root Astra canary policy is missing or activates GPT-6 production routing")
     watchlist = root / _WATCHLIST_PATH
     if not watchlist.is_file():
@@ -372,7 +372,7 @@ def configuration_errors(root: Path) -> list[str]:
     errors = []
     try:
         config = _toml(root / ".codex/config.toml")
-        if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-5.6-sol", "xhigh"):
+        if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-6-sol", "xhigh"):
             errors.append("Master route differs from reviewed policy")
         if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 6}:
             errors.append("agent enablement/concurrency differs from reviewed policy")
