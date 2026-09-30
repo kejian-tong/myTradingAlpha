@@ -12,14 +12,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     BeforeValidator,
+    ConfigDict,
     Field,
     PlainSerializer,
     StrictStr,
+    ValidationError,
     field_validator,
     model_validator,
 )
 
 from mytradingalpha.contracts.common import CanonicalChecksum, StableId, UtcDateTime
+from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 
@@ -75,11 +78,19 @@ ExactDate = Annotated[
 
 
 def _validate_timezone(value: object) -> str:
-    if (
-        type(value) is not str
-        or len(value.encode("utf-8", "strict")) > 128
-        or _TIMEZONE_PATTERN.fullmatch(value) is None
-    ):
+    if type(value) is not str or len(value) > 128:
+        raise ValueError("invalid_timezone: expected an explicit IANA region name")
+    try:
+        encoded_size = len(value.encode("utf-8", "strict"))
+    except UnicodeError:
+        raise ValueError("invalid_timezone: expected an explicit IANA region name") from None
+    if encoded_size > 128:
+        raise ValueError("invalid_timezone: expected an explicit IANA region name")
+    try:
+        validate_artifact_text(value)
+    except (TypeError, ValueError):
+        raise ValueError("invalid_timezone: sensitive text is not permitted") from None
+    if _TIMEZONE_PATTERN.fullmatch(value) is None:
         raise ValueError("invalid_timezone: expected an explicit IANA region name")
     return value
 
@@ -171,8 +182,25 @@ def _replay_evidence_hash(payload: dict[str, object]) -> str:
     return "sha256:" + hashlib.sha256(_REPLAY_HASH_DOMAIN + canonical).hexdigest()
 
 
+def _replay_input_validation_error() -> ValidationError:
+    return ValidationError.from_exception_data(
+        "TradingCalendar",
+        [
+            {
+                "type": "value_error",
+                "loc": ("replay_evidence",),
+                "input": None,
+                "ctx": {"error": ValueError("invalid_replay_evidence: rejected")},
+            }
+        ],
+        hide_input=True,
+    )
+
+
 class CalendarReplayEvidence(ContractModel):
     """Versioned captured local-date classification, independent of replay TZDB."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     schema_version: Literal["v1"]
     calendar_id: StableId
@@ -180,6 +208,21 @@ class CalendarReplayEvidence(ContractModel):
     coverage_ranges: tuple[CalendarCoverageRange, ...]
     days: tuple[CalendarReplayDay, ...]
     content_hash: CanonicalChecksum
+
+    @classmethod
+    def model_validate(cls, obj: object, *args: object, **kwargs: object) -> CalendarReplayEvidence:
+        snapshot = _capture_calendar_plain(obj, seen=set(), nodes=[0])
+        if type(snapshot) is dict and "timezone" in snapshot:
+            _validate_timezone(snapshot["timezone"])
+        return super().model_validate(snapshot, *args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def snapshot_input(cls, value: object) -> object:
+        snapshot = _capture_calendar_plain(value, seen=set(), nodes=[0])
+        if type(snapshot) is dict and "timezone" in snapshot:
+            _validate_timezone(snapshot["timezone"])
+        return snapshot
 
     @field_validator("coverage_ranges", mode="before")
     @classmethod
@@ -238,6 +281,8 @@ class CalendarReplayEvidence(ContractModel):
 class TradingCalendar(ContractModel):
     """An immutable, bounded, injected exchange schedule."""
 
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
     schema_version: Literal[CURRENT_SCHEMA_VERSION]
     calendar_id: StableId
     timezone: IanaTimezone
@@ -249,6 +294,27 @@ class TradingCalendar(ContractModel):
     replay_evidence: CalendarReplayEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+
+    @classmethod
+    def model_validate(cls, obj: object, *args: object, **kwargs: object) -> TradingCalendar:
+        try:
+            witnessed = _has_replay_evidence(obj)
+            snapshot = _capture_calendar_plain(obj, seen=set(), nodes=[0]) if witnessed else obj
+        except (AttributeError, TypeError, ValueError):
+            raise _replay_input_validation_error() from None
+        if witnessed:
+            _check_witness_timezone(snapshot)
+            obj = snapshot
+        return super().model_validate(obj, *args, **kwargs)
+
+    @model_validator(mode="before")
+    @classmethod
+    def snapshot_witnessed_input(cls, value: object) -> object:
+        if _has_replay_evidence(value):
+            snapshot = _capture_calendar_plain(value, seen=set(), nodes=[0])
+            _check_witness_timezone(snapshot)
+            return snapshot
+        return value
 
     @field_validator("coverage_ranges", mode="before")
     @classmethod
@@ -293,10 +359,6 @@ class TradingCalendar(ContractModel):
     def revalidate_replay_evidence(cls, value: object) -> object:
         if value is None:
             return None
-        if type(value) is CalendarReplayEvidence:
-            value = value.model_dump(mode="python")
-        if type(value) is not dict:
-            raise ValueError("invalid_replay_evidence: expected plain evidence")
         return CalendarReplayEvidence.model_validate(value)
 
     @model_validator(mode="after")
@@ -460,22 +522,56 @@ class TradingCalendar(ContractModel):
         return len(sessions) - 1
 
 
+def _has_replay_evidence(value: object) -> bool:
+    value_type = type(value)
+    if value_type is dict:
+        storage = value
+    elif value_type is TradingCalendar:
+        storage = object.__getattribute__(value, "__dict__")
+        if type(storage) is not dict:
+            raise ValueError("invalid_replay_evidence: calendar storage is not plain")
+    elif issubclass(value_type, TradingCalendar):
+        raise ValueError("invalid_replay_evidence: calendar subclass is not accepted")
+    else:
+        return False
+    if dict.__len__(storage) > 64:
+        raise ValueError("invalid_replay_evidence: calendar fields exceed bound")
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys):
+        raise ValueError("invalid_replay_evidence: calendar keys are not plain")
+    return "replay_evidence" in keys and dict.__getitem__(storage, "replay_evidence") is not None
+
+
+def _check_witness_timezone(value: object) -> None:
+    if type(value) is not dict:
+        raise ValueError("invalid_replay_evidence: calendar is not plain")
+    if "timezone" in value:
+        _validate_timezone(value["timezone"])
+    witness = value.get("replay_evidence")
+    if type(witness) is dict and "timezone" in witness:
+        _validate_timezone(witness["timezone"])
+
+
 def _capture_calendar_plain(
     value: object, *, seen: set[int], nodes: list[int], depth: int = 0
 ) -> object:
     nodes[0] += 1
-    if nodes[0] > 20_000 or depth > 16:
+    if nodes[0] > 100_000 or depth > 64:
         raise ValueError("invalid_replay_capture: calendar exceeds bounds")
     value_type = type(value)
     if value_type is str:
-        if len(value) > 4096 or len(value.encode("utf-8", "strict")) > 4096:
+        try:
+            encoded_size = len(value.encode("utf-8", "strict"))
+        except UnicodeError:
+            raise ValueError("invalid_replay_capture: calendar text is invalid") from None
+        if len(value) > 4096 or encoded_size > 4096:
             raise ValueError("invalid_replay_capture: calendar text exceeds bound")
         return value
     if value_type in (date, datetime, SessionType, type(None)):
         if value_type is datetime and value.tzinfo is not timezone.utc:
             raise ValueError("invalid_replay_capture: calendar timestamp is not UTC")
         return value
-    if value_type is tuple:
+    if value_type in (tuple, list):
         if len(value) > MAX_CALENDAR_REPLAY_DAYS:
             raise ValueError("invalid_replay_capture: calendar sequence exceeds bound")
         identity = id(value)
@@ -483,13 +579,43 @@ def _capture_calendar_plain(
             raise ValueError("invalid_replay_capture: calendar contains a cycle")
         seen.add(identity)
         try:
-            return tuple(
+            copied = tuple(
                 _capture_calendar_plain(item, seen=seen, nodes=nodes, depth=depth + 1)
                 for item in value
             )
+            return copied if value_type is tuple else list(copied)
         finally:
             seen.remove(identity)
-    if value_type in (TradingCalendar, CalendarCoverageRange, CalendarClosure, TradingSession):
+    if value_type is dict:
+        if dict.__len__(value) > 64:
+            raise ValueError("invalid_replay_capture: calendar mapping exceeds bound")
+        identity = id(value)
+        if identity in seen:
+            raise ValueError("invalid_replay_capture: calendar contains a cycle")
+        seen.add(identity)
+        try:
+            keys = tuple(dict.keys(value))
+            if any(type(key) is not str for key in keys):
+                raise ValueError("invalid_replay_capture: calendar keys are not plain")
+            return {
+                key: _capture_calendar_plain(
+                    dict.__getitem__(value, key),
+                    seen=seen,
+                    nodes=nodes,
+                    depth=depth + 1,
+                )
+                for key in keys
+            }
+        finally:
+            seen.remove(identity)
+    if value_type in (
+        TradingCalendar,
+        CalendarReplayEvidence,
+        CalendarReplayDay,
+        CalendarCoverageRange,
+        CalendarClosure,
+        TradingSession,
+    ):
         identity = id(value)
         if identity in seen:
             raise ValueError("invalid_replay_capture: calendar contains a cycle")
@@ -497,11 +623,12 @@ def _capture_calendar_plain(
         try:
             storage = object.__getattribute__(value, "__dict__")
             fields = tuple(value_type.model_fields)
+            if type(storage) is not dict or dict.__len__(storage) != len(fields):
+                raise ValueError("invalid_replay_capture: calendar storage is not canonical")
+            keys = tuple(dict.keys(storage))
             if (
-                type(storage) is not dict
-                or dict.__len__(storage) != len(fields)
-                or set(dict.keys(storage)) != set(fields)
-                or any(type(key) is not str for key in dict.keys(storage))
+                any(type(key) is not str for key in keys)
+                or set(keys) != set(fields)
             ):
                 raise ValueError("invalid_replay_capture: calendar storage is not canonical")
             return {
