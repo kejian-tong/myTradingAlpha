@@ -546,7 +546,6 @@ class FeatureObservation(ContractModel):
             )
             if (
                 not lookback < anchor
-                or anchor != self.as_of.date()
                 or source_sessions[0] != lookback
                 or source_sessions[-1] != anchor
                 or any(

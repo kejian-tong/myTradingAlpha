@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
+from contextlib import suppress
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Literal
@@ -29,6 +32,8 @@ from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 _ISO_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _TIMEZONE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z][A-Za-z0-9_+-]*)+")
 _REPLAY_HASH_DOMAIN = b"mytradingalpha:calendar-replay-evidence:v1\0"
+_MAX_TIMEZONE_DECODE_DEPTH = 2
+_MAX_TIMEZONE_DECODE_CANDIDATES = 16
 MAX_CALENDAR_REPLAY_DAYS = 4096
 _MAX_REPLAY_CANONICAL_BYTES = 1_048_576
 
@@ -92,6 +97,43 @@ def _validate_timezone(value: object) -> str:
         raise ValueError("invalid_timezone: sensitive text is not permitted") from None
     if _TIMEZONE_PATTERN.fullmatch(value) is None:
         raise ValueError("invalid_timezone: expected an explicit IANA region name")
+    inspected = 0
+    for segment in value.split("/"):
+        pending: list[tuple[str, int]] = [(segment, 0)]
+        seen: set[str] = set()
+        while pending:
+            candidate, depth = pending.pop()
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            inspected += 1
+            if inspected > _MAX_TIMEZONE_DECODE_CANDIDATES:
+                raise ValueError("invalid_timezone: encoded text exceeds bound")
+            try:
+                validate_artifact_text(candidate)
+            except (TypeError, ValueError):
+                raise ValueError("invalid_timezone: sensitive text is not permitted") from None
+            if depth == _MAX_TIMEZONE_DECODE_DEPTH:
+                continue
+            if len(candidate) >= 16 and re.fullmatch(r"[A-Za-z0-9_-]+", candidate):
+                try:
+                    decoded_bytes = base64.urlsafe_b64decode(
+                        candidate + "=" * (-len(candidate) % 4)
+                    )
+                    if (
+                        base64.urlsafe_b64encode(decoded_bytes).decode("ascii").rstrip("=")
+                        == candidate
+                    ):
+                        pending.append((decoded_bytes.decode("utf-8", "strict"), depth + 1))
+                except (ValueError, UnicodeError, binascii.Error):
+                    pass
+            if candidate[:3].casefold() == "hex":
+                hex_value = candidate[3:]
+                if len(hex_value) >= 16 and len(hex_value) % 2 == 0 and re.fullmatch(
+                    r"[0-9A-Fa-f]+", hex_value
+                ):
+                    with suppress(ValueError, UnicodeError):
+                        pending.append((bytes.fromhex(hex_value).decode("utf-8", "strict"), depth + 1))
     return value
 
 
@@ -128,8 +170,17 @@ class TradingSession(ContractModel):
 class CalendarCoverageRange(ContractModel):
     """One continuously classified inclusive calendar date range."""
 
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, hide_input_in_errors=True, revalidate_instances="always"
+    )
+
     start: ExactDate
     end: ExactDate
+
+    @model_validator(mode="before")
+    @classmethod
+    def snapshot_input(cls, value: object) -> object:
+        return _capture_calendar_plain(value, seen=set(), nodes=[0])
 
     @model_validator(mode="after")
     def validate_range(self) -> CalendarCoverageRange:
@@ -150,9 +201,18 @@ class CalendarClosure(ContractModel):
 class CalendarReplayDay(ContractModel):
     """A captured exchange-local date and its exact half-open UTC interval."""
 
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, hide_input_in_errors=True, revalidate_instances="always"
+    )
+
     local_date: ExactDate
     start_utc: UtcDateTime
     end_utc: UtcDateTime
+
+    @model_validator(mode="before")
+    @classmethod
+    def snapshot_input(cls, value: object) -> object:
+        return _capture_calendar_plain(value, seen=set(), nodes=[0])
 
     @model_validator(mode="after")
     def validate_interval(self) -> CalendarReplayDay:
@@ -200,7 +260,9 @@ def _replay_input_validation_error() -> ValidationError:
 class CalendarReplayEvidence(ContractModel):
     """Versioned captured local-date classification, independent of replay TZDB."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, hide_input_in_errors=True, revalidate_instances="always"
+    )
 
     schema_version: Literal["v1"]
     calendar_id: StableId
@@ -281,7 +343,9 @@ class CalendarReplayEvidence(ContractModel):
 class TradingCalendar(ContractModel):
     """An immutable, bounded, injected exchange schedule."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, hide_input_in_errors=True, revalidate_instances="always"
+    )
 
     schema_version: Literal[CURRENT_SCHEMA_VERSION]
     calendar_id: StableId
