@@ -6,9 +6,9 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `49d5980b640638ed687b6c7771f5f28367072c9a`
-- `last_reconciled_main_tree`: `3b3a70802603d4cd717c62e5c46089319c5ffa0f`
-- `roadmap_status`: `sig_03_green_pending_review`
+- `last_reconciled_main_sha`: `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
+- `last_reconciled_main_tree`: `d406d98f159e9f841e2242c79bcf04d74fcb61d2`
+- `roadmap_status`: `sig_03_blocked_on_temporal_contract`
 - `current_pr_id`: `SIG-03` / PR #87
 - `current_phase`: Phase 02 — Evidence and Agent Boundary
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
@@ -16,9 +16,12 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `autonomy_mode`: enabled only for authorized SIG-03 implementation
 - `active_writer`: none
 - `last_writer_route`: `high_implementer`
-- `merge`: pending independent exact-head review, required CI, and Master gate
+- `sig_03_main_sync`: PR #87 branch merged current main at `16e58141b8ed563dd29bffd7539dc3f6e5a8162e`
+- `merge`: blocked by two open HIGH temporal findings; calendar replay-contract decision, repair,
+  independent exact-head review, required CI, and Master gate remain pending
 
-SIG-03 is the only active roadmap slice. Base is `49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
+SIG-03 is the only active roadmap slice. Its original JIT base was
+`49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
 contract is persisted in PR #87. RED commits are `03c29a17c9517766fbdaaf2636cd5b172c5b359a`,
 `01957a598e46ff264552b764393ea8adba050149`, `367dfd3da3bd289c1d7c87d4a03c5f4011ef3a2c`,
 `161ce9c9659f5129953f28563e1a5e3e712ad8d8`, `b0d18f6dc206b09d109f8b2a2a97bf33b91c403a`,
@@ -82,6 +85,9 @@ PR evidence. Round-sixteen repair started from candidate
 `04d5a6f4a208a4b1f7516e68a4366a9d01a088cb`. The bounded timezone-independent sealed-bundle replay
 GREEN candidate was produced; durable Round-sixteen lease release will be recorded in PR evidence
 before fresh review.
+The open HIGH findings concern full sealed-bundle semantic replay and UTC versus exchange-session date
+boundaries; both require a calendar replay-contract decision before bounded repair. The main synchronization
+does not close either finding or authorize SIG-04.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
@@ -97,10 +103,9 @@ PAPER/live, or promotion behavior was introduced.
 
 ## Current harness policy
 
-- `harness_reconciled_through`: `HARNESS-AUD-21` / PR #86 / merge
-  `49d5980b640638ed687b6c7771f5f28367072c9a`
-- `active_harness_pr`: none; HARNESS-AUD-21 / PR #86 merged as the verified base
-  `49d5980b640638ed687b6c7771f5f28367072c9a`. Its read-only review-assurance policy is active.
+- `harness_reconciled_through`: PR #88 / merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
+- `active_harness_pr`: none; PR #88 updated GPT-6 routing, role configuration, tests, and documentation.
+  PR #86's read-only review-assurance policy remains active.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
 integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane
