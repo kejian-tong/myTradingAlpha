@@ -21,7 +21,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import (
     ROUND_UP,
     Decimal,
@@ -370,7 +370,20 @@ def _bundle(
     instruments: tuple[Instrument, ...] | None = None,
     memberships: tuple[UniverseMembership, ...] | None = None,
     aliases: tuple[SymbolAlias, ...] | None = None,
+    legacy_calendar: bool = False,
 ) -> EvidenceBundle:
+    selected_calendar = _calendar() if calendar is None else calendar
+    if not legacy_calendar:
+        import mytradingalpha.data.calendar as calendar_module
+
+        capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+        if callable(capture) and getattr(selected_calendar, "replay_evidence", None) is None:
+            selected_calendar = TradingCalendar.model_validate(
+                {
+                    **selected_calendar.model_dump(mode="python"),
+                    "replay_evidence": capture(selected_calendar),
+                }
+            )
     return build_evidence_bundle(
         schema_version="v1",
         bundle_id="bundle-sig03-fixture",
@@ -379,7 +392,7 @@ def _bundle(
         replay_policy=replay_policy,
         requirements=_requirements(),
         missing_optional=_missing_optional(),
-        calendar=_calendar() if calendar is None else calendar,
+        calendar=selected_calendar,
         instrument_candidates=(
             instruments
             if instruments is not None
@@ -5383,3 +5396,222 @@ def test_quant_features_has_no_zoneinfo_import_or_use() -> None:
         not isinstance(node, ast.Name) or node.id not in {"ZoneInfo", "ZoneInfoNotFoundError"}
         for node in ast.walk(tree)
     )
+
+
+def _witnessed_quant_bundle(**overrides: Any) -> EvidenceBundle:
+    import mytradingalpha.data.calendar as calendar_module
+
+    capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+    assert callable(capture), "SIG-03 calendar replay capture API is missing"
+    bundle = _bundle(**overrides)
+    assert bundle.calendar.replay_evidence is not None
+    return bundle
+
+
+def _rehashed_bundle_mutation(bundle: EvidenceBundle, **changes: Any) -> EvidenceBundle:
+    import mytradingalpha.data.bundle as bundle_module
+
+    semantic_fields = (
+        "schema_version",
+        "knowledge_cutoff",
+        "replay_policy",
+        "requirements",
+        "missing_optional",
+        "calendar",
+        "instruments",
+        "aliases",
+        "memberships",
+        "actions",
+        "bars",
+        "filings",
+        "events",
+        "social_posts",
+        "macro_observations",
+    )
+    assert set(semantic_fields) == set(EvidenceBundle.model_fields) - {
+        "bundle_id", "bundle_hash", "created_at"
+    }
+    fields = {name: getattr(bundle, name) for name in EvidenceBundle.model_fields}
+    fields.update(changes)
+    fields["bundle_hash"] = bundle_module._semantic_hash(
+        **{name: fields[name] for name in semantic_fields}
+    )
+    return bundle.model_copy(update=fields)
+
+
+def test_quant_requires_replay_witness_but_retains_legacy_v1_bundle_readability() -> None:
+    api = _api()
+    legacy = _bundle(legacy_calendar=True)
+    assert "replay_evidence" not in legacy.calendar.model_dump(mode="json")
+    assert legacy.bundle_hash == "sha256:6e8b06b8bc40c1b7aabf3c3af027a1ce6e6ccd2bc31bf4502a4b73fe1001cec7"
+    assert EvidenceBundle.model_validate(legacy.model_dump(mode="python")).bundle_hash == legacy.bundle_hash
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=legacy)
+    assert "bundle-sig03-fixture" not in str(exc_info.value)
+
+
+def test_witness_maps_utc_midnight_cutoff_to_exchange_local_july_second() -> None:
+    api = _api()
+    bundle = _witnessed_quant_bundle(cutoff="2024-07-03T00:30:00Z")
+    configuration = _configuration(api)
+    features = _features(api, bundle=bundle, configuration=configuration)
+    signal = _score(
+        api,
+        feature_set=features,
+        bundle=bundle,
+        configuration=configuration,
+    )
+    assert features.as_of == datetime(2024, 7, 2, 20, tzinfo=timezone.utc)
+    assert signal.score == Decimal(_fixture()["scenario"]["expected_score"])
+    assert signal.status is api.QuantSignalStatus.VALID
+    assert bundle.calendar.replay_evidence is not None
+    days = bundle.calendar.replay_evidence.days
+    assert sum(
+        day.start_utc <= bundle.knowledge_cutoff < day.end_utc for day in days
+    ) == 1
+    at_next_start = _witnessed_quant_bundle(cutoff="2024-07-03T04:00:00Z")
+    next_days = at_next_start.calendar.replay_evidence.days
+    july_second = next(day for day in next_days if day.local_date == date(2024, 7, 2))
+    july_third = next(day for day in next_days if day.local_date == date(2024, 7, 3))
+    assert july_second.end_utc == at_next_start.knowledge_cutoff == july_third.start_utc
+    assert _features(api, bundle=at_next_start, configuration=configuration).as_of == features.as_of
+    at_coverage_end = _witnessed_quant_bundle(cutoff="2024-07-06T04:00:00Z")
+    unavailable = _features(api, bundle=at_coverage_end, configuration=configuration)
+    assert "calendar_session_unavailable" in _codes(unavailable)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    (
+        "future_ingestion",
+        "future_availability",
+        "duplicate_bar",
+        "preliminary_bar",
+        "wrong_calendar",
+        "wrong_event_time",
+        "missingness",
+        "duplicate_business_key",
+    ),
+)
+def test_rehashed_invalid_bundle_is_rejected_before_quant_scoring(defect: str) -> None:
+    api = _api()
+    import mytradingalpha.data.calendar as calendar_module
+
+    capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+    bundle = _witnessed_quant_bundle() if callable(capture) else _bundle()
+    bars = list(bundle.bars)
+    bar_index = next(
+        index
+        for index, bar in enumerate(bars)
+        if bar.session_date == date(2024, 7, 2)
+        and bar.manifest.source == "synthetic-quant-bars"
+    )
+    bar = bars[bar_index]
+    if defect == "future_ingestion":
+        manifest = bar.manifest.model_copy(
+            update={"ingested_at": datetime(2024, 7, 2, 20, 5, tzinfo=timezone.utc)}
+        )
+        bars[bar_index] = bar.model_copy(update={"manifest": manifest})
+    elif defect == "future_availability":
+        manifest = bar.manifest.model_copy(
+            update={
+                "available_at": datetime(2024, 7, 2, 20, 5, tzinfo=timezone.utc),
+                "fetched_at": datetime(2024, 7, 2, 20, 6, tzinfo=timezone.utc),
+                "ingested_at": datetime(2024, 7, 2, 20, 7, tzinfo=timezone.utc),
+            }
+        )
+        bars[bar_index] = bar.model_copy(update={"manifest": manifest})
+    elif defect == "duplicate_bar":
+        bars.append(bar)
+    elif defect == "preliminary_bar":
+        bars[bar_index] = bar.model_copy(update={"finality": BarFinality.PRELIMINARY})
+    elif defect == "wrong_calendar":
+        bars[bar_index] = bar.model_copy(update={"calendar_id": "OTHER.synthetic.v1"})
+    elif defect == "wrong_event_time":
+        manifest = bar.manifest.model_copy(
+            update={"event_time": bar.manifest.event_time - timedelta(minutes=1)}
+        )
+        bars[bar_index] = bar.model_copy(update={"manifest": manifest})
+    elif defect == "duplicate_business_key":
+        bars.append(bar.model_copy(update={"bar_id": "bar-duplicate-business-key"}))
+    if defect == "missingness":
+        altered = _rehashed_bundle_mutation(
+            bundle,
+            missing_optional=(
+                *bundle.missing_optional,
+                MissingEvidence(
+                    schema_version="v1",
+                    domain=EvidenceDomain.BARS,
+                    reason="fabricated_absence",
+                ),
+            ),
+        )
+    else:
+        altered = _rehashed_bundle_mutation(bundle, bars=tuple(bars))
+    assert altered.bundle_hash != bundle.bundle_hash
+    with pytest.raises(api.QuantInputError) as exc_info:
+        _features(api, bundle=altered)
+    assert "fabricated_absence" not in str(exc_info.value)
+    assert "OTHER.synthetic.v1" not in str(exc_info.value)
+
+
+def test_availability_only_accepts_late_ingestion_with_witness() -> None:
+    api = _api()
+    bars = tuple(
+        _bar("2024-07-02", "121.00", ingestion_offset_minutes=10)
+        if bar.session_date == date(2024, 7, 2)
+        and bar.manifest.source == "synthetic-quant-bars"
+        else bar
+        for bar in _bars()
+    )
+    bundle = _witnessed_quant_bundle(
+        bars=bars,
+        replay_policy="availability",
+    )
+    features = _features(api, bundle=bundle)
+    assert _score(api, feature_set=features, bundle=bundle).score == Decimal(
+        _fixture()["scenario"]["expected_score"]
+    )
+
+
+def test_witness_replay_revalidates_full_bundle_without_timezone_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    import zoneinfo
+
+    import mytradingalpha.data.calendar as calendar_module
+
+    bundle = _witnessed_quant_bundle(cutoff="2024-07-03T00:30:00Z")
+    configuration = _configuration(api)
+    artifact = _artifact(api)
+    expected = _score(api, bundle=bundle, configuration=configuration, artifact=artifact)
+    original_tzpath = tuple(zoneinfo.TZPATH)
+    empty_tzpath = tmp_path / "empty-tzpath-witness"
+    empty_tzpath.mkdir()
+    calls = {"count": 0}
+
+    def deny_zoneinfo(*args: Any, **kwargs: Any) -> Any:
+        calls["count"] += 1
+        raise AssertionError("replay consulted the host timezone database")
+
+    try:
+        zoneinfo.ZoneInfo.clear_cache()
+        zoneinfo.reset_tzpath((str(empty_tzpath),))
+        zoneinfo.ZoneInfo.clear_cache()
+        monkeypatch.setattr(calendar_module, "ZoneInfo", deny_zoneinfo)
+        replayed = EvidenceBundle.model_validate(bundle.model_dump(mode="python"))
+        features = _features(api, bundle=replayed, configuration=configuration)
+        actual = _score(
+            api,
+            feature_set=features,
+            bundle=replayed,
+            configuration=configuration,
+            artifact=artifact,
+        )
+    finally:
+        zoneinfo.reset_tzpath(original_tzpath)
+        zoneinfo.ZoneInfo.clear_cache()
+    assert actual.model_dump(mode="json") == expected.model_dump(mode="json")
+    assert calls["count"] == 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import socket
@@ -145,6 +146,151 @@ def _repository(
     bars: tuple[DailyBar, ...],
 ) -> BarRepository:
     return BarRepository(schema_version="v1", calendar=calendar, bars=bars)
+
+
+def _calendar_with_replay_evidence(calendar: TradingCalendar) -> TradingCalendar:
+    capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+    assert callable(capture), "SIG-03 calendar replay capture API is missing"
+    evidence = capture(calendar)
+    return TradingCalendar.model_validate(
+        {**calendar.model_dump(mode="python"), "replay_evidence": evidence}
+    )
+
+
+def _replay_evidence_hash(payload: dict[str, object]) -> str:
+    canonical = json.dumps(
+        {key: value for key, value in payload.items() if key != "content_hash"},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(
+        b"mytradingalpha:calendar-replay-evidence:v1\0" + canonical
+    ).hexdigest()
+
+
+def test_legacy_v1_calendar_serialization_omits_replay_evidence() -> None:
+    calendar = _calendar()
+    for mode in ("python", "json"):
+        payload = calendar.model_dump(mode=mode)
+        assert "replay_evidence" not in payload
+        assert TradingCalendar.model_validate(payload).model_dump(mode=mode) == payload
+
+
+def test_captured_replay_days_bind_local_dates_to_utc_half_open_intervals() -> None:
+    calendar = _calendar_with_replay_evidence(_calendar())
+    evidence = calendar.replay_evidence
+    assert evidence is not None
+    assert evidence.schema_version == "v1"
+    assert evidence.timezone == calendar.timezone
+    assert evidence.coverage_ranges == calendar.coverage_ranges
+    assert evidence.content_hash.startswith("sha256:")
+    assert len(evidence.content_hash) == 71
+    assert evidence.content_hash == _replay_evidence_hash(
+        evidence.model_dump(mode="json")
+    )
+    days = {day.local_date.isoformat(): day for day in evidence.days}
+    assert tuple(days) == tuple(sorted(days))
+    assert days["2024-03-10"].start_utc == datetime(2024, 3, 10, 5, tzinfo=timezone.utc)
+    assert days["2024-03-10"].end_utc == datetime(2024, 3, 11, 4, tzinfo=timezone.utc)
+    assert days["2024-07-02"].start_utc == datetime(2024, 7, 2, 4, tzinfo=timezone.utc)
+    assert days["2024-07-02"].end_utc == datetime(2024, 7, 3, 4, tzinfo=timezone.utc)
+    assert days["2024-07-03"].start_utc == days["2024-07-02"].end_utc
+    assert days["2024-07-03"].start_utc <= datetime(2024, 7, 3, 4, tzinfo=timezone.utc)
+    assert days["2024-07-02"].start_utc <= datetime(2024, 7, 3, 0, 30, tzinfo=timezone.utc) < days["2024-07-02"].end_utc
+    assert calendar.session("2024-07-03").session_type is SessionType.EARLY_CLOSE
+    assert calendar.session("2024-07-03").close_at < days["2024-07-03"].end_utc
+    assert not any(day.local_date == date(2024, 7, 6) for day in evidence.days)
+
+
+def test_captured_replay_day_includes_fall_dst_25_hour_date() -> None:
+    calendar = TradingCalendar.model_validate(
+        {
+            "schema_version": "v1",
+            "calendar_id": "XNYS.synthetic.v1",
+            "timezone": "America/New_York",
+            "coverage_start": "2024-11-02",
+            "coverage_end": "2024-11-04",
+            "coverage_ranges": ({"start": "2024-11-02", "end": "2024-11-04"},),
+            "closures": (
+                {"schema_version": "v1", "calendar_id": "XNYS.synthetic.v1", "date": "2024-11-02", "reason": "weekend"},
+                {"schema_version": "v1", "calendar_id": "XNYS.synthetic.v1", "date": "2024-11-03", "reason": "weekend"},
+            ),
+            "schedule": (
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "session_date": "2024-11-04",
+                    "open_at": "2024-11-04T14:30:00Z",
+                    "close_at": "2024-11-04T21:00:00Z",
+                    "session_type": "regular",
+                },
+            ),
+        }
+    )
+    days = _calendar_with_replay_evidence(calendar).replay_evidence.days
+    fall_day = next(day for day in days if day.local_date == date(2024, 11, 3))
+    assert fall_day.start_utc == datetime(2024, 11, 3, 4, tzinfo=timezone.utc)
+    assert fall_day.end_utc == datetime(2024, 11, 4, 5, tzinfo=timezone.utc)
+    assert fall_day.end_utc - fall_day.start_utc == timedelta(hours=25)
+
+
+@pytest.mark.parametrize("defect", ("missing", "duplicate", "reversed", "overlap", "hash", "version"))
+def test_replay_evidence_rejects_corrupt_or_noncanonical_day_claim(defect: str) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar())
+    payload = calendar.model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    days = list(evidence["days"])
+    if defect == "missing":
+        days.pop(1)
+    elif defect == "duplicate":
+        days.insert(1, days[0])
+    elif defect == "reversed":
+        days[0], days[1] = days[1], days[0]
+    elif defect == "overlap":
+        days[1] = {**days[1], "start_utc": days[0]["start_utc"]}
+    elif defect == "hash":
+        evidence["content_hash"] = "sha256:" + "0" * 64
+    else:
+        evidence["schema_version"] = "v2"
+    evidence["days"] = days
+    if defect != "hash":
+        evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises(ValidationError):
+        TradingCalendar.model_validate(payload)
+
+
+def test_replay_evidence_day_count_cap_rejects_cap_plus_one() -> None:
+    max_days = getattr(calendar_module, "MAX_CALENDAR_REPLAY_DAYS", None)
+    assert type(max_days) is int and 1 <= max_days <= 4096
+    calendar = _calendar_with_replay_evidence(_calendar())
+    payload = calendar.model_dump(mode="python")
+    evidence = dict(payload["replay_evidence"])
+    evidence["days"] = [evidence["days"][0]] * (max_days + 1)
+    payload["replay_evidence"] = evidence
+    with pytest.raises(ValidationError):
+        TradingCalendar.model_validate(payload)
+
+
+def test_replay_evidence_rejects_hostile_day_without_callback_or_payload_echo() -> None:
+    class HostileDay:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError("HOSTILE-REPLAY-DAY-CANARY")
+
+        def __str__(self) -> str:
+            raise AssertionError("HOSTILE-REPLAY-DAY-CANARY")
+
+    calendar = _calendar_with_replay_evidence(_calendar())
+    payload = calendar.model_dump(mode="python")
+    evidence = dict(payload["replay_evidence"])
+    days = list(evidence["days"])
+    days[0] = HostileDay()
+    evidence["days"] = days
+    payload["replay_evidence"] = evidence
+    with pytest.raises(ValidationError) as exc_info:
+        TradingCalendar.model_validate(payload)
+    assert "HOSTILE-REPLAY-DAY-CANARY" not in str(exc_info.value)
 
 
 def test_calendar_fixture_is_versioned_sorted_and_immutable() -> None:

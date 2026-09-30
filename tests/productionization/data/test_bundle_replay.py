@@ -414,6 +414,28 @@ def test_fixture_build_selects_highest_eligible_revisions_and_missing_optional()
     assert bundle.bundle_hash == _fixture()["expected_bundle_hash"]
 
 
+def test_legacy_bundle_hash_and_calendar_bytes_survive_optional_replay_evidence() -> None:
+    legacy = _build()
+    legacy_calendar = legacy.calendar.model_dump(mode="json")
+    assert "replay_evidence" not in legacy_calendar
+    assert legacy.bundle_hash == _fixture()["expected_bundle_hash"]
+    assert EvidenceBundle.model_validate(legacy.model_dump(mode="python")).bundle_hash == legacy.bundle_hash
+
+    import mytradingalpha.data.calendar as calendar_module
+
+    capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+    assert callable(capture), "SIG-03 calendar replay capture API is missing"
+    witnessed_calendar = TradingCalendar.model_validate(
+        {**legacy.calendar.model_dump(mode="python"), "replay_evidence": capture(legacy.calendar)}
+    )
+    witnessed = _build(calendar=witnessed_calendar)
+    assert witnessed.bundle_hash != legacy.bundle_hash
+    assert witnessed.calendar.replay_evidence is not None
+    assert EvidenceBundle.model_validate(witnessed.model_dump(mode="python")).bundle_hash == witnessed.bundle_hash
+    assert legacy.calendar.model_dump(mode="json") == legacy_calendar
+    assert legacy.bundle_hash == _fixture()["expected_bundle_hash"]
+
+
 def test_canonical_hash_and_order_ignore_only_bundle_identity_and_creation_time() -> None:
     candidates = _candidate_fields()
     first = _build()
