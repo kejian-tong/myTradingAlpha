@@ -8,17 +8,17 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
 - `last_reconciled_main_tree`: `d406d98f159e9f841e2242c79bcf04d74fcb61d2`
-- `roadmap_status`: `sig_03_blocked_on_temporal_contract`
+- `roadmap_status`: `sig_03_calendar_replay_green_pending_review`
 - `current_pr_id`: `SIG-03` / PR #87
 - `current_phase`: Phase 02 — Evidence and Agent Boundary
 - `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
   `376c9c044722ee37f3fa36691b576420e3b6253d`
 - `autonomy_mode`: enabled only for authorized SIG-03 implementation
-- `active_writer`: none
+- `active_writer`: none; SIG-03 writer-lease release is required before review
 - `last_writer_route`: `high_implementer`
 - `sig_03_main_sync`: PR #87 branch merged current main at `16e58141b8ed563dd29bffd7539dc3f6e5a8162e`
-- `merge`: blocked by two open HIGH temporal findings; calendar replay-contract decision, repair,
-  independent exact-head review, required CI, and Master gate remain pending
+- `merge`: blocked pending fresh independent exact-head review, required CI, writer-lease release,
+  and the Master gate for the amended calendar replay contract
 
 SIG-03 is the only active roadmap slice. Its original JIT base was
 `49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
@@ -85,9 +85,11 @@ PR evidence. Round-sixteen repair started from candidate
 `04d5a6f4a208a4b1f7516e68a4366a9d01a088cb`. The bounded timezone-independent sealed-bundle replay
 GREEN candidate was produced; durable Round-sixteen lease release will be recorded in PR evidence
 before fresh review.
-The open HIGH findings concern full sealed-bundle semantic replay and UTC versus exchange-session date
-boundaries; both require a calendar replay-contract decision before bounded repair. The main synchronization
-does not close either finding or authorize SIG-04.
+The two temporal HIGH findings prompted an amended SIG-03 JIT and a tests-only RED commit
+`67bc93eb4c29dcb590a915d8da761b1b8fb2c789`. The bounded GREEN candidate adds sealed
+calendar-day replay evidence, full detached EvidenceBundle semantic revalidation, and exchange-local
+cutoff mapping. Finding closure remains subject to fresh independent review on the committed final head;
+the main synchronization does not authorize SIG-04.
 No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
 action, credential, deployment, or
 promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.

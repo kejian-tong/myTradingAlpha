@@ -670,6 +670,7 @@ def test_quant_signal_wire_status_reason_and_shadow_authority_are_exact() -> Non
     assert signal.run_id == "run-sig03-fixture"
     bundle = _bundle()
     assert signal.bundle_id == bundle.bundle_id
+    assert bundle.calendar.replay_evidence.content_hash == _fixture()["scenario"]["expected_calendar_replay_hash"]
     assert signal.bundle_hash == bundle.bundle_hash == _fixture()["scenario"]["expected_bundle_hash"]
     assert signal.decimal_places == 12
     assert signal.shadow_only is True
@@ -2276,7 +2277,7 @@ def test_no_closed_calendar_session_returns_canonical_invalid_feature_set() -> N
         replay_policy="archive_realistic",
         requirements=requirements,
         missing_optional=missing_optional,
-        calendar=_calendar(),
+        calendar=_witnessed_quant_bundle().calendar,
         instrument_candidates=(
             *_models("universe_actions", "instruments", Instrument),
             *_additional_instruments(),

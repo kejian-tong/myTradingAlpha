@@ -65,6 +65,8 @@ from mytradingalpha.data.calendar import (
     CalendarClosure,
     CalendarCoverageRange,
     CalendarError,
+    CalendarReplayDay,
+    CalendarReplayEvidence,
     SessionType,
     TradingCalendar,
     TradingSession,
@@ -1216,6 +1218,8 @@ _MODEL_FIELDS: dict[type[object], tuple[str, ...]] = {
         TradingCalendar,
         CalendarCoverageRange,
         CalendarClosure,
+        CalendarReplayEvidence,
+        CalendarReplayDay,
         TradingSession,
         Instrument,
         SymbolAlias,
@@ -1382,38 +1386,33 @@ def _validated_bundle(bundle: EvidenceBundle) -> EvidenceBundle:
     if type(bundle) is not EvidenceBundle:
         raise QuantInputError("evidence bundle requires exact sealed type")
     root_fields = _raw_fields(bundle, EvidenceBundle)
-    walk_nodes = [0]
-    _safe_bundle_value(root_fields, seen=set(), depth=0, nodes=walk_nodes)
     bars = root_fields["bars"]
     if type(bars) is not tuple or len(bars) > MAX_BARS:
         raise QuantInputError("bar count exceeds SIG-03 bound")
     try:
-        expected_hash = _bundle_semantic_hash(
-            **{field: root_fields[field] for field in _BUNDLE_SEMANTIC_FIELDS}
-        )
+        snapshot = _safe_bundle_value(root_fields, seen=set(), depth=0, nodes=[0])
     except QuantInputError:
         raise
-    except Exception as exc:
-        raise QuantInputError("sealed evidence bundle hash is invalid") from exc
-    if root_fields["bundle_hash"] != expected_hash:
-        raise QuantInputError("sealed evidence bundle hash changed")
+    except Exception:
+        raise QuantInputError("sealed evidence bundle snapshot is invalid") from None
+    if type(snapshot) is not dict:
+        raise QuantInputError("sealed evidence bundle snapshot is invalid")
+    calendar = snapshot["calendar"]
+    if type(calendar) is not dict or calendar["replay_evidence"] is None:
+        raise QuantInputError("sealed evidence lacks calendar replay evidence")
     try:
-        copied = bundle.model_copy(deep=True)
-    except Exception as exc:
-        raise QuantInputError("sealed evidence bundle copy failed") from exc
-    copied_fields = _raw_fields(copied, EvidenceBundle)
-    _safe_bundle_value(copied_fields, seen=set(), depth=0, nodes=walk_nodes)
-    copied_bars = copied_fields["bars"]
-    if type(copied_bars) is not tuple or len(copied_bars) > MAX_BARS:
-        raise QuantInputError("bar count exceeds SIG-03 bound")
-    try:
+        copied = EvidenceBundle.model_validate(snapshot)
         copied_hash = _bundle_semantic_hash(
-            **{field: copied_fields[field] for field in _BUNDLE_SEMANTIC_FIELDS}
+            **{field: getattr(copied, field) for field in _BUNDLE_SEMANTIC_FIELDS}
         )
-    except Exception as exc:
-        raise QuantInputError("sealed evidence bundle copy hash is invalid") from exc
-    if copied_fields["bundle_hash"] != copied_hash or copied_hash != expected_hash:
-        raise QuantInputError("sealed evidence bundle copy hash changed")
+    except Exception:
+        raise QuantInputError("sealed evidence bundle semantics are invalid") from None
+    if (
+        copied.bundle_hash != copied_hash
+        or copied.bundle_hash != snapshot["bundle_hash"]
+        or copied.bundle_id != snapshot["bundle_id"]
+    ):
+        raise QuantInputError("sealed evidence bundle identity changed")
     return copied
 
 
@@ -1502,7 +1501,21 @@ def _copy_feature_set(value: object) -> FeatureSet:
 
 def _anchor(bundle: EvidenceBundle) -> tuple[Any | None, Any | None, QuantSignalReasonCode | None]:
     calendar = bundle.calendar
-    cutoff_date = bundle.knowledge_cutoff.date()
+    replay_evidence = calendar.replay_evidence
+    if replay_evidence is None:
+        raise QuantInputError("sealed evidence lacks calendar replay evidence")
+    matching_days = tuple(
+        day
+        for day in replay_evidence.days
+        if day.start_utc <= bundle.knowledge_cutoff < day.end_utc
+    )
+    if len(matching_days) != 1:
+        return (
+            bundle.knowledge_cutoff,
+            None,
+            QuantSignalReasonCode.CALENDAR_SESSION_UNAVAILABLE,
+        )
+    cutoff_date = matching_days[0].local_date
     matching_ranges = tuple(
         item
         for item in calendar.coverage_ranges

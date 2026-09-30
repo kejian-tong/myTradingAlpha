@@ -32,6 +32,8 @@ from mytradingalpha.data.bundle import (
 from mytradingalpha.data.calendar import (
     CalendarClosure,
     CalendarCoverageRange,
+    CalendarReplayDay,
+    CalendarReplayEvidence,
     SessionType,
     TradingCalendar,
     TradingSession,
@@ -141,9 +143,19 @@ _MODEL_FIELDS: dict[type[object], tuple[str, ...]] = {
         "coverage_ranges",
         "closures",
         "schedule",
+        "replay_evidence",
     ),
     CalendarCoverageRange: ("start", "end"),
     CalendarClosure: ("schema_version", "calendar_id", "date", "reason"),
+    CalendarReplayEvidence: (
+        "schema_version",
+        "calendar_id",
+        "timezone",
+        "coverage_ranges",
+        "days",
+        "content_hash",
+    ),
+    CalendarReplayDay: ("local_date", "start_utc", "end_utc"),
     TradingSession: (
         "schema_version",
         "calendar_id",
