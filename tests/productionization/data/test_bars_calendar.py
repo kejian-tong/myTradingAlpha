@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import inspect
 import json
 import socket
@@ -169,6 +170,70 @@ def _replay_evidence_hash(payload: dict[str, object]) -> str:
     return "sha256:" + hashlib.sha256(
         b"mytradingalpha:calendar-replay-evidence:v1\0" + canonical
     ).hexdigest()
+
+
+def _unsupported_witnessed_timezone_names() -> tuple[str, ...]:
+    secret = "sk-proj-CALENDAR-CANARY"
+    standard_encoded = base64.b64encode((secret + chr(0x1003E)).encode()).decode()
+    assert "+" in standard_encoded
+    nested = secret
+    for _ in range(3):
+        nested = base64.urlsafe_b64encode(nested.encode()).decode().rstrip("=")
+    return (
+        "America/" + standard_encoded,
+        "America/" + nested,
+        "America/" + base64.b64encode(b"sk-").decode().rstrip("="),
+        "America/" + base64.b32encode(b"sk-").decode().rstrip("="),
+        "America/Not_A_Real_Zone_2026",
+    )
+
+
+def test_witnessed_timezone_catalog_is_frozen_to_reviewed_iana_source() -> None:
+    try:
+        catalog = importlib.import_module("mytradingalpha.data.timezone_catalog")
+    except ModuleNotFoundError:
+        catalog = None
+    assert catalog is not None, "SIG-03 witnessed timezone catalog is missing"
+    version = getattr(catalog, "CATALOG_VERSION", None)
+    names = getattr(catalog, "SUPPORTED_TIMEZONE_NAMES", None)
+    assert version == "2026e"
+    assert type(names) is tuple
+    assert len(names) == 553
+    assert all(type(name) is str for name in names)
+    assert names == tuple(sorted(set(names)))
+    assert hashlib.sha256(("\n".join(names) + "\n").encode("utf-8")).hexdigest() == (
+        "bab362935dbe8fceb73682327aa5a8773917e07406d4cbd0b986808a9fff39d6"
+    )
+    for alias in ("US/Eastern", "Canada/Central", "Etc/UTC", "Etc/GMT+4"):
+        assert alias in names
+    for candidate in _unsupported_witnessed_timezone_names():
+        assert candidate not in names
+
+
+@pytest.mark.parametrize("timezone_name", _unsupported_witnessed_timezone_names())
+@pytest.mark.parametrize("entrypoint", ("python", "json", "type_adapter"))
+def test_rehashed_witness_rejects_unknown_or_encoded_timezone_without_echo(
+    timezone_name: str,
+    entrypoint: str,
+) -> None:
+    decoded = "sk-proj-CALENDAR-CANARY"
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "python":
+            TradingCalendar.model_validate(payload)
+        elif entrypoint == "json":
+            TradingCalendar.model_validate_json(json.dumps(payload, sort_keys=True))
+        else:
+            TypeAdapter(TradingCalendar).validate_python(payload)
+    error = str(exc_info.value)
+    assert timezone_name not in error
+    assert decoded not in error
+    assert "CALENDAR-CANARY" not in error
 
 
 def test_legacy_v1_calendar_serialization_omits_replay_evidence() -> None:

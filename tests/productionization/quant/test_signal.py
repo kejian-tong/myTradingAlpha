@@ -5618,6 +5618,22 @@ def test_witness_replay_revalidates_full_bundle_without_timezone_database(
     assert calls["count"] == 0
 
 
+def _catalog_escape_timezone_names() -> tuple[str, ...]:
+    secret = "sk-proj-CALENDAR-CANARY"
+    standard_encoded = base64.b64encode((secret + chr(0x1003E)).encode()).decode()
+    assert "+" in standard_encoded
+    nested = secret
+    for _ in range(3):
+        nested = base64.urlsafe_b64encode(nested.encode()).decode().rstrip("=")
+    return (
+        "America/" + standard_encoded,
+        "America/" + nested,
+        "America/" + base64.b64encode(b"sk-").decode().rstrip("="),
+        "America/" + base64.b32encode(b"sk-").decode().rstrip("="),
+        "America/Not_A_Real_Zone_2026",
+    )
+
+
 @pytest.mark.parametrize(
     "poisoned_timezone",
     (
@@ -5625,6 +5641,7 @@ def test_witness_replay_revalidates_full_bundle_without_timezone_database(
         "America/c2stcHJvai1DQUxFTkRBUi1DQU5BUlk",
         "America/hex736b2d70726f6a2d43414c454e4441522d43414e415259",
         "America/sk-proj-%43ALENDAR-CANARY",
+        *_catalog_escape_timezone_names(),
     ),
 )
 def test_rehashed_credential_shaped_calendar_witness_never_scores_valid(
