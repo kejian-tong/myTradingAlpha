@@ -84,15 +84,15 @@ record requested/configured actual route and never invent runtime telemetry.
 
 | Role | Model / effort |
 | --- | --- |
-| Master/orchestrator | GPT-5.6 Sol / xhigh |
-| `normal_implementer` | GPT-5.6 Luna / max |
-| `high_implementer` | GPT-5.6 Sol / high |
-| `critical_implementer` | GPT-5.6 Sol / xhigh |
-| `reviewer_high` | GPT-5.6 Sol / high |
-| `reviewer_xhigh` | GPT-5.6 Sol / xhigh |
-| `code_explorer`, `test_auditor` | GPT-5.6 Luna / max |
-| `boundary_reviewer` | GPT-5.6 Sol / high |
-| `external_spec_researcher` | GPT-5.6 Luna / max |
+| Master/orchestrator | GPT-6 Sol / xhigh |
+| `normal_implementer` | GPT-6 Luna / max |
+| `high_implementer` | GPT-6 Sol / high |
+| `critical_implementer` | GPT-6 Sol / xhigh |
+| `reviewer_high` | GPT-6 Sol / high |
+| `reviewer_xhigh` | GPT-6 Sol / xhigh |
+| `code_explorer`, `test_auditor` | GPT-6 Luna / max |
+| `boundary_reviewer` | GPT-6 Sol / high |
+| `external_spec_researcher` | GPT-6 Luna / max |
 | `astra_canary` | GPT-6 Astra / xhigh, shadow-only |
 
 ### Named route matrix
@@ -108,7 +108,7 @@ record requested/configured actual route and never invent runtime telemetry.
 | hardest | `critical_implementer` + `reviewer_xhigh` |
 
 Normal and high share the initial route; critical uses `reviewer_xhigh`; implementation and review
-escalations follow the exact matrix above. GPT-6 production routes remain disabled. The
+escalations follow the exact matrix above. GPT-6 Astra production routes remain disabled. The
 `astra_canary` is shadow-only for closed historical/immutable replay and cannot write, control-review,
 merge, or act as Master. An unavailable or incomparable canary is `insufficient_evidence`, not a route
 substitute. Routing changes apply prospectively after merge, refreshed main, and a fresh session.

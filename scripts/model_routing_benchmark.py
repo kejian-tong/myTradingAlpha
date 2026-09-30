@@ -24,17 +24,17 @@ USD_RATE_SOURCE = "https://help.openai.com/en/articles/20001415-chatgpt-rate-car
 
 # Current ChatGPT Work/Codex token-based credits per 1M tokens.
 CREDIT_RATES = {
-    "gpt-5.6-luna": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
+    "gpt-6-luna": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
     "gpt-5.6-terra": {"input": 50.0, "cached_input": 5.0, "output": 300.0},
-    "gpt-5.6-sol": {"input": 100.0, "cached_input": 10.0, "output": 500.0},
+    "gpt-6-sol": {"input": 100.0, "cached_input": 10.0, "output": 500.0},
     "gpt-6-astra": {"input": 250.0, "cached_input": 25.0, "output": 1250.0},
 }
 
 # Enterprise token-based USD rates per 1M tokens, used only when useful for comparison.
 USD_RATES = {
-    "gpt-5.6-luna": {"input": 0.20, "cached_input": 0.02, "output": 1.20},
+    "gpt-6-luna": {"input": 0.20, "cached_input": 0.02, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00},
-    "gpt-5.6-sol": {"input": 4.00, "cached_input": 0.40, "output": 20.00},
+    "gpt-6-sol": {"input": 4.00, "cached_input": 0.40, "output": 20.00},
     "gpt-6-astra": {"input": 10.00, "cached_input": 1.00, "output": 50.00},
 }
 
@@ -50,9 +50,9 @@ _PROVENANCE_FIELDS = (
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ALLOWED_EFFORTS = {
-    "gpt-5.6-luna": frozenset({"max"}),
+    "gpt-6-luna": frozenset({"max"}),
     "gpt-5.6-terra": frozenset({"medium", "high", "xhigh"}),
-    "gpt-5.6-sol": frozenset({"high", "xhigh"}),
+    "gpt-6-sol": frozenset({"high", "xhigh"}),
     "gpt-6-astra": frozenset({"xhigh"}),
 }
 _REQUIRED = {
@@ -239,7 +239,7 @@ def _astra_pairing(rows: list[dict]) -> dict[str, dict]:
     by_class: dict[str, dict[str, set[str]]] = defaultdict(lambda: {"sol_xhigh": set(), "astra_xhigh": set()})
     for row in rows:
         key = None
-        if (row["model"], row["effort"]) == ("gpt-5.6-sol", "xhigh"):
+        if (row["model"], row["effort"]) == ("gpt-6-sol", "xhigh"):
             key = "sol_xhigh"
         elif (row["model"], row["effort"]) == ("gpt-6-astra", "xhigh"):
             key = "astra_xhigh"

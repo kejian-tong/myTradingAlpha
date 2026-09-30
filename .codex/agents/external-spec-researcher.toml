@@ -1,6 +1,6 @@
 name = "external_spec_researcher"
 description = "Read-only external specification researcher for authoritative mutable API/product documentation needed by myTradingAlpha harness or roadmap analysis."
-model = "gpt-5.6-luna"
+model = "gpt-6-luna"
 model_reasoning_effort = "max"
 sandbox_mode = "read-only"
 approval_policy = "never"

@@ -20,9 +20,9 @@ The Work/Codex rate cards were re-checked on 2026-09-07. The benchmark constants
 
 | Model | Input credits / 1M | Cached input / 1M | Output / 1M | Input $ / 1M | Cached $ / 1M | Output $ / 1M |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| GPT-5.6 Luna | 5 | 0.5 | 30 | 0.20 | 0.02 | 1.20 |
+| GPT-6 Luna | 5 | 0.5 | 30 | 0.20 | 0.02 | 1.20 |
 | GPT-5.6 Terra | 50 | 5 | 300 | 2.00 | 0.20 | 12.00 |
-| GPT-5.6 Sol | 100 | 10 | 500 | 4.00 | 0.40 | 20.00 |
+| GPT-6 Sol | 100 | 10 | 500 | 4.00 | 0.40 | 20.00 |
 | GPT-6 Astra | 250 | 25 | 1,250 | 10.00 | 1.00 | 50.00 |
 
 Official sources:

@@ -28,15 +28,15 @@ SKILL_NAMES = (
 )
 
 ROLE_SPECS = {
-    "normal_implementer": ("gpt-5.6-luna", "max", False),
-    "high_implementer": ("gpt-5.6-sol", "high", False),
-    "critical_implementer": ("gpt-5.6-sol", "xhigh", False),
-    "reviewer_high": ("gpt-5.6-sol", "high", True),
-    "reviewer_xhigh": ("gpt-5.6-sol", "xhigh", True),
-    "code_explorer": ("gpt-5.6-luna", "max", True),
-    "test_auditor": ("gpt-5.6-luna", "max", True),
-    "boundary_reviewer": ("gpt-5.6-sol", "high", True),
-    "external_spec_researcher": ("gpt-5.6-luna", "max", True),
+    "normal_implementer": ("gpt-6-luna", "max", False),
+    "high_implementer": ("gpt-6-sol", "high", False),
+    "critical_implementer": ("gpt-6-sol", "xhigh", False),
+    "reviewer_high": ("gpt-6-sol", "high", True),
+    "reviewer_xhigh": ("gpt-6-sol", "xhigh", True),
+    "code_explorer": ("gpt-6-luna", "max", True),
+    "test_auditor": ("gpt-6-luna", "max", True),
+    "boundary_reviewer": ("gpt-6-sol", "high", True),
+    "external_spec_researcher": ("gpt-6-luna", "max", True),
     "astra_canary": ("gpt-6-astra", "xhigh", True),
 }
 
@@ -155,8 +155,8 @@ def test_root_owns_global_invariants_authority_safety_routing_and_boundaries() -
     assert _contains(text, r"PAPER/live", r"promotion")
     assert _contains(text, r"Master-only delegation")
     assert _contains(text, r"Default named roles", r"Role \| Model / effort")
-    assert _contains(text, r"gpt[- .]?5\.6[- /]luna", r"GPT-5\.6 Luna")
-    assert _contains(text, r"gpt[- .]?5\.6[- /]sol", r"GPT-5\.6 Sol")
+    assert _contains(text, r"gpt[- .]?6[- /]luna", r"GPT-6 Luna")
+    assert _contains(text, r"gpt[- .]?6[- /]sol", r"GPT-6 Sol")
     assert _contains(text, r"gpt[- .]?6[- /]astra", r"GPT-6 Astra")
     assert _contains(text, r"one[- ]writer", r"single[- ]writer", r"merge gate")
     assert _contains(text, r"## 11\. Stop conditions", r"stop conditions")
@@ -200,7 +200,7 @@ def test_hybrid_protocol_owns_one_writer_scheduling_and_review_phases() -> None:
 
 def test_config_keeps_runtime_settings_and_short_policy_references() -> None:
     config = _toml(CONFIG_SURFACE)
-    assert config.get("model") == "gpt-5.6-sol"
+    assert config.get("model") == "gpt-6-sol"
     assert config.get("model_reasoning_effort") == "xhigh"
     assert config.get("agents") == {
         "enabled": True,
@@ -287,7 +287,7 @@ def test_skills_keep_valid_metadata_and_procedural_ownership() -> None:
 
 def test_detailed_model_ids_are_owned_by_root_config_and_roles_only() -> None:
     routing_patterns = (
-        re.compile(r"\bgpt[- ]?5\.6[- ]?(?:luna|sol)\b", re.IGNORECASE),
+        re.compile(r"\bgpt[- ]?6[- ]?(?:luna|sol)\b", re.IGNORECASE),
         re.compile(r"\bgpt[- ]?6[- ]?astra\b", re.IGNORECASE),
     )
     leaking = {
