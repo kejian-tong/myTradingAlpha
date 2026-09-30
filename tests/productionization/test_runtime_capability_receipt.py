@@ -89,7 +89,7 @@ def _receipt(**overrides: object) -> dict[str, object]:
         "config_path": ROLE_CONFIG,
         "runtime_version": "codex-runtime-test",
         "multi_agent_version": "v2",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "reasoning_effort": "high",
         "base_sha": _git("HEAD"),
         "head_sha": _git("HEAD"),
@@ -201,7 +201,7 @@ def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _temporary_repo(tmp_path: Path, *, model: str = "gpt-5.6-sol") -> tuple[Path, str, str]:
+def _temporary_repo(tmp_path: Path, *, model: str = "gpt-6-sol") -> tuple[Path, str, str]:
     repo = tmp_path / "repo"
     config = repo / ROLE_CONFIG
     config.parent.mkdir(parents=True)
@@ -377,7 +377,7 @@ def test_observed_at_must_be_nonnegative() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("model", "gpt-5.6-luna"),
+        ("model", "gpt-6-luna"),
         ("reasoning_effort", "xhigh"),
         ("config_path", ".codex/agents/normal-implementer.toml"),
         ("role", "normal_implementer"),
@@ -480,7 +480,7 @@ def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path:
     repo, head, tree = _temporary_repo(tmp_path)
     (repo / ROLE_CONFIG).write_text(
         (repo / ROLE_CONFIG).read_text(encoding="utf-8").replace(
-            'model = "gpt-5.6-sol"', 'model = "dirty-untrusted-model"'
+            'model = "gpt-6-sol"', 'model = "dirty-untrusted-model"'
         ),
         encoding="utf-8",
     )
@@ -499,7 +499,7 @@ def test_repository_replace_cannot_substitute_trusted_head_tree(tmp_path: Path) 
     role_path = repo / ROLE_CONFIG
     role_path.write_text(
         role_path.read_text(encoding="utf-8").replace(
-            'model = "gpt-5.6-sol"', 'model = "replacement-model"'
+            'model = "gpt-6-sol"', 'model = "replacement-model"'
         )
         + 'mcp_policy = "replacement-intent"\n',
         encoding="utf-8",
@@ -764,7 +764,7 @@ def _external_spec_receipt(**overrides: object) -> dict[str, object]:
     receipt = _receipt(
         role="external_spec_researcher",
         config_path=EXTERNAL_ROLE_CONFIG,
-        model="gpt-5.6-luna",
+        model="gpt-6-luna",
         reasoning_effort="max",
         tool_names=_configured_external_mcp_tool_names(),
     )
@@ -805,7 +805,7 @@ def _temporary_external_repo(
         "\n".join(
             (
                 'name = "external_spec_researcher"',
-                'model = "gpt-5.6-luna"',
+                'model = "gpt-6-luna"',
                 'model_reasoning_effort = "max"',
                 'sandbox_mode = "read-only"',
                 "[agents]",
@@ -929,13 +929,13 @@ def test_every_non_external_role_rejects_mcp_tools(role: str) -> None:
     [
         (
             "reviewer_high",
-            "gpt-5.6-sol",
+            "gpt-6-sol",
             "high",
             ".codex/agents/reviewer-high.toml",
         ),
         (
             "code_explorer",
-            "gpt-5.6-luna",
+            "gpt-6-luna",
             "max",
             ".codex/agents/code-explorer.toml",
         ),

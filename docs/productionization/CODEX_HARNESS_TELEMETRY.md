@@ -124,7 +124,7 @@ recorder rejects arbitrary fields to keep the durable schema narrow.
 
 ```bash
 python scripts/harness_telemetry.py record --json \
-  '{"event":"agent_stop","role":"code_explorer","active_agents":1,"duration_ms":12500,"model":"gpt-5.6-luna"}'
+  '{"event":"agent_stop","role":"code_explorer","active_agents":1,"duration_ms":12500,"model":"gpt-6-luna"}'
 python scripts/harness_telemetry.py summary
 ```
 

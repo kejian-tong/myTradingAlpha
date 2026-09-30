@@ -36,7 +36,8 @@ def test_astra_canary_is_read_only_shadow_and_not_a_production_route() -> None:
     assert role["agents"] == {"enabled": False}
     assert "mcp_servers" not in role
     root_policy = (ROOT / "AGENTS.md").read_text()
-    assert "GPT-6 production routes remain disabled" in root_policy
+    assert "GPT-6 Astra production routes remain disabled" in root_policy
+    assert "GPT-6 production routes remain disabled" not in root_policy
     assert "shadow-only" in root_policy
 
 

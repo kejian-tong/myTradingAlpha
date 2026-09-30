@@ -33,7 +33,7 @@ def _common(repo: Path) -> dict[str, str]:
     return {
         "session_id": "session-secret-like-but-not-durable",
         "cwd": str(repo),
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-luna",
         "transcript_path": "/do/not/store/transcript.jsonl",
     }
 
@@ -113,7 +113,7 @@ def test_runpy_loading_matches_windows_command_shape(tmp_path: Path) -> None:
         "hook_event_name": "SubagentStart",
         "cwd": str(repo),
         "agent_type": "test_auditor",
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-luna",
     }
     code = f"import runpy; runpy.run_path({str(HOOK)!r}, run_name='__main__')"
     result = subprocess.run(
@@ -135,7 +135,7 @@ def test_telemetry_hook_is_best_effort_and_fail_open(tmp_path: Path) -> None:
         "session_id": "not-a-repo-session",
         "agent_id": "agent",
         "agent_type": "code_explorer",
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-luna",
     }
     result = _run(event)
     assert result.returncode == 0
