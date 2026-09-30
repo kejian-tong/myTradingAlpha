@@ -45,14 +45,14 @@ def test_operational_state_tracks_current_main_and_sig03_blockers() -> None:
     state = _state_text()
     assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
     assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
-    assert "`roadmap_status`: `sig_03_blocked_on_temporal_contract`" in state
+    assert "`roadmap_status`: `sig_03_calendar_replay_green_pending_review`" in state
     assert "`current_pr_id`: `SIG-03` / PR #87" in state
     assert "`current_phase`: Phase 02 — Evidence and Agent Boundary" in state
     assert "`last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge" in state
     assert "`autonomy_mode`: enabled only for authorized SIG-03 implementation" in state
-    assert "`merge`: blocked by two open HIGH temporal findings" in state
-    assert "full sealed-bundle semantic replay" in state
-    assert "UTC versus exchange-session date" in state
+    assert "`merge`: blocked pending fresh independent exact-head review" in state
+    assert "full detached EvidenceBundle semantic revalidation" in state
+    assert "exchange-local\ncutoff mapping" in state
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
     assert "`active_harness_pr`: none" in state
