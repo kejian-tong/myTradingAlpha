@@ -12,7 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 import mytradingalpha.data.bars as bars_module
 import mytradingalpha.data.calendar as calendar_module
@@ -381,6 +381,164 @@ def test_witnessed_calendar_rejects_sensitive_timezone_without_echo(
         TradingCalendar.model_validate(payload)
     assert timezone_name not in str(exc_info.value)
     assert "CALENDAR-CANARY" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field", ("local_date", "end_utc"))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_direct_replay_day_rejects_mutated_exact_instance_without_callbacks(
+    field: str,
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("date_eq")
+            raise AssertionError("DIRECT-REPLAY-DATE-CALLBACK")
+
+    class ArmedDateTime(datetime):
+        def __sub__(self, other: object) -> timedelta:
+            calls.append("datetime_sub")
+            raise AssertionError("DIRECT-REPLAY-TIME-CALLBACK")
+
+    day = _calendar_with_replay_evidence(_calendar()).replay_evidence.days[0].model_copy()
+    if field == "local_date":
+        object.__setattr__(day, field, ArmedDate(2024, 3, 8))
+    else:
+        end = day.end_utc
+        object.__setattr__(
+            day,
+            field,
+            ArmedDateTime(end.year, end.month, end.day, end.hour, tzinfo=timezone.utc),
+        )
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            calendar_module.CalendarReplayDay.model_validate(day)
+        else:
+            TypeAdapter(calendar_module.CalendarReplayDay).validate_python(day)
+    assert calls == []
+    assert "DIRECT-REPLAY-" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("entrypoint", ("constructor", "model_validate", "type_adapter"))
+def test_replay_day_rejects_raw_datetime_subclass_before_utcoffset_callback(
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+
+    class ArmedDateTime(datetime):
+        def utcoffset(self) -> timedelta:
+            calls.append("utcoffset")
+            raise AssertionError("RAW-REPLAY-UTC-OFFSET-CALLBACK")
+
+    payload = _calendar_with_replay_evidence(_calendar()).replay_evidence.days[0].model_dump(
+        mode="python"
+    )
+    payload["start_utc"] = ArmedDateTime(2024, 3, 8, 5, tzinfo=timezone.utc)
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "constructor":
+            calendar_module.CalendarReplayDay(**payload)
+        elif entrypoint == "model_validate":
+            calendar_module.CalendarReplayDay.model_validate(payload)
+        else:
+            TypeAdapter(calendar_module.CalendarReplayDay).validate_python(payload)
+    assert calls == []
+    assert "RAW-REPLAY-UTC-OFFSET-CALLBACK" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_direct_coverage_range_rejects_mutated_exact_instance_without_callbacks(
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __gt__(self, other: object) -> bool:
+            calls.append("date_gt")
+            raise AssertionError("DIRECT-COVERAGE-DATE-CALLBACK")
+
+    coverage = _calendar_with_replay_evidence(_calendar()).coverage_ranges[0].model_copy()
+    object.__setattr__(coverage, "start", ArmedDate(2024, 3, 8))
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            calendar_module.CalendarCoverageRange.model_validate(coverage)
+        else:
+            TypeAdapter(calendar_module.CalendarCoverageRange).validate_python(coverage)
+    assert calls == []
+    assert "DIRECT-COVERAGE-DATE-CALLBACK" not in str(exc_info.value)
+
+
+def test_exact_instance_type_adapters_reject_nested_mutation_without_callbacks() -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError("NESTED-REPLAY-DATE-CALLBACK")
+
+        def __ne__(self, other: object) -> bool:
+            calls.append("ne")
+            raise AssertionError("NESTED-REPLAY-DATE-CALLBACK")
+
+    calendar = _calendar_with_replay_evidence(_calendar())
+    evidence = calendar.replay_evidence.model_copy(deep=True)
+    day = evidence.days[0].model_copy()
+    object.__setattr__(day, "local_date", ArmedDate(2024, 3, 8))
+    object.__setattr__(evidence, "days", (day, *evidence.days[1:]))
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TypeAdapter(calendar_module.CalendarReplayEvidence).validate_python(evidence)
+    assert calls == []
+    assert "NESTED-REPLAY-DATE-CALLBACK" not in str(exc_info.value)
+
+    coverage = calendar.coverage_ranges[0].model_copy()
+    object.__setattr__(coverage, "start", ArmedDate(2024, 3, 8))
+    object.__setattr__(calendar, "coverage_ranges", (coverage, *calendar.coverage_ranges[1:]))
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TypeAdapter(TradingCalendar).validate_python(calendar)
+    assert calls == []
+    assert "NESTED-REPLAY-DATE-CALLBACK" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("entrypoint", ("python", "json"))
+@pytest.mark.parametrize(
+    "timezone_name",
+    (
+        "America/sk-proj-CALENDAR-CANARY",
+        "America/c2stcHJvai1DQUxFTkRBUi1DQU5BUlk",
+        "America/hex736b2d70726f6a2d43414c454e4441522d43414e415259",
+        "America/sk-proj-%43ALENDAR-CANARY",
+    ),
+)
+def test_witnessed_timezone_secret_encodings_reject_without_echo(
+    timezone_name: str,
+    entrypoint: str,
+) -> None:
+    decoded = "sk-proj-CALENDAR-CANARY"
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "python":
+            TradingCalendar.model_validate(payload)
+        else:
+            TradingCalendar.model_validate_json(json.dumps(payload, sort_keys=True))
+    assert timezone_name not in str(exc_info.value)
+    assert decoded not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("timezone_name", ("America/New_York", "Pacific/Honolulu"))
+def test_safe_iana_timezones_remain_valid_without_changing_legacy_wire(
+    timezone_name: str,
+) -> None:
+    payload = _calendar().model_dump(mode="json")
+    assert "replay_evidence" not in payload
+    payload["timezone"] = timezone_name
+    calendar = TradingCalendar.model_validate(payload)
+    assert calendar.timezone == timezone_name
+    assert "replay_evidence" not in calendar.model_dump(mode="json")
 
 
 def test_calendar_fixture_is_versioned_sorted_and_immutable() -> None:

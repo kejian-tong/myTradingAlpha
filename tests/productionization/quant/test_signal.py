@@ -5618,9 +5618,19 @@ def test_witness_replay_revalidates_full_bundle_without_timezone_database(
     assert calls["count"] == 0
 
 
-def test_rehashed_credential_shaped_calendar_witness_never_scores_valid() -> None:
+@pytest.mark.parametrize(
+    "poisoned_timezone",
+    (
+        "America/sk-proj-CALENDAR-CANARY",
+        "America/c2stcHJvai1DQUxFTkRBUi1DQU5BUlk",
+        "America/hex736b2d70726f6a2d43414c454e4441522d43414e415259",
+        "America/sk-proj-%43ALENDAR-CANARY",
+    ),
+)
+def test_rehashed_credential_shaped_calendar_witness_never_scores_valid(
+    poisoned_timezone: str,
+) -> None:
     api = _api()
-    poisoned_timezone = "America/sk-proj-CALENDAR-CANARY"
     bundle = _witnessed_quant_bundle()
     calendar_payload = bundle.calendar.model_dump(mode="json")
     witness_payload = dict(calendar_payload["replay_evidence"])
@@ -5641,3 +5651,45 @@ def test_rehashed_credential_shaped_calendar_witness_never_scores_valid() -> Non
         assert "CALENDAR-CANARY" not in str(exc)
     else:
         pytest.fail("a rehashed credential-shaped calendar witness produced a valid feature set")
+
+
+def test_honolulu_local_session_close_after_utc_midnight_scores_deterministically() -> None:
+    api = _api()
+    calendar_payload = _calendar().model_dump(mode="json")
+    calendar_payload["timezone"] = "Pacific/Honolulu"
+    july_second = next(
+        session
+        for session in calendar_payload["schedule"]
+        if session["session_date"] == "2024-07-02"
+    )
+    july_second["open_at"] = "2024-07-02T19:30:00Z"
+    july_second["close_at"] = "2024-07-03T02:00:00Z"
+    calendar = TradingCalendar.model_validate(calendar_payload)
+    close = datetime(2024, 7, 3, 2, tzinfo=timezone.utc)
+    bars = []
+    for bar in _bars():
+        if bar.session_date == date(2024, 7, 2):
+            manifest = bar.manifest.model_copy(
+                update={
+                    "event_time": close,
+                    "available_at": close + timedelta(minutes=1),
+                    "fetched_at": close + timedelta(minutes=2),
+                    "ingested_at": close + timedelta(minutes=3),
+                }
+            )
+            bar = bar.model_copy(update={"manifest": manifest})
+        bars.append(bar)
+    bundle = _bundle(
+        calendar=calendar,
+        bars=tuple(bars),
+        cutoff="2024-07-03T02:04:00Z",
+    )
+    assert bundle.calendar.replay_evidence is not None
+    configuration = _configuration(api)
+    features = _features(api, bundle=bundle, configuration=configuration)
+    signal = _score(api, feature_set=features, bundle=bundle, configuration=configuration)
+    assert features.as_of == close
+    assert features.as_of.date() != date(2024, 7, 2)
+    assert all(item.anchor_session == "2024-07-02" for item in features.observations)
+    assert signal.status is api.QuantSignalStatus.VALID
+    assert signal.score == Decimal("0.305000000000")
