@@ -8,8 +8,9 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
-RECONCILED_MAIN_TREE = "3b3a70802603d4cd717c62e5c46089319c5ffa0f"
+RECONCILED_MAIN_SHA = "a42ce7a654994d8071824c3aaba4c9e5503a7e9d"
+RECONCILED_MAIN_TREE = "d406d98f159e9f841e2242c79bcf04d74fcb61d2"
+SIG03_ORIGINAL_BASE_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
 RULESET_ID = "23141241"
@@ -32,6 +33,7 @@ HARNESS_MERGES = {
     84: "14cb132a92f9177f0f22492a4708a6ed8880918a",
     85: "93b812e654773aa1ddafe26879fae7fec0a8e4b7",
     86: "49d5980b640638ed687b6c7771f5f28367072c9a",
+    88: "a42ce7a654994d8071824c3aaba4c9e5503a7e9d",
 }
 
 
@@ -39,32 +41,35 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_sig02_operational_state_is_post_merge_and_stopped() -> None:
+def test_operational_state_tracks_current_main_and_sig03_blockers() -> None:
     state = _state_text()
     assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
     assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
-    assert "`roadmap_status`: `sig_03_green_pending_review`" in state
+    assert "`roadmap_status`: `sig_03_blocked_on_temporal_contract`" in state
     assert "`current_pr_id`: `SIG-03` / PR #87" in state
     assert "`current_phase`: Phase 02 — Evidence and Agent Boundary" in state
     assert "`last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge" in state
     assert "`autonomy_mode`: enabled only for authorized SIG-03 implementation" in state
-    assert "`merge`: pending independent exact-head review" in state
+    assert "`merge`: blocked by two open HIGH temporal findings" in state
+    assert "full sealed-bundle semantic replay" in state
+    assert "UTC versus exchange-session date" in state
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
     assert "`active_harness_pr`: none" in state
-    assert "PR #86 merged as the verified base" in state
+    assert f"original JIT base was\n`{SIG03_ORIGINAL_BASE_SHA}`" in state
+    assert "PR #86's read-only review-assurance policy remains active" in state
     assert "SIG-03 is the only active roadmap slice" in state
-    assert "active PR #87" not in state or "pending" in state
     assert "No SIG-04 or" in state
     assert "portfolio/risk/order/broker/PAPER/live" in state
 
 
 def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     state = _state_text()
-    harness_marker = "`harness_reconciled_through`: `HARNESS-AUD-21` / PR #86 / merge"
+    harness_marker = "`harness_reconciled_through`: PR #88 / merge"
     required = (
         "## Current harness policy",
-        f"{harness_marker}\n  `{RECONCILED_MAIN_SHA}`",
+        f"{harness_marker} `{RECONCILED_MAIN_SHA}`",
+        "PR #86's read-only review-assurance policy remains active",
     )
     missing = [marker for marker in required if marker not in state]
     assert not missing, f"current Harness reconciliation is missing: {missing}"
