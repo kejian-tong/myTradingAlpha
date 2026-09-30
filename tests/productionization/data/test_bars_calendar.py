@@ -8,6 +8,7 @@ import importlib
 import inspect
 import json
 import socket
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -242,6 +243,161 @@ def test_legacy_v1_calendar_serialization_omits_replay_evidence() -> None:
         payload = calendar.model_dump(mode=mode)
         assert "replay_evidence" not in payload
         assert TradingCalendar.model_validate(payload).model_dump(mode=mode) == payload
+
+
+def _direct_calendar_contract(name: str) -> object:
+    calendar = _calendar_with_replay_evidence(_calendar())
+    if name == "TradingCalendar":
+        return calendar
+    evidence = calendar.replay_evidence
+    assert evidence is not None
+    if name == "CalendarReplayEvidence":
+        return evidence
+    if name == "CalendarReplayDay":
+        return evidence.days[0]
+    if name == "CalendarCoverageRange":
+        return evidence.coverage_ranges[0]
+    raise AssertionError("unknown direct calendar contract")
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    (
+        "TradingCalendar",
+        "CalendarReplayDay",
+        "CalendarReplayEvidence",
+        "CalendarCoverageRange",
+    ),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_direct_calendar_entrypoints_preserve_exact_plain_inputs(
+    model_name: str,
+    entrypoint: str,
+) -> None:
+    model = getattr(calendar_module, model_name)
+    original = _direct_calendar_contract(model_name)
+    payload = original.model_dump(mode="python")
+    for value in (payload, original):
+        if entrypoint == "model_validate":
+            restored = model.model_validate(value)
+        else:
+            restored = TypeAdapter(model).validate_python(value)
+        assert type(restored) is model
+        assert restored.model_dump(mode="json") == original.model_dump(mode="json")
+
+
+def test_legacy_calendar_json_hash_stays_stable_after_direct_input_guard() -> None:
+    calendar = _calendar()
+    encoded = calendar.model_dump_json()
+    assert "replay_evidence" not in encoded
+    assert hashlib.sha256(encoded.encode("utf-8")).hexdigest() == (
+        "62ab71b71afa6830091429b096c6f8f6642dc232ef598d5d12f94cfc2869569e"
+    )
+    assert TradingCalendar.model_validate_json(encoded).model_dump_json() == encoded
+    assert TypeAdapter(TradingCalendar).validate_json(encoded).model_dump_json() == encoded
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    (
+        "TradingCalendar",
+        "CalendarReplayDay",
+        "CalendarReplayEvidence",
+        "CalendarCoverageRange",
+    ),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+@pytest.mark.parametrize(
+    "attack",
+    (
+        "dict_items",
+        "mapping_getitem",
+        "opaque_no_attributes",
+        "opaque_attributes",
+        "model_subclass_attribute",
+    ),
+)
+def test_direct_calendar_entrypoints_reject_hostile_top_level_without_callbacks_or_echo(
+    model_name: str,
+    entrypoint: str,
+    attack: str,
+) -> None:
+    model = getattr(calendar_module, model_name)
+    original = _direct_calendar_contract(model_name)
+    payload = original.model_dump(mode="python")
+    calls: list[str] = []
+    armed = {"value": False}
+    canary = "HOSTILE-CALENDAR-TOP-LEVEL-CANARY"
+
+    class ArmedDict(dict):
+        def items(self):
+            calls.append("items")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    class ArmedMapping(Mapping[str, object]):
+        def __iter__(self):
+            return iter(payload)
+
+        def __len__(self) -> int:
+            return len(payload)
+
+        def __getitem__(self, key: str) -> object:
+            calls.append("getitem")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    class ArmedOpaque:
+        def __getattribute__(self, name: str) -> object:
+            calls.append("getattribute")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    class ArmedModel(model):
+        def __getattribute__(self, name: str) -> object:
+            if armed["value"]:
+                calls.append("getattribute")
+                raise AssertionError(canary)
+            return super().__getattribute__(name)
+
+        def __repr__(self) -> str:
+            if armed["value"]:
+                calls.append("repr")
+                return f"<{canary}>"
+            return super().__repr__()
+
+    if attack == "dict_items":
+        hostile = ArmedDict(payload)
+    elif attack == "mapping_getitem":
+        hostile = ArmedMapping()
+    elif attack.startswith("opaque_"):
+        hostile = ArmedOpaque()
+    else:
+        hostile = ArmedModel.model_validate(payload)
+    from_attributes = attack == "opaque_attributes"
+    armed["value"] = True
+    try:
+        with pytest.raises((ValidationError, ValueError)) as exc_info:
+            if entrypoint == "model_validate":
+                model.model_validate(hostile, from_attributes=from_attributes)
+            else:
+                TypeAdapter(model).validate_python(
+                    hostile, from_attributes=from_attributes
+                )
+        rendered = str(exc_info.value)
+    finally:
+        armed["value"] = False
+    assert calls == []
+    assert canary not in rendered
 
 
 def test_captured_replay_days_bind_local_dates_to_utc_half_open_intervals() -> None:
