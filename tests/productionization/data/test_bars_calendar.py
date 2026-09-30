@@ -8,6 +8,7 @@ import importlib
 import inspect
 import json
 import socket
+import warnings
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -295,6 +296,227 @@ def test_legacy_calendar_json_hash_stays_stable_after_direct_input_guard() -> No
     )
     assert TradingCalendar.model_validate_json(encoded).model_dump_json() == encoded
     assert TypeAdapter(TradingCalendar).validate_json(encoded).model_dump_json() == encoded
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+@pytest.mark.parametrize("container", ("dict", "list", "tuple", "model"))
+def test_legacy_calendar_snapshot_preserves_exact_plain_children(
+    entrypoint: str,
+    container: str,
+) -> None:
+    calendar = _calendar()
+    payload = calendar.model_dump(mode="python")
+    for field in ("coverage_ranges", "closures", "schedule"):
+        children = (
+            getattr(calendar, field)
+            if container == "model"
+            else tuple(payload[field])
+        )
+        payload[field] = (
+            list(children)
+            if container == "list"
+            else tuple(children)
+        )
+    restored = (
+        TradingCalendar.model_validate(payload)
+        if entrypoint == "model_validate"
+        else TypeAdapter(TradingCalendar).validate_python(payload)
+    )
+    assert restored.model_dump_json() == calendar.model_dump_json()
+    assert hashlib.sha256(restored.model_dump_json().encode("utf-8")).hexdigest() == (
+        "62ab71b71afa6830091429b096c6f8f6642dc232ef598d5d12f94cfc2869569e"
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_legacy_calendar_snapshot_normalizes_exact_fixed_offset_datetimes(
+    entrypoint: str,
+) -> None:
+    expected = _calendar()
+    payload = expected.model_dump(mode="python")
+    schedule = list(payload["schedule"])
+    first = dict(schedule[0])
+    first["open_at"] = "2024-03-08T09:30:00-05:00"
+    first["close_at"] = datetime(
+        2024, 3, 8, 16, tzinfo=timezone(timedelta(hours=-5))
+    )
+    schedule[0] = first
+    payload["schedule"] = tuple(schedule)
+    restored = (
+        TradingCalendar.model_validate(payload)
+        if entrypoint == "model_validate"
+        else TypeAdapter(TradingCalendar).validate_python(payload)
+    )
+    assert restored.model_dump_json() == expected.model_dump_json()
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+@pytest.mark.parametrize(
+    "field, child_model, mutated_field",
+    (
+        ("coverage_ranges", "CalendarCoverageRange", "start"),
+        ("closures", "CalendarClosure", "date"),
+        ("schedule", "TradingSession", "open_at"),
+    ),
+)
+@pytest.mark.parametrize(
+    "attack",
+    (
+        "list_subclass",
+        "tuple_subclass",
+        "model_subclass",
+        "dict_subclass",
+        "key_subclass",
+        "opaque_child",
+        "mutated_exact_model",
+    ),
+)
+def test_legacy_calendar_snapshot_rejects_nested_hostility_without_callbacks_or_echo(
+    entrypoint: str,
+    field: str,
+    child_model: str,
+    mutated_field: str,
+    attack: str,
+) -> None:
+    payload = _calendar().model_dump(mode="python")
+    rows = list(payload[field])
+    model = getattr(calendar_module, child_model)
+    calls: list[str] = []
+    armed = {"value": False}
+    canary = "LEGACY-CALENDAR-NESTED-CANARY"
+
+    class ArmedList(list):
+        def __iter__(self):
+            calls.append("list_iter")
+            raise AssertionError(canary)
+
+    class ArmedTuple(tuple):
+        def __iter__(self):
+            calls.append("tuple_iter")
+            raise AssertionError(canary)
+
+    class ArmedModel(model):
+        def model_dump(self, *args: object, **kwargs: object) -> dict[str, object]:
+            if armed["value"]:
+                calls.append("model_dump")
+                raise AssertionError(canary)
+            return super().model_dump(*args, **kwargs)
+
+    class ArmedDict(dict):
+        def items(self):
+            calls.append("items")
+            raise AssertionError(canary)
+
+        def __getitem__(self, key: object) -> object:
+            calls.append("getitem")
+            raise AssertionError(canary)
+
+    class ArmedKey(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("key_eq")
+            raise AssertionError(canary)
+
+    class ArmedOpaque:
+        def __getattribute__(self, name: str) -> object:
+            calls.append("opaque_attribute")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("opaque_repr")
+            return f"<{canary}>"
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("date_eq")
+            raise AssertionError(canary)
+
+        def toordinal(self) -> int:
+            calls.append("date_toordinal")
+            raise AssertionError(canary)
+
+    class ArmedDateTime(datetime):
+        def utcoffset(self) -> timedelta:
+            calls.append("datetime_utcoffset")
+            raise AssertionError(canary)
+
+        def astimezone(self, tz: object = None) -> datetime:
+            calls.append("datetime_astimezone")
+            raise AssertionError(canary)
+
+    if attack == "list_subclass":
+        payload[field] = ArmedList(rows)
+    elif attack == "tuple_subclass":
+        payload[field] = ArmedTuple(rows)
+    elif attack == "model_subclass":
+        rows[0] = ArmedModel.model_validate(rows[0])
+        payload[field] = tuple(rows)
+    elif attack == "dict_subclass":
+        rows[0] = ArmedDict(rows[0])
+        payload[field] = tuple(rows)
+    elif attack == "key_subclass":
+        child = dict(rows[0])
+        value = child.pop(mutated_field)
+        child[ArmedKey(mutated_field)] = value
+        rows[0] = child
+        payload[field] = tuple(rows)
+    elif attack == "opaque_child":
+        rows[0] = ArmedOpaque()
+        payload[field] = tuple(rows)
+    else:
+        child = model.model_validate(rows[0])
+        changed = (
+            ArmedDateTime(2024, 3, 8, 14, 30, tzinfo=timezone.utc)
+            if field == "schedule"
+            else ArmedDate(2024, 3, 8)
+        )
+        object.__setattr__(child, mutated_field, changed)
+        rows[0] = child
+        payload[field] = tuple(rows)
+
+    armed["value"] = True
+    try:
+        with warnings.catch_warnings(record=True) as observed_warnings:
+            warnings.simplefilter("always")
+            with pytest.raises((ValidationError, ValueError)) as exc_info:
+                if entrypoint == "model_validate":
+                    TradingCalendar.model_validate(payload)
+                else:
+                    TypeAdapter(TradingCalendar).validate_python(payload)
+            rendered = str(exc_info.value)
+        assert calls == []
+        assert canary not in rendered
+        assert all(canary not in str(item.message) for item in observed_warnings)
+    finally:
+        armed["value"] = False
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_legacy_calendar_snapshot_rejects_scalar_subclass_without_callbacks_or_echo(
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+    canary = "LEGACY-CALENDAR-SCALAR-CANARY"
+
+    class ArmedString(str):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    payload = _calendar().model_dump(mode="python")
+    payload["schema_version"] = ArmedString("v1")
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            TradingCalendar.model_validate(payload)
+        else:
+            TypeAdapter(TradingCalendar).validate_python(payload)
+    assert calls == []
+    assert canary not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
