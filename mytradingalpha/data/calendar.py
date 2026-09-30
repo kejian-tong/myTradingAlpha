@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
 import json
 import re
-from contextlib import suppress
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Literal
@@ -29,11 +26,11 @@ from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.contracts.schemas import ContractModel
 from mytradingalpha.contracts.versions import CURRENT_SCHEMA_VERSION
 
+from .timezone_catalog import SUPPORTED_TIMEZONE_NAME_SET
+
 _ISO_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _TIMEZONE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z][A-Za-z0-9_+-]*)+")
 _REPLAY_HASH_DOMAIN = b"mytradingalpha:calendar-replay-evidence:v1\0"
-_MAX_TIMEZONE_DECODE_DEPTH = 2
-_MAX_TIMEZONE_DECODE_CANDIDATES = 16
 MAX_CALENDAR_REPLAY_DAYS = 4096
 _MAX_REPLAY_CANONICAL_BYTES = 1_048_576
 
@@ -97,49 +94,24 @@ def _validate_timezone(value: object) -> str:
         raise ValueError("invalid_timezone: sensitive text is not permitted") from None
     if _TIMEZONE_PATTERN.fullmatch(value) is None:
         raise ValueError("invalid_timezone: expected an explicit IANA region name")
-    inspected = 0
-    for segment in value.split("/"):
-        pending: list[tuple[str, int]] = [(segment, 0)]
-        seen: set[str] = set()
-        while pending:
-            candidate, depth = pending.pop()
-            if candidate in seen:
-                continue
-            seen.add(candidate)
-            inspected += 1
-            if inspected > _MAX_TIMEZONE_DECODE_CANDIDATES:
-                raise ValueError("invalid_timezone: encoded text exceeds bound")
-            try:
-                validate_artifact_text(candidate)
-            except (TypeError, ValueError):
-                raise ValueError("invalid_timezone: sensitive text is not permitted") from None
-            if depth == _MAX_TIMEZONE_DECODE_DEPTH:
-                continue
-            if len(candidate) >= 16 and re.fullmatch(r"[A-Za-z0-9_-]+", candidate):
-                try:
-                    decoded_bytes = base64.urlsafe_b64decode(
-                        candidate + "=" * (-len(candidate) % 4)
-                    )
-                    if (
-                        base64.urlsafe_b64encode(decoded_bytes).decode("ascii").rstrip("=")
-                        == candidate
-                    ):
-                        pending.append((decoded_bytes.decode("utf-8", "strict"), depth + 1))
-                except (ValueError, UnicodeError, binascii.Error):
-                    pass
-            if candidate[:3].casefold() == "hex":
-                hex_value = candidate[3:]
-                if len(hex_value) >= 16 and len(hex_value) % 2 == 0 and re.fullmatch(
-                    r"[0-9A-Fa-f]+", hex_value
-                ):
-                    with suppress(ValueError, UnicodeError):
-                        pending.append((bytes.fromhex(hex_value).decode("utf-8", "strict"), depth + 1))
     return value
+
+
+def _validate_witnessed_timezone(value: object) -> str:
+    name = _validate_timezone(value)
+    if name not in SUPPORTED_TIMEZONE_NAME_SET:
+        raise ValueError("invalid_timezone: unsupported witnessed IANA region name")
+    return name
 
 
 IanaTimezone = Annotated[
     StrictStr,
     BeforeValidator(_validate_timezone),
+]
+
+WitnessedIanaTimezone = Annotated[
+    StrictStr,
+    BeforeValidator(_validate_witnessed_timezone),
 ]
 
 
@@ -266,7 +238,7 @@ class CalendarReplayEvidence(ContractModel):
 
     schema_version: Literal["v1"]
     calendar_id: StableId
-    timezone: IanaTimezone
+    timezone: WitnessedIanaTimezone
     coverage_ranges: tuple[CalendarCoverageRange, ...]
     days: tuple[CalendarReplayDay, ...]
     content_hash: CanonicalChecksum
@@ -275,7 +247,7 @@ class CalendarReplayEvidence(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> CalendarReplayEvidence:
         snapshot = _capture_calendar_plain(obj, seen=set(), nodes=[0])
         if type(snapshot) is dict and "timezone" in snapshot:
-            _validate_timezone(snapshot["timezone"])
+            _validate_witnessed_timezone(snapshot["timezone"])
         return super().model_validate(snapshot, *args, **kwargs)
 
     @model_validator(mode="before")
@@ -283,7 +255,7 @@ class CalendarReplayEvidence(ContractModel):
     def snapshot_input(cls, value: object) -> object:
         snapshot = _capture_calendar_plain(value, seen=set(), nodes=[0])
         if type(snapshot) is dict and "timezone" in snapshot:
-            _validate_timezone(snapshot["timezone"])
+            _validate_witnessed_timezone(snapshot["timezone"])
         return snapshot
 
     @field_validator("coverage_ranges", mode="before")
@@ -610,10 +582,10 @@ def _check_witness_timezone(value: object) -> None:
     if type(value) is not dict:
         raise ValueError("invalid_replay_evidence: calendar is not plain")
     if "timezone" in value:
-        _validate_timezone(value["timezone"])
+        _validate_witnessed_timezone(value["timezone"])
     witness = value.get("replay_evidence")
     if type(witness) is dict and "timezone" in witness:
-        _validate_timezone(witness["timezone"])
+        _validate_witnessed_timezone(witness["timezone"])
 
 
 def _capture_calendar_plain(
