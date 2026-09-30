@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import json
@@ -514,6 +515,34 @@ def test_witnessed_timezone_secret_encodings_reject_without_echo(
     entrypoint: str,
 ) -> None:
     decoded = "sk-proj-CALENDAR-CANARY"
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "python":
+            TradingCalendar.model_validate(payload)
+        else:
+            TradingCalendar.model_validate_json(json.dumps(payload, sort_keys=True))
+    assert timezone_name not in str(exc_info.value)
+    assert decoded not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("encoding", ("double_base64", "base64_of_hex"))
+@pytest.mark.parametrize("entrypoint", ("python", "json"))
+def test_nested_timezone_secret_encoding_is_bounded_and_rejected_without_echo(
+    encoding: str,
+    entrypoint: str,
+) -> None:
+    decoded = "sk-proj-CALENDAR-CANARY"
+    if encoding == "double_base64":
+        inner = base64.urlsafe_b64encode(decoded.encode()).decode().rstrip("=")
+    else:
+        inner = "hex" + decoded.encode().hex()
+    segment = base64.urlsafe_b64encode(inner.encode()).decode().rstrip("=")
+    timezone_name = "America/" + segment
     payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
     evidence = dict(payload["replay_evidence"])
     payload["timezone"] = timezone_name
