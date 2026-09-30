@@ -14,6 +14,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    ModelWrapValidatorHandler,
     PlainSerializer,
     StrictStr,
     ValidationError,
@@ -115,6 +116,11 @@ WitnessedIanaTimezone = Annotated[
 ]
 
 
+def _require_exact_calendar_input(value: object, model: type[ContractModel]) -> None:
+    if type(value) is not dict and type(value) is not model:
+        raise ValueError("invalid_calendar_input: expected exact plain data")
+
+
 def _query_date(value: object) -> date:
     try:
         return _validate_exact_date(value)
@@ -149,6 +155,14 @@ class CalendarCoverageRange(ContractModel):
     start: ExactDate
     end: ExactDate
 
+    @model_validator(mode="wrap")
+    @classmethod
+    def reject_hostile_input(
+        cls, value: object, handler: ModelWrapValidatorHandler[CalendarCoverageRange]
+    ) -> CalendarCoverageRange:
+        _require_exact_calendar_input(value, CalendarCoverageRange)
+        return handler(value)
+
     @model_validator(mode="before")
     @classmethod
     def snapshot_input(cls, value: object) -> object:
@@ -180,6 +194,14 @@ class CalendarReplayDay(ContractModel):
     local_date: ExactDate
     start_utc: UtcDateTime
     end_utc: UtcDateTime
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def reject_hostile_input(
+        cls, value: object, handler: ModelWrapValidatorHandler[CalendarReplayDay]
+    ) -> CalendarReplayDay:
+        _require_exact_calendar_input(value, CalendarReplayDay)
+        return handler(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -242,6 +264,14 @@ class CalendarReplayEvidence(ContractModel):
     coverage_ranges: tuple[CalendarCoverageRange, ...]
     days: tuple[CalendarReplayDay, ...]
     content_hash: CanonicalChecksum
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def reject_hostile_input(
+        cls, value: object, handler: ModelWrapValidatorHandler[CalendarReplayEvidence]
+    ) -> CalendarReplayEvidence:
+        _require_exact_calendar_input(value, CalendarReplayEvidence)
+        return handler(value)
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> CalendarReplayEvidence:
@@ -330,6 +360,14 @@ class TradingCalendar(ContractModel):
     replay_evidence: CalendarReplayEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def reject_hostile_input(
+        cls, value: object, handler: ModelWrapValidatorHandler[TradingCalendar]
+    ) -> TradingCalendar:
+        _require_exact_calendar_input(value, TradingCalendar)
+        return handler(value)
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> TradingCalendar:
