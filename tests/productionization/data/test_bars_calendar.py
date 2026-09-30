@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 import mytradingalpha.data.bars as bars_module
 import mytradingalpha.data.calendar as calendar_module
+from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.data.bars import (
     AdjustmentBasis,
     BarFutureError,
@@ -291,6 +292,95 @@ def test_replay_evidence_rejects_hostile_day_without_callback_or_payload_echo() 
     with pytest.raises(ValidationError) as exc_info:
         TradingCalendar.model_validate(payload)
     assert "HOSTILE-REPLAY-DAY-CANARY" not in str(exc_info.value)
+
+
+def test_mutated_exact_replay_day_date_is_rejected_before_comparison_callback() -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError("REPLAY-DAY-DATE-CALLBACK")
+
+        def __ne__(self, other: object) -> bool:
+            calls.append("ne")
+            raise AssertionError("REPLAY-DAY-DATE-CALLBACK")
+
+    evidence = _calendar_with_replay_evidence(_calendar()).replay_evidence
+    payload = evidence.model_dump(mode="python")
+    day = evidence.days[0].model_copy()
+    object.__setattr__(day, "local_date", ArmedDate(2024, 3, 8))
+    payload["days"] = (day, *payload["days"][1:])
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        calendar_module.CalendarReplayEvidence.model_validate(payload)
+    assert calls == []
+    assert "REPLAY-DAY-DATE-CALLBACK" not in str(exc_info.value)
+
+
+def test_mutated_exact_replay_coverage_is_rejected_before_date_callback() -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def toordinal(self) -> int:
+            calls.append("toordinal")
+            raise AssertionError("REPLAY-COVERAGE-DATE-CALLBACK")
+
+    evidence = _calendar_with_replay_evidence(_calendar()).replay_evidence
+    payload = evidence.model_dump(mode="python")
+    coverage = evidence.coverage_ranges[0].model_copy()
+    object.__setattr__(coverage, "start", ArmedDate(2024, 3, 8))
+    payload["coverage_ranges"] = (coverage, *payload["coverage_ranges"][1:])
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        calendar_module.CalendarReplayEvidence.model_validate(payload)
+    assert calls == []
+    assert "REPLAY-COVERAGE-DATE-CALLBACK" not in str(exc_info.value)
+
+
+def test_witnessed_calendar_rejects_str_subclass_child_key_before_equality() -> None:
+    calls: list[str] = []
+
+    class ArmedKey(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError("REPLAY-CHILD-KEY-CALLBACK")
+
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="python")
+    evidence = dict(payload["replay_evidence"])
+    days = list(evidence["days"])
+    day = dict(days[0])
+    original_date = day.pop("local_date")
+    day[ArmedKey("local_date")] = original_date
+    days[0] = day
+    evidence["days"] = days
+    payload["replay_evidence"] = evidence
+    calls.clear()
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TradingCalendar.model_validate(payload)
+    assert calls == []
+    assert "REPLAY-CHILD-KEY-CALLBACK" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "timezone_name",
+    ("America/sk-proj-CALENDAR-CANARY", "America/sk-proj-%43ALENDAR-CANARY"),
+)
+def test_witnessed_calendar_rejects_sensitive_timezone_without_echo(
+    timezone_name: str,
+) -> None:
+    with pytest.raises(ValueError):
+        validate_artifact_text(timezone_name)
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TradingCalendar.model_validate(payload)
+    assert timezone_name not in str(exc_info.value)
+    assert "CALENDAR-CANARY" not in str(exc_info.value)
 
 
 def test_calendar_fixture_is_versioned_sorted_and_immutable() -> None:

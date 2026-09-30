@@ -5616,3 +5616,28 @@ def test_witness_replay_revalidates_full_bundle_without_timezone_database(
         zoneinfo.ZoneInfo.clear_cache()
     assert actual.model_dump(mode="json") == expected.model_dump(mode="json")
     assert calls["count"] == 0
+
+
+def test_rehashed_credential_shaped_calendar_witness_never_scores_valid() -> None:
+    api = _api()
+    poisoned_timezone = "America/sk-proj-CALENDAR-CANARY"
+    bundle = _witnessed_quant_bundle()
+    calendar_payload = bundle.calendar.model_dump(mode="json")
+    witness_payload = dict(calendar_payload["replay_evidence"])
+    calendar_payload["timezone"] = poisoned_timezone
+    witness_payload["timezone"] = poisoned_timezone
+    witness_payload["content_hash"] = _canonical_hash(
+        "mytradingalpha:calendar-replay-evidence:v1\0",
+        {key: value for key, value in witness_payload.items() if key != "content_hash"},
+    )
+    calendar_payload["replay_evidence"] = witness_payload
+    try:
+        poisoned_calendar = TradingCalendar.model_validate(calendar_payload)
+        poisoned_bundle = _bundle(calendar=poisoned_calendar)
+        assert poisoned_bundle.bundle_hash != bundle.bundle_hash
+        _features(api, bundle=poisoned_bundle)
+    except (ValidationError, ValueError, api.QuantInputError) as exc:
+        assert poisoned_timezone not in str(exc)
+        assert "CALENDAR-CANARY" not in str(exc)
+    else:
+        pytest.fail("a rehashed credential-shaped calendar witness produced a valid feature set")
