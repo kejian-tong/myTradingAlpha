@@ -373,22 +373,25 @@ class TradingCalendar(ContractModel):
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> TradingCalendar:
         try:
             witnessed = _has_replay_evidence(obj)
-            snapshot = _capture_calendar_plain(obj, seen=set(), nodes=[0]) if witnessed else obj
+            snapshot = _capture_calendar_plain(
+                obj, seen=set(), nodes=[0], legacy=not witnessed
+            )
         except (AttributeError, TypeError, ValueError):
             raise _replay_input_validation_error() from None
         if witnessed:
             _check_witness_timezone(snapshot)
-            obj = snapshot
-        return super().model_validate(obj, *args, **kwargs)
+        return super().model_validate(snapshot, *args, **kwargs)
 
     @model_validator(mode="before")
     @classmethod
-    def snapshot_witnessed_input(cls, value: object) -> object:
-        if _has_replay_evidence(value):
-            snapshot = _capture_calendar_plain(value, seen=set(), nodes=[0])
+    def snapshot_calendar_input(cls, value: object) -> object:
+        witnessed = _has_replay_evidence(value)
+        snapshot = _capture_calendar_plain(
+            value, seen=set(), nodes=[0], legacy=not witnessed
+        )
+        if witnessed:
             _check_witness_timezone(snapshot)
-            return snapshot
-        return value
+        return snapshot
 
     @field_validator("coverage_ranges", mode="before")
     @classmethod
@@ -627,7 +630,12 @@ def _check_witness_timezone(value: object) -> None:
 
 
 def _capture_calendar_plain(
-    value: object, *, seen: set[int], nodes: list[int], depth: int = 0
+    value: object,
+    *,
+    seen: set[int],
+    nodes: list[int],
+    depth: int = 0,
+    legacy: bool = False,
 ) -> object:
     nodes[0] += 1
     if nodes[0] > 100_000 or depth > 64:
@@ -642,11 +650,18 @@ def _capture_calendar_plain(
             raise ValueError("invalid_replay_capture: calendar text exceeds bound")
         return value
     if value_type in (date, datetime, SessionType, type(None)):
-        if value_type is datetime and value.tzinfo is not timezone.utc:
-            raise ValueError("invalid_replay_capture: calendar timestamp is not UTC")
+        if value_type is datetime:
+            if legacy:
+                if type(value.tzinfo) is not timezone:
+                    raise ValueError(
+                        "invalid_replay_capture: calendar timestamp has unsupported offset"
+                    )
+            elif value.tzinfo is not timezone.utc:
+                raise ValueError("invalid_replay_capture: calendar timestamp is not UTC")
         return value
     if value_type in (tuple, list):
-        if len(value) > MAX_CALENDAR_REPLAY_DAYS:
+        sequence_bound = 100_000 if legacy else MAX_CALENDAR_REPLAY_DAYS
+        if len(value) > sequence_bound:
             raise ValueError("invalid_replay_capture: calendar sequence exceeds bound")
         identity = id(value)
         if identity in seen:
@@ -654,7 +669,9 @@ def _capture_calendar_plain(
         seen.add(identity)
         try:
             copied = tuple(
-                _capture_calendar_plain(item, seen=seen, nodes=nodes, depth=depth + 1)
+                _capture_calendar_plain(
+                    item, seen=seen, nodes=nodes, depth=depth + 1, legacy=legacy
+                )
                 for item in value
             )
             return copied if value_type is tuple else list(copied)
@@ -677,6 +694,7 @@ def _capture_calendar_plain(
                     seen=seen,
                     nodes=nodes,
                     depth=depth + 1,
+                    legacy=legacy,
                 )
                 for key in keys
             }
@@ -711,6 +729,7 @@ def _capture_calendar_plain(
                     seen=seen,
                     nodes=nodes,
                     depth=depth + 1,
+                    legacy=legacy,
                 )
                 for field in fields
             }
