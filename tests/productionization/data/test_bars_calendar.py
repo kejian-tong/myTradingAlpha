@@ -519,6 +519,49 @@ def test_legacy_calendar_snapshot_rejects_scalar_subclass_without_callbacks_or_e
     assert canary not in str(exc_info.value)
 
 
+@pytest.mark.parametrize("witnessed", (False, True))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_calendar_snapshot_race_rejects_missing_key_without_echo(
+    monkeypatch: pytest.MonkeyPatch,
+    witnessed: bool,
+    entrypoint: str,
+) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar()) if witnessed else _calendar()
+    payload = calendar.model_dump(mode="python")
+    secret_key = "sk-proj-CALENDAR-SNAPSHOT-RACE-CANARY"
+    secret_value = "CALENDAR-SNAPSHOT-RACE-VALUE-CANARY"
+    payload[secret_key] = secret_value
+    original_capture = calendar_module._capture_calendar_plain
+    removed = False
+
+    def remove_key_on_first_child(
+        value: object,
+        *,
+        seen: set[int],
+        nodes: list[int],
+        depth: int = 0,
+        legacy: bool = False,
+    ) -> object:
+        nonlocal removed
+        if depth == 1 and not removed:
+            removed = True
+            payload.pop(secret_key)
+        return original_capture(
+            value, seen=seen, nodes=nodes, depth=depth, legacy=legacy
+        )
+
+    monkeypatch.setattr(calendar_module, "_capture_calendar_plain", remove_key_on_first_child)
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            TradingCalendar.model_validate(payload)
+        else:
+            TypeAdapter(TradingCalendar).validate_python(payload)
+    assert removed
+    rendered = str(exc_info.value)
+    assert secret_key not in rendered
+    assert secret_value not in rendered
+
+
 @pytest.mark.parametrize(
     "model_name",
     (
