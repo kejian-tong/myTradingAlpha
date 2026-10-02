@@ -121,6 +121,16 @@ def _require_exact_calendar_input(value: object, model: type[ContractModel]) -> 
         raise ValueError("invalid_calendar_input: expected exact plain data")
 
 
+def _reject_extra_field_echo(error: ValidationError) -> None:
+    if any(
+        detail["type"] == "extra_forbidden"
+        for detail in error.errors(
+            include_url=False, include_context=False, include_input=False
+        )
+    ):
+        raise ValueError("invalid_calendar_input: unexpected field") from None
+
+
 def _query_date(value: object) -> date:
     try:
         return _validate_exact_date(value)
@@ -161,7 +171,11 @@ class CalendarCoverageRange(ContractModel):
         cls, value: object, handler: ModelWrapValidatorHandler[CalendarCoverageRange]
     ) -> CalendarCoverageRange:
         _require_exact_calendar_input(value, CalendarCoverageRange)
-        return handler(value)
+        try:
+            return handler(value)
+        except ValidationError as error:
+            _reject_extra_field_echo(error)
+            raise
 
     @model_validator(mode="before")
     @classmethod
@@ -201,7 +215,11 @@ class CalendarReplayDay(ContractModel):
         cls, value: object, handler: ModelWrapValidatorHandler[CalendarReplayDay]
     ) -> CalendarReplayDay:
         _require_exact_calendar_input(value, CalendarReplayDay)
-        return handler(value)
+        try:
+            return handler(value)
+        except ValidationError as error:
+            _reject_extra_field_echo(error)
+            raise
 
     @model_validator(mode="before")
     @classmethod
@@ -271,7 +289,11 @@ class CalendarReplayEvidence(ContractModel):
         cls, value: object, handler: ModelWrapValidatorHandler[CalendarReplayEvidence]
     ) -> CalendarReplayEvidence:
         _require_exact_calendar_input(value, CalendarReplayEvidence)
-        return handler(value)
+        try:
+            return handler(value)
+        except ValidationError as error:
+            _reject_extra_field_echo(error)
+            raise
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> CalendarReplayEvidence:
@@ -367,7 +389,11 @@ class TradingCalendar(ContractModel):
         cls, value: object, handler: ModelWrapValidatorHandler[TradingCalendar]
     ) -> TradingCalendar:
         _require_exact_calendar_input(value, TradingCalendar)
-        return handler(value)
+        try:
+            return handler(value)
+        except ValidationError as error:
+            _reject_extra_field_echo(error)
+            raise
 
     @classmethod
     def model_validate(cls, obj: object, *args: object, **kwargs: object) -> TradingCalendar:
