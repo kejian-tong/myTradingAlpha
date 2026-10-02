@@ -198,6 +198,41 @@ def test_evidence_toolset_lists_only_citable_domains_deterministically() -> None
     assert [(reference.domain, reference.record_id) for reference in first] == sorted(actual)
 
 
+def test_reader_accepts_legacy_and_witnessed_bundles_without_relaxing_exact_types() -> None:
+    import mytradingalpha.data.calendar as calendar_module
+
+    contracts, evidence_tools, _ = _load_sig02()
+    legacy = build_fixture_bundle()
+    capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+    assert callable(capture), "SIG-03 calendar replay capture API is missing"
+    witnessed_calendar = calendar_module.TradingCalendar.model_validate(
+        {
+            **legacy.calendar.model_dump(mode="python"),
+            "replay_evidence": capture(legacy.calendar),
+        }
+    )
+    witnessed = build_fixture_bundle(calendar=witnessed_calendar)
+    assert "replay_evidence" not in legacy.calendar.model_dump(mode="json")
+    assert witnessed.bundle_hash != legacy.bundle_hash
+    for bundle in (legacy, witnessed):
+        toolset = evidence_tools.EvidenceToolset(bundle)
+        references = toolset.list_citations()
+        assert references
+        assert all(reference.domain != EvidenceDomain.CALENDAR.value for reference in references)
+        reference = _reference(contracts, bundle, "events", "news-aapl-earnings")
+        assert toolset.get(reference).content["event_id"] == "news-aapl-earnings"
+
+    class HostileWitness:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError("HOSTILE-WITNESS-CALLBACK")
+
+    hostile_calendar = witnessed.calendar.model_copy(update={"replay_evidence": HostileWitness()})
+    hostile_bundle = witnessed.model_copy(update={"calendar": hostile_calendar})
+    with pytest.raises(evidence_tools.EvidenceToolError) as exc_info:
+        evidence_tools.EvidenceToolset(hostile_bundle)
+    assert "HOSTILE-WITNESS-CALLBACK" not in str(exc_info.value)
+
+
 def test_get_returns_a_frozen_derived_item_with_copied_content_and_provenance() -> None:
     contracts, evidence_tools, _ = _load_sig02()
     bundle, _, _, _ = _bundle_response()

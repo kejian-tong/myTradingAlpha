@@ -1,6 +1,6 @@
 # Phase 02 — Evidence and Agent Boundary Design
 
-Status: partially implemented. SIG-01 closed cached-response replay is implemented; SIG-02 through SIG-05 remain planned. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
+Status: partially implemented. SIG-01 and SIG-02 are merged; SIG-03 is implemented in active PR #87 pending independent review, required CI, and merge; SIG-04/SIG-05 remain planned. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
 
 ## Goals
 

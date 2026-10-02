@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import importlib
 import inspect
 import json
 import socket
+import warnings
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 import mytradingalpha.data.bars as bars_module
 import mytradingalpha.data.calendar as calendar_module
+from mytradingalpha.contracts.redaction import validate_artifact_text
 from mytradingalpha.data.bars import (
     AdjustmentBasis,
     BarFutureError,
@@ -145,6 +151,971 @@ def _repository(
     bars: tuple[DailyBar, ...],
 ) -> BarRepository:
     return BarRepository(schema_version="v1", calendar=calendar, bars=bars)
+
+
+def _calendar_with_replay_evidence(calendar: TradingCalendar) -> TradingCalendar:
+    capture = getattr(calendar_module, "capture_calendar_replay_evidence", None)
+    assert callable(capture), "SIG-03 calendar replay capture API is missing"
+    evidence = capture(calendar)
+    return TradingCalendar.model_validate(
+        {**calendar.model_dump(mode="python"), "replay_evidence": evidence}
+    )
+
+
+def _replay_evidence_hash(payload: dict[str, object]) -> str:
+    canonical = json.dumps(
+        {key: value for key, value in payload.items() if key != "content_hash"},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(
+        b"mytradingalpha:calendar-replay-evidence:v1\0" + canonical
+    ).hexdigest()
+
+
+def _unsupported_witnessed_timezone_names() -> tuple[str, ...]:
+    secret = "sk-proj-CALENDAR-CANARY"
+    standard_encoded = base64.b64encode((secret + chr(0x1003E)).encode()).decode()
+    assert "+" in standard_encoded
+    nested = secret
+    for _ in range(3):
+        nested = base64.urlsafe_b64encode(nested.encode()).decode().rstrip("=")
+    return (
+        "America/" + standard_encoded,
+        "America/" + nested,
+        "America/" + base64.b64encode(b"sk-").decode().rstrip("="),
+        "America/" + base64.b32encode(b"sk-").decode().rstrip("="),
+        "America/Not_A_Real_Zone_2026",
+    )
+
+
+def test_witnessed_timezone_catalog_is_frozen_to_reviewed_iana_source() -> None:
+    try:
+        catalog = importlib.import_module("mytradingalpha.data.timezone_catalog")
+    except ModuleNotFoundError:
+        catalog = None
+    assert catalog is not None, "SIG-03 witnessed timezone catalog is missing"
+    version = getattr(catalog, "CATALOG_VERSION", None)
+    names = getattr(catalog, "SUPPORTED_TIMEZONE_NAMES", None)
+    assert version == "2026e"
+    assert type(names) is tuple
+    assert len(names) == 553
+    assert all(type(name) is str for name in names)
+    assert names == tuple(sorted(set(names)))
+    assert hashlib.sha256(("\n".join(names) + "\n").encode("utf-8")).hexdigest() == (
+        "bab362935dbe8fceb73682327aa5a8773917e07406d4cbd0b986808a9fff39d6"
+    )
+    for alias in ("US/Eastern", "Canada/Central", "Etc/UTC", "Etc/GMT+4"):
+        assert alias in names
+    for candidate in _unsupported_witnessed_timezone_names():
+        assert candidate not in names
+
+
+@pytest.mark.parametrize("timezone_name", _unsupported_witnessed_timezone_names())
+@pytest.mark.parametrize("entrypoint", ("python", "json", "type_adapter"))
+def test_rehashed_witness_rejects_unknown_or_encoded_timezone_without_echo(
+    timezone_name: str,
+    entrypoint: str,
+) -> None:
+    decoded = "sk-proj-CALENDAR-CANARY"
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "python":
+            TradingCalendar.model_validate(payload)
+        elif entrypoint == "json":
+            TradingCalendar.model_validate_json(json.dumps(payload, sort_keys=True))
+        else:
+            TypeAdapter(TradingCalendar).validate_python(payload)
+    error = str(exc_info.value)
+    assert timezone_name not in error
+    assert decoded not in error
+    assert "CALENDAR-CANARY" not in error
+
+
+def test_legacy_v1_calendar_serialization_omits_replay_evidence() -> None:
+    calendar = _calendar()
+    for mode in ("python", "json"):
+        payload = calendar.model_dump(mode=mode)
+        assert "replay_evidence" not in payload
+        assert TradingCalendar.model_validate(payload).model_dump(mode=mode) == payload
+
+
+def _direct_calendar_contract(name: str) -> object:
+    calendar = _calendar_with_replay_evidence(_calendar())
+    if name == "TradingCalendar":
+        return calendar
+    evidence = calendar.replay_evidence
+    assert evidence is not None
+    if name == "CalendarReplayEvidence":
+        return evidence
+    if name == "CalendarReplayDay":
+        return evidence.days[0]
+    if name == "CalendarCoverageRange":
+        return evidence.coverage_ranges[0]
+    raise AssertionError("unknown direct calendar contract")
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    (
+        "TradingCalendar",
+        "CalendarReplayDay",
+        "CalendarReplayEvidence",
+        "CalendarCoverageRange",
+    ),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_direct_calendar_entrypoints_preserve_exact_plain_inputs(
+    model_name: str,
+    entrypoint: str,
+) -> None:
+    model = getattr(calendar_module, model_name)
+    original = _direct_calendar_contract(model_name)
+    payload = original.model_dump(mode="python")
+    for value in (payload, original):
+        if entrypoint == "model_validate":
+            restored = model.model_validate(value)
+        else:
+            restored = TypeAdapter(model).validate_python(value)
+        assert type(restored) is model
+        assert restored.model_dump(mode="json") == original.model_dump(mode="json")
+
+
+def test_legacy_calendar_json_hash_stays_stable_after_direct_input_guard() -> None:
+    calendar = _calendar()
+    encoded = calendar.model_dump_json()
+    assert "replay_evidence" not in encoded
+    assert hashlib.sha256(encoded.encode("utf-8")).hexdigest() == (
+        "62ab71b71afa6830091429b096c6f8f6642dc232ef598d5d12f94cfc2869569e"
+    )
+    assert TradingCalendar.model_validate_json(encoded).model_dump_json() == encoded
+    assert TypeAdapter(TradingCalendar).validate_json(encoded).model_dump_json() == encoded
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+@pytest.mark.parametrize("container", ("dict", "list", "tuple", "model"))
+def test_legacy_calendar_snapshot_preserves_exact_plain_children(
+    entrypoint: str,
+    container: str,
+) -> None:
+    calendar = _calendar()
+    payload = calendar.model_dump(mode="python")
+    for field in ("coverage_ranges", "closures", "schedule"):
+        children = (
+            getattr(calendar, field)
+            if container == "model"
+            else tuple(payload[field])
+        )
+        payload[field] = (
+            list(children)
+            if container == "list"
+            else tuple(children)
+        )
+    restored = (
+        TradingCalendar.model_validate(payload)
+        if entrypoint == "model_validate"
+        else TypeAdapter(TradingCalendar).validate_python(payload)
+    )
+    assert restored.model_dump_json() == calendar.model_dump_json()
+    assert hashlib.sha256(restored.model_dump_json().encode("utf-8")).hexdigest() == (
+        "62ab71b71afa6830091429b096c6f8f6642dc232ef598d5d12f94cfc2869569e"
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_legacy_calendar_snapshot_normalizes_exact_fixed_offset_datetimes(
+    entrypoint: str,
+) -> None:
+    expected = _calendar()
+    payload = expected.model_dump(mode="python")
+    schedule = list(payload["schedule"])
+    first = dict(schedule[0])
+    first["open_at"] = "2024-03-08T09:30:00-05:00"
+    first["close_at"] = datetime(
+        2024, 3, 8, 16, tzinfo=timezone(timedelta(hours=-5))
+    )
+    schedule[0] = first
+    payload["schedule"] = tuple(schedule)
+    restored = (
+        TradingCalendar.model_validate(payload)
+        if entrypoint == "model_validate"
+        else TypeAdapter(TradingCalendar).validate_python(payload)
+    )
+    assert restored.model_dump_json() == expected.model_dump_json()
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+@pytest.mark.parametrize(
+    "field, child_model, mutated_field",
+    (
+        ("coverage_ranges", "CalendarCoverageRange", "start"),
+        ("closures", "CalendarClosure", "date"),
+        ("schedule", "TradingSession", "open_at"),
+    ),
+)
+@pytest.mark.parametrize(
+    "attack",
+    (
+        "list_subclass",
+        "tuple_subclass",
+        "model_subclass",
+        "dict_subclass",
+        "key_subclass",
+        "opaque_child",
+        "mutated_exact_model",
+    ),
+)
+def test_legacy_calendar_snapshot_rejects_nested_hostility_without_callbacks_or_echo(
+    entrypoint: str,
+    field: str,
+    child_model: str,
+    mutated_field: str,
+    attack: str,
+) -> None:
+    payload = _calendar().model_dump(mode="python")
+    rows = list(payload[field])
+    model = getattr(calendar_module, child_model)
+    calls: list[str] = []
+    armed = {"value": False}
+    canary = "LEGACY-CALENDAR-NESTED-CANARY"
+
+    class ArmedList(list):
+        def __iter__(self):
+            calls.append("list_iter")
+            raise AssertionError(canary)
+
+    class ArmedTuple(tuple):
+        def __iter__(self):
+            calls.append("tuple_iter")
+            raise AssertionError(canary)
+
+    class ArmedModel(model):
+        def model_dump(self, *args: object, **kwargs: object) -> dict[str, object]:
+            if armed["value"]:
+                calls.append("model_dump")
+                raise AssertionError(canary)
+            return super().model_dump(*args, **kwargs)
+
+    class ArmedDict(dict):
+        def items(self):
+            calls.append("items")
+            raise AssertionError(canary)
+
+        def __getitem__(self, key: object) -> object:
+            calls.append("getitem")
+            raise AssertionError(canary)
+
+    class ArmedKey(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("key_eq")
+            raise AssertionError(canary)
+
+    class ArmedOpaque:
+        def __getattribute__(self, name: str) -> object:
+            calls.append("opaque_attribute")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("opaque_repr")
+            return f"<{canary}>"
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("date_eq")
+            raise AssertionError(canary)
+
+        def toordinal(self) -> int:
+            calls.append("date_toordinal")
+            raise AssertionError(canary)
+
+    class ArmedDateTime(datetime):
+        def utcoffset(self) -> timedelta:
+            calls.append("datetime_utcoffset")
+            raise AssertionError(canary)
+
+        def astimezone(self, tz: object = None) -> datetime:
+            calls.append("datetime_astimezone")
+            raise AssertionError(canary)
+
+    if attack == "list_subclass":
+        payload[field] = ArmedList(rows)
+    elif attack == "tuple_subclass":
+        payload[field] = ArmedTuple(rows)
+    elif attack == "model_subclass":
+        rows[0] = ArmedModel.model_validate(rows[0])
+        payload[field] = tuple(rows)
+    elif attack == "dict_subclass":
+        rows[0] = ArmedDict(rows[0])
+        payload[field] = tuple(rows)
+    elif attack == "key_subclass":
+        child = dict(rows[0])
+        value = child.pop(mutated_field)
+        child[ArmedKey(mutated_field)] = value
+        rows[0] = child
+        payload[field] = tuple(rows)
+    elif attack == "opaque_child":
+        rows[0] = ArmedOpaque()
+        payload[field] = tuple(rows)
+    else:
+        child = model.model_validate(rows[0])
+        changed = (
+            ArmedDateTime(2024, 3, 8, 14, 30, tzinfo=timezone.utc)
+            if field == "schedule"
+            else ArmedDate(2024, 3, 8)
+        )
+        object.__setattr__(child, mutated_field, changed)
+        rows[0] = child
+        payload[field] = tuple(rows)
+
+    armed["value"] = True
+    try:
+        with warnings.catch_warnings(record=True) as observed_warnings:
+            warnings.simplefilter("always")
+            with pytest.raises((ValidationError, ValueError)) as exc_info:
+                if entrypoint == "model_validate":
+                    TradingCalendar.model_validate(payload)
+                else:
+                    TypeAdapter(TradingCalendar).validate_python(payload)
+            rendered = str(exc_info.value)
+        assert calls == []
+        assert canary not in rendered
+        assert all(canary not in str(item.message) for item in observed_warnings)
+    finally:
+        armed["value"] = False
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_legacy_calendar_snapshot_rejects_scalar_subclass_without_callbacks_or_echo(
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+    canary = "LEGACY-CALENDAR-SCALAR-CANARY"
+
+    class ArmedString(str):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    payload = _calendar().model_dump(mode="python")
+    payload["schema_version"] = ArmedString("v1")
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            TradingCalendar.model_validate(payload)
+        else:
+            TypeAdapter(TradingCalendar).validate_python(payload)
+    assert calls == []
+    assert canary not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("witnessed", (False, True))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_calendar_snapshot_race_rejects_missing_key_without_echo(
+    monkeypatch: pytest.MonkeyPatch,
+    witnessed: bool,
+    entrypoint: str,
+) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar()) if witnessed else _calendar()
+    payload = calendar.model_dump(mode="python")
+    secret_key = "sk-proj-CALENDAR-SNAPSHOT-RACE-CANARY"
+    secret_value = "CALENDAR-SNAPSHOT-RACE-VALUE-CANARY"
+    payload[secret_key] = secret_value
+    original_capture = calendar_module._capture_calendar_plain
+    removed = False
+
+    def remove_key_on_first_child(
+        value: object,
+        *,
+        seen: set[int],
+        nodes: list[int],
+        depth: int = 0,
+        legacy: bool = False,
+    ) -> object:
+        nonlocal removed
+        if depth == 1 and not removed:
+            removed = True
+            payload.pop(secret_key)
+        return original_capture(
+            value, seen=seen, nodes=nodes, depth=depth, legacy=legacy
+        )
+
+    monkeypatch.setattr(calendar_module, "_capture_calendar_plain", remove_key_on_first_child)
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            TradingCalendar.model_validate(payload)
+        else:
+            TypeAdapter(TradingCalendar).validate_python(payload)
+    assert removed
+    rendered = str(exc_info.value)
+    assert secret_key not in rendered
+    assert secret_value not in rendered
+
+
+def _assert_calendar_extra_field_rejected_without_echo(
+    model: type, payload: dict[str, object], entrypoint: str
+) -> None:
+    secret_key = "sk-proj-CALENDAR-EXTRA-KEY-CANARY"
+    secret_value = "CALENDAR-EXTRA-VALUE-CANARY"
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            model.model_validate(payload)
+        elif entrypoint == "type_adapter":
+            TypeAdapter(model).validate_python(payload)
+        else:
+            model.model_validate_json(json.dumps(payload, sort_keys=True))
+    rendered = str(exc_info.value)
+    assert secret_key not in rendered
+    assert secret_value not in rendered
+    assert "CALENDAR-EXTRA-" not in rendered
+
+
+@pytest.mark.parametrize("witnessed", (False, True))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter", "json"))
+def test_calendar_rejects_secret_shaped_extra_field_without_echo(
+    witnessed: bool, entrypoint: str
+) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar()) if witnessed else _calendar()
+    payload = calendar.model_dump(mode="json")
+    payload["sk-proj-CALENDAR-EXTRA-KEY-CANARY"] = "CALENDAR-EXTRA-VALUE-CANARY"
+    _assert_calendar_extra_field_rejected_without_echo(
+        TradingCalendar, payload, entrypoint
+    )
+
+
+@pytest.mark.parametrize("witnessed", (False, True))
+@pytest.mark.parametrize("field", ("coverage_ranges", "closures", "schedule"))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter", "json"))
+def test_calendar_rejects_nested_secret_shaped_extra_field_without_echo(
+    witnessed: bool, field: str, entrypoint: str
+) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar()) if witnessed else _calendar()
+    payload = calendar.model_dump(mode="json")
+    children = list(payload[field])
+    child = dict(children[0])
+    child["sk-proj-CALENDAR-EXTRA-KEY-CANARY"] = "CALENDAR-EXTRA-VALUE-CANARY"
+    children[0] = child
+    payload[field] = children
+    _assert_calendar_extra_field_rejected_without_echo(
+        TradingCalendar, payload, entrypoint
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name", ("CalendarReplayDay", "CalendarReplayEvidence", "CalendarCoverageRange")
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter", "json"))
+def test_direct_calendar_contract_rejects_secret_shaped_extra_field_without_echo(
+    model_name: str, entrypoint: str
+) -> None:
+    model = getattr(calendar_module, model_name)
+    payload = _direct_calendar_contract(model_name).model_dump(mode="json")
+    payload["sk-proj-CALENDAR-EXTRA-KEY-CANARY"] = "CALENDAR-EXTRA-VALUE-CANARY"
+    _assert_calendar_extra_field_rejected_without_echo(model, payload, entrypoint)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    (
+        "TradingCalendar",
+        "CalendarReplayDay",
+        "CalendarReplayEvidence",
+        "CalendarCoverageRange",
+    ),
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+@pytest.mark.parametrize(
+    "attack",
+    (
+        "dict_items",
+        "mapping_getitem",
+        "opaque_no_attributes",
+        "opaque_attributes",
+        "model_subclass_attribute",
+    ),
+)
+def test_direct_calendar_entrypoints_reject_hostile_top_level_without_callbacks_or_echo(
+    model_name: str,
+    entrypoint: str,
+    attack: str,
+) -> None:
+    model = getattr(calendar_module, model_name)
+    original = _direct_calendar_contract(model_name)
+    payload = original.model_dump(mode="python")
+    calls: list[str] = []
+    armed = {"value": False}
+    canary = "HOSTILE-CALENDAR-TOP-LEVEL-CANARY"
+
+    class ArmedDict(dict):
+        def items(self):
+            calls.append("items")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    class ArmedMapping(Mapping[str, object]):
+        def __iter__(self):
+            return iter(payload)
+
+        def __len__(self) -> int:
+            return len(payload)
+
+        def __getitem__(self, key: str) -> object:
+            calls.append("getitem")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    class ArmedOpaque:
+        def __getattribute__(self, name: str) -> object:
+            calls.append("getattribute")
+            raise AssertionError(canary)
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return f"<{canary}>"
+
+    class ArmedModel(model):
+        def __getattribute__(self, name: str) -> object:
+            if armed["value"]:
+                calls.append("getattribute")
+                raise AssertionError(canary)
+            return super().__getattribute__(name)
+
+        def __repr__(self) -> str:
+            if armed["value"]:
+                calls.append("repr")
+                return f"<{canary}>"
+            return super().__repr__()
+
+    if attack == "dict_items":
+        hostile = ArmedDict(payload)
+    elif attack == "mapping_getitem":
+        hostile = ArmedMapping()
+    elif attack.startswith("opaque_"):
+        hostile = ArmedOpaque()
+    else:
+        hostile = ArmedModel.model_validate(payload)
+    from_attributes = attack == "opaque_attributes"
+    armed["value"] = True
+    try:
+        with pytest.raises((ValidationError, ValueError)) as exc_info:
+            if entrypoint == "model_validate":
+                model.model_validate(hostile, from_attributes=from_attributes)
+            else:
+                TypeAdapter(model).validate_python(
+                    hostile, from_attributes=from_attributes
+                )
+        rendered = str(exc_info.value)
+    finally:
+        armed["value"] = False
+    assert calls == []
+    assert canary not in rendered
+
+
+def test_captured_replay_days_bind_local_dates_to_utc_half_open_intervals() -> None:
+    calendar = _calendar_with_replay_evidence(_calendar())
+    evidence = calendar.replay_evidence
+    assert evidence is not None
+    assert evidence.schema_version == "v1"
+    assert evidence.timezone == calendar.timezone
+    assert evidence.coverage_ranges == calendar.coverage_ranges
+    assert evidence.content_hash.startswith("sha256:")
+    assert len(evidence.content_hash) == 71
+    assert evidence.content_hash == _replay_evidence_hash(
+        evidence.model_dump(mode="json")
+    )
+    days = {day.local_date.isoformat(): day for day in evidence.days}
+    assert tuple(days) == tuple(sorted(days))
+    assert days["2024-03-10"].start_utc == datetime(2024, 3, 10, 5, tzinfo=timezone.utc)
+    assert days["2024-03-10"].end_utc == datetime(2024, 3, 11, 4, tzinfo=timezone.utc)
+    assert days["2024-07-02"].start_utc == datetime(2024, 7, 2, 4, tzinfo=timezone.utc)
+    assert days["2024-07-02"].end_utc == datetime(2024, 7, 3, 4, tzinfo=timezone.utc)
+    assert days["2024-07-03"].start_utc == days["2024-07-02"].end_utc
+    assert days["2024-07-03"].start_utc <= datetime(2024, 7, 3, 4, tzinfo=timezone.utc)
+    assert days["2024-07-02"].start_utc <= datetime(2024, 7, 3, 0, 30, tzinfo=timezone.utc) < days["2024-07-02"].end_utc
+    assert calendar.session("2024-07-03").session_type is SessionType.EARLY_CLOSE
+    assert calendar.session("2024-07-03").close_at < days["2024-07-03"].end_utc
+    assert not any(day.local_date == date(2024, 7, 6) for day in evidence.days)
+
+
+def test_captured_replay_day_includes_fall_dst_25_hour_date() -> None:
+    calendar = TradingCalendar.model_validate(
+        {
+            "schema_version": "v1",
+            "calendar_id": "XNYS.synthetic.v1",
+            "timezone": "America/New_York",
+            "coverage_start": "2024-11-02",
+            "coverage_end": "2024-11-04",
+            "coverage_ranges": ({"start": "2024-11-02", "end": "2024-11-04"},),
+            "closures": (
+                {"schema_version": "v1", "calendar_id": "XNYS.synthetic.v1", "date": "2024-11-02", "reason": "weekend"},
+                {"schema_version": "v1", "calendar_id": "XNYS.synthetic.v1", "date": "2024-11-03", "reason": "weekend"},
+            ),
+            "schedule": (
+                {
+                    "schema_version": "v1",
+                    "calendar_id": "XNYS.synthetic.v1",
+                    "session_date": "2024-11-04",
+                    "open_at": "2024-11-04T14:30:00Z",
+                    "close_at": "2024-11-04T21:00:00Z",
+                    "session_type": "regular",
+                },
+            ),
+        }
+    )
+    days = _calendar_with_replay_evidence(calendar).replay_evidence.days
+    fall_day = next(day for day in days if day.local_date == date(2024, 11, 3))
+    assert fall_day.start_utc == datetime(2024, 11, 3, 4, tzinfo=timezone.utc)
+    assert fall_day.end_utc == datetime(2024, 11, 4, 5, tzinfo=timezone.utc)
+    assert fall_day.end_utc - fall_day.start_utc == timedelta(hours=25)
+
+
+@pytest.mark.parametrize("defect", ("missing", "duplicate", "reversed", "overlap", "hash", "version"))
+def test_replay_evidence_rejects_corrupt_or_noncanonical_day_claim(defect: str) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar())
+    payload = calendar.model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    days = list(evidence["days"])
+    if defect == "missing":
+        days.pop(1)
+    elif defect == "duplicate":
+        days.insert(1, days[0])
+    elif defect == "reversed":
+        days[0], days[1] = days[1], days[0]
+    elif defect == "overlap":
+        days[1] = {**days[1], "start_utc": days[0]["start_utc"]}
+    elif defect == "hash":
+        evidence["content_hash"] = "sha256:" + "0" * 64
+    else:
+        evidence["schema_version"] = "v2"
+    evidence["days"] = days
+    if defect != "hash":
+        evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises(ValidationError):
+        TradingCalendar.model_validate(payload)
+
+
+def test_replay_evidence_day_count_cap_rejects_cap_plus_one() -> None:
+    max_days = getattr(calendar_module, "MAX_CALENDAR_REPLAY_DAYS", None)
+    assert type(max_days) is int and 1 <= max_days <= 4096
+    calendar = _calendar_with_replay_evidence(_calendar())
+    payload = calendar.model_dump(mode="python")
+    evidence = dict(payload["replay_evidence"])
+    evidence["days"] = [evidence["days"][0]] * (max_days + 1)
+    payload["replay_evidence"] = evidence
+    with pytest.raises(ValidationError):
+        TradingCalendar.model_validate(payload)
+
+
+def test_replay_evidence_rejects_hostile_day_without_callback_or_payload_echo() -> None:
+    class HostileDay:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError("HOSTILE-REPLAY-DAY-CANARY")
+
+        def __str__(self) -> str:
+            raise AssertionError("HOSTILE-REPLAY-DAY-CANARY")
+
+    calendar = _calendar_with_replay_evidence(_calendar())
+    payload = calendar.model_dump(mode="python")
+    evidence = dict(payload["replay_evidence"])
+    days = list(evidence["days"])
+    days[0] = HostileDay()
+    evidence["days"] = days
+    payload["replay_evidence"] = evidence
+    with pytest.raises(ValidationError) as exc_info:
+        TradingCalendar.model_validate(payload)
+    assert "HOSTILE-REPLAY-DAY-CANARY" not in str(exc_info.value)
+
+
+def test_mutated_exact_replay_day_date_is_rejected_before_comparison_callback() -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError("REPLAY-DAY-DATE-CALLBACK")
+
+        def __ne__(self, other: object) -> bool:
+            calls.append("ne")
+            raise AssertionError("REPLAY-DAY-DATE-CALLBACK")
+
+    evidence = _calendar_with_replay_evidence(_calendar()).replay_evidence
+    payload = evidence.model_dump(mode="python")
+    day = evidence.days[0].model_copy()
+    object.__setattr__(day, "local_date", ArmedDate(2024, 3, 8))
+    payload["days"] = (day, *payload["days"][1:])
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        calendar_module.CalendarReplayEvidence.model_validate(payload)
+    assert calls == []
+    assert "REPLAY-DAY-DATE-CALLBACK" not in str(exc_info.value)
+
+
+def test_mutated_exact_replay_coverage_is_rejected_before_date_callback() -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def toordinal(self) -> int:
+            calls.append("toordinal")
+            raise AssertionError("REPLAY-COVERAGE-DATE-CALLBACK")
+
+    evidence = _calendar_with_replay_evidence(_calendar()).replay_evidence
+    payload = evidence.model_dump(mode="python")
+    coverage = evidence.coverage_ranges[0].model_copy()
+    object.__setattr__(coverage, "start", ArmedDate(2024, 3, 8))
+    payload["coverage_ranges"] = (coverage, *payload["coverage_ranges"][1:])
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        calendar_module.CalendarReplayEvidence.model_validate(payload)
+    assert calls == []
+    assert "REPLAY-COVERAGE-DATE-CALLBACK" not in str(exc_info.value)
+
+
+def test_witnessed_calendar_rejects_str_subclass_child_key_before_equality() -> None:
+    calls: list[str] = []
+
+    class ArmedKey(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError("REPLAY-CHILD-KEY-CALLBACK")
+
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="python")
+    evidence = dict(payload["replay_evidence"])
+    days = list(evidence["days"])
+    day = dict(days[0])
+    original_date = day.pop("local_date")
+    day[ArmedKey("local_date")] = original_date
+    days[0] = day
+    evidence["days"] = days
+    payload["replay_evidence"] = evidence
+    calls.clear()
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TradingCalendar.model_validate(payload)
+    assert calls == []
+    assert "REPLAY-CHILD-KEY-CALLBACK" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "timezone_name",
+    ("America/sk-proj-CALENDAR-CANARY", "America/sk-proj-%43ALENDAR-CANARY"),
+)
+def test_witnessed_calendar_rejects_sensitive_timezone_without_echo(
+    timezone_name: str,
+) -> None:
+    with pytest.raises(ValueError):
+        validate_artifact_text(timezone_name)
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TradingCalendar.model_validate(payload)
+    assert timezone_name not in str(exc_info.value)
+    assert "CALENDAR-CANARY" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field", ("local_date", "end_utc"))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_direct_replay_day_rejects_mutated_exact_instance_without_callbacks(
+    field: str,
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("date_eq")
+            raise AssertionError("DIRECT-REPLAY-DATE-CALLBACK")
+
+    class ArmedDateTime(datetime):
+        def __sub__(self, other: object) -> timedelta:
+            calls.append("datetime_sub")
+            raise AssertionError("DIRECT-REPLAY-TIME-CALLBACK")
+
+    day = _calendar_with_replay_evidence(_calendar()).replay_evidence.days[0].model_copy()
+    if field == "local_date":
+        object.__setattr__(day, field, ArmedDate(2024, 3, 8))
+    else:
+        end = day.end_utc
+        object.__setattr__(
+            day,
+            field,
+            ArmedDateTime(end.year, end.month, end.day, end.hour, tzinfo=timezone.utc),
+        )
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            calendar_module.CalendarReplayDay.model_validate(day)
+        else:
+            TypeAdapter(calendar_module.CalendarReplayDay).validate_python(day)
+    assert calls == []
+    assert "DIRECT-REPLAY-" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("entrypoint", ("constructor", "model_validate", "type_adapter"))
+def test_replay_day_rejects_raw_datetime_subclass_before_utcoffset_callback(
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+
+    class ArmedDateTime(datetime):
+        def utcoffset(self) -> timedelta:
+            calls.append("utcoffset")
+            raise AssertionError("RAW-REPLAY-UTC-OFFSET-CALLBACK")
+
+    payload = _calendar_with_replay_evidence(_calendar()).replay_evidence.days[0].model_dump(
+        mode="python"
+    )
+    payload["start_utc"] = ArmedDateTime(2024, 3, 8, 5, tzinfo=timezone.utc)
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "constructor":
+            calendar_module.CalendarReplayDay(**payload)
+        elif entrypoint == "model_validate":
+            calendar_module.CalendarReplayDay.model_validate(payload)
+        else:
+            TypeAdapter(calendar_module.CalendarReplayDay).validate_python(payload)
+    assert calls == []
+    assert "RAW-REPLAY-UTC-OFFSET-CALLBACK" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter"))
+def test_direct_coverage_range_rejects_mutated_exact_instance_without_callbacks(
+    entrypoint: str,
+) -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __gt__(self, other: object) -> bool:
+            calls.append("date_gt")
+            raise AssertionError("DIRECT-COVERAGE-DATE-CALLBACK")
+
+    coverage = _calendar_with_replay_evidence(_calendar()).coverage_ranges[0].model_copy()
+    object.__setattr__(coverage, "start", ArmedDate(2024, 3, 8))
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            calendar_module.CalendarCoverageRange.model_validate(coverage)
+        else:
+            TypeAdapter(calendar_module.CalendarCoverageRange).validate_python(coverage)
+    assert calls == []
+    assert "DIRECT-COVERAGE-DATE-CALLBACK" not in str(exc_info.value)
+
+
+def test_exact_instance_type_adapters_reject_nested_mutation_without_callbacks() -> None:
+    calls: list[str] = []
+
+    class ArmedDate(date):
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            raise AssertionError("NESTED-REPLAY-DATE-CALLBACK")
+
+        def __ne__(self, other: object) -> bool:
+            calls.append("ne")
+            raise AssertionError("NESTED-REPLAY-DATE-CALLBACK")
+
+    calendar = _calendar_with_replay_evidence(_calendar())
+    evidence = calendar.replay_evidence.model_copy(deep=True)
+    day = evidence.days[0].model_copy()
+    object.__setattr__(day, "local_date", ArmedDate(2024, 3, 8))
+    object.__setattr__(evidence, "days", (day, *evidence.days[1:]))
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TypeAdapter(calendar_module.CalendarReplayEvidence).validate_python(evidence)
+    assert calls == []
+    assert "NESTED-REPLAY-DATE-CALLBACK" not in str(exc_info.value)
+
+    coverage = calendar.coverage_ranges[0].model_copy()
+    object.__setattr__(coverage, "start", ArmedDate(2024, 3, 8))
+    object.__setattr__(calendar, "coverage_ranges", (coverage, *calendar.coverage_ranges[1:]))
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        TypeAdapter(TradingCalendar).validate_python(calendar)
+    assert calls == []
+    assert "NESTED-REPLAY-DATE-CALLBACK" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("entrypoint", ("python", "json"))
+@pytest.mark.parametrize(
+    "timezone_name",
+    (
+        "America/sk-proj-CALENDAR-CANARY",
+        "America/c2stcHJvai1DQUxFTkRBUi1DQU5BUlk",
+        "America/hex736b2d70726f6a2d43414c454e4441522d43414e415259",
+        "America/sk-proj-%43ALENDAR-CANARY",
+    ),
+)
+def test_witnessed_timezone_secret_encodings_reject_without_echo(
+    timezone_name: str,
+    entrypoint: str,
+) -> None:
+    decoded = "sk-proj-CALENDAR-CANARY"
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "python":
+            TradingCalendar.model_validate(payload)
+        else:
+            TradingCalendar.model_validate_json(json.dumps(payload, sort_keys=True))
+    assert timezone_name not in str(exc_info.value)
+    assert decoded not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("encoding", ("double_base64", "base64_of_hex"))
+@pytest.mark.parametrize("entrypoint", ("python", "json"))
+def test_nested_timezone_secret_encoding_is_bounded_and_rejected_without_echo(
+    encoding: str,
+    entrypoint: str,
+) -> None:
+    decoded = "sk-proj-CALENDAR-CANARY"
+    if encoding == "double_base64":
+        inner = base64.urlsafe_b64encode(decoded.encode()).decode().rstrip("=")
+    else:
+        inner = "hex" + decoded.encode().hex()
+    segment = base64.urlsafe_b64encode(inner.encode()).decode().rstrip("=")
+    timezone_name = "America/" + segment
+    payload = _calendar_with_replay_evidence(_calendar()).model_dump(mode="json")
+    evidence = dict(payload["replay_evidence"])
+    payload["timezone"] = timezone_name
+    evidence["timezone"] = timezone_name
+    evidence["content_hash"] = _replay_evidence_hash(evidence)
+    payload["replay_evidence"] = evidence
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "python":
+            TradingCalendar.model_validate(payload)
+        else:
+            TradingCalendar.model_validate_json(json.dumps(payload, sort_keys=True))
+    assert timezone_name not in str(exc_info.value)
+    assert decoded not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("timezone_name", ("America/New_York", "Pacific/Honolulu"))
+def test_safe_iana_timezones_remain_valid_without_changing_legacy_wire(
+    timezone_name: str,
+) -> None:
+    payload = _calendar().model_dump(mode="json")
+    assert "replay_evidence" not in payload
+    payload["timezone"] = timezone_name
+    calendar = TradingCalendar.model_validate(payload)
+    assert calendar.timezone == timezone_name
+    assert "replay_evidence" not in calendar.model_dump(mode="json")
 
 
 def test_calendar_fixture_is_versioned_sorted_and_immutable() -> None:
