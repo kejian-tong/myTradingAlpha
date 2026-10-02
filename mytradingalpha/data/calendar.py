@@ -376,7 +376,7 @@ class TradingCalendar(ContractModel):
             snapshot = _capture_calendar_plain(
                 obj, seen=set(), nodes=[0], legacy=not witnessed
             )
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             raise _replay_input_validation_error() from None
         if witnessed:
             _check_witness_timezone(snapshot)
@@ -613,10 +613,16 @@ def _has_replay_evidence(value: object) -> bool:
         return False
     if dict.__len__(storage) > 64:
         raise ValueError("invalid_replay_evidence: calendar fields exceed bound")
-    keys = tuple(dict.keys(storage))
-    if any(type(key) is not str for key in keys):
-        raise ValueError("invalid_replay_evidence: calendar keys are not plain")
-    return "replay_evidence" in keys and dict.__getitem__(storage, "replay_evidence") is not None
+    try:
+        keys = tuple(dict.keys(storage))
+        if any(type(key) is not str for key in keys):
+            raise ValueError("invalid_replay_evidence: calendar keys are not plain")
+        return (
+            "replay_evidence" in keys
+            and dict.__getitem__(storage, "replay_evidence") is not None
+        )
+    except (KeyError, RuntimeError):
+        raise ValueError("invalid_replay_evidence: calendar snapshot changed") from None
 
 
 def _check_witness_timezone(value: object) -> None:
@@ -698,6 +704,8 @@ def _capture_calendar_plain(
                 )
                 for key in keys
             }
+        except (KeyError, RuntimeError):
+            raise ValueError("invalid_replay_capture: calendar snapshot changed") from None
         finally:
             seen.remove(identity)
     if value_type in (
@@ -733,6 +741,8 @@ def _capture_calendar_plain(
                 )
                 for field in fields
             }
+        except (KeyError, RuntimeError):
+            raise ValueError("invalid_replay_capture: calendar snapshot changed") from None
         finally:
             seen.remove(identity)
     raise ValueError("invalid_replay_capture: calendar contains non-data")
