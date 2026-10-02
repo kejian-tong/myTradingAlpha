@@ -562,6 +562,68 @@ def test_calendar_snapshot_race_rejects_missing_key_without_echo(
     assert secret_value not in rendered
 
 
+def _assert_calendar_extra_field_rejected_without_echo(
+    model: type, payload: dict[str, object], entrypoint: str
+) -> None:
+    secret_key = "sk-proj-CALENDAR-EXTRA-KEY-CANARY"
+    secret_value = "CALENDAR-EXTRA-VALUE-CANARY"
+    with pytest.raises((ValidationError, ValueError)) as exc_info:
+        if entrypoint == "model_validate":
+            model.model_validate(payload)
+        elif entrypoint == "type_adapter":
+            TypeAdapter(model).validate_python(payload)
+        else:
+            model.model_validate_json(json.dumps(payload, sort_keys=True))
+    rendered = str(exc_info.value)
+    assert secret_key not in rendered
+    assert secret_value not in rendered
+    assert "CALENDAR-EXTRA-" not in rendered
+
+
+@pytest.mark.parametrize("witnessed", (False, True))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter", "json"))
+def test_calendar_rejects_secret_shaped_extra_field_without_echo(
+    witnessed: bool, entrypoint: str
+) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar()) if witnessed else _calendar()
+    payload = calendar.model_dump(mode="json")
+    payload["sk-proj-CALENDAR-EXTRA-KEY-CANARY"] = "CALENDAR-EXTRA-VALUE-CANARY"
+    _assert_calendar_extra_field_rejected_without_echo(
+        TradingCalendar, payload, entrypoint
+    )
+
+
+@pytest.mark.parametrize("witnessed", (False, True))
+@pytest.mark.parametrize("field", ("coverage_ranges", "closures", "schedule"))
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter", "json"))
+def test_calendar_rejects_nested_secret_shaped_extra_field_without_echo(
+    witnessed: bool, field: str, entrypoint: str
+) -> None:
+    calendar = _calendar_with_replay_evidence(_calendar()) if witnessed else _calendar()
+    payload = calendar.model_dump(mode="json")
+    children = list(payload[field])
+    child = dict(children[0])
+    child["sk-proj-CALENDAR-EXTRA-KEY-CANARY"] = "CALENDAR-EXTRA-VALUE-CANARY"
+    children[0] = child
+    payload[field] = children
+    _assert_calendar_extra_field_rejected_without_echo(
+        TradingCalendar, payload, entrypoint
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name", ("CalendarReplayDay", "CalendarReplayEvidence", "CalendarCoverageRange")
+)
+@pytest.mark.parametrize("entrypoint", ("model_validate", "type_adapter", "json"))
+def test_direct_calendar_contract_rejects_secret_shaped_extra_field_without_echo(
+    model_name: str, entrypoint: str
+) -> None:
+    model = getattr(calendar_module, model_name)
+    payload = _direct_calendar_contract(model_name).model_dump(mode="json")
+    payload["sk-proj-CALENDAR-EXTRA-KEY-CANARY"] = "CALENDAR-EXTRA-VALUE-CANARY"
+    _assert_calendar_extra_field_rejected_without_echo(model, payload, entrypoint)
+
+
 @pytest.mark.parametrize(
     "model_name",
     (
