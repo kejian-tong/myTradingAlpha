@@ -42,7 +42,7 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_reconciled_main_and_active_harness_pr() -> None:
+def test_operational_state_tracks_reconciled_main_and_stopped_harness_pr() -> None:
     state = _state_text()
     assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
     assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
@@ -51,7 +51,8 @@ def test_operational_state_tracks_reconciled_main_and_active_harness_pr() -> Non
     assert "`current_phase`: bounded pstack compatibility replay" in state
     assert "`last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge" in state
     assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
-    assert "`active_writer`: `normal_implementer` / `gpt-6-luna` / `max`; PR #90 lease active" in state
+    assert "active_writer: none; PR #90 writer stopped and all leases released" in state
+    assert "`last_writer_route`: `normal_implementer` / `gpt-6-luna` / `max`" in state
     assert (
         "`merge`: PR #90 remains governed by exact-head review, exact-SHA CI, and the "
         "Master merge gate"
