@@ -8,8 +8,9 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "a42ce7a654994d8071824c3aaba4c9e5503a7e9d"
-RECONCILED_MAIN_TREE = "d406d98f159e9f841e2242c79bcf04d74fcb61d2"
+RECONCILED_MAIN_SHA = "6de1635a90d6c33aee02079dca5d0932e3a32cec"
+RECONCILED_MAIN_TREE = "8cffcc9b18a6efdbb47f2678bcfe0e8fb1a67540"
+HARNESS_PR88_MERGE_SHA = "a42ce7a654994d8071824c3aaba4c9e5503a7e9d"
 SIG03_ORIGINAL_BASE_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
@@ -33,7 +34,7 @@ HARNESS_MERGES = {
     84: "14cb132a92f9177f0f22492a4708a6ed8880918a",
     85: "93b812e654773aa1ddafe26879fae7fec0a8e4b7",
     86: "49d5980b640638ed687b6c7771f5f28367072c9a",
-    88: "a42ce7a654994d8071824c3aaba4c9e5503a7e9d",
+    88: HARNESS_PR88_MERGE_SHA,
 }
 
 
@@ -45,20 +46,19 @@ def test_operational_state_tracks_current_main_and_sig03_blockers() -> None:
     state = _state_text()
     assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
     assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
-    assert "`roadmap_status`: `sig_03_calendar_replay_green_pending_review`" in state
-    assert "`current_pr_id`: `SIG-03` / PR #87" in state
-    assert "`current_phase`: Phase 02 — Evidence and Agent Boundary" in state
-    assert "`last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge" in state
-    assert "`autonomy_mode`: enabled only for authorized SIG-03 implementation" in state
-    assert "`merge`: blocked pending fresh independent exact-head review" in state
+    assert "`roadmap_status`: SIG-03 merged; later roadmap work is not authorized" in state
+    assert "`current_pr_id`: none" in state
+    assert "`current_phase`: post-SIG-03; no successor slice authorized" in state
+    assert "`last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge" in state
+    assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
+    assert "`active_writer`: `normal_implementer` is completing PR #89" in state
+    assert "`merge`: PR #89 candidate review, exact-SHA CI, and Master gate remain pending" in state
     assert "full detached EvidenceBundle semantic revalidation" in state
     assert "exchange-local\ncutoff mapping" in state
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
-    assert "`active_harness_pr`: none" in state
+    assert "`active_harness_pr`: PR #89 / `HARNESS-PSTACK-89`" in state
     assert f"original JIT base was\n`{SIG03_ORIGINAL_BASE_SHA}`" in state
-    assert "PR #86's read-only review-assurance policy remains active" in state
-    assert "SIG-03 is the only active roadmap slice" in state
     assert "No SIG-04 or" in state
     assert "portfolio/risk/order/broker/PAPER/live" in state
 
@@ -68,7 +68,7 @@ def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     harness_marker = "`harness_reconciled_through`: PR #88 / merge"
     required = (
         "## Current harness policy",
-        f"{harness_marker} `{RECONCILED_MAIN_SHA}`",
+        f"{harness_marker} `{HARNESS_PR88_MERGE_SHA}`",
         "PR #86's read-only review-assurance policy remains active",
     )
     missing = [marker for marker in required if marker not in state]
