@@ -17,7 +17,9 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - active_writer: none; PR #90 writer stopped and all leases released
 - `last_writer_route`: `normal_implementer` / `gpt-6-luna` / `max`
 - `red_commit`: `54b0a87b032348d50a9a71cbc59cabf43d5f31c4`
-- `repair_red_commits`: `fc3db3405983ed57502112dc964e0383e719cb10`, `0cd46484f377eb3be926d6e3048b68eac77ed3aa`
+- `repair_red_commits`: `fc3db3405983ed57502112dc964e0383e719cb10`,
+  `0cd46484f377eb3be926d6e3048b68eac77ed3aa`,
+  `3e2553e43cf6b6a1c18b6a20a82c9b90fc0be209`
 - `green_commit`: `d1bb97db7f27a42edf9a8b2d33ca86e57cfff11d` / tree `f0d36c771bd574ff167a4738d8dfd4d7113246d6`
 - `red_writer_lease`: `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a` released; owner/session/lane refs `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397` / `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475` / `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4`
 - `final_green_lease`: `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28` released; serialized lease evidence is in PR #90
