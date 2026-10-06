@@ -31,6 +31,38 @@ EXPECTED_SKILLS = {
     "why",
 }
 
+EXISTING_REPOSITORY_SKILLS = {
+    "exact-head-review",
+    "jit-scope-contract",
+    "merge-gate",
+    "productionization-preflight",
+    "tdd-red-green-evidence",
+    "writer-lease",
+}
+
+EXPECTED_EXISTING_SKILL_HASHES = {
+    "exact-head-review": "bad23859c9c1d820c53f66fad7199f1a13fbe3f4e784a7c8aa918b74dab92490",
+    "jit-scope-contract": "ea9fa972f63b0520ba626d95795e531e8d3dd26ed9088d6b58988bb240b1d8da",
+    "merge-gate": "9f97f9ca1df6cc53db5ab3b680c0f4a74f28e65c41ca6fac71371f47059c03e6",
+    "productionization-preflight": "9b646e195dd348c61d60b9d8545b1c92352ee2ef43ca5a8754f14e3206e6f9a4",
+    "tdd-red-green-evidence": "e1c7e33c6b8a1b2a61875c95f281f6570ea0ed47299515f1445a13792e8d1529",
+    "writer-lease": "066cf85bf456c40078e629b658409f49eb4852e9a425b4b8c6b5d6be9f4c581a",
+}
+
+EXPECTED_ALL_SKILLS = EXPECTED_SKILLS | EXISTING_REPOSITORY_SKILLS
+
+EXPECTED_AUTHORITY_PATHS = {
+    "root_instructions": "AGENTS.md",
+    "productionization_instructions": "docs/productionization/AGENTS.md",
+    "test_instructions": "tests/productionization/AGENTS.md",
+    "productionization_preflight": ".agents/skills/productionization-preflight/SKILL.md",
+    "jit_scope_contract": ".agents/skills/jit-scope-contract/SKILL.md",
+    "writer_lease": ".agents/skills/writer-lease/SKILL.md",
+    "tdd": ".agents/skills/tdd-red-green-evidence/SKILL.md",
+    "exact_head_review": ".agents/skills/exact-head-review/SKILL.md",
+    "merge_gate": ".agents/skills/merge-gate/SKILL.md",
+}
+
 EXPECTED_CANONICAL_SOURCES = {
     "skills/architect/SKILL.md": "741901140ee382ebf93263a7ed03c6ee3719e578416d81afcd195876fa16c496",
     "skills/arena/SKILL.md": "e3a1f6c49a08b7e0b92134e53300d146f1f22ba83386d2019926e736df421851",
@@ -94,8 +126,13 @@ EXPECTED_POLICY = {
     "autopilot_stack": "prohibited",
     "shipping": "prohibited",
     "paper_live_broker_policy": "unchanged",
+    "paper_policy": "unchanged",
+    "live_policy": "unchanged",
+    "broker_policy": "unchanged",
     "roadmap_authorization": "unchanged",
+    "roadmap_slice_authorization": "not_granted",
     "model_routing": "unchanged",
+    "external_model_fallback": False,
     "arena_comparison": "sequential_same_context",
     "interrogate_authority": "supplemental_only",
     "why_evidence_scope": "repository_only",
@@ -116,6 +153,8 @@ EXPECTED_EXCLUDED_CAPABILITIES = {
     "autopilot-full",
     "autopilot-stack",
     "shipping",
+    "autonomous landing",
+    "external-model fallback",
 }
 
 
@@ -158,6 +197,26 @@ def _skill_frontmatter(path: Path) -> dict[str, str]:
         assert key not in fields, f"duplicate frontmatter field in {path}: {key}"
         fields[key] = value.strip().strip('"').strip("'")
     return fields
+
+
+def _documented_skill_purposes() -> dict[str, str]:
+    document = COMPATIBILITY_DOC.read_text(encoding="utf-8")
+    section = re.search(r"(?ms)^## Skill purposes\s*\n(.*?)(?=^## |\Z)", document)
+    assert section is not None, "compatibility doc has no skill purpose table"
+
+    purposes: dict[str, str] = {}
+    for line in section.group(1).splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or cells[0].lower() == "skill":
+            continue
+        name = cells[0].strip("`")
+        if re.fullmatch(r"[-: ]+", name):
+            continue
+        assert name not in purposes, f"duplicate skill purpose row: {name}"
+        purposes[name] = cells[1]
+    return purposes
 
 
 def test_manifest_pins_canonical_source_and_portable_reference() -> None:
@@ -211,6 +270,41 @@ def test_adapted_skill_inventory_has_codex_metadata_and_pinned_hashes() -> None:
         assert metadata["description"]
 
 
+def test_skill_inventory_preserves_repository_skills_and_documents_adaptations() -> None:
+    manifest = _load_manifest()
+    inventory = manifest["adapted_skills"]
+    adapted_names = {entry["name"] for entry in inventory}
+    assert len(inventory) == len(EXPECTED_SKILLS)
+    assert adapted_names == EXPECTED_SKILLS
+
+    discovered_skill_names = {
+        path.name for path in SKILLS_ROOT.iterdir() if (path / "SKILL.md").is_file()
+    }
+    assert discovered_skill_names == EXPECTED_ALL_SKILLS
+
+    for name, expected_hash in EXPECTED_EXISTING_SKILL_HASHES.items():
+        skill_path = SKILLS_ROOT / name / "SKILL.md"
+        assert skill_path.is_file()
+        assert not skill_path.is_symlink()
+        assert _sha256(skill_path) == expected_hash
+
+    manifest_purposes = {
+        entry["name"]: entry.get("adaptation_purpose") for entry in inventory
+    }
+    assert set(manifest_purposes) == EXPECTED_SKILLS
+    assert all(
+        isinstance(purpose, str) and purpose.strip()
+        for purpose in manifest_purposes.values()
+    )
+
+    documented_purposes = _documented_skill_purposes()
+    assert set(documented_purposes) == EXPECTED_SKILLS
+    assert all(purpose.strip() for purpose in documented_purposes.values())
+    assert {
+        name: purpose.strip() for name, purpose in manifest_purposes.items()
+    } == documented_purposes
+
+
 def test_manifest_encodes_repository_authority_and_excluded_capabilities() -> None:
     manifest = _load_manifest()
     assert manifest["schema_version"] == 1
@@ -218,6 +312,34 @@ def test_manifest_encodes_repository_authority_and_excluded_capabilities() -> No
     excluded = manifest["excluded_capabilities"]
     assert len(excluded) == len(set(excluded))
     assert set(excluded) == EXPECTED_EXCLUDED_CAPABILITIES
+
+
+def test_repository_authority_files_and_harness_boundaries_are_explicit() -> None:
+    for relative_path in EXPECTED_AUTHORITY_PATHS.values():
+        assert (ROOT / relative_path).is_file(), relative_path
+
+    authority = _load_manifest()["authority"]
+    assert authority["master_first_level_delegation"] == "allowed"
+    assert authority["non_master_nested_delegation"] == "prohibited"
+    assert authority["production_writers"] == 1
+    assert authority["writer_lease_owner"] == "master"
+    assert authority["tdd_authority"] == "tdd-red-green-evidence"
+    assert authority["review_authority"] == "exact-head-review"
+    assert authority["ci_binding"] == "candidate_sha"
+    assert authority["merge_gate"] == "merge-gate"
+    assert authority["merge_authority"] == "master_only"
+    assert authority["delegate_push"] is False
+    assert authority["delegate_merge"] is False
+    assert authority["autonomous_landing"] is False
+    assert authority["autopilot_full"] == "prohibited"
+    assert authority["autopilot_stack"] == "prohibited"
+    assert authority["shipping"] == "prohibited"
+    assert authority["external_model_fallback"] is False
+    assert authority["roadmap_slice_authorization"] == "not_granted"
+    assert authority["paper_policy"] == "unchanged"
+    assert authority["live_policy"] == "unchanged"
+    assert authority["broker_policy"] == "unchanged"
+    assert authority["model_routing"] == "unchanged"
 
 
 def test_manifest_paths_and_record_size_are_portable_and_bounded() -> None:
