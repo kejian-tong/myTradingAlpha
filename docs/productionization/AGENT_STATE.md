@@ -14,11 +14,11 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
   `6de1635a90d6c33aee02079dca5d0932e3a32cec`
 - `autonomy_mode`: disabled outside the explicit scope of an authorized PR
-- `active_writer`: `normal_implementer` is completing PR #89; Master releases the lease after stop observation
+- `active_writer`: none; PR #89 writer leases are released; lifecycle evidence is in the PR conversation
 - `last_writer_route`: `normal_implementer` / `gpt-6-luna` / `max`
 - `current_harness_pr`: PR #89 / `HARNESS-PSTACK-89`, based on
   `6de1635a90d6c33aee02079dca5d0932e3a32cec`
-- `merge`: PR #89 candidate review, exact-SHA CI, and Master gate remain pending; the writer does not merge
+- `merge`: PR #89 remains governed by exact-head review, exact-SHA CI, and the Master merge gate; evidence is in the PR conversation; current status is in GitHub
 
 PR #87 merged after the following historical SIG-03 implementation and review iterations. The entries below record the state during that work; they do not describe current blockers. The merged PR conversation and current `main` are authoritative. Its original JIT base was
 `49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
@@ -109,7 +109,7 @@ PAPER/live, or promotion behavior was introduced.
 - `active_harness_pr`: PR #89 / `HARNESS-PSTACK-89`; RED `b75fbb922d7bc091f8de8e2bfad7323584667f33`; GREEN candidate is the current branch head.
 - PR #89 leaves PR #88 model routing, PR #86 read-only review assurance, and all paper/live gates unchanged.
 - PR #86's read-only review-assurance policy remains active.
-- The controlling exact-head review, required CI, and Master merge gate remain pending for PR #89.
+- The current status for PR #89's controlling exact-head review, required CI, and Master merge gate is in GitHub.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
 integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane
