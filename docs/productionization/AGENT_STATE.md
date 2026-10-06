@@ -6,21 +6,33 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
-- `last_reconciled_main_tree`: `d406d98f159e9f841e2242c79bcf04d74fcb61d2`
-- `roadmap_status`: `sig_03_calendar_replay_green_pending_review`
-- `current_pr_id`: `SIG-03` / PR #87
-- `current_phase`: Phase 02 — Evidence and Agent Boundary
-- `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
-  `376c9c044722ee37f3fa36691b576420e3b6253d`
-- `autonomy_mode`: enabled only for authorized SIG-03 implementation
-- `active_writer`: none; SIG-03 writer-lease release is required before review
-- `last_writer_route`: `high_implementer`
-- `sig_03_main_sync`: PR #87 branch merged current main at `16e58141b8ed563dd29bffd7539dc3f6e5a8162e`
-- `merge`: blocked pending fresh independent exact-head review, required CI, writer-lease release,
-  and the Master gate for the amended calendar replay contract
+- `last_reconciled_main_sha`: `6de1635a90d6c33aee02079dca5d0932e3a32cec`
+- `last_reconciled_main_tree`: `8cffcc9b18a6efdbb47f2678bcfe0e8fb1a67540`
+- `roadmap_status`: SIG-03 merged; later roadmap work is not authorized
+- `current_pr_id`: `HARNESS-PSTACK-CLEAN-REPLAY-90` / PR #90
+- `current_phase`: bounded pstack compatibility replay
+- `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
+  `6de1635a90d6c33aee02079dca5d0932e3a32cec`
+- `autonomy_mode`: disabled outside the explicit scope of an authorized PR
+- `active_writer`: `normal_implementer` / `gpt-6-luna` / `max`; PR #90 lease active
+- `red_commit`: `54b0a87b032348d50a9a71cbc59cabf43d5f31c4`
+- `repair_red_commit`: `fc3db3405983ed57502112dc964e0383e719cb10`
+- `red_lease_cycle_1`: released by Master after observed stop; lease
+  `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a`, with the same
+  owner/session/lane refs as the active writer below.
+- `active_writer_lease`: Green-only lease `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28`; active pending Master-observed stop
+- `active_writer_owner_ref`: `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397`
+- `active_writer_session_ref`: `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475`
+- `active_writer_lane_ref`: `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4`
+- `merge`: PR #90 remains governed by exact-head review, exact-SHA CI, and the Master merge gate;
+  those gates are pending and tracked in the PR conversation
+- Pre-existing status-doc drift:
+  README.md and `02_TARGET_ARCHITECTURE.md` still describe SIG-03 as active in PR #87 after it merged.
+- AGENT_STATE.md and current GitHub state are authoritative for operational status.
 
-SIG-03 is the only active roadmap slice. Its original JIT base was
+PR #87 merged after the following historical SIG-03 implementation and review iterations. At that time,
+the recorded state said, "SIG-03 is the only active roadmap slice." The entries below record state during
+that work; they do not describe current blockers. Its original JIT base was
 `49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
 contract is persisted in PR #87. RED commits are `03c29a17c9517766fbdaaf2636cd5b172c5b359a`,
 `01957a598e46ff264552b764393ea8adba050149`, `367dfd3da3bd289c1d7c87d4a03c5f4011ef3a2c`,
@@ -106,8 +118,12 @@ PAPER/live, or promotion behavior was introduced.
 ## Current harness policy
 
 - `harness_reconciled_through`: PR #88 / merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
-- `active_harness_pr`: none; PR #88 updated GPT-6 routing, role configuration, tests, and documentation.
-  PR #86's read-only review-assurance policy remains active.
+- `active_harness_pr`: PR #90 / `HARNESS-PSTACK-CLEAN-REPLAY-90`
+- PR #90 preserves PR #88 model routing, PR #86 read-only review assurance, and all PAPER/live gates.
+- PR #90 focused RED replay collected 16 tests: 10 expected missing-integration/current-state
+  failures and 6 passes. GREEN validation, exact-head review, required CI, and Master merge gate remain
+  pending.
+- PR #86's read-only review-assurance policy remains active.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
 integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane
