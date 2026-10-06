@@ -10,6 +10,7 @@ TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
 RECONCILED_MAIN_SHA = "6de1635a90d6c33aee02079dca5d0932e3a32cec"
 RECONCILED_MAIN_TREE = "8cffcc9b18a6efdbb47f2678bcfe0e8fb1a67540"
+HARNESS_PR88_MERGE_SHA = "a42ce7a654994d8071824c3aaba4c9e5503a7e9d"
 SIG03_ORIGINAL_BASE_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
@@ -65,6 +66,12 @@ def test_operational_state_tracks_reconciled_main_and_active_harness_pr() -> Non
     assert "SIG-03 is the only active roadmap slice" in state
     assert "No SIG-04 or" in state
     assert "portfolio/risk/order/broker/PAPER/live" in state
+    assert (
+        "README.md and `02_TARGET_ARCHITECTURE.md` still describe SIG-03 as active in PR #87 "
+        "after it merged"
+    ) in state
+    assert "AGENT_STATE.md and current GitHub state are authoritative for operational status" in state
+    assert "Explicit human PAPER/live promotion gates remain mandatory and unexercised." in state
 
 
 def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
@@ -72,7 +79,7 @@ def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     harness_marker = "`harness_reconciled_through`: PR #88 / merge"
     required = (
         "## Current harness policy",
-        f"{harness_marker} `{RECONCILED_MAIN_SHA}`",
+        f"{harness_marker} `{HARNESS_PR88_MERGE_SHA}`",
         "PR #86's read-only review-assurance policy remains active",
     )
     missing = [marker for marker in required if marker not in state]
