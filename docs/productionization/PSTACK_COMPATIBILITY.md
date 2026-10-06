@@ -4,13 +4,31 @@ This PR adapts a bounded set of engineering skills from `cursor/plugins/pstack` 
 
 The adapted files contain Codex-compatible `name` and `description` frontmatter. The local skills preserve useful investigation, design, testing, verification, and writing practices while replacing Cursor-specific routing and autonomy instructions with repository policy.
 
+## Skill purposes
+
+| Skill | Adaptation purpose |
+| --- | --- |
+| `architect` | Shape a repository-aligned design from explicit requirements and constraints. |
+| `arena` | Compare design options sequentially within one context. |
+| `figure-it-out` | Investigate unclear behavior through bounded repository evidence. |
+| `how` | Explain how a repository capability or workflow works. |
+| `interrogate` | Surface adversarial questions as supplemental analysis. |
+| `poteto-mode` | Route supported engineering tasks through repository-owned policy. |
+| `principle-separate-before-serializing-shared-state` | Keep shared mutable state separate until an explicit serialization boundary. |
+| `principles-design` | Explore design choices while preserving repository constraints. |
+| `principles-verification` | Turn work into deterministic, behavior-focused verification. |
+| `show-me-your-work` | Summarize decisions using existing PR and repository evidence. |
+| `tdd` | Guide test-first work through the repository's authoritative TDD procedure. |
+| `technical-writing` | Improve engineering prose while following repository language policy. |
+| `why` | Explain reasons using repository evidence only. |
+
 ## Repository authority
 
 Root and scoped `AGENTS.md` files and the six existing repository skills remain authoritative. The Master may delegate bounded first-level work when repository policy allows it. Non-Master nested delegation is prohibited. One production writer and the Master-owned writer lease remain required. Repository TDD, exact-head review, exact-SHA CI, and the Master merge gate remain unchanged. The Master alone merges. Delegated specialists do not push or merge.
 
 The `poteto-mode` skill routes read-only investigation, rationale, design, supplemental adversarial analysis, repository TDD, multi-step planning, writing, and evidence review. `arena` compares candidates sequentially in the same context. `interrogate` is supplemental and cannot replace `exact-head-review`. `tdd` defers to `tdd-red-green-evidence`. `why` uses repository evidence only. `show-me-your-work` uses existing PR, JIT, Git, CI, and review evidence. It does not read raw transcripts or create a separate private log.
 
-The manifest records excluded scripts, agents, MCP configuration, automation packs, and autonomous or shipping workflows. These skills do not change model routing, PAPER/live/broker policy, or roadmap authorization. They do not provide setup, push, merge, deployment, or promotion authority.
+The manifest records excluded scripts, agents, MCP configuration, automation packs, and autonomous or shipping workflows. It explicitly denies autonomous landing and external-model fallback. These skills do not change model routing or PAPER/live/broker policy, and grant no authority for a later roadmap slice. They do not provide setup, push, merge, deployment, or promotion authority.
 
 The portable reference is `backnotprop/pstack` at `124f622bcaeac490e7e9dac6af83f3ef9611d554`, which records upstream snapshot `cursor/plugins/pstack` version `0.15.9` at `e43c7ee26e0038c6c1fa8380dd34ce86ff94cb2a`. It informed portability review only; canonical content and hashes come from the pinned `0.15.13` source.
 
