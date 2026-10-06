@@ -51,8 +51,11 @@ def test_operational_state_tracks_current_main_and_sig03_blockers() -> None:
     assert "`current_phase`: post-SIG-03; no successor slice authorized" in state
     assert "`last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge" in state
     assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
-    assert "`active_writer`: `normal_implementer` is completing PR #89" in state
-    assert "`merge`: PR #89 candidate review, exact-SHA CI, and Master gate remain pending" in state
+    assert "`active_writer`: none; PR #89 writer leases are released" in state
+    assert (
+        "`merge`: PR #89 remains governed by exact-head review, exact-SHA CI, and the "
+        "Master merge gate; evidence is in the PR conversation"
+    ) in state
     assert "full detached EvidenceBundle semantic revalidation" in state
     assert "exchange-local\ncutoff mapping" in state
     assert MERGE_SHA in state
