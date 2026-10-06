@@ -6,21 +6,21 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
-- `last_reconciled_main_tree`: `d406d98f159e9f841e2242c79bcf04d74fcb61d2`
-- `roadmap_status`: `sig_03_calendar_replay_green_pending_review`
-- `current_pr_id`: `SIG-03` / PR #87
-- `current_phase`: Phase 02 — Evidence and Agent Boundary
-- `last_completed_roadmap_pr`: `SIG-02` / PR #45 / merge
-  `376c9c044722ee37f3fa36691b576420e3b6253d`
-- `autonomy_mode`: enabled only for authorized SIG-03 implementation
-- `active_writer`: none; SIG-03 writer-lease release is required before review
-- `last_writer_route`: `high_implementer`
-- `sig_03_main_sync`: PR #87 branch merged current main at `16e58141b8ed563dd29bffd7539dc3f6e5a8162e`
-- `merge`: blocked pending fresh independent exact-head review, required CI, writer-lease release,
-  and the Master gate for the amended calendar replay contract
+- `last_reconciled_main_sha`: `6de1635a90d6c33aee02079dca5d0932e3a32cec`
+- `last_reconciled_main_tree`: `8cffcc9b18a6efdbb47f2678bcfe0e8fb1a67540`
+- `roadmap_status`: SIG-03 merged; later roadmap work is not authorized
+- `current_pr_id`: none
+- `current_phase`: post-SIG-03; no successor slice authorized
+- `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
+  `6de1635a90d6c33aee02079dca5d0932e3a32cec`
+- `autonomy_mode`: disabled outside the explicit scope of an authorized PR
+- `active_writer`: `normal_implementer` is completing PR #89; Master releases the lease after stop observation
+- `last_writer_route`: `normal_implementer` / `gpt-6-luna` / `max`
+- `current_harness_pr`: PR #89 / `HARNESS-PSTACK-89`, based on
+  `6de1635a90d6c33aee02079dca5d0932e3a32cec`
+- `merge`: PR #89 candidate review, exact-SHA CI, and Master gate remain pending; the writer does not merge
 
-SIG-03 is the only active roadmap slice. Its original JIT base was
+PR #87 merged after the following historical SIG-03 implementation and review iterations. The entries below record the state during that work; they do not describe current blockers. The merged PR conversation and current `main` are authoritative. Its original JIT base was
 `49d5980b640638ed687b6c7771f5f28367072c9a`; the JIT
 contract is persisted in PR #87. RED commits are `03c29a17c9517766fbdaaf2636cd5b172c5b359a`,
 `01957a598e46ff264552b764393ea8adba050149`, `367dfd3da3bd289c1d7c87d4a03c5f4011ef3a2c`,
@@ -106,8 +106,9 @@ PAPER/live, or promotion behavior was introduced.
 ## Current harness policy
 
 - `harness_reconciled_through`: PR #88 / merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
-- `active_harness_pr`: none; PR #88 updated GPT-6 routing, role configuration, tests, and documentation.
-  PR #86's read-only review-assurance policy remains active.
+- `active_harness_pr`: PR #89 / `HARNESS-PSTACK-89`; RED `b75fbb922d7bc091f8de8e2bfad7323584667f33`; GREEN candidate is the current branch head.
+- PR #89 leaves PR #88 model routing, PR #86 read-only review assurance, and all paper/live gates unchanged.
+- The controlling exact-head review, required CI, and Master merge gate remain pending for PR #89.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
 integrity, network-denial proof, and safe review worktrees; #78–#81 covered degraded assurance, writer-lane

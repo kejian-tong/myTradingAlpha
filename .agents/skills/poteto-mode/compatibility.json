@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "canonical_source": {
+    "repository": "cursor/plugins/pstack",
+    "version": "0.15.13",
+    "commit": "e5a8186d7b43be8d6ac4452440fbead5f1a51c70",
+    "skill_sources": [
+      {
+        "path": "skills/architect/SKILL.md",
+        "sha256": "741901140ee382ebf93263a7ed03c6ee3719e578416d81afcd195876fa16c496"
+      },
+      {
+        "path": "skills/arena/SKILL.md",
+        "sha256": "e3a1f6c49a08b7e0b92134e53300d146f1f22ba83386d2019926e736df421851"
+      },
+      {
+        "path": "skills/figure-it-out/SKILL.md",
+        "sha256": "0eb9485f0e7d84fee56b5d0f0af0faf4635e3ca87c8cba3970c01293b76ecc19"
+      },
+      {
+        "path": "skills/how/SKILL.md",
+        "sha256": "d31805589c7f6a63a6db6c9fadebbd79fb9660682cf1654e9b2e5e1e7cd30bc0"
+      },
+      {
+        "path": "skills/interrogate/SKILL.md",
+        "sha256": "59d498c3e9848a24b2d105eb3f05b808aa4152adf4cb1de7bbb6aff4f4cd9b68"
+      },
+      {
+        "path": "skills/poteto-mode/SKILL.md",
+        "sha256": "404c0ef4a78e93451b2ab555ca532e7197b5cf87de29205b6f7109dbee5d9c4d"
+      },
+      {
+        "path": "skills/principle-exhaust-the-design-space/SKILL.md",
+        "sha256": "8583310d7297b7823d75494faa57b003564d436807febecdecbd8321abe5cf6e"
+      },
+      {
+        "path": "skills/principle-prove-it-works/SKILL.md",
+        "sha256": "ec79a15025bac8d33d62011c54f3b612733fd2a024e623b531b3637aa75070e2"
+      },
+      {
+        "path": "skills/principle-redesign-from-first-principles/SKILL.md",
+        "sha256": "a1c7fd0a96b40e12a74bceb0e6bb20a9666dd844dcabfb624acb27da23b929fe"
+      },
+      {
+        "path": "skills/principle-separate-before-serializing-shared-state/SKILL.md",
+        "sha256": "05294b40448e927c5da1c7b6f5c6b9fed3744637e3833d2d948b9154a9dd00bb"
+      },
+      {
+        "path": "skills/principle-sequence-verifiable-units/SKILL.md",
+        "sha256": "2ccbbacc56ace5afdfb8670cef19d7bd009fb2a0033b9a741cbdf2b6baf72187"
+      },
+      {
+        "path": "skills/principle-test-behavior-not-implementation/SKILL.md",
+        "sha256": "87e40efe4e486f7ea639d2ed1fc0abe6c93b8fd0e89a81218086909d2470a52e"
+      },
+      {
+        "path": "skills/show-me-your-work/SKILL.md",
+        "sha256": "bcff5f7f9fd23f92c12b251f9cd6b947e9485e1055cfacb6fdd9cae0789d7550"
+      },
+      {
+        "path": "skills/tdd/SKILL.md",
+        "sha256": "eeb868e2dfebee528d730a67d7b17498fac4bb85dec2e38bc5c5176aca4d5d2f"
+      },
+      {
+        "path": "skills/technical-writing/SKILL.md",
+        "sha256": "f5c512ffeec70bc4e0dee50f7bb4c26742e1be77967a6e8b15d1921e1c209ceb"
+      },
+      {
+        "path": "skills/why/SKILL.md",
+        "sha256": "2a852ec8680920109d2b56538b027c52867896a597250ac5d18a13e0b42e5b06"
+      }
+    ],
+    "license": {
+      "path": "LICENSE",
+      "sha256": "bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e"
+    }
+  },
+  "portable_reference": {
+    "repository": "backnotprop/pstack",
+    "version": "0.15.9",
+    "head_sha": "124f622bcaeac490e7e9dac6af83f3ef9611d554",
+    "upstream_snapshot_repository": "cursor/plugins/pstack",
+    "upstream_snapshot_version": "0.15.9",
+    "upstream_snapshot_commit": "e43c7ee26e0038c6c1fa8380dd34ce86ff94cb2a"
+  },
+  "adapted_skills": [
+    {
+      "name": "architect",
+      "path": ".agents/skills/architect/SKILL.md",
+      "sha256": "1c376f0ed145f9a9e0c1944a03dfbb94262c4a41a85211c2fc0f4c1ea9ce02a1",
+      "source_paths": [
+        "skills/architect/SKILL.md"
+      ]
+    },
+    {
+      "name": "arena",
+      "path": ".agents/skills/arena/SKILL.md",
+      "sha256": "4a0ec1c7856108fd1daceb5181245edcade31bc614b63c9b0cccbf2945979993",
+      "source_paths": [
+        "skills/arena/SKILL.md"
+      ]
+    },
+    {
+      "name": "figure-it-out",
+      "path": ".agents/skills/figure-it-out/SKILL.md",
+      "sha256": "edb10525f7ccd4e43777c6891a2d5a6a471de4baf6e4a4b3b7f54bd9697b75d6",
+      "source_paths": [
+        "skills/figure-it-out/SKILL.md"
+      ]
+    },
+    {
+      "name": "how",
+      "path": ".agents/skills/how/SKILL.md",
+      "sha256": "9ad2d5e0bdcaac10a850e7cc19896dd263ed7207bcc8a8e73f36f2f361928342",
+      "source_paths": [
+        "skills/how/SKILL.md"
+      ]
+    },
+    {
+      "name": "interrogate",
+      "path": ".agents/skills/interrogate/SKILL.md",
+      "sha256": "6e3f59e13326020f26ebffda83607568859b917c537bbe8ea01adc2f3f9692b4",
+      "source_paths": [
+        "skills/interrogate/SKILL.md"
+      ]
+    },
+    {
+      "name": "poteto-mode",
+      "path": ".agents/skills/poteto-mode/SKILL.md",
+      "sha256": "7deaa4c061aa9f4a15118318dda49c5cdc039d119fb8a847edbc282d7202f39e",
+      "source_paths": [
+        "skills/poteto-mode/SKILL.md"
+      ]
+    },
+    {
+      "name": "principle-separate-before-serializing-shared-state",
+      "path": ".agents/skills/principle-separate-before-serializing-shared-state/SKILL.md",
+      "sha256": "5cb4cf905ddd2106ad61bd56e1a1459e19f819158da95432977b6e658068efcc",
+      "source_paths": [
+        "skills/principle-separate-before-serializing-shared-state/SKILL.md"
+      ]
+    },
+    {
+      "name": "principles-design",
+      "path": ".agents/skills/principles-design/SKILL.md",
+      "sha256": "a647e11593ff1372e13f67f3a29ba688d4b681b91ca7f83284a269576f219461",
+      "source_paths": [
+        "skills/principle-exhaust-the-design-space/SKILL.md",
+        "skills/principle-redesign-from-first-principles/SKILL.md"
+      ]
+    },
+    {
+      "name": "principles-verification",
+      "path": ".agents/skills/principles-verification/SKILL.md",
+      "sha256": "3c7a5985268f41bfcb608b04d9bc67d74f05b6115d311e33c79c1ba976228963",
+      "source_paths": [
+        "skills/principle-prove-it-works/SKILL.md",
+        "skills/principle-sequence-verifiable-units/SKILL.md",
+        "skills/principle-test-behavior-not-implementation/SKILL.md"
+      ]
+    },
+    {
+      "name": "show-me-your-work",
+      "path": ".agents/skills/show-me-your-work/SKILL.md",
+      "sha256": "004e1d9cbcbc18db3a853b13163f42bb2d38e3999650d993ae2a8f65a78d033b",
+      "source_paths": [
+        "skills/show-me-your-work/SKILL.md"
+      ]
+    },
+    {
+      "name": "tdd",
+      "path": ".agents/skills/tdd/SKILL.md",
+      "sha256": "8804f9ecf31ac2b95b64a5866406b4cd1b1fff75b0231086eff8f86602c4ff16",
+      "source_paths": [
+        "skills/tdd/SKILL.md"
+      ]
+    },
+    {
+      "name": "technical-writing",
+      "path": ".agents/skills/technical-writing/SKILL.md",
+      "sha256": "4d26f0719b7e4f06f8a82cd5d714af3264d74e4aef490eb67bad28109ddeff02",
+      "source_paths": [
+        "skills/technical-writing/SKILL.md"
+      ]
+    },
+    {
+      "name": "why",
+      "path": ".agents/skills/why/SKILL.md",
+      "sha256": "456249502e48e9e7e115289f616a56d5173e5b43f4a97938a614f9917a8bc502",
+      "source_paths": [
+        "skills/why/SKILL.md"
+      ]
+    }
+  ],
+  "authority": {
+    "repository_instructions": "authoritative",
+    "master_first_level_delegation": "allowed",
+    "non_master_nested_delegation": "prohibited",
+    "production_writers": 1,
+    "writer_lease_owner": "master",
+    "tdd_authority": "tdd-red-green-evidence",
+    "review_authority": "exact-head-review",
+    "ci_binding": "candidate_sha",
+    "merge_gate": "merge-gate",
+    "merge_authority": "master_only",
+    "delegate_push": false,
+    "delegate_merge": false,
+    "autonomous_landing": false,
+    "autopilot_full": "prohibited",
+    "autopilot_stack": "prohibited",
+    "shipping": "prohibited",
+    "paper_live_broker_policy": "unchanged",
+    "roadmap_authorization": "unchanged",
+    "model_routing": "unchanged",
+    "arena_comparison": "sequential_same_context",
+    "interrogate_authority": "supplemental_only",
+    "why_evidence_scope": "repository_only",
+    "decision_evidence": "existing_pr_jit_git_ci_review_evidence_only",
+    "raw_transcripts": false,
+    "private_decision_log": false
+  },
+  "excluded_capabilities": [
+    "MCP configuration",
+    "automation packs",
+    "autonomous-run",
+    "autopilot-full",
+    "autopilot-stack",
+    "orchestrate",
+    "pstack agents",
+    "pstack scripts",
+    "setup-pstack",
+    "shipping",
+    "swarm"
+  ]
+}

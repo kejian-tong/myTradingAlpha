@@ -8,7 +8,6 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / ".agents/skills/poteto-mode/compatibility.json"
 SKILLS_ROOT = ROOT / ".agents/skills"
@@ -48,7 +47,32 @@ EXPECTED_CANONICAL_SOURCES = {
     "skills/show-me-your-work/SKILL.md": "bcff5f7f9fd23f92c12b251f9cd6b947e9485e1055cfacb6fdd9cae0789d7550",
     "skills/tdd/SKILL.md": "eeb868e2dfebee528d730a67d7b17498fac4bb85dec2e38bc5c5176aca4d5d2f",
     "skills/technical-writing/SKILL.md": "f5c512ffeec70bc4e0dee50f7bb4c26742e1be77967a6e8b15d1921e1c209ceb",
-    "skills/why/SKILL.md": "2a852ec8680920109d2b56538b027c52867896a597250ac5d18e1e0b42e5b06",
+    "skills/why/SKILL.md": "2a852ec8680920109d2b56538b027c52867896a597250ac5d18a13e0b42e5b06",
+}
+
+EXPECTED_SKILL_SOURCE_PATHS = {
+    "architect": ["skills/architect/SKILL.md"],
+    "arena": ["skills/arena/SKILL.md"],
+    "figure-it-out": ["skills/figure-it-out/SKILL.md"],
+    "how": ["skills/how/SKILL.md"],
+    "interrogate": ["skills/interrogate/SKILL.md"],
+    "poteto-mode": ["skills/poteto-mode/SKILL.md"],
+    "principle-separate-before-serializing-shared-state": [
+        "skills/principle-separate-before-serializing-shared-state/SKILL.md"
+    ],
+    "principles-design": [
+        "skills/principle-exhaust-the-design-space/SKILL.md",
+        "skills/principle-redesign-from-first-principles/SKILL.md",
+    ],
+    "principles-verification": [
+        "skills/principle-prove-it-works/SKILL.md",
+        "skills/principle-sequence-verifiable-units/SKILL.md",
+        "skills/principle-test-behavior-not-implementation/SKILL.md",
+    ],
+    "show-me-your-work": ["skills/show-me-your-work/SKILL.md"],
+    "tdd": ["skills/tdd/SKILL.md"],
+    "technical-writing": ["skills/technical-writing/SKILL.md"],
+    "why": ["skills/why/SKILL.md"],
 }
 
 EXPECTED_LICENSE_SHA256 = "bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e"
@@ -72,6 +96,26 @@ EXPECTED_POLICY = {
     "paper_live_broker_policy": "unchanged",
     "roadmap_authorization": "unchanged",
     "model_routing": "unchanged",
+    "arena_comparison": "sequential_same_context",
+    "interrogate_authority": "supplemental_only",
+    "why_evidence_scope": "repository_only",
+    "decision_evidence": "existing_pr_jit_git_ci_review_evidence_only",
+    "raw_transcripts": False,
+    "private_decision_log": False,
+}
+
+EXPECTED_EXCLUDED_CAPABILITIES = {
+    "pstack scripts",
+    "pstack agents",
+    "MCP configuration",
+    "automation packs",
+    "setup-pstack",
+    "swarm",
+    "autonomous-run",
+    "orchestrate",
+    "autopilot-full",
+    "autopilot-stack",
+    "shipping",
 }
 
 
@@ -125,6 +169,7 @@ def test_manifest_pins_canonical_source_and_portable_reference() -> None:
 
     sources = canonical["skill_sources"]
     assert len(sources) == len(EXPECTED_CANONICAL_SOURCES)
+    assert [entry["path"] for entry in sources] == sorted(EXPECTED_CANONICAL_SOURCES)
     assert len({entry["path"] for entry in sources}) == len(sources)
     assert {entry["path"]: entry["sha256"] for entry in sources} == EXPECTED_CANONICAL_SOURCES
     license_record = canonical["license"]
@@ -152,6 +197,7 @@ def test_adapted_skill_inventory_has_codex_metadata_and_pinned_hashes() -> None:
         assert name in EXPECTED_SKILLS
         expected_path = f".agents/skills/{name}/SKILL.md"
         assert entry["path"] == expected_path
+        assert entry["source_paths"] == EXPECTED_SKILL_SOURCE_PATHS[name]
         skill_path = ROOT / expected_path
         assert not (SKILLS_ROOT / name).is_symlink()
         assert not skill_path.is_symlink()
@@ -169,15 +215,9 @@ def test_manifest_encodes_repository_authority_and_excluded_capabilities() -> No
     manifest = _load_manifest()
     assert manifest["schema_version"] == 1
     assert manifest["authority"] == EXPECTED_POLICY
-    assert manifest["excluded_capabilities"] == [
-        "pstack scripts",
-        "pstack agents",
-        "MCP configuration",
-        "automation packs",
-        "setup-pstack",
-        "swarm",
-        "autonomous-run",
-    ]
+    excluded = manifest["excluded_capabilities"]
+    assert len(excluded) == len(set(excluded))
+    assert set(excluded) == EXPECTED_EXCLUDED_CAPABILITIES
 
 
 def test_manifest_paths_and_record_size_are_portable_and_bounded() -> None:
@@ -190,11 +230,44 @@ def test_manifest_paths_and_record_size_are_portable_and_bounded() -> None:
     _safe_relative_path(manifest["canonical_source"]["license"]["path"])
     for entry in manifest["adapted_skills"]:
         _safe_relative_path(entry["path"])
+    assert b"/Users/" not in raw
+    assert b"/tmp/" not in raw
     assert "private_path" not in manifest
     assert "credentials" not in manifest
     assert "raw_session_id" not in manifest
     assert "prompts" not in manifest
     assert "transcripts" not in manifest
+
+
+def test_routed_skills_preserve_repository_workflow_boundaries() -> None:
+    def skill_text(name: str) -> str:
+        return (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8").lower()
+
+    wrapper = skill_text("poteto-mode")
+    assert "master may delegate first-level work" in wrapper
+    assert "non-master nested delegation is prohibited" in wrapper
+    assert "one production writer" in wrapper
+    assert "master alone merges" in wrapper
+    assert "model routing remains unchanged" in wrapper
+
+    arena = skill_text("arena")
+    assert "sequentially in the same context" in arena
+    assert "do not spawn" in arena
+
+    interrogate = skill_text("interrogate")
+    assert "supplemental" in interrogate
+    assert "exact-head-review" in interrogate
+
+    why = skill_text("why")
+    assert "repository evidence only" in why
+
+    tdd = skill_text("tdd")
+    assert "tdd-red-green-evidence" in tdd
+
+    show_work = skill_text("show-me-your-work")
+    assert "existing pr, jit, git, ci, and review evidence" in show_work
+    assert "do not read raw transcripts" in show_work
+    assert "do not create a private log" in show_work
 
 
 def test_compatibility_document_notice_and_operational_state_are_reconciled() -> None:
@@ -211,3 +284,4 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "6de1635a90d6c33aee02079dca5d0932e3a32cec" in state
     assert "PR #89" in state
     assert "HARNESS-PSTACK-89" in state
+    assert "b75fbb922d7bc091f8de8e2bfad7323584667f33" in state
