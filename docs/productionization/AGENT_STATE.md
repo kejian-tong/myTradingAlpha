@@ -14,16 +14,13 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
   `6de1635a90d6c33aee02079dca5d0932e3a32cec`
 - `autonomy_mode`: disabled outside the explicit scope of an authorized PR
-- `active_writer`: `normal_implementer` / `gpt-6-luna` / `max`; PR #90 lease active
+- active_writer: none; PR #90 writer stopped and all leases released
+- `last_writer_route`: `normal_implementer` / `gpt-6-luna` / `max`
 - `red_commit`: `54b0a87b032348d50a9a71cbc59cabf43d5f31c4`
-- `repair_red_commit`: `fc3db3405983ed57502112dc964e0383e719cb10`
-- `red_lease_cycle_1`: released by Master after observed stop; lease
-  `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a`, with the same
-  owner/session/lane refs as the active writer below.
-- `active_writer_lease`: Green-only lease `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28`; active pending Master-observed stop
-- `active_writer_owner_ref`: `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397`
-- `active_writer_session_ref`: `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475`
-- `active_writer_lane_ref`: `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4`
+- `repair_red_commits`: `fc3db3405983ed57502112dc964e0383e719cb10`, `0cd46484f377eb3be926d6e3048b68eac77ed3aa`
+- `green_commit`: `d1bb97db7f27a42edf9a8b2d33ca86e57cfff11d` / tree `f0d36c771bd574ff167a4738d8dfd4d7113246d6`
+- `red_writer_lease`: `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a` released; owner/session/lane refs `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397` / `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475` / `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4`
+- `final_green_lease`: `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28` released; serialized lease evidence is in PR #90
 - `merge`: PR #90 remains governed by exact-head review, exact-SHA CI, and the Master merge gate;
   those gates are pending and tracked in the PR conversation
 - Pre-existing status-doc drift:
@@ -120,9 +117,8 @@ PAPER/live, or promotion behavior was introduced.
 - `harness_reconciled_through`: PR #88 / merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
 - `active_harness_pr`: PR #90 / `HARNESS-PSTACK-CLEAN-REPLAY-90`
 - PR #90 preserves PR #88 model routing, PR #86 read-only review assurance, and all PAPER/live gates.
-- PR #90 focused RED replay collected 16 tests: 10 expected missing-integration/current-state
-  failures and 6 passes. GREEN validation, exact-head review, required CI, and Master merge gate remain
-  pending.
+- PR #90 RED, Green validation, and writer lifecycle evidence are in the PR conversation. Exact-head
+  review, required CI, and the Master merge gate remain pending.
 - PR #86's read-only review-assurance policy remains active.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
