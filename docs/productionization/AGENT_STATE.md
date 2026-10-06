@@ -108,6 +108,7 @@ PAPER/live, or promotion behavior was introduced.
 - `harness_reconciled_through`: PR #88 / merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
 - `active_harness_pr`: PR #89 / `HARNESS-PSTACK-89`; RED `b75fbb922d7bc091f8de8e2bfad7323584667f33`; GREEN candidate is the current branch head.
 - PR #89 leaves PR #88 model routing, PR #86 read-only review assurance, and all paper/live gates unchanged.
+- PR #86's read-only review-assurance policy remains active.
 - The controlling exact-head review, required CI, and Master merge gate remain pending for PR #89.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
