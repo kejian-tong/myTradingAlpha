@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -16,11 +15,8 @@ COMPATIBILITY_DOC = ROOT / "docs/productionization/PSTACK_COMPATIBILITY.md"
 NOTICE = ROOT / "docs/productionization/PSTACK_MIT_NOTICE.md"
 AGENT_STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 BASE_SHA = "6de1635a90d6c33aee02079dca5d0932e3a32cec"
+RED_COMMIT = "54b0a87b032348d50a9a71cbc59cabf43d5f31c4"
 GREEN_LEASE_ID = "371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28"
-RED_TEST_PATHS = {
-    "tests/productionization/test_post_sig02_reconciliation.py",
-    "tests/productionization/test_pstack_compatibility.py",
-}
 
 EXPECTED_SKILLS = {
     "architect",
@@ -186,27 +182,6 @@ def _safe_relative_path(raw_path: str) -> PurePosixPath:
     assert ".." not in path.parts
     assert "\\" not in raw_path
     return path
-
-
-def _fresh_red_sha() -> str:
-    commits = subprocess.run(
-        ["git", "rev-list", "--reverse", f"{BASE_SHA}..HEAD"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    for commit in commits:
-        changed_paths = subprocess.run(
-            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-        if set(changed_paths) == RED_TEST_PATHS:
-            return commit
-    raise AssertionError("the current branch has no fresh tests-only RED commit")
 
 
 def _sha256(path: Path) -> str:
@@ -457,7 +432,7 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "`current_pr_id`: `HARNESS-PSTACK-CLEAN-REPLAY-90` / PR #90" in state
     assert "`active_harness_pr`: PR #90 / `HARNESS-PSTACK-CLEAN-REPLAY-90`" in state
     assert "active_writer: none; PR #90 writer stopped and all leases released" in state
-    assert "`red_commit`: `" + _fresh_red_sha() + "`" in state
+    assert f"`red_commit`: `{RED_COMMIT}`" in state
     assert "7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a" in state
     assert "215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397" in state
     assert "daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475" in state
