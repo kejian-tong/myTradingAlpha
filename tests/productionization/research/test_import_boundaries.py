@@ -84,7 +84,7 @@ def _run_isolated(
         f"os.chdir({str(nested)!r})\n"
     )
     return subprocess.run(
-        [sys.executable, "-I", "-c", prefix + source],
+        [sys.executable, "-B", "-I", "-c", prefix + source],
         cwd=nested,
         env=_isolated_environment(environment),
         check=False,
