@@ -84,7 +84,7 @@ def _run_isolated(
         f"os.chdir({str(nested)!r})\n"
     )
     return subprocess.run(
-        [sys.executable, "-I", "-c", prefix + source],
+        [sys.executable, "-B", "-I", "-c", prefix + source],
         cwd=nested,
         env=_isolated_environment(environment),
         check=False,
@@ -96,6 +96,21 @@ def _run_isolated(
 def _json_result(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def test_isolated_child_disables_bytecode_writes(tmp_path: Path) -> None:
+    source = """
+import json
+import sys
+print(json.dumps({
+    "isolated": sys.flags.isolated,
+    "dont_write_bytecode": sys.dont_write_bytecode,
+}))
+"""
+    observed = _json_result(_run_isolated(tmp_path, source))
+
+    assert observed["isolated"] == 1
+    assert observed["dont_write_bytecode"] is True
 
 
 @pytest.mark.parametrize(
