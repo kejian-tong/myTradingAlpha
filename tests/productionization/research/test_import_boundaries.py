@@ -98,6 +98,21 @@ def _json_result(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
+def test_isolated_child_disables_bytecode_writes(tmp_path: Path) -> None:
+    source = """
+import json
+import sys
+print(json.dumps({
+    "isolated": sys.flags.isolated,
+    "dont_write_bytecode": sys.dont_write_bytecode,
+}))
+"""
+    observed = _json_result(_run_isolated(tmp_path, source))
+
+    assert observed["isolated"] == 1
+    assert observed["dont_write_bytecode"] is True
+
+
 @pytest.mark.parametrize(
     "module_name",
     (
