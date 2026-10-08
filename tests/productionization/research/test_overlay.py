@@ -294,6 +294,38 @@ def test_attenuation_veto_abstention_and_zero_multiplier_are_explicit(
         result.no_trade = not result.no_trade
 
 
+def test_overlay_wire_has_exact_sig04_fields_and_no_sig05_authority() -> None:
+    api = _load_sig04()
+    assert set(api.LLMOverlay.model_fields) == {
+        "schema_version",
+        "overlay_id",
+        "note_id",
+        "note_hash",
+        "quant_signal_id",
+        "run_id",
+        "bundle_id",
+        "bundle_hash",
+        "instrument_id",
+        "action",
+        "abstain",
+        "multiplier",
+        "evidence_ids",
+        "rationale",
+        "model_id",
+        "generated_at",
+    }
+    assert not {
+        "target_weight",
+        "target_weights",
+        "quantity",
+        "order",
+        "portfolio",
+        "risk_decision",
+        "envelope",
+        "variant_registry",
+    }.intersection(api.LLMOverlay.model_fields)
+
+
 def test_prompt_injection_prose_cannot_supply_a_missing_action(
     bound_inputs: tuple[Any, Any, Any],
 ) -> None:

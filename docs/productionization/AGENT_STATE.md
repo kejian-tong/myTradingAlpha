@@ -6,27 +6,22 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `6de1635a90d6c33aee02079dca5d0932e3a32cec`
-- `last_reconciled_main_tree`: `8cffcc9b18a6efdbb47f2678bcfe0e8fb1a67540`
-- `roadmap_status`: SIG-03 merged; later roadmap work is not authorized
-- `current_pr_id`: `HARNESS-PSTACK-CLEAN-REPLAY-90` / PR #90
-- `current_phase`: bounded pstack compatibility replay
+- `last_reconciled_main_sha`: `8f76f341bedf086dd4eb69e4229be33127f5028f`
+- `last_reconciled_main_tree`: `b5a25ecd0994cf8d32d5a525b42831c5be824235`
+- `roadmap_status`: SIG-04 active in draft PR #91; SIG-05 deferred
+- `current_pr_id`: `SIG-04` / PR #91
+- `current_phase`: bounded overlay guard
 - `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
   `6de1635a90d6c33aee02079dca5d0932e3a32cec`
 - `autonomy_mode`: disabled outside the explicit scope of an authorized PR
-- active_writer: none; PR #90 writer stopped and all leases released
-- `last_writer_route`: `normal_implementer` / `gpt-6-luna` / `max`
-- `red_commit`: `54b0a87b032348d50a9a71cbc59cabf43d5f31c4`
-- `repair_red_commits`: `fc3db3405983ed57502112dc964e0383e719cb10`,
-  `0cd46484f377eb3be926d6e3048b68eac77ed3aa`,
-  `3e2553e43cf6b6a1c18b6a20a82c9b90fc0be209`
-- `green_commit`: `d1bb97db7f27a42edf9a8b2d33ca86e57cfff11d` / tree `f0d36c771bd574ff167a4738d8dfd4d7113246d6`
-- `red_writer_lease`: `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a` released; owner/session/lane refs `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397` / `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475` / `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4`
-- `final_green_lease`: `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28` released; serialized lease evidence is in PR #90
-- `merge`: PR #90 remains governed by exact-head review, exact-SHA CI, and the Master merge gate;
-  those gates are pending and tracked in the PR conversation
-- Pre-existing status-doc drift:
-  README.md and `02_TARGET_ARCHITECTURE.md` still describe SIG-03 as active in PR #87 after it merged.
+- `active_writer`: candidate writer currently active; release/review/CI pending
+- `configured_writer_route`: `normal_implementer`, GPT-6 Luna/max; runtime unobserved
+- `red_commits`: `6024cb5e1437f3a91bb95b11a8e649506bf0aee8`,
+  `695edf06ebd006ac19f9aeb7974448ea648086a8`,
+  `014e6fa6625a89f5be5f4f24f053f71a88139bae`
+- `jit`: PR #91 comments `6049785978`, `6049852668` (RED audit)
+- `merge`: PR #91 draft; review, CI, Master gate pending
+- SIG-04 validates caller-supplied candidates only; no inference
 - AGENT_STATE.md and current GitHub state are authoritative for operational status.
 
 PR #87 merged after the following historical SIG-03 implementation and review iterations. At that time,
@@ -99,11 +94,11 @@ before fresh review.
 The two temporal HIGH findings prompted an amended SIG-03 JIT and a tests-only RED commit
 `67bc93eb4c29dcb590a915d8da761b1b8fb2c789`. The bounded GREEN candidate adds sealed
 calendar-day replay evidence, full detached EvidenceBundle semantic revalidation, and exchange-local
-cutoff mapping. Finding closure remains subject to fresh independent review on the committed final head;
-the main synchronization does not authorize SIG-04.
-No SIG-04 or later roadmap implementation, portfolio/risk/order/broker/PAPER/live
-action, credential, deployment, or
-promotion action is authorized. Explicit human PAPER/live promotion gates remain mandatory and unexercised.
+cutoff mapping. Finding closure was subject to fresh independent review on the committed final head.
+At that time the main synchronization did not authorize SIG-04. The current SIG-04 authority is the
+user request and the JIT in PR #91; SIG-05 and later roadmap work remains deferred. No portfolio,
+risk, order, broker, PAPER/live action, credential, deployment, or promotion action is authorized.
+Explicit human PAPER/live promotion gates remain mandatory and unexercised.
 
 ## SIG-02 recovery reference
 
@@ -116,11 +111,20 @@ PAPER/live, or promotion behavior was introduced.
 
 ## Current harness policy
 
-- `harness_reconciled_through`: PR #88 / merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d`
-- `active_harness_pr`: PR #90 / `HARNESS-PSTACK-CLEAN-REPLAY-90`
-- PR #90 preserves PR #88 model routing, PR #86 read-only review assurance, and all PAPER/live gates.
-- PR #90 RED, Green validation, and writer lifecycle evidence are in the PR conversation. Exact-head
-  review, required CI, and the Master merge gate remain pending.
+- `harness_reconciled_through`: PR #90 / merge `8f76f341bedf086dd4eb69e4229be33127f5028f`
+- `active_harness_pr`: none
+- PR #90 completed bounded pstack compatibility replay and preserves PR #88 model routing, PR #86
+  read-only review assurance, and all PAPER/live gates.
+- PR #88's policy merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d` remains recoverable in the
+  completed Harness sequence below.
+- PR #90 RED commit `54b0a87b032348d50a9a71cbc59cabf43d5f31c4`; final GREEN lease
+  `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28` is released. Its RED lease
+  `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a` and refs
+  `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397` /
+  `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475` /
+  `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4` remain recoverable in its PR.
+- PR #90 completed with its exact-head review, required checks, and Master merge gate in the PR conversation.
+- PR #91's JIT and current GREEN lease evidence are tracked in its PR conversation; SIG-05 stays deferred.
 - PR #86's read-only review-assurance policy remains active.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark

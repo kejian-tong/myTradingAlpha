@@ -1559,15 +1559,20 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         path_forbidden_modules = forbidden_modules
+        path_forbidden_names = forbidden_names
         if path.parent.name == "contracts":
             path_forbidden_modules = forbidden_modules - {"datetime"}
+        if path == ROOT / "mytradingalpha" / "contracts" / "signals.py":
+            # SIG-04 owns LLMOverlay in this first-use contract module. The
+            # SIG-05 envelope and variant registry remain absent here.
+            path_forbidden_names = forbidden_names - {"LLMOverlay"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 assert all(alias.name not in path_forbidden_modules for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
                 assert node.module not in path_forbidden_modules
             elif isinstance(node, ast.Name):
-                assert node.id not in forbidden_names
+                assert node.id not in path_forbidden_names
             elif isinstance(node, ast.Attribute):
                 assert node.attr not in forbidden_names
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
