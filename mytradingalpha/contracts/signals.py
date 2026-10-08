@@ -8,7 +8,14 @@ import json
 import re
 import unicodedata
 from contextlib import suppress
-from decimal import Decimal
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context as _DecimalContext,
+    Decimal,
+    Inexact,
+    Rounded,
+    localcontext,
+)
 from enum import Enum
 from typing import Literal
 
@@ -19,6 +26,7 @@ from pydantic import (
     StrictInt,
     ValidationError,
     ValidationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -31,7 +39,14 @@ from .common import (
     timezone as _Timezone,
 )
 from .redaction import validate_artifact_text
-from .schemas import ContractModel
+from .research import (
+    EvidenceCitation,
+    EvidenceReference,
+    ResearchNote,
+    ResearchProvenance,
+    ResearchSourceFields,
+)
+from .schemas import ContractModel, Mode, NetworkPolicy, RunContext
 from .versions import CURRENT_SCHEMA_VERSION
 
 _SIGNAL_ID = re.compile(r"quant-signal:[0-9a-f]{64}")
@@ -50,6 +65,8 @@ _REASON_ORDER = (
 )
 HASH_DOMAIN_QUANT_SIGNAL = "mytradingalpha:sig03:quant-signal:v1\0"
 HASH_DOMAIN_LLM_OVERLAY = "mytradingalpha:sig04:llm-overlay:v1\0"
+HASH_DOMAIN_SIGNAL_VARIANT = "mytradingalpha:sig05:signal-variant:v1\0"
+HASH_DOMAIN_SIGNAL_ENVELOPE = "mytradingalpha:sig05:signal-envelope:v1\0"
 MAX_FEATURES = 32
 MAX_IDENTIFIER_LENGTH = 128
 MAX_CANONICAL_BYTES = 1_048_576
@@ -57,8 +74,24 @@ MAX_NESTING_DEPTH = 64
 MAX_LLM_OVERLAY_BYTES = 65_536
 MAX_LLM_OVERLAY_EVIDENCE_IDS = 32
 MAX_LLM_OVERLAY_RATIONALE_BYTES = 8_192
+MAX_SIG05_CANONICAL_BYTES = 6_291_456
+MAX_SIG05_DEPTH = 16
+MAX_SIG05_NODES = 4_096
+MAX_SIG05_SEQUENCE_ITEMS = 256
+MAX_SIG05_TEXT_BYTES = 1_048_576
+MAX_SIG05_INTEGER_BITS = 63
 _LLM_OVERLAY_ID = re.compile(r"overlay:[0-9a-f]{64}")
 _LLM_OVERLAY_DECIMAL = re.compile(r"(?:0|1|0\.(?:[0-9]{0,11}[1-9]))")
+_SIG05_ENVELOPE_ID = re.compile(r"signal-envelope:[0-9a-f]{64}")
+_SIG05_FIXED_DECIMAL = re.compile(r"-?(?:0|[1-9][0-9]*)\.[0-9]{24}")
+_SIG05_SCALE = Decimal("0." + "0" * 23 + "1")
+_SIG05_FIXED_ZERO = Decimal("0." + "0" * 24)
+_SIG05_DECIMAL_QUANTA = tuple(Decimal(f"1E{exponent}") for exponent in range(-24, 1))
+_SIG05_ZERO_REPRESENTATIONS = tuple(
+    Decimal(f"{sign}0E{exponent}")
+    for exponent in range(-24, 1)
+    for sign in ("", "-")
+)
 _DIRECT_SENSITIVE_WORDS = (
     "api-key",
     "apikey",
@@ -1151,9 +1184,727 @@ class LLMOverlay(ContractModel):
         return self
 
 
+class SignalEnvelopeReasonCode(str, Enum):
+    """Static SIG-05 outcome and sanitized input reason wires."""
+
+    QUANT_ONLY = "quant_only"
+    OVERLAY_APPLIED = "overlay_applied"
+    QUANT_INVALID = "quant_invalid"
+    QUANT_ZERO = "quant_zero"
+    NOTE_UNAVAILABLE = "note_unavailable"
+    NOTE_INVALID = "note_invalid"
+    OVERLAY_UNAVAILABLE = "overlay_unavailable"
+    OVERLAY_INVALID = "overlay_invalid"
+    OVERLAY_VETOED = "overlay_vetoed"
+    OVERLAY_ABSTAINED = "overlay_abstained"
+    OVERLAY_ZERO_MULTIPLIER = "overlay_zero_multiplier"
+    INPUT_INVALID = "input_invalid"
+    CONTEXT_INVALID = "context_invalid"
+    CONTEXT_MISMATCH = "context_mismatch"
+    VARIANT_INVALID = "variant_invalid"
+    UNEXPECTED_RESEARCH = "unexpected_research"
+
+
+class SignalEnvelopeError(ValueError):
+    """Sanitized fail-closed error for SIG-05 composition and registry inputs."""
+
+    def __init__(
+        self,
+        reason_code: SignalEnvelopeReasonCode = SignalEnvelopeReasonCode.INPUT_INVALID,
+    ) -> None:
+        if type(reason_code) is not SignalEnvelopeReasonCode:
+            reason_code = SignalEnvelopeReasonCode.INPUT_INVALID
+        self.reason_code = reason_code
+        self.no_trade = True
+        super().__init__(f"signal envelope rejected: {reason_code.value}")
+
+
+class _Sig05WalkBudget:
+    __slots__ = ("nodes", "json_bytes", "active")
+
+    def __init__(self) -> None:
+        self.nodes = 0
+        self.json_bytes = 0
+        self.active: set[int] = set()
+
+    def visit(self, depth: int) -> None:
+        if depth > MAX_SIG05_DEPTH or self.nodes >= MAX_SIG05_NODES:
+            raise ValueError("SIG-05 source exceeds its structural bound")
+        self.nodes += 1
+        self.json_bytes += 2
+        if self.json_bytes > MAX_SIG05_CANONICAL_BYTES:
+            raise ValueError("SIG-05 canonical source exceeds its bound")
+
+    def add_string(self, value: str) -> None:
+        if len(value) > MAX_SIG05_TEXT_BYTES:
+            raise ValueError("SIG-05 string exceeds its bound")
+        try:
+            encoded = value.encode("utf-8", "strict")
+        except UnicodeError:
+            raise ValueError("SIG-05 string is not valid UTF-8") from None
+        if len(encoded) > MAX_SIG05_TEXT_BYTES:
+            raise ValueError("SIG-05 string exceeds its bound")
+        escaped_bytes = sum(char in ('"', "\\") for char in value)
+        escaped_bytes += 5 * sum(ord(char) < 0x20 for char in value)
+        self.json_bytes += len(encoded) + escaped_bytes + 2
+        if self.json_bytes > MAX_SIG05_CANONICAL_BYTES:
+            raise ValueError("SIG-05 canonical source exceeds its bound")
+
+
+def _sig05_decimal_is_bounded(value: Decimal) -> None:
+    if type(value) is not Decimal or not value.is_finite():
+        raise ValueError("SIG-05 decimal is invalid")
+    if not any(value.same_quantum(quantum) for quantum in _SIG05_DECIMAL_QUANTA):
+        raise ValueError("SIG-05 decimal exceeds its exponent bound")
+    if value < Decimal("-1") or value > Decimal("1"):
+        raise ValueError("SIG-05 decimal exceeds its numeric range")
+    if value.is_zero():
+        if not any(
+            value.compare_total(zero) == 0 for zero in _SIG05_ZERO_REPRESENTATIONS
+        ):
+            raise ValueError("SIG-05 zero representation exceeds its bound")
+        return
+    if len(value.as_tuple().digits) > 25:
+        raise ValueError("SIG-05 decimal coefficient exceeds its bound")
+
+
+def _sig05_walk(value: object, budget: _Sig05WalkBudget, depth: int = 0) -> object:
+    budget.visit(depth)
+    value_type = type(value)
+
+    model_type: type[object] | None = None
+    model_fields: tuple[str, ...] = ()
+    for allowed_type, allowed_fields in _SIG05_MODEL_FIELDS.items():
+        if value_type is allowed_type:
+            model_type = allowed_type
+            model_fields = allowed_fields
+            break
+    if model_type is not None:
+        try:
+            storage = object.__getattribute__(value, "__dict__")
+        except (AttributeError, TypeError) as exc:
+            raise ValueError("SIG-05 model storage is invalid") from exc
+        if type(storage) is not dict:
+            raise ValueError("SIG-05 model storage is invalid")
+        if dict.__len__(storage) != len(model_fields):
+            raise ValueError("SIG-05 model fields are invalid")
+        keys = tuple(dict.keys(storage))
+        if (
+            any(type(key) is not str for key in keys)
+            or set(keys) != set(model_fields)
+        ):
+            raise ValueError("SIG-05 model fields are invalid")
+        identity = id(value)
+        if identity in budget.active:
+            raise ValueError("SIG-05 source contains a cycle")
+        budget.active.add(identity)
+        try:
+            payload: dict[str, object] = {}
+            for field in model_fields:
+                budget.add_string(field)
+                payload[field] = _sig05_walk(
+                    dict.__getitem__(storage, field), budget, depth + 1
+                )
+        finally:
+            budget.active.remove(identity)
+        if model_type is LLMOverlay:
+            multiplier = dict.__getitem__(storage, "multiplier")
+            _sig05_decimal_is_bounded(multiplier)
+            payload["multiplier"] = str(multiplier)
+            evidence_ids = payload["evidence_ids"]
+            if type(evidence_ids) is tuple:
+                payload["evidence_ids"] = list(evidence_ids)
+            generated_at = dict.__getitem__(storage, "generated_at")
+            if (
+                type(generated_at) is not _DateTime
+                or object.__getattribute__(generated_at, "tzinfo") is not _Timezone.utc
+            ):
+                raise ValueError("SIG-05 overlay timestamp is invalid")
+            payload["generated_at"] = generated_at.isoformat().replace("+00:00", "Z")
+        return payload
+
+    if value_type is str:
+        budget.add_string(value)
+        return value
+    if value_type is bool or value_type is type(None):
+        return value
+    if value_type is int:
+        if value.bit_length() > MAX_SIG05_INTEGER_BITS:
+            raise ValueError("SIG-05 integer exceeds its numeric bound")
+        return value
+    if value_type is Decimal:
+        _sig05_decimal_is_bounded(value)
+        return value
+    if value_type is _DateTime:
+        if object.__getattribute__(value, "tzinfo") is not _Timezone.utc:
+            raise ValueError("SIG-05 timestamp must be exact UTC")
+        return value
+    if any(value_type is enum_type for enum_type in _SIG05_ENUM_TYPES):
+        return value
+    if value_type is dict:
+        if dict.__len__(value) > MAX_SIG05_SEQUENCE_ITEMS:
+            raise ValueError("SIG-05 mapping exceeds its cardinality bound")
+        identity = id(value)
+        if identity in budget.active:
+            raise ValueError("SIG-05 source contains a cycle")
+        budget.active.add(identity)
+        try:
+            result: dict[str, object] = {}
+            for key in dict.keys(value):
+                if type(key) is not str:
+                    raise ValueError("SIG-05 mapping keys must be exact strings")
+                budget.add_string(key)
+                result[key] = _sig05_walk(dict.__getitem__(value, key), budget, depth + 1)
+            return result
+        finally:
+            budget.active.remove(identity)
+    if value_type is tuple or value_type is list:
+        if len(value) > MAX_SIG05_SEQUENCE_ITEMS:
+            raise ValueError("SIG-05 sequence exceeds its cardinality bound")
+        identity = id(value)
+        if identity in budget.active:
+            raise ValueError("SIG-05 source contains a cycle")
+        budget.active.add(identity)
+        try:
+            copied = [_sig05_walk(child, budget, depth + 1) for child in value]
+        finally:
+            budget.active.remove(identity)
+        return tuple(copied) if value_type is tuple else copied
+    raise ValueError("SIG-05 source contains an unsupported value")
+
+
+def _sig05_model_payload(value: object, model: type[object]) -> dict[str, object]:
+    value_type = type(value)
+    if value_type is not dict and value_type is not model:
+        raise ValueError("SIG-05 requires exact model or plain dictionary input")
+    storage = object.__getattribute__(value, "__dict__") if value_type is model else value
+    fields = _SIG05_MODEL_FIELDS[model]
+    if type(storage) is not dict:
+        raise ValueError("SIG-05 model storage is invalid")
+    if dict.__len__(storage) != len(fields):
+        raise ValueError("SIG-05 model fields are invalid")
+    keys = tuple(dict.keys(storage))
+    if (
+        any(type(key) is not str for key in keys)
+        or set(keys) != set(fields)
+    ):
+        raise ValueError("SIG-05 model fields are invalid")
+    budget = _Sig05WalkBudget()
+    budget.visit(0)
+    payload: dict[str, object] = {}
+    for field in fields:
+        budget.add_string(field)
+        payload[field] = _sig05_walk(dict.__getitem__(storage, field), budget, 1)
+    if model is LLMOverlay:
+        multiplier = dict.__getitem__(storage, "multiplier")
+        _sig05_decimal_is_bounded(multiplier)
+        payload["multiplier"] = str(multiplier)
+        evidence_ids = payload["evidence_ids"]
+        if type(evidence_ids) is tuple:
+            payload["evidence_ids"] = list(evidence_ids)
+        generated_at = dict.__getitem__(storage, "generated_at")
+        if (
+            type(generated_at) is not _DateTime
+            or object.__getattribute__(generated_at, "tzinfo") is not _Timezone.utc
+        ):
+            raise ValueError("SIG-05 overlay timestamp is invalid")
+        payload["generated_at"] = generated_at.isoformat().replace("+00:00", "Z")
+    return payload
+
+
+def _sig05_json_bytes(payload: dict[str, object], domain: str, maximum: int) -> bytes:
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8", "strict")
+    except (TypeError, ValueError, OverflowError, UnicodeError):
+        raise ValueError("SIG-05 canonical payload is invalid") from None
+    if len(domain.encode("utf-8") + encoded) > maximum:
+        raise ValueError("SIG-05 canonical payload exceeds its bound")
+    return encoded
+
+
+def _sig05_hash(payload: dict[str, object], domain: str, maximum: int) -> str:
+    encoded = _sig05_json_bytes(payload, domain, maximum)
+    domain_bytes = domain.encode("utf-8")
+    return f"sha256:{hashlib.sha256(domain_bytes + encoded).hexdigest()}"
+
+
+def _sig05_decimal_context() -> _DecimalContext:
+    context = _DecimalContext(prec=64, rounding=ROUND_HALF_EVEN, Emin=-100, Emax=100)
+    context.traps[Inexact] = False
+    context.traps[Rounded] = False
+    return context
+
+
+def _sig05_fixed_decimal(value: object, *, maximum: Decimal) -> Decimal:
+    if type(value) is Decimal:
+        _sig05_decimal_is_bounded(value)
+        decimal_value = value
+    elif type(value) is str:
+        if len(value) > 32 or _SIG05_FIXED_DECIMAL.fullmatch(value) is None:
+            raise ValueError("SIG-05 decimal text is not canonical")
+        decimal_value = Decimal(value)
+    else:
+        raise ValueError("SIG-05 decimal requires an exact decimal value")
+    if decimal_value.as_tuple().exponent != -24:
+        raise ValueError("SIG-05 decimal requires exactly 24 places")
+    if decimal_value.is_zero() and decimal_value.as_tuple().sign:
+        raise ValueError("SIG-05 zero must have a positive sign")
+    if not -maximum <= decimal_value <= maximum:
+        raise ValueError("SIG-05 decimal exceeds its fixed range")
+    return decimal_value
+
+
+class SignalVariant(ContractModel):
+    """Immutable, content-addressed identity for one explicit SIG-05 variant."""
+
+    schema_version: Literal[CURRENT_SCHEMA_VERSION]
+    variant_id: StableId
+    kind: Literal["quant_only", "quant_llm"]
+    variant_hash: CanonicalChecksum
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        revalidate_instances="always",
+        hide_input_in_errors=True,
+    )
+
+    @classmethod
+    def model_validate_json(
+        cls,
+        json_data: object,
+        *args: object,
+        **kwargs: object,
+    ) -> SignalVariant:
+        del json_data, args, kwargs
+        raise ValueError("SignalVariant accepts plain dictionary input only")
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_bounded_plain_data(cls, value: object, info: ValidationInfo) -> object:
+        if info.mode == "json":
+            raise ValueError("SignalVariant JSON input is disabled")
+        try:
+            return _sig05_model_payload(value, cls)
+        except (TypeError, ValueError, OverflowError, UnicodeError):
+            raise ValueError("SignalVariant input is invalid") from None
+
+    @field_validator("schema_version", "variant_id", "kind", "variant_hash", mode="before")
+    @classmethod
+    def validate_exact_variant_strings(cls, value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("SignalVariant fields require exact strings")
+        return value
+
+    @field_validator("variant_id")
+    @classmethod
+    def validate_variant_identity(cls, value: str) -> str:
+        try:
+            encoded = value.encode("utf-8", "strict")
+        except UnicodeError:
+            raise ValueError("variant identity is invalid") from None
+        if not encoded or len(encoded) > MAX_IDENTIFIER_LENGTH:
+            raise ValueError("variant identity exceeds its bound")
+        return validate_sig03_identifier(value)
+
+    @field_validator("variant_hash", mode="before")
+    @classmethod
+    def validate_variant_hash_wire(cls, value: object) -> str:
+        if type(value) is not str or _CANONICAL_CHECKSUM.fullmatch(value) is None:
+            raise ValueError("variant hash is invalid")
+        return value
+
+    @model_validator(mode="after")
+    def validate_variant_hash(self) -> SignalVariant:
+        payload = {
+            "schema_version": self.schema_version,
+            "variant_id": self.variant_id,
+            "kind": self.kind,
+        }
+        expected = _sig05_hash(
+            payload,
+            HASH_DOMAIN_SIGNAL_VARIANT,
+            MAX_SIG05_CANONICAL_BYTES,
+        )
+        if self.variant_hash != expected:
+            raise ValueError("variant hash does not match canonical content")
+        return self
+
+
+def _sig05_validate_context(context: RunContext) -> None:
+    if type(context) is not RunContext or context.mode is not Mode.HISTORICAL:
+        raise ValueError("SIG-05 requires historical context")
+    identifier_budget = _new_sensitive_prevalidation_budget()
+    for field in (
+        "run_id",
+        "variant_id",
+        "bundle_id",
+        "bundle_hash",
+        "calendar_id",
+        "base_currency",
+    ):
+        try:
+            validate_sig03_identifier(
+                object.__getattribute__(context, field),
+                _decode_budget=identifier_budget,
+            )
+        except (TypeError, ValueError):
+            raise ValueError("SIG-05 context identity is invalid") from None
+    policy = context.network_policy
+    if type(policy) is not NetworkPolicy:
+        raise ValueError("SIG-05 requires exact network policy")
+    storage = object.__getattribute__(policy, "__dict__")
+    for component in (
+        "data_capture_egress",
+        "model_provider_egress",
+        "research_tool_egress",
+        "paper_broker_egress",
+        "live_broker_egress",
+    ):
+        if dict.__getitem__(storage, component) is not False:
+            raise ValueError("SIG-05 context egress must be disabled")
+
+
+def _sig05_check_context_quant(
+    variant: SignalVariant,
+    context: RunContext,
+    quant: QuantSignal,
+) -> None:
+    _sig05_validate_context(context)
+    if context.variant_id != variant.variant_id:
+        raise ValueError("SIG-05 variant does not match context")
+    if (
+        context.run_id != quant.run_id
+        or context.bundle_id != quant.bundle_id
+        or context.bundle_hash != quant.bundle_hash
+        or quant.as_of > context.knowledge_cutoff
+    ):
+        raise ValueError("SIG-05 context does not match QuantSignal")
+
+
+def _sig05_validate_note_context(
+    note: ResearchNote,
+    context: RunContext,
+    quant: QuantSignal,
+) -> None:
+    note.canonical_bytes()
+    if (
+        note.run_id != context.run_id
+        or note.variant_id != context.variant_id
+        or note.bundle_id != context.bundle_id
+        or note.bundle_hash != context.bundle_hash
+        or note.calendar_id != context.calendar_id
+        or note.knowledge_cutoff != context.knowledge_cutoff
+    ):
+        raise ValueError("SIG-05 ResearchNote contradicts its context")
+    if note.instrument_id != quant.instrument_id:
+        raise SignalEnvelopeError(SignalEnvelopeReasonCode.NOTE_INVALID)
+
+
+def _sig05_validate_overlay_lineage(
+    overlay: LLMOverlay,
+    note: ResearchNote,
+    quant: QuantSignal,
+    context: RunContext,
+) -> None:
+    if (
+        overlay.note_id != note.note_id
+        or overlay.note_hash != note.note_hash
+        or overlay.quant_signal_id != quant.signal_id
+        or overlay.run_id != context.run_id
+        or overlay.bundle_id != context.bundle_id
+        or overlay.bundle_hash != context.bundle_hash
+        or overlay.instrument_id != quant.instrument_id
+        or overlay.generated_at > context.knowledge_cutoff
+    ):
+        raise ValueError("SIG-05 overlay lineage is invalid")
+    cited = {
+        f"{citation.reference.domain}:{citation.reference.record_id}"
+        for citation in note.citations
+    }
+    if not set(overlay.evidence_ids).issubset(cited):
+        raise ValueError("SIG-05 overlay evidence is outside its note")
+
+
+def _sig05_expected_envelope(
+    variant: SignalVariant,
+    context: RunContext,
+    quant: QuantSignal,
+    note: ResearchNote | None,
+    overlay: LLMOverlay | None,
+    *,
+    absent_reasons: tuple[SignalEnvelopeReasonCode, ...] | None = None,
+) -> tuple[
+    Decimal,
+    Decimal,
+    str,
+    bool,
+    tuple[SignalEnvelopeReasonCode, ...],
+]:
+    if type(variant) is not SignalVariant or type(context) is not RunContext:
+        raise ValueError("SIG-05 variant and context types are invalid")
+    if type(quant) is not QuantSignal:
+        raise ValueError("SIG-05 QuantSignal type is invalid")
+    _sig05_check_context_quant(variant, context, quant)
+    zero = _SIG05_FIXED_ZERO
+    invalid_quant = quant.status is QuantSignalStatus.INVALID or quant.score is None
+
+    if variant.kind == "quant_only":
+        if note is not None or overlay is not None:
+            raise ValueError("quant_only envelope cannot contain research sources")
+        if invalid_quant:
+            return zero, zero, "abstain", True, (SignalEnvelopeReasonCode.QUANT_INVALID,)
+        assert quant.score is not None
+        if quant.score.is_zero():
+            return zero, zero, "abstain", True, (SignalEnvelopeReasonCode.QUANT_ZERO,)
+        return (
+            _sig05_effective_score(quant.score, Decimal("1")),
+            _sig05_quant_multiplier(Decimal("1")),
+            "eligible",
+            False,
+            (SignalEnvelopeReasonCode.QUANT_ONLY,),
+        )
+
+    if invalid_quant:
+        if note is not None or overlay is not None:
+            raise ValueError("invalid quant envelope must sanitize research sources")
+        return zero, zero, "abstain", True, (SignalEnvelopeReasonCode.QUANT_INVALID,)
+    if note is None:
+        if overlay is not None:
+            raise ValueError("overlay cannot be retained without its note")
+        if absent_reasons not in (
+            (SignalEnvelopeReasonCode.NOTE_UNAVAILABLE,),
+            (SignalEnvelopeReasonCode.NOTE_INVALID,),
+        ):
+            raise ValueError("missing note requires a bounded no-trade reason")
+        return zero, zero, "abstain", True, absent_reasons
+    if type(note) is not ResearchNote:
+        raise ValueError("SIG-05 ResearchNote type is invalid")
+    _sig05_validate_note_context(note, context, quant)
+
+    if overlay is None:
+        if absent_reasons not in (
+            (SignalEnvelopeReasonCode.OVERLAY_UNAVAILABLE,),
+            (SignalEnvelopeReasonCode.OVERLAY_INVALID,),
+        ):
+            raise ValueError("missing overlay requires a bounded no-trade reason")
+        return zero, zero, "abstain", True, absent_reasons
+    if type(overlay) is not LLMOverlay:
+        raise ValueError("SIG-05 overlay type is invalid")
+    _sig05_validate_overlay_lineage(overlay, note, quant, context)
+
+    if overlay.action == "veto":
+        return zero, zero, "vetoed", True, (SignalEnvelopeReasonCode.OVERLAY_VETOED,)
+    if overlay.abstain is True:
+        return zero, zero, "abstain", True, (SignalEnvelopeReasonCode.OVERLAY_ABSTAINED,)
+    if overlay.action != "attenuate":
+        raise ValueError("SIG-05 overlay action is invalid")
+    if overlay.multiplier.is_zero():
+        return zero, zero, "abstain", True, (SignalEnvelopeReasonCode.OVERLAY_ZERO_MULTIPLIER,)
+    assert quant.score is not None
+    if quant.score.is_zero():
+        return zero, zero, "abstain", True, (SignalEnvelopeReasonCode.QUANT_ZERO,)
+    return (
+        _sig05_effective_score(quant.score, overlay.multiplier),
+        _sig05_quant_multiplier(overlay.multiplier),
+        "attenuated",
+        False,
+        (SignalEnvelopeReasonCode.OVERLAY_APPLIED,),
+    )
+
+
+def _sig05_quant_multiplier(value: Decimal) -> Decimal:
+    _sig05_decimal_is_bounded(value)
+    with localcontext(_sig05_decimal_context()) as context:
+        result = value.quantize(_SIG05_SCALE, context=context)
+    return _SIG05_FIXED_ZERO if result.is_zero() else result
+
+
+def _sig05_effective_score(score: Decimal, multiplier: Decimal) -> Decimal:
+    _sig05_decimal_is_bounded(score)
+    _sig05_decimal_is_bounded(multiplier)
+    with localcontext(_sig05_decimal_context()) as context:
+        try:
+            result = (score * multiplier).quantize(_SIG05_SCALE, context=context)
+        except Exception:
+            raise ValueError("SIG-05 score arithmetic failed") from None
+    return _SIG05_FIXED_ZERO if result.is_zero() else result
+
+
+class SignalEnvelope(ContractModel):
+    """Full-source, deterministic shadow-only combination of SIG-03 and SIG-04."""
+
+    schema_version: Literal[CURRENT_SCHEMA_VERSION]
+    envelope_id: str
+    variant: SignalVariant
+    context: RunContext
+    quant: QuantSignal
+    note: ResearchNote | None
+    overlay: LLMOverlay | None
+    effective_score: Decimal
+    effective_multiplier: Decimal
+    effective_action: Literal["eligible", "attenuated", "vetoed", "abstain"]
+    no_trade: StrictBool
+    reason_codes: tuple[SignalEnvelopeReasonCode, ...]
+    created_at: UtcDateTime
+    shadow_only: StrictBool
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        revalidate_instances="always",
+        hide_input_in_errors=True,
+    )
+
+    @classmethod
+    def model_validate_json(
+        cls,
+        json_data: object,
+        *args: object,
+        **kwargs: object,
+    ) -> SignalEnvelope:
+        del json_data, args, kwargs
+        raise ValueError("SignalEnvelope accepts plain dictionary input only")
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_bounded_plain_data(cls, value: object, info: ValidationInfo) -> object:
+        if info.mode == "json":
+            raise ValueError("SignalEnvelope JSON input is disabled")
+        try:
+            return _sig05_model_payload(value, cls)
+        except (TypeError, ValueError, OverflowError, UnicodeError):
+            raise ValueError("SignalEnvelope input is invalid") from None
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def validate_envelope_schema_version(cls, value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("envelope schema version requires an exact string")
+        return value
+
+    @field_validator("envelope_id", mode="before")
+    @classmethod
+    def validate_envelope_id(cls, value: object) -> str:
+        if type(value) is not str or _SIG05_ENVELOPE_ID.fullmatch(value) is None:
+            raise ValueError("envelope ID is invalid")
+        return value
+
+    @field_validator("effective_score", mode="before")
+    @classmethod
+    def validate_effective_score(cls, value: object) -> Decimal:
+        return _sig05_fixed_decimal(value, maximum=Decimal("1"))
+
+    @field_validator("effective_multiplier", mode="before")
+    @classmethod
+    def validate_effective_multiplier(cls, value: object) -> Decimal:
+        return _sig05_fixed_decimal(value, maximum=Decimal("1"))
+
+    @field_serializer("effective_score", "effective_multiplier", when_used="json")
+    def serialize_fixed_decimals(self, value: Decimal) -> str:
+        return format(value, "f")
+
+    @field_validator("reason_codes", mode="before")
+    @classmethod
+    def validate_reason_sequence(cls, value: object) -> tuple[object, ...]:
+        if type(value) not in (tuple, list) or len(value) > 16:
+            raise ValueError("envelope reason codes are invalid")
+        return tuple(value)
+
+    @model_validator(mode="after")
+    def validate_envelope_semantics(self) -> SignalEnvelope:
+        if self.shadow_only is not True:
+            raise ValueError("SignalEnvelope must remain shadow-only")
+        if tuple(self.reason_codes) != tuple(
+            sorted(self.reason_codes, key=lambda item: item.value)
+        ):
+            raise ValueError("envelope reason codes are not canonical")
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise ValueError("envelope reason codes are duplicated")
+        try:
+            score, multiplier, action, no_trade, reasons = _sig05_expected_envelope(
+                self.variant,
+                self.context,
+                self.quant,
+                self.note,
+                self.overlay,
+                absent_reasons=self.reason_codes,
+            )
+        except (SignalEnvelopeError, TypeError, ValueError, OverflowError):
+            raise ValueError("SignalEnvelope sources or semantics are invalid") from None
+        if (
+            self.effective_score != score
+            or self.effective_multiplier != multiplier
+            or self.effective_action != action
+            or self.no_trade is not no_trade
+            or self.reason_codes != reasons
+            or self.created_at != self.context.decision_time
+        ):
+            raise ValueError("SignalEnvelope outcome does not match its sources")
+        payload = self.model_dump(mode="json")
+        supplied_id = payload.pop("envelope_id")
+        if supplied_id != _sig05_envelope_id(payload):
+            raise ValueError("envelope ID does not match canonical content")
+        return self
+
+    def canonical_bytes(self) -> bytes:
+        """Return bounded canonical JSON after revalidating every stored source."""
+
+        try:
+            rebuilt = type(self).model_validate(self)
+            payload = rebuilt.model_dump(mode="json")
+            return _sig05_json_bytes(
+                payload,
+                HASH_DOMAIN_SIGNAL_ENVELOPE,
+                MAX_SIG05_CANONICAL_BYTES,
+            )
+        except (ValidationError, SignalEnvelopeError, TypeError, ValueError, OverflowError, UnicodeError):
+            raise ValueError("SignalEnvelope failed safe canonical validation") from None
+
+
+_SIG05_MODEL_FIELDS: dict[type[object], tuple[str, ...]] = {
+    model: tuple(model.model_fields)
+    for model in (
+        NetworkPolicy,
+        RunContext,
+        QuantSignal,
+        LLMOverlay,
+        ResearchProvenance,
+        ResearchSourceFields,
+        EvidenceReference,
+        EvidenceCitation,
+        ResearchNote,
+        SignalVariant,
+        SignalEnvelope,
+    )
+}
+_SIG05_ENUM_TYPES = (
+    Mode,
+    QuantSignalStatus,
+    QuantSignalReasonCode,
+    SignalEnvelopeReasonCode,
+)
+
+
+def _sig05_envelope_id(payload: dict[str, object]) -> str:
+    encoded = _sig05_json_bytes(
+        payload,
+        HASH_DOMAIN_SIGNAL_ENVELOPE,
+        MAX_SIG05_CANONICAL_BYTES,
+    )
+    digest = hashlib.sha256(HASH_DOMAIN_SIGNAL_ENVELOPE.encode("utf-8") + encoded).hexdigest()
+    return f"signal-envelope:{digest}"
+
+
 __all__ = [
     "HASH_DOMAIN_LLM_OVERLAY",
     "HASH_DOMAIN_QUANT_SIGNAL",
+    "HASH_DOMAIN_SIGNAL_ENVELOPE",
+    "HASH_DOMAIN_SIGNAL_VARIANT",
     "LLMOverlay",
     "MAX_LLM_OVERLAY_BYTES",
     "MAX_LLM_OVERLAY_EVIDENCE_IDS",
@@ -1165,5 +1916,9 @@ __all__ = [
     "QuantSignal",
     "QuantSignalReasonCode",
     "QuantSignalStatus",
+    "SignalEnvelope",
+    "SignalEnvelopeError",
+    "SignalEnvelopeReasonCode",
+    "SignalVariant",
     "validate_sig03_identifier",
 ]

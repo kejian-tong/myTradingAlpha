@@ -1552,6 +1552,7 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
         "risk_decision",
         "LLMOverlay",
         "SignalEnvelope",
+        "SignalVariant",
         "VariantRegistry",
     }
     for path in paths:
@@ -1563,9 +1564,21 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
         if path.parent.name == "contracts":
             path_forbidden_modules = forbidden_modules - {"datetime"}
         if path == ROOT / "mytradingalpha" / "contracts" / "signals.py":
-            # SIG-04 owns LLMOverlay in this first-use contract module. The
-            # SIG-05 envelope and variant registry remain absent here.
-            path_forbidden_names = forbidden_names - {"LLMOverlay"}
+            # SIG-04 owns LLMOverlay; SIG-05 adds only its shared wire types.
+            path_forbidden_names = forbidden_names - {
+                "LLMOverlay",
+                "SignalEnvelope",
+                "SignalVariant",
+            }
+        elif path.name == "envelope.py":
+            path_forbidden_names = forbidden_names - {
+                "LLMOverlay",
+                "SignalEnvelope",
+                "SignalVariant",
+                "VariantRegistry",
+            }
+        elif path.name == "variants.py":
+            path_forbidden_names = forbidden_names - {"SignalVariant", "VariantRegistry"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 assert all(alias.name not in path_forbidden_modules for alias in node.names)
@@ -1574,7 +1587,7 @@ def test_static_quant_dependency_direction_and_no_later_authority() -> None:
             elif isinstance(node, ast.Name):
                 assert node.id not in path_forbidden_names
             elif isinstance(node, ast.Attribute):
-                assert node.attr not in forbidden_names
+                assert node.attr not in path_forbidden_names
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 assert node.func.id not in {
                     "open",

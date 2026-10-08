@@ -1,6 +1,6 @@
 # Phase 02 — Evidence and Agent Boundary Design
 
-Status: partially implemented. SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is implemented by PR #91; consult GitHub for its current review and merge status. SIG-05 remains deferred. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
+Status: partially implemented. SIG-01 through SIG-04 are merged at their approved contract scope. SIG-05's `SignalEnvelope`, deterministic composition, and immutable `VariantRegistry` are implemented by PR #92. SIG-04 and SIG-05 do not invoke a model provider or add response capture. Later roadmap phases remain deferred.
 
 ## Goals
 
@@ -10,7 +10,7 @@ Status: partially implemented. SIG-01, SIG-02, and SIG-03 are merged. SIG-04's b
 
 ## Scope
 
-Research adapter, evidence tools, `ResearchNote`, deterministic feature/signal service, bounded overlay guard, and later `SignalEnvelope`/variant registration.
+Research adapter, evidence tools, `ResearchNote`, deterministic feature/signal service, bounded overlay guard, and `SignalEnvelope`/variant registration.
 
 ## Non-goals
 
@@ -28,7 +28,7 @@ EvidenceBundle ───────────────> Quant feature serv
       +-> SIG-01 read-only adapter ───> legacy prose graph state
                   ^                         |
 Separate exact-bound cached response        +-> SIG-02 ResearchNote ───> optional LLMOverlay
-QuantSignal + optional overlay ─────────> SIG-05 SignalEnvelope (deferred)
+QuantSignal + optional overlay ─────────> SIG-05 SignalEnvelope
 ```
 
 The two branches are independent: QuantSignal does not depend on LLM output, and the Research adapter does not grant the LLM access to network, credentials, weights, or orders. An overlay timeout/schema error or abstain yields no trade. Quant-only is a separate preregistered experiment variant, not runtime fallback.
@@ -38,6 +38,14 @@ canonical ResearchNote content and QuantSignal lineage and cutoff; this does not
 inference, provider output capture, or historical response provenance. No prose can supply a missing
 action. A missing action is allowed only with abstention and multiplier zero; veto and abstention
 also require zero multiplier.
+
+SIG-05 combines only exact, revalidated production contracts. Variant selection comes from a bounded
+immutable registry snapshot; `quant_only` and `quant_llm` remain separate identities with no fallback.
+The envelope retains full context and source contracts, computes an exact attenuated score, and
+records only static reasons. Structural run, bundle, hash, variant, calendar, cutoff, or QuantSignal
+mismatch is a typed no-trade rejection. Missing or invalid optional note/overlay inputs become a
+same-variant zero/no-trade envelope after invalid sources are removed. The envelope and variant wires
+reject JSON-mode validation; no JSON parser or inference path is introduced.
 
 ## Current integration points
 
@@ -92,11 +100,11 @@ Both replay policies require response `available_at <= knowledge_cutoff`; archiv
 also requires `ingested_at <= knowledge_cutoff`. Availability-only backfilled research is not proof
 of archive-realistic capture. See the [policy examples](../../03_CONTRACTS_AND_SCHEMAS.md#executable-response-policy-examples).
 `trade_date` equals the canonical UTC `knowledge_cutoff` date; session-clock behavior remains later
-roadmap work. SIG-02 remains deferred.
+roadmap work. SIG-02 owns the evidence tools and `ResearchNote` contract described above.
 
 ## Interfaces and invariants
 
-`EvidenceToolset.get(evidence_id)` returns immutable content plus provenance only. `QuantSignal` is deterministic for a fixed bundle, feature version, and model artifact. The SIG-04 `LLMOverlay` is optional and exact-bound to the note and quant signal; it has `action=attenuate|veto` or, for abstention only, `action=None`, a strict abstain flag, and `multiplier ∈ [0,1]`. Veto and abstention require multiplier 0; overlay failure and zero multiplier mean no trade. There is no overlay field for target weights, orders, credentials, or increased quant influence. `SignalEnvelope` remains SIG-05 and records source IDs and reason codes only when its own slice is implemented.
+`EvidenceToolset.get(evidence_id)` returns immutable content plus provenance only. `QuantSignal` is deterministic for a fixed bundle, feature version, and model artifact. The SIG-04 `LLMOverlay` is optional and exact-bound to the note and quant signal; it has `action=attenuate|veto` or, for abstention only, `action=None`, a strict abstain flag, and `multiplier ∈ [0,1]`. Veto and abstention require multiplier 0; overlay failure and zero multiplier mean no trade. There is no overlay field for target weights, orders, credentials, or increased quant influence. SIG-05's `SignalEnvelope` records full source contracts, the effective score/multiplier/action, static reasons, and explicit variant identity.
 
 ## Decisions and alternatives
 

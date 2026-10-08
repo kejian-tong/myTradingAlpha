@@ -1,6 +1,8 @@
 # Phase 02 — Evidence and Agent Boundary Implementation
 
-SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is implemented by PR #91; consult GitHub for its current review and merge status. SIG-05 remains deferred. Commands are plans until their PR records exact output.
+SIG-01 through SIG-04 are merged at their approved contract scope. SIG-05's envelope, deterministic
+composition, and immutable variant registry are implemented by PR #92; current review, CI, and merge
+status are recorded by GitHub. Commands are plans until their PR records exact output.
 
 ## Ordered PR/work packages
 
@@ -8,7 +10,7 @@ SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is impl
 2. **SIG-02** — EvidenceToolset and ResearchNote.
 3. **SIG-03** — deterministic features and QuantSignal.
 4. **SIG-04** — bounded LLMOverlay validator (implemented by PR #91).
-5. **SIG-05** — SignalEnvelope and variant registry (deferred).
+5. **SIG-05** — SignalEnvelope, deterministic QuantSignal/LLMOverlay composition, and explicit variant registry (PR #92).
 
 ## Exact existing files to touch
 
@@ -30,8 +32,18 @@ SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is impl
 - `mytradingalpha/quant/models.py`: `ModelArtifact` with content hash and feature schema.
 - `mytradingalpha/research/overlay.py`: pure `LLMOverlayService.evaluate(note, quant_signal, candidate)` with an explicit no-trade result.
 - `mytradingalpha/research/overlay_validator.py`: `validate_overlay()` and no-trade failure mapping.
-- `mytradingalpha/quant/envelope.py`: `combine_quant_overlay()`.
-- `mytradingalpha/quant/variants.py`: `VariantRegistry.register/resolve()`.
+- `mytradingalpha/quant/envelope.py`: `combine_quant_overlay(quant_signal, *, context, registry, note=None, overlay=None) -> SignalEnvelope`.
+- `mytradingalpha/quant/variants.py`: immutable `VariantRegistry.register(variant_id, *, kind) -> VariantRegistry` and `resolve(variant_id) -> SignalVariant`.
+
+## Current SIG-05 composition boundary
+
+The composer accepts exact `RunContext`, `QuantSignal`, and `VariantRegistry` instances. It resolves
+only `context.variant_id`, requires historical mode with all five context egress flags false, and
+binds context run/bundle/hash and cutoff to the quantitative source. `quant_only` rejects every
+supplied note or overlay. `quant_llm` retains a note only after full canonical validation and an
+overlay only after exact note/quant/citation/cutoff binding. No context, quant, registry, or source
+failure falls back to another variant. This API consumes Python contract objects or bounded plain
+mappings and adds no JSON parser, provider call, or inference path.
 
 ## Schema and pseudocode
 
@@ -57,7 +69,7 @@ The SIG-04 candidate validator rejects extra output fields that represent weight
 
 1. SIG-01 Red: add exact sealed repository/context/response binding, canonical bytes/hash/provenance/cutoff/date failures, no-callable denial, side-effect observers, state/output compatibility, authority denial, and SIG-02-deferral tests.
 2. SIG-01 Green: implement only the closed response contract/repository, pure `tradingagents` validator, and adapter; do not change ordinary graph execution or add a remote/current fallback.
-3. SIG-03 added deterministic quant; SIG-04 adds only the bounded overlay guard. SIG-05 has its own future RED/GREEN cycle for envelope and variant behavior.
+3. SIG-03 added deterministic quant; SIG-04 added only the bounded overlay guard. SIG-05's separate RED/GREEN implementation and review evidence are recorded in PR #92.
 4. Refactor: isolate compatibility rendering from domain contracts and freeze the public action/variant names without crossing PR boundaries.
 
 ## Exact tests and fixtures
@@ -84,7 +96,7 @@ These are the SIG-04 validation commands. The PR report records exact executions
 
 ## Migration and compatibility
 
-The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The SIG-01 adapter is opt-in, preserves the legacy prose state and five-tier string, and requires an exact sealed bundle plus exact canonical cached response. It does not emit a `ResearchNote` or `SignalEnvelope`; those remain later SIG slices. Disable the new path to roll back without deleting bundles/responses or changing current memory records. Forward-paper behavior remains outside SIG-01.
+The default `TradingAgentsGraph` and `SignalProcessor.process_signal()` remain compatible. The SIG-01 adapter is opt-in, preserves the legacy prose state and five-tier string, and requires an exact sealed bundle plus exact canonical cached response. It does not emit a `ResearchNote` or `SignalEnvelope`; SIG-02 and SIG-05 add those separate contracts. Disable the adapter to roll back without deleting bundles/responses or changing current memory records. Forward-paper behavior remains outside SIG-01.
 
 SIG-01 tests seal deterministic canonical response fixtures through the production parser. Fixtures
 prove replay mechanics only and are never described as real model inference. The approved

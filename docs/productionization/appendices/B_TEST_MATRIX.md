@@ -29,6 +29,7 @@ not enabled by the presence of a credential. These actual paths supersede old pl
 | Sealed bundle | `tests/productionization/data/test_bundle_replay.py` | Canonical bytes, exact binding, replay policy |
 | Closed research | `tests/productionization/research/test_adapter.py`, `tests/productionization/research/test_adapter_repairs.py`, `tests/productionization/research/test_cached_response.py`, `tests/productionization/research/test_authority_aliases.py` | No live inference; exact data-only cached replay and negative boundaries |
 | Bounded overlay | `tests/productionization/research/test_overlay.py` | Strict caller-supplied candidate, canonical ID, note/quant binding and cutoff, attenuation/veto/abstain/no-trade, secret/authority/resource rejection, immutability, and no provider or external side effects |
+| Signal envelope and variants | `tests/productionization/quant/test_envelope_variants.py` | Full-source canonical envelope, explicit immutable variants, deterministic 24-place attenuation, strict lineage, JSON-ingress denial, defensive copies, and same-variant fail-closed outcomes |
 | Validation tooling | `tests/productionization/test_validation_boundaries.py`, `tests/productionization/test_harness_contracts.py` | Opt-in integration, installed origins, offline policy predicates |
 | Design handoffs | `tests/productionization/test_design_handoffs.py` | Executable specification, not future ledger/OMS runtime |
 
@@ -38,7 +39,6 @@ not enabled by the presence of a credential. These actual paths supersede old pl
 | --- | --- | --- | --- |
 | Evidence citations | `research/test_evidence_tools.py` | Every note cites IDs; prompt-injection text remains data; provenance retained | `pytest -q tests/productionization/research` |
 | Quant | `quant/test_signal.py` | SIG-03 fixed bundle/config/model yields deterministic domain-separated hashes and score; exact PIT selectors, provenance, missingness, Decimal bounds, hostile-input and side-effect boundaries | `uv run --no-sync pytest -q tests/productionization/quant` |
-| Variants | `quant/test_envelope_variants.py` | Quant-only separate from Quant+LLM; no dynamic fallback | same |
 | Clock/events | `backtest/test_clock_events.py` | Close decision and earliest next-session execution; ordered events; restart sequence | `pytest -q tests/productionization/backtest` |
 | Fills/costs | `backtest/test_fills_costs.py` | Deterministic fills, explicit spread/slippage/commission/impact, partial fill | same |
 | Ledger/NAV | `backtest/test_ledger_nav.py` | Append-only, cash/position/receivable/liability balance, fee posted once, NAV formula, duplicate detection | same |
