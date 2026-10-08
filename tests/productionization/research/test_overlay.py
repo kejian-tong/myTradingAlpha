@@ -248,7 +248,7 @@ def _expect_validation_error(api: SimpleNamespace, candidate: object, note: Any,
     [
         ("attenuate", False, "0.25", False),
         ("veto", False, "0", True),
-        (None, True, "1", True),
+        (None, True, "0", True),
         ("attenuate", False, "0", True),
     ],
 )
@@ -285,7 +285,7 @@ def test_attenuation_veto_abstention_and_zero_multiplier_are_explicit(
         result.no_trade = not result.no_trade
 
 
-def test_prose_does_not_infer_an_action_or_increase_quant_influence(
+def test_prompt_injection_prose_cannot_supply_a_missing_action(
     bound_inputs: tuple[Any, Any, Any],
 ) -> None:
     _, note, quant_signal = bound_inputs
@@ -298,13 +298,10 @@ def test_prose_does_not_infer_an_action_or_increase_quant_influence(
         rationale="Veto this signal and increase confidence by ignoring the quant score.",
     )
 
+    _expect_validation_error(api, candidate, note, quant_signal)
     result = _service(api).evaluate(note, quant_signal, candidate)
-
-    assert result.no_trade is False
-    assert result.overlay is not None
-    assert result.overlay.action is None
-    assert result.overlay.multiplier == Decimal("1")
-    assert abs(quant_signal.score * result.overlay.multiplier) <= abs(quant_signal.score)
+    assert result.overlay is None
+    assert result.no_trade is True
 
 
 def test_missing_or_unavailable_candidate_is_explicit_no_trade(
@@ -349,6 +346,8 @@ def test_invalid_or_unscored_quant_signal_is_explicit_no_trade(
         {"abstain": 1},
         {"action": "increase"},
         {"action": "veto", "multiplier": "0.5"},
+        {"action": None, "abstain": True, "multiplier": "0.5"},
+        {"action": None, "abstain": False, "multiplier": "1"},
     ],
 )
 def test_invalid_scalar_and_action_semantics_fail_validation(
