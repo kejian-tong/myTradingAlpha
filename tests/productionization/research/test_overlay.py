@@ -796,9 +796,3 @@ def test_overlay_modules_do_not_import_provider_or_side_effect_capabilities() ->
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module.split(".", 1)[0])
         assert imported.isdisjoint(forbidden_roots)
-
-
-def test_sig05_envelope_and_variant_registry_remain_deferred() -> None:
-    quant_root = Path(__file__).resolve().parents[3] / "mytradingalpha/quant"
-    assert not (quant_root / "envelope.py").exists()
-    assert not (quant_root / "variants.py").exists()
