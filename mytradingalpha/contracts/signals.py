@@ -1038,6 +1038,18 @@ class LLMOverlay(ContractModel):
         hide_input_in_errors=True,
     )
 
+    @classmethod
+    def model_validate_json(
+        cls,
+        json_data: object,
+        *args: object,
+        **kwargs: object,
+    ) -> LLMOverlay:
+        """Reject JSON before parsing; SIG-04 accepts only bounded plain mappings."""
+
+        del json_data, args, kwargs
+        raise ValueError("LLMOverlay accepts plain dictionary input only")
+
     @model_validator(mode="before")
     @classmethod
     def require_bounded_plain_data(cls, value: object) -> object:
