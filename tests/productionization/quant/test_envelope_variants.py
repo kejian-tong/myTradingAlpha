@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import gc
 import hashlib
 import importlib
 import io
@@ -18,6 +19,7 @@ import re
 import socket
 import subprocess
 import traceback
+import tracemalloc
 import urllib.request
 from copy import deepcopy
 from decimal import ROUND_UP, Decimal, Inexact, Rounded, getcontext, setcontext
@@ -164,6 +166,22 @@ def _expect_safe_error(api: SimpleNamespace, call: Any, *canaries: str) -> None:
         assert canary not in str(exc_info.value)
 
 
+def _assert_validation_peak_below(call: Any, *, maximum_bytes: int = 256 * 1024) -> None:
+    """Measure only validation allocations; caller-owned inputs are prepared first."""
+
+    gc.collect()
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        baseline, _ = tracemalloc.get_traced_memory()
+        with pytest.raises((ValidationError, ValueError, TypeError)):
+            call()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak - baseline < maximum_bytes
+
+
 def test_sig05_api_exists_and_is_owned_by_contract_and_quant_modules() -> None:
     api = _api()
     assert api.SignalEnvelope.__module__ == "mytradingalpha.contracts.signals"
@@ -248,6 +266,34 @@ def test_registry_is_bounded_and_unknown_identity_has_no_default() -> None:
         for variant_id in ("variant-one", "variant-two")
     } == before
     _expect_safe_error(api, lambda: registry.resolve("variant-unregistered"))
+
+
+def test_registry_bounds_kind_and_preserves_snapshot_on_failed_registration() -> None:
+    api = _api()
+    registry = _registry(api, "variant-quant-only", "quant_only")
+    before = registry.resolve("variant-quant-only").model_dump(mode="json")
+    overlong_kind = "quant_llm" + ("x" * 100_000)
+
+    _expect_safe_error(
+        api,
+        lambda: registry.register("variant-extra", kind=overlong_kind),
+    )
+
+    assert registry.resolve("variant-quant-only").model_dump(mode="json") == before
+    _expect_safe_error(api, lambda: registry.resolve("variant-extra"))
+
+
+def test_signal_variant_rejects_oversized_root_mapping_before_copy_allocation() -> None:
+    api = _api()
+    variant = _registry(api, "variant-quant-only", "quant_only").resolve(
+        "variant-quant-only"
+    )
+    mapping = variant.model_dump(mode="python")
+    mapping.update({f"extra-field-{index:06}": None for index in range(100_000)})
+
+    _assert_validation_peak_below(
+        lambda: api.SignalVariant.model_validate(mapping),
+    )
 
 
 def test_registry_rejects_hostile_subclass_without_attribute_callbacks() -> None:
@@ -1176,6 +1222,34 @@ def test_envelope_revalidates_semantics_after_rehashed_tampering(
             envelope.canonical_bytes()
     finally:
         dict.__setitem__(stored, "effective_multiplier", original_multiplier)
+
+
+def test_nested_exact_model_storage_rejects_oversized_keys_before_copy_allocation(
+    bound_sources: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context, registry, overlay = _llm_inputs(note, quant_signal)
+    envelope = api.combine_quant_overlay(
+        quant_signal,
+        context=context,
+        registry=registry,
+        note=note,
+        overlay=overlay,
+    )
+    storage = object.__getattribute__(envelope.variant, "__dict__")
+    original_storage = dict(storage)
+    dict.update(
+        storage,
+        {f"extra-variant-field-{index:06}": None for index in range(100_000)},
+    )
+    try:
+        _assert_validation_peak_below(
+            lambda: api.SignalEnvelope.model_validate(envelope),
+        )
+    finally:
+        dict.clear(storage)
+        dict.update(storage, original_storage)
 
 
 @pytest.mark.parametrize(
