@@ -252,6 +252,16 @@ def _expect_validation_error(api: SimpleNamespace, candidate: object, note: Any,
     assert "SIG04_SECRET_CANARY" not in str(exc_info.value)
 
 
+def _assert_json_wire_rejected_without_echo(
+    api: SimpleNamespace,
+    payload: str | bytes,
+    canary: str,
+) -> None:
+    with pytest.raises((TypeError, ValueError, ValidationError)) as exc_info:
+        api.LLMOverlay.model_validate_json(payload)
+    assert canary not in str(exc_info.value)
+
+
 @pytest.mark.parametrize(
     ("action", "abstain", "multiplier", "expected_no_trade"),
     [
@@ -324,6 +334,72 @@ def test_overlay_wire_has_exact_sig04_fields_and_no_sig05_authority() -> None:
         "envelope",
         "variant_registry",
     }.intersection(api.LLMOverlay.model_fields)
+
+
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_direct_json_validation_rejects_well_formed_candidate(
+    bound_inputs: tuple[Any, Any, Any],
+    as_bytes: bool,
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    canary = "SIG04_JSON_INPUT_CANARY"
+    candidate = _candidate(note, quant_signal, rationale=f"safe fixture {canary}")
+    canonical = json.dumps(
+        candidate,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    payload = canonical.encode("utf-8") if as_bytes else canonical
+
+    _assert_json_wire_rejected_without_echo(api, payload, canary)
+
+
+def test_direct_json_validation_rejects_duplicate_keys_without_echo(
+    bound_inputs: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    canary = "SIG04_DUPLICATE_JSON_CANARY"
+    candidate = _candidate(note, quant_signal, rationale=f"safe fixture {canary}")
+    canonical = json.dumps(
+        candidate,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    duplicate = canonical.replace(
+        '"action":"attenuate"',
+        '"action":"attenuate","action":"attenuate"',
+        1,
+    )
+    assert duplicate != canonical
+
+    _assert_json_wire_rejected_without_echo(api, duplicate, canary)
+
+
+def test_direct_json_validation_rejects_oversized_payload_without_echo(
+    bound_inputs: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    canary = "SIG04_OVERSIZED_JSON_CANARY"
+    candidate = _candidate(note, quant_signal, rationale=f"safe fixture {canary}")
+    canonical = json.dumps(
+        candidate,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    maximum_bytes = 65_536
+    payload = canonical + (" " * (maximum_bytes + 1 - len(canonical)))
+    assert len(payload.encode("utf-8")) > maximum_bytes
+
+    _assert_json_wire_rejected_without_echo(api, payload, canary)
 
 
 def test_prompt_injection_prose_cannot_supply_a_missing_action(
