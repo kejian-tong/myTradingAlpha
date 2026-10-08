@@ -173,8 +173,11 @@ def _registry_storage_graph(
         seen.add(identity)
         if len(seen) > 128:
             raise AssertionError("registry reference graph exceeds its test bound")
-        if value is registry or value is type(registry):
+        if value is registry:
             pending.extend(gc.get_referents(value))
+            continue
+        if value is type(registry):
+            # Class metadata is shared trusted policy, not registry-owned state.
             continue
         value_type = type(value)
         if value_type is tuple:
@@ -309,7 +312,7 @@ def test_registry_snapshot_cannot_be_rewritten_through_owned_referents_or_slots(
     else:
         assert mutable_containers == ()
         assert unsupported == ()
-        assert string_leaves >= 3
+        assert string_leaves == 4
 
     resolved = registry.resolve(context.variant_id)
     outcome = api.combine_quant_overlay(
@@ -415,7 +418,7 @@ def test_registry_rejects_hostile_subclass_without_attribute_callbacks() -> None
             invoked.append(name)
             raise AssertionError("registry callback must not run")
 
-    hostile = object.__new__(HostileRegistry)
+    hostile = tuple.__new__(HostileRegistry, ())
     _expect_safe_error(
         api,
         lambda: api.VariantRegistry.resolve(hostile, "variant-unregistered"),
