@@ -14,7 +14,7 @@ SKILLS_ROOT = ROOT / ".agents/skills"
 COMPATIBILITY_DOC = ROOT / "docs/productionization/PSTACK_COMPATIBILITY.md"
 NOTICE = ROOT / "docs/productionization/PSTACK_MIT_NOTICE.md"
 AGENT_STATE = ROOT / "docs/productionization/AGENT_STATE.md"
-CURRENT_MAIN_SHA = "fb3843b678efa18ae54a061821b577d26be1f297"
+CURRENT_MAIN_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
 
 EXPECTED_SKILLS = {
@@ -428,8 +428,13 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "Copyright (c) 2026 Lauren Tan" in notice
     assert "https://github.com/cursor/plugins/tree/main/pstack" in notice
     assert f"`last_reconciled_main_sha`: `{CURRENT_MAIN_SHA}`" in state
-    assert "`current_pr_id`: `SIG-05` / PR #92" in state
+    assert "`roadmap_status`: no active roadmap PR; SIG-05 / PR #92 merged" in state
+    assert "`current_pr_id`: none" in state
     assert "`active_harness_pr`: none" in state
-    assert "`writer_lease_status`: PR #92 conversation is the durable lease lifecycle record; Master owns it" in state
+    normalized_state = " ".join(state.split())
+    assert (
+        f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "
+        f"its GitHub conversation; it merged at `{CURRENT_MAIN_SHA}`."
+    ) in normalized_state
     assert f"`harness_reconciled_through`: PR #90 / merge `{HARNESS_PR90_MERGE_SHA}`" in state
     assert "PR #90's RED/GREEN, writer lease, exact-head review, and required-check evidence remain in its PR conversation" in state
