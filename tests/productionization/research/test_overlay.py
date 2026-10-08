@@ -11,7 +11,10 @@ import base64
 import builtins
 import hashlib
 import importlib
+import io
 import json
+import logging
+import os
 import re
 import socket
 import subprocess
@@ -237,6 +240,12 @@ def _late_quant_signal(quant_signal: Any) -> Any:
     return QuantSignal.model_validate(quant_fixtures._rekey_signal_payload(payload))
 
 
+def _cross_run_quant_signal(quant_signal: Any) -> Any:
+    payload = quant_signal.model_dump(mode="json")
+    payload["run_id"] = "run-cross-input"
+    return QuantSignal.model_validate(quant_fixtures._rekey_signal_payload(payload))
+
+
 def _expect_validation_error(api: SimpleNamespace, candidate: object, note: Any, signal: Any) -> None:
     with pytest.raises(api.OverlayValidationError) as exc_info:
         api.validate_overlay(candidate, note, signal)
@@ -414,6 +423,24 @@ def test_note_quant_and_run_lineage_mismatches_fail_closed(
     assert result.no_trade is True
 
 
+def test_note_and_quant_must_match_even_when_candidate_matches_each_id(
+    bound_inputs: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    cross_run_signal = _cross_run_quant_signal(quant_signal)
+    candidate = _candidate(
+        note,
+        cross_run_signal,
+        run_id=cross_run_signal.run_id,
+    )
+
+    _expect_validation_error(api, candidate, note, cross_run_signal)
+    result = _service(api).evaluate(note, cross_run_signal, candidate)
+    assert result.overlay is None
+    assert result.no_trade is True
+
+
 def test_overlay_and_quant_timestamps_must_not_exceed_note_cutoff(
     bound_inputs: tuple[Any, Any, Any],
 ) -> None:
@@ -459,14 +486,13 @@ def _rehash_candidate(candidate: dict[str, object]) -> None:
 
 def test_sensitive_rationale_is_rejected_without_reflecting_secret_text(
     bound_inputs: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _, note, quant_signal = bound_inputs
     api = _load_sig04()
     encoded_secret = base64.b64encode(b"api_key=SIG04_SECRET_CANARY").decode("ascii")
-    for rationale in (
-        "api_key=SIG04_SECRET_CANARY",
-        f"fixture={encoded_secret}",
-    ):
+    caplog.set_level(logging.DEBUG)
+    for rationale in ("api_key=SIG04_SECRET_CANARY", f"fixture={encoded_secret}"):
         candidate = _candidate(note, quant_signal, rationale=rationale)
         with pytest.raises(api.OverlayValidationError) as exc_info:
             api.validate_overlay(candidate, note, quant_signal)
@@ -474,6 +500,7 @@ def test_sensitive_rationale_is_rejected_without_reflecting_secret_text(
         result = _service(api).evaluate(note, quant_signal, candidate)
         assert result.overlay is None
         assert result.no_trade is True
+    assert "SIG04_SECRET_CANARY" not in caplog.text
 
 
 def test_callback_objects_and_subclasses_are_rejected_without_execution(
@@ -521,6 +548,77 @@ def test_mutated_note_or_quant_storage_is_revalidated_and_fails_closed(
     assert _service(api).evaluate(clean_note, clean_signal, clean_candidate).no_trade is True
 
 
+def test_overlay_hash_detects_payload_mutation_and_wire_is_immutable(
+    bound_inputs: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    stale_candidate = _candidate(note, quant_signal)
+    stale_candidate["rationale"] = "payload changed without refreshing the overlay id"
+
+    _expect_validation_error(api, stale_candidate, note, quant_signal)
+    assert _service(api).evaluate(note, quant_signal, stale_candidate).no_trade is True
+
+    overlay = api.validate_overlay(_candidate(note, quant_signal), note, quant_signal)
+    with pytest.raises((AttributeError, TypeError, ValidationError)):
+        overlay.multiplier = Decimal("0.25")
+
+
+def test_multiplier_evidence_and_unknown_nested_values_are_bounded(
+    bound_inputs: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    oversized_multiplier = _candidate(
+        note,
+        quant_signal,
+        multiplier="0." + "1" * 64,
+    )
+    oversized_evidence = _candidate(
+        note,
+        quant_signal,
+        evidence_ids=[f"events:synthetic-record-{index:03d}" for index in range(33)],
+    )
+    deep_value: object = "leaf"
+    for _ in range(80):
+        deep_value = [deep_value]
+    deeply_nested_unknown = _candidate(note, quant_signal, unexpected=deep_value)
+
+    for candidate in (oversized_multiplier, oversized_evidence, deeply_nested_unknown):
+        _expect_validation_error(api, candidate, note, quant_signal)
+        result = _service(api).evaluate(note, quant_signal, candidate)
+        assert result.overlay is None
+        assert result.no_trade is True
+
+
+def test_note_and_quant_subclasses_are_rejected_without_callbacks(
+    bound_inputs: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_inputs
+    api = _load_sig04()
+    candidate = _candidate(note, quant_signal)
+    calls: list[str] = []
+
+    class HostileNote(type(note)):
+        def __getattribute__(self, name: str) -> object:
+            calls.append(f"note:{name}")
+            raise AssertionError("note subclass callback ran")
+
+    class HostileSignal(QuantSignal):
+        def __getattribute__(self, name: str) -> object:
+            calls.append(f"quant:{name}")
+            raise AssertionError("quant subclass callback ran")
+
+    hostile_note = HostileNote.model_construct(**note.model_dump(mode="python"))
+    hostile_signal = HostileSignal.model_construct(**quant_signal.model_dump(mode="python"))
+
+    _expect_validation_error(api, candidate, hostile_note, quant_signal)
+    _expect_validation_error(api, candidate, note, hostile_signal)
+    assert _service(api).evaluate(hostile_note, quant_signal, candidate).no_trade is True
+    assert _service(api).evaluate(note, hostile_signal, candidate).no_trade is True
+    assert calls == []
+
+
 def test_oversized_overlay_is_rejected_before_unbounded_processing(
     bound_inputs: tuple[Any, Any, Any],
 ) -> None:
@@ -556,6 +654,8 @@ def test_overlay_evaluation_has_no_provider_network_file_or_process_effects(
     monkeypatch.setattr(subprocess, "run", forbidden("subprocess.run"))
     monkeypatch.setattr(subprocess, "Popen", forbidden("subprocess.Popen"))
     monkeypatch.setattr(builtins, "open", forbidden("open"))
+    monkeypatch.setattr(io, "open", forbidden("io.open"))
+    monkeypatch.setattr(os, "open", forbidden("os.open"))
 
     result = _service(api).evaluate(note, quant_signal, candidate)
 
@@ -568,6 +668,7 @@ def test_overlay_modules_do_not_import_provider_or_side_effect_capabilities() ->
     forbidden_roots = {
         "anthropic",
         "httpx",
+        "io",
         "importlib",
         "openai",
         "os",
