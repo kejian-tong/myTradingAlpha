@@ -39,6 +39,7 @@ from tests.productionization.research import test_overlay as overlay_fixtures
 
 ROOT = Path(__file__).resolve().parents[3]
 ENVELOPE_HASH_DOMAIN = b"mytradingalpha:sig05:signal-envelope:v1\0"
+VARIANT_HASH_DOMAIN = b"mytradingalpha:sig05:signal-variant:v1\0"
 
 
 def _api() -> SimpleNamespace:
@@ -154,6 +155,55 @@ def _assert_no_trade(envelope: Any, *, expected_variant: str = "quant_llm") -> N
     )
 
 
+def _registry_storage_graph(
+    api: SimpleNamespace,
+    registry: Any,
+) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], int]:
+    pending = [registry]
+    seen: set[int] = set()
+    models: list[Any] = []
+    mutable: list[Any] = []
+    unsupported: list[Any] = []
+    string_leaves = 0
+    while pending:
+        value = pending.pop()
+        identity = id(value)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if len(seen) > 128:
+            raise AssertionError("registry reference graph exceeds its test bound")
+        if value is registry or value is type(registry):
+            pending.extend(gc.get_referents(value))
+            continue
+        value_type = type(value)
+        if value_type is tuple:
+            if len(value) > 256:
+                raise AssertionError("registry tuple exceeds its test bound")
+            pending.extend(value)
+        elif value_type is str:
+            string_leaves += 1
+        elif value_type is api.SignalVariant:
+            models.append(value)
+            storage = object.__getattribute__(value, "__dict__")
+            if type(storage) is dict:
+                mutable.append(storage)
+                pending.extend(dict.keys(storage))
+                pending.extend(dict.values(storage))
+            else:
+                unsupported.append(storage)
+        elif value_type is dict:
+            mutable.append(value)
+            pending.extend(dict.keys(value))
+            pending.extend(dict.values(value))
+        elif value_type is list or value_type is set or value_type is bytearray:
+            mutable.append(value)
+            pending.extend(value)
+        else:
+            unsupported.append(value)
+    return tuple(models), tuple(mutable), tuple(unsupported), string_leaves
+
+
 def _expect_safe_error(api: SimpleNamespace, call: Any, *canaries: str) -> None:
     with pytest.raises(api.SignalEnvelopeError) as exc_info:
         call()
@@ -223,6 +273,66 @@ def test_variant_registry_returns_immutable_explicit_snapshots() -> None:
     dict.__setitem__(object.__getattribute__(resolved, "__dict__"), "kind", "quant_llm")
     assert quant_only.resolve("variant-quant-only").kind == "quant_only"
     assert quant_llm.resolve("variant-quant-only").kind == "quant_only"
+
+
+def test_registry_snapshot_cannot_be_rewritten_through_owned_referents_or_slots(
+    bound_sources: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context = _context(note)
+    registry = _registry(api, context.variant_id, "quant_llm")
+    stored_models, mutable_containers, unsupported, string_leaves = _registry_storage_graph(
+        api,
+        registry,
+    )
+
+    if stored_models:
+        assert len(stored_models) == 1
+        stored_variant = stored_models[0]
+        storage = object.__getattribute__(stored_variant, "__dict__")
+        replacement_fields = {
+            "schema_version": dict.__getitem__(storage, "schema_version"),
+            "variant_id": dict.__getitem__(storage, "variant_id"),
+            "kind": "quant_only",
+        }
+        encoded = json.dumps(
+            replacement_fields,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        digest = hashlib.sha256(VARIANT_HASH_DOMAIN + encoded).hexdigest()
+        dict.__setitem__(storage, "kind", "quant_only")
+        dict.__setitem__(storage, "variant_hash", f"sha256:{digest}")
+    else:
+        assert mutable_containers == ()
+        assert unsupported == ()
+        assert string_leaves >= 3
+
+    resolved = registry.resolve(context.variant_id)
+    outcome = api.combine_quant_overlay(
+        quant_signal,
+        context=context,
+        registry=registry,
+        note=None,
+        overlay=None,
+    )
+    assert resolved.kind == "quant_llm"
+    assert outcome.variant.kind == "quant_llm"
+    _assert_no_trade(outcome)
+    try:
+        object.__setattr__(
+            registry,
+            "_variants",
+            ((context.variant_id, "quant_only", "sha256:" + "0" * 64),),
+        )
+        slot_rejected = False
+    except (AttributeError, TypeError):
+        slot_rejected = True
+
+    assert slot_rejected is True
 
 
 @pytest.mark.parametrize(
