@@ -429,6 +429,6 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert f"`last_reconciled_main_sha`: `{BASE_SHA}`" in state
     assert "`current_pr_id`: `SIG-04` / PR #91" in state
     assert "`active_harness_pr`: none" in state
-    assert "`active_writer`: docs/status repair in current candidate; Master release pending after stop" in state
+    assert "`writer_lease_status`: PR #91 conversation records checkpoint, release, and evidence status" in state
     assert f"`harness_reconciled_through`: PR #90 / merge `{BASE_SHA}`" in state
     assert "PR #90's RED/GREEN, writer lease, exact-head review, and required-check evidence remain in its PR conversation" in state

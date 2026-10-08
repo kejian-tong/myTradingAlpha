@@ -14,17 +14,17 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
   `6de1635a90d6c33aee02079dca5d0932e3a32cec`
 - `autonomy_mode`: disabled outside the explicit scope of an authorized PR
-- `active_writer`: docs/status repair in current candidate; Master release pending after stop
 - `configured_writer_route`: `normal_implementer`, GPT-6 Luna/max; runtime unobserved
 - `red_commits`: `6024cb5e1437f3a91bb95b11a8e649506bf0aee8`,
   `695edf06ebd006ac19f9aeb7974448ea648086a8`,
-  `014e6fa6625a89f5be5f4f24f053f71a88139bae`
-- `jit`: PR #91 comments `6049785978`, `6049852668`, `6050019890`
-- `green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5` / tree `5697aa38ad87b5dacaafd5187539e50e7c5aaf61`
-- `green_writer_lease`: `d625b34ee0f7954560c47bf5a49d0843a58fa5c2aec9f82fcaaef515a8445c86` released; digest `e7dd34d3038effd41922d684131808fe406146e221e487708d87846edf04f40a`
+  `014e6fa6625a89f5be5f4f24f053f71a88139bae`,
+  `debede6925a9539dfed0143c26f6b9e17cd607cc`
+- `jit`: PR #91 comments `6049785978`, `6049852668`, `6050019890`, `6050218427`, `6050243741`
+- `initial_green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5` / tree `5697aa38ad87b5dacaafd5187539e50e7c5aaf61`
+- `green_repair_commit`: `2fcdd842173294b10598c13061e7154772087cb0` / tree `ffaa5ed7577f7b2dd662a0a90ed5f6999d6d7d60`
+- `writer_lease_status`: PR #91 conversation records checkpoint, release, and evidence status; Master owns lifecycle
 - `merge`: PR #91 implementation committed; current review/CI/merge status is on GitHub
 - SIG-04 validates caller-supplied candidates only; no inference
-- AGENT_STATE.md and current GitHub state are authoritative for operational status.
 
 PR #87 merged after the following historical SIG-03 implementation and review iterations. At that time,
 the recorded state said, "SIG-03 is the only active roadmap slice." The entries below record state during

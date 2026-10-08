@@ -52,10 +52,12 @@ def test_operational_state_tracks_reconciled_main_and_active_sig04_pr() -> None:
     assert "`current_phase`: bounded overlay guard" in state
     assert "`last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge" in state
     assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
-    assert "`active_writer`: docs/status repair in current candidate; Master release pending after stop" in state
+    assert "`writer_lease_status`: PR #91 conversation records checkpoint, release, and evidence status" in state
     assert "`configured_writer_route`: `normal_implementer`, GPT-6 Luna/max" in state
-    assert "`green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5`" in state
-    assert "`green_writer_lease`: `d625b34ee0f7954560c47bf5a49d0843a58fa5c2aec9f82fcaaef515a8445c86` released" in state
+    assert "`initial_green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5`" in state
+    assert "`green_repair_commit`: `2fcdd842173294b10598c13061e7154772087cb0`" in state
+    assert "`writer_lease_status`: PR #91 conversation records checkpoint, release, and evidence status" in state
+    assert "`debede6925a9539dfed0143c26f6b9e17cd607cc`" in state
     assert "`merge`: PR #91 implementation committed; current review/CI/merge status is on GitHub" in state
     assert "full detached EvidenceBundle semantic revalidation" in state
     assert "exchange-local\ncutoff mapping" in state
@@ -70,7 +72,6 @@ def test_operational_state_tracks_reconciled_main_and_active_sig04_pr() -> None:
     assert (
         "SIG-04 validates caller-supplied candidates only; no inference"
     ) in state
-    assert "AGENT_STATE.md and current GitHub state are authoritative for operational status" in state
     assert "Explicit human PAPER/live promotion gates remain mandatory and unexercised." in state
 
 
