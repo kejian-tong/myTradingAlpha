@@ -124,10 +124,11 @@ def _llm_inputs(
     quant_signal: Any,
     *,
     context_updates: dict[str, object] | None = None,
+    multiplier: str = "0.5",
 ) -> tuple[RunContext, Any, Any]:
     api = _api()
     context = _context(note, **(context_updates or {}))
-    candidate = overlay_fixtures._candidate(note, quant_signal)
+    candidate = overlay_fixtures._candidate(note, quant_signal, multiplier=multiplier)
     overlay = api.contracts_module.LLMOverlay.model_validate(candidate)
     registry = _registry(api, context.variant_id, "quant_llm")
     return context, registry, overlay
@@ -220,20 +221,30 @@ def test_registry_rejects_duplicate_identity_kind_and_unknown_kind(
 ) -> None:
     api = _api()
     registry = _registry(api, first_id, first_kind)
+    before = registry.resolve(first_id).model_dump(mode="json")
     _expect_safe_error(
         api,
         lambda: registry.register(second_id, kind=second_kind),
     )
+    assert registry.resolve(first_id).model_dump(mode="json") == before
 
 
 def test_registry_is_bounded_and_unknown_identity_has_no_default() -> None:
     api = _api()
     registry = api.VariantRegistry().register("variant-one", kind="quant_only")
     registry = registry.register("variant-two", kind="quant_llm")
+    before = {
+        variant_id: registry.resolve(variant_id).model_dump(mode="json")
+        for variant_id in ("variant-one", "variant-two")
+    }
     _expect_safe_error(
         api,
         lambda: registry.register("variant-three", kind="quant_only"),
     )
+    assert {
+        variant_id: registry.resolve(variant_id).model_dump(mode="json")
+        for variant_id in ("variant-one", "variant-two")
+    } == before
     _expect_safe_error(api, lambda: registry.resolve("variant-unregistered"))
 
 
@@ -676,31 +687,30 @@ def test_hostile_context_and_network_policy_are_rejected_before_callbacks(
             raise AssertionError("context callback must not run")
 
     hostile = object.__new__(HostileContext)
-    with pytest.raises((api.SignalEnvelopeError, TypeError, ValueError)):
-        api.combine_quant_overlay(
+    _expect_safe_error(
+        api,
+        lambda: api.combine_quant_overlay(
             quant_signal,
             context=hostile,
             registry=registry,
             note=note,
             overlay=overlay,
-        )
+        ),
+    )
     assert invoked == []
 
     unsafe_policy = NetworkPolicy.model_construct(live_broker_egress=True)
-    corrupted_context = object.__new__(RunContext)
-    dict.__setitem__(
-        object.__getattribute__(corrupted_context, "__dict__"),
-        "network_policy",
-        unsafe_policy,
-    )
-    with pytest.raises((api.SignalEnvelopeError, TypeError, ValueError)):
-        api.combine_quant_overlay(
+    corrupted_context = context.model_copy(update={"network_policy": unsafe_policy})
+    _expect_safe_error(
+        api,
+        lambda: api.combine_quant_overlay(
             quant_signal,
             context=corrupted_context,
             registry=registry,
             note=note,
             overlay=overlay,
-        )
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -735,6 +745,31 @@ def test_any_enabled_context_egress_fails_closed(
     )
 
 
+@pytest.mark.parametrize("mode", [Mode.FORWARD_PAPER, Mode.LIVE_PILOT])
+def test_nonhistorical_all_egress_false_contexts_are_out_of_scope_and_rejected(
+    bound_sources: tuple[Any, Any, Any],
+    mode: Mode,
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context, registry, overlay = _llm_inputs(note, quant_signal)
+    context_data = context.model_dump(mode="python")
+    context_data["mode"] = mode
+    valid_nonhistorical_context = RunContext.model_validate(context_data)
+    assert not any(valid_nonhistorical_context.network_policy.model_dump().values())
+
+    _expect_safe_error(
+        api,
+        lambda: api.combine_quant_overlay(
+            quant_signal,
+            context=valid_nonhistorical_context,
+            registry=registry,
+            note=note,
+            overlay=overlay,
+        ),
+    )
+
+
 def test_context_and_network_policy_are_copied_defensively(
     bound_sources: tuple[Any, Any, Any],
 ) -> None:
@@ -758,6 +793,45 @@ def test_context_and_network_policy_are_copied_defensively(
     )
     assert envelope.context.variant_id == note.variant_id
     assert envelope.context.network_policy.live_broker_egress is False
+
+
+def test_composition_detaches_quant_note_and_overlay_source_storage(
+    bound_sources: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context, registry, overlay = _llm_inputs(note, quant_signal)
+    envelope = api.combine_quant_overlay(
+        quant_signal,
+        context=context,
+        registry=registry,
+        note=note,
+        overlay=overlay,
+    )
+    original_bytes = envelope.canonical_bytes()
+    original_id = envelope.envelope_id
+    original_score = quant_signal.score
+    original_thesis = note.thesis
+    original_note_hash = note.note_hash
+    original_multiplier = overlay.multiplier
+
+    quant_storage = object.__getattribute__(quant_signal, "__dict__")
+    note_storage = object.__getattribute__(note, "__dict__")
+    overlay_storage = object.__getattribute__(overlay, "__dict__")
+    dict.__setitem__(quant_storage, "score", Decimal("0.125000000000"))
+    dict.__setitem__(note_storage, "thesis", "caller-mutated source")
+    dict.__setitem__(overlay_storage, "multiplier", Decimal("0.25"))
+    try:
+        assert envelope.canonical_bytes() == original_bytes
+        assert envelope.envelope_id == original_id
+        assert envelope.quant.score == original_score
+        assert envelope.note.thesis == original_thesis
+        assert envelope.note.note_hash == original_note_hash
+        assert envelope.overlay.multiplier == original_multiplier
+    finally:
+        dict.__setitem__(quant_storage, "score", original_score)
+        dict.__setitem__(note_storage, "thesis", original_thesis)
+        dict.__setitem__(overlay_storage, "multiplier", original_multiplier)
 
 
 def test_invalid_note_or_overlay_is_same_variant_zero_no_trade_without_echo(
@@ -792,37 +866,99 @@ def test_invalid_note_or_overlay_is_same_variant_zero_no_trade_without_echo(
 
 
 @pytest.mark.parametrize(
-    "oversized",
-    [True, False],
+    "case",
+    ["note_text", "note_depth", "quant_features", "overlay_evidence"],
 )
-def test_oversized_or_deep_untrusted_source_is_bounded_and_no_trade(
+def test_corrupted_supported_model_storage_hits_resource_bounds_fail_closed(
     bound_sources: tuple[Any, Any, Any],
-    oversized: bool,
+    case: str,
 ) -> None:
     _, note, quant_signal = bound_sources
     api = _api()
     context, registry, overlay = _llm_inputs(note, quant_signal)
-    if oversized:
-        malformed_note: object = {"thesis": "x" * (1_048_576 + 1)}
-    else:
-        nested: dict[str, object] = {"value": "bounded"}
+    if case == "note_text":
+        storage = object.__getattribute__(note, "__dict__")
+        field = "thesis"
+        original = dict.__getitem__(storage, field)
+        dict.__setitem__(storage, field, "x" * (1_048_576 + 1))
+    elif case == "note_depth":
+        storage = object.__getattribute__(note, "__dict__")
+        field = "citations"
+        original = dict.__getitem__(storage, field)
+        citation = note.citations[0].model_dump(mode="python")
+        reference = dict(citation["reference"])
+        nested: object = "leaf"
         for _ in range(32):
-            nested["value"] = {"value": nested["value"]}
-        malformed_note = nested
+            nested = {"nested": nested}
+        reference["record_id"] = nested
+        citation["reference"] = reference
+        dict.__setitem__(storage, field, (citation,))
+    elif case == "quant_features":
+        storage = object.__getattribute__(quant_signal, "__dict__")
+        field = "feature_ids"
+        original = dict.__getitem__(storage, field)
+        dict.__setitem__(
+            storage,
+            field,
+            tuple(f"feature-{index:03}" for index in range(33)),
+        )
+    else:
+        storage = object.__getattribute__(overlay, "__dict__")
+        field = "evidence_ids"
+        original = dict.__getitem__(storage, field)
+        dict.__setitem__(
+            storage,
+            field,
+            tuple(f"evidence-{index:03}" for index in range(33)),
+        )
 
-    envelope = api.combine_quant_overlay(
-        quant_signal,
-        context=context,
-        registry=registry,
-        note=malformed_note,
-        overlay=overlay,
-    )
+    try:
+        if case == "quant_features":
+            _expect_safe_error(
+                api,
+                lambda: api.combine_quant_overlay(
+                    quant_signal,
+                    context=context,
+                    registry=registry,
+                    note=note,
+                    overlay=overlay,
+                ),
+            )
+            return
 
-    _assert_no_trade(envelope)
+        envelope = api.combine_quant_overlay(
+            quant_signal,
+            context=context,
+            registry=registry,
+            note=note,
+            overlay=overlay,
+        )
+        _assert_no_trade(envelope)
+        if case in {"note_text", "note_depth"}:
+            assert envelope.note is None
+            assert envelope.overlay is None
+        else:
+            assert envelope.note.canonical_bytes() == note.canonical_bytes()
+            assert envelope.overlay is None
+    finally:
+        dict.__setitem__(storage, field, original)
 
 
-def test_envelope_revalidates_semantics_even_after_a_valid_rehash(
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("effective_score", "0.999999999999999999999999"),
+        ("effective_multiplier", "0.990000000000000000000000"),
+        ("effective_action", "eligible"),
+        ("no_trade", True),
+        ("reason_codes", ["quant_invalid"]),
+        ("context.run_id", "run-envelope-other"),
+    ],
+)
+def test_envelope_revalidates_semantics_after_rehashed_tampering(
     bound_sources: tuple[Any, Any, Any],
+    path: str,
+    value: object,
 ) -> None:
     _, note, quant_signal = bound_sources
     api = _api()
@@ -835,16 +971,34 @@ def test_envelope_revalidates_semantics_even_after_a_valid_rehash(
         overlay=overlay,
     )
     payload = envelope.model_dump(mode="json")
-    payload["effective_score"] = "0.999999999999999999999999"
+    if "." in path:
+        parent, field = path.split(".", 1)
+        payload[parent][field] = value
+    else:
+        payload[path] = value
     forged = _rehash_envelope(payload)
 
     with pytest.raises((ValidationError, ValueError, TypeError)):
         api.SignalEnvelope.model_validate(forged)
 
+    original_bytes = envelope.canonical_bytes()
+    validated = api.SignalEnvelope.model_validate(envelope)
+    assert validated.canonical_bytes() == original_bytes
+
     stored = object.__getattribute__(envelope, "__dict__")
-    dict.__setitem__(stored, "effective_score", Decimal("0.999999999999999999999999"))
-    with pytest.raises((ValidationError, ValueError, TypeError)):
-        envelope.canonical_bytes()
+    original_multiplier = dict.__getitem__(stored, "effective_multiplier")
+    dict.__setitem__(
+        stored,
+        "effective_multiplier",
+        Decimal("0.990000000000000000000000"),
+    )
+    try:
+        with pytest.raises((ValidationError, ValueError, TypeError)):
+            api.SignalEnvelope.model_validate(envelope)
+        with pytest.raises((ValidationError, ValueError, TypeError)):
+            envelope.canonical_bytes()
+    finally:
+        dict.__setitem__(stored, "effective_multiplier", original_multiplier)
 
 
 @pytest.mark.parametrize(
@@ -886,7 +1040,11 @@ def test_canonical_envelope_roundtrip_and_repeat_are_stable_and_json_bounded(
 ) -> None:
     _, note, quant_signal = bound_sources
     api = _api()
-    context, registry, overlay = _llm_inputs(note, quant_signal)
+    context, registry, overlay = _llm_inputs(
+        note,
+        quant_signal,
+        multiplier="0.123456789012",
+    )
     original_context = getcontext().copy()
     try:
         getcontext().prec = 6
@@ -916,6 +1074,10 @@ def test_canonical_envelope_roundtrip_and_repeat_are_stable_and_json_bounded(
     assert first_bytes == second_bytes
     assert first.envelope_id == second.envelope_id
     assert first.envelope_id == _rehash_envelope(json.loads(first_bytes))["envelope_id"]
+    assert first.effective_score == (
+        quant_signal.score * Decimal("0.123456789012")
+    ).quantize(Decimal("0.000000000000000000000000"))
+    assert first.effective_multiplier == Decimal("0.123456789012000000000000")
     assert first.created_at == context.decision_time
     assert first.shadow_only is True
     decoded = json.loads(first_bytes)
