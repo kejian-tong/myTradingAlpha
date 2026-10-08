@@ -1286,10 +1286,11 @@ def _sig05_walk(value: object, budget: _Sig05WalkBudget, depth: int = 0) -> obje
             raise ValueError("SIG-05 model storage is invalid") from exc
         if type(storage) is not dict:
             raise ValueError("SIG-05 model storage is invalid")
+        if dict.__len__(storage) != len(model_fields):
+            raise ValueError("SIG-05 model fields are invalid")
         keys = tuple(dict.keys(storage))
         if (
-            len(keys) != len(model_fields)
-            or any(type(key) is not str for key in keys)
+            any(type(key) is not str for key in keys)
             or set(keys) != set(model_fields)
         ):
             raise ValueError("SIG-05 model fields are invalid")
@@ -1380,10 +1381,11 @@ def _sig05_model_payload(value: object, model: type[object]) -> dict[str, object
     fields = _SIG05_MODEL_FIELDS[model]
     if type(storage) is not dict:
         raise ValueError("SIG-05 model storage is invalid")
+    if dict.__len__(storage) != len(fields):
+        raise ValueError("SIG-05 model fields are invalid")
     keys = tuple(dict.keys(storage))
     if (
-        len(keys) != len(fields)
-        or any(type(key) is not str for key in keys)
+        any(type(key) is not str for key in keys)
         or set(keys) != set(fields)
     ):
         raise ValueError("SIG-05 model fields are invalid")

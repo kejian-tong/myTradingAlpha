@@ -65,6 +65,8 @@ class VariantRegistry:
             raise SignalEnvelopeError(SignalEnvelopeReasonCode.VARIANT_INVALID)
         if type(variant_id) is not str or type(kind) is not str:
             raise self._error(SignalEnvelopeReasonCode.INPUT_INVALID)
+        if len(kind) > 10:
+            raise self._error(SignalEnvelopeReasonCode.VARIANT_INVALID)
         if kind not in {"quant_only", "quant_llm"}:
             raise self._error(SignalEnvelopeReasonCode.VARIANT_INVALID)
         if len(variant_id) > 128:
