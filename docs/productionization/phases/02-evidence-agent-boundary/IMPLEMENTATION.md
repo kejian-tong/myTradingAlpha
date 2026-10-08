@@ -1,14 +1,14 @@
 # Phase 02 — Evidence and Agent Boundary Implementation
 
-SIG-01 and SIG-02 are implemented; SIG-03 is implemented in active PR #87 pending review and merge; SIG-04/SIG-05 remain planned. Commands are plans until their PR records exact output.
+SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is implemented by PR #91; consult GitHub for its current review and merge status. SIG-05 remains deferred. Commands are plans until their PR records exact output.
 
 ## Ordered PR/work packages
 
 1. **SIG-01** — read-only Research Graph adapter.
 2. **SIG-02** — EvidenceToolset and ResearchNote.
 3. **SIG-03** — deterministic features and QuantSignal.
-4. **SIG-04** — bounded LLMOverlay validator.
-5. **SIG-05** — SignalEnvelope and variant registry.
+4. **SIG-04** — bounded LLMOverlay validator (implemented by PR #91).
+5. **SIG-05** — SignalEnvelope and variant registry (deferred).
 
 ## Exact existing files to touch
 
@@ -22,13 +22,13 @@ SIG-01 and SIG-02 are implemented; SIG-03 is implemented in active PR #87 pendin
 - `mytradingalpha/data/replay_guard.py`: additive `HistoricalDataGuard.replay_bound(...) -> tuple[EvidenceBundle, RunContext]` returns the guard-validated canonical binding; existing `replay(...) -> EvidenceBundle` remains compatible.
 - `mytradingalpha/research/cached_response.py`: separate v1 canonical response contract, exact selection, byte sealer/parser, append-only repository, hashes, provenance/cutoff checks, and typed errors.
 - `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact evidence/response repositories and selection; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
-- Shared ResearchNote/QuantSignal/LLMOverlay/SignalEnvelope wire classes follow [first-use ownership](../../03_CONTRACTS_AND_SCHEMAS.md#first-use-wire-ownership); no duplicate domain wire classes.
+- Shared ResearchNote/QuantSignal/LLMOverlay/SignalEnvelope wire classes follow [first-use ownership](../../03_CONTRACTS_AND_SCHEMAS.md#first-use-wire-ownership); SIG-04 owns LLMOverlay, and SIG-05 owns SignalEnvelope. No duplicate domain wire classes.
 - `mytradingalpha/research/evidence_tools.py`: `EvidenceToolset.get/list_citations()`.
 - `mytradingalpha/research/notes.py`: `ResearchNoteBuilder.build()`.
 - `mytradingalpha/quant/features.py`: `FeatureSet.compute(bundle, instrument)`.
 - `mytradingalpha/quant/signal.py`: `QuantSignalModel.score(features)`.
 - `mytradingalpha/quant/models.py`: `ModelArtifact` with content hash and feature schema.
-- `mytradingalpha/research/overlay.py`: `LLMOverlayService.evaluate(note, quant_signal)`.
+- `mytradingalpha/research/overlay.py`: pure `LLMOverlayService.evaluate(note, quant_signal, candidate)` with an explicit no-trade result.
 - `mytradingalpha/research/overlay_validator.py`: `validate_overlay()` and no-trade failure mapping.
 - `mytradingalpha/quant/envelope.py`: `combine_quant_overlay()`.
 - `mytradingalpha/quant/variants.py`: `VariantRegistry.register/resolve()`.
@@ -40,23 +40,24 @@ bundle -> FeatureSet -> QuantSignal
 bundle -> ResearchAdapter -> ResearchNote -> optional OverlayService
 
 overlay_result:
-  if timeout/schema_error/abstain: SignalEnvelope(action="abstain")
-  if veto: multiplier=0, action="veto"
-  if attenuate: 0 <= multiplier <= 1, action="attenuate"
-  otherwise: reject; never infer a default action
+  if missing_candidate/invalid_quant/validation_error/abstain: no_trade=true
+  if veto or multiplier=0: no_trade=true
+  if attenuate: 0 <= multiplier <= 1; no_trade=false only for positive multiplier
+  if action is None: abstain=true and multiplier=0
+  otherwise: reject; prose never supplies an action
 
 Quant-only and Quant+LLM are separate VariantRegistry entries.
 ```
 
-SIG-02 is a pure bundle/evidence/cached-state-to-note transformation: no model invocation, capture service, runtime callback or ordinary-graph fallback. Preserve genuine cached provenance; citation/rendering tests are not real inference evidence. The future producer is assigned in the [v1 handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
+SIG-02 is a pure bundle/evidence/cached-state-to-note transformation: no model invocation, capture service, runtime callback or ordinary-graph fallback. SIG-04 also performs no model invocation: it validates a supplied plain candidate against defensive canonical note and quant copies. Preserve genuine cached provenance; citation/rendering tests are not real inference evidence. The future producer is assigned in the [v1 handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
 
-The validator rejects extra output fields that represent weights, quantity, order type, broker IDs, or credentials. It rejects multiplier values outside [0,1], veto with nonzero multiplier, and any envelope whose bundle/context hash is inconsistent.
+The SIG-04 candidate validator rejects extra output fields that represent weights, quantity, order type, broker IDs, or credentials. It rejects multiplier values outside [0,1] and veto with nonzero multiplier. SIG-05 owns SignalEnvelope validation and combination.
 
 ## Red-green-refactor
 
 1. SIG-01 Red: add exact sealed repository/context/response binding, canonical bytes/hash/provenance/cutoff/date failures, no-callable denial, side-effect observers, state/output compatibility, authority denial, and SIG-02-deferral tests.
 2. SIG-01 Green: implement only the closed response contract/repository, pure `tradingagents` validator, and adapter; do not change ordinary graph execution or add a remote/current fallback.
-3. Later SIG PRs repeat their own RED/GREEN cycles for evidence citations, deterministic quant, overlay validation, and envelope/variant behavior.
+3. SIG-03 added deterministic quant; SIG-04 adds only the bounded overlay guard. SIG-05 has its own future RED/GREEN cycle for envelope and variant behavior.
 4. Refactor: isolate compatibility rendering from domain contracts and freeze the public action/variant names without crossing PR boundaries.
 
 ## Exact tests and fixtures
@@ -66,7 +67,7 @@ The validator rejects extra output fields that represent weights, quantity, orde
 - `tests/productionization/research/test_adapter_repairs.py`: bound-field mutation denial, sealed alias intervals, defensive canonical context handoff, UTC cutoff-date enforcement, and authority checks in supported plain messages/structured call arguments.
 - `tests/productionization/research/test_evidence_tools.py`: citation completeness, immutable item, prompt-injection text treated as data.
 - `tests/productionization/quant/test_signal.py`: feature golden file, deterministic repeat, missing-feature status, model hash.
-- `tests/productionization/research/test_overlay.py`: attenuate/veto/abstain, timeout/schema error no-trade, forbidden fields, multiplier bounds.
+- `tests/productionization/research/test_overlay.py`: attenuation/veto/abstain semantics, note/quant lineage and cutoff binding, canonical overlay ID, secret and authority rejection, resource bounds, immutable output, and no provider/file/network/process side effects.
 - `tests/productionization/quant/test_envelope_variants.py`: Quant-only and Quant+LLM IDs, no dynamic fallback, envelope serialization.
 - `tests/productionization/fixtures/evidence/bundle-minimal.json` and `overlay-{attenuate,veto,abstain,error}.json`.
 
@@ -79,7 +80,7 @@ python scripts/check_dependency_direction.py
 ruff check .
 ```
 
-These commands are planned; the PR report must state whether each ran and include no credentials or live payloads.
+These are the SIG-04 validation commands. The PR report records exact executions and includes no credentials or live payloads.
 
 ## Migration and compatibility
 

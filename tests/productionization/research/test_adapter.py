@@ -507,9 +507,9 @@ def test_dependency_direction_scope_and_callable_surface_are_static_and_narrow()
         "subprocess",
     ):
         assert token not in source
-    research_root = REPOSITORY_ROOT / "mytradingalpha/research"
-    for later in ("overlay.py", "overlay_validator.py"):
-        assert not (research_root / later).exists()
+    quant_root = REPOSITORY_ROOT / "mytradingalpha/quant"
+    for later in ("envelope.py", "variants.py"):
+        assert not (quant_root / later).exists()
 
 
 def test_public_signatures_and_default_graph_contract_remain_compatible() -> None:

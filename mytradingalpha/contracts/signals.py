@@ -49,10 +49,16 @@ _REASON_ORDER = (
     "optional_feature_missing",
 )
 HASH_DOMAIN_QUANT_SIGNAL = "mytradingalpha:sig03:quant-signal:v1\0"
+HASH_DOMAIN_LLM_OVERLAY = "mytradingalpha:sig04:llm-overlay:v1\0"
 MAX_FEATURES = 32
 MAX_IDENTIFIER_LENGTH = 128
 MAX_CANONICAL_BYTES = 1_048_576
 MAX_NESTING_DEPTH = 64
+MAX_LLM_OVERLAY_BYTES = 65_536
+MAX_LLM_OVERLAY_EVIDENCE_IDS = 32
+MAX_LLM_OVERLAY_RATIONALE_BYTES = 8_192
+_LLM_OVERLAY_ID = re.compile(r"overlay:[0-9a-f]{64}")
+_LLM_OVERLAY_DECIMAL = re.compile(r"(?:0|1|0\.(?:[0-9]{0,11}[1-9]))")
 _DIRECT_SENSITIVE_WORDS = (
     "api-key",
     "apikey",
@@ -857,8 +863,301 @@ class QuantSignal(ContractModel):
         return self
 
 
+_LLM_OVERLAY_FIELDS = (
+    "schema_version",
+    "overlay_id",
+    "note_id",
+    "note_hash",
+    "quant_signal_id",
+    "run_id",
+    "bundle_id",
+    "bundle_hash",
+    "instrument_id",
+    "action",
+    "abstain",
+    "multiplier",
+    "evidence_ids",
+    "rationale",
+    "model_id",
+    "generated_at",
+)
+_LLM_OVERLAY_IDENTIFIER_FIELDS = (
+    "overlay_id",
+    "note_id",
+    "quant_signal_id",
+    "run_id",
+    "bundle_id",
+    "instrument_id",
+    "model_id",
+)
+_LLM_OVERLAY_CHECKSUM_FIELDS = ("note_hash", "bundle_hash")
+
+
+def _overlay_text(value: object, *, maximum: int) -> str:
+    if type(value) is not str or not value or len(value) > maximum:
+        raise ValueError("overlay text is invalid")
+    try:
+        encoded = value.encode("utf-8", "strict")
+    except UnicodeError as exc:
+        raise ValueError("overlay text is invalid") from exc
+    if len(encoded) > maximum:
+        raise ValueError("overlay text exceeds its bound")
+    return value
+
+
+def _overlay_plain_fields(value: object, model: type[object]) -> dict[str, object]:
+    if type(value) is model:
+        storage = object.__getattribute__(value, "__dict__")
+    elif type(value) is dict:
+        storage = value
+    else:
+        raise _validation_error(model.__name__)
+    if type(storage) is not dict or dict.__len__(storage) != len(_LLM_OVERLAY_FIELDS):
+        raise _validation_error(model.__name__)
+    keys = tuple(dict.keys(storage))
+    if any(type(key) is not str for key in keys) or set(keys) != set(_LLM_OVERLAY_FIELDS):
+        raise _validation_error(model.__name__)
+    plain = {field: dict.__getitem__(storage, field) for field in _LLM_OVERLAY_FIELDS}
+
+    model_input = type(value) is model
+    string_limits = {
+        "schema_version": 16,
+        "overlay_id": 72,
+        "note_id": MAX_IDENTIFIER_LENGTH,
+        "note_hash": 71,
+        "quant_signal_id": MAX_IDENTIFIER_LENGTH,
+        "run_id": MAX_IDENTIFIER_LENGTH,
+        "bundle_id": MAX_IDENTIFIER_LENGTH,
+        "bundle_hash": 71,
+        "instrument_id": MAX_IDENTIFIER_LENGTH,
+        "model_id": MAX_IDENTIFIER_LENGTH,
+        "rationale": MAX_LLM_OVERLAY_RATIONALE_BYTES,
+    }
+    for field, maximum in string_limits.items():
+        _overlay_text(plain[field], maximum=maximum)
+
+    action = plain["action"]
+    if action is not None and type(action) is not str:
+        raise ValueError("overlay action is invalid")
+    if action is not None and action not in {"attenuate", "veto"}:
+        raise ValueError("overlay action is invalid")
+    if type(plain["abstain"]) is not bool:
+        raise ValueError("overlay abstain flag is invalid")
+
+    multiplier = plain["multiplier"]
+    if model_input:
+        if type(multiplier) is not Decimal or not multiplier.is_finite():
+            raise ValueError("overlay multiplier is invalid")
+        multiplier_text = str(multiplier)
+    else:
+        multiplier_text = _overlay_text(multiplier, maximum=32)
+    if _LLM_OVERLAY_DECIMAL.fullmatch(multiplier_text) is None:
+        raise ValueError("overlay multiplier is not canonical")
+    if not Decimal("0") <= Decimal(multiplier_text) <= Decimal("1"):
+        raise ValueError("overlay multiplier is outside its bound")
+
+    evidence_ids = plain["evidence_ids"]
+    if type(evidence_ids) not in (list, tuple):
+        raise ValueError("overlay evidence identifiers are invalid")
+    if len(evidence_ids) > MAX_LLM_OVERLAY_EVIDENCE_IDS:
+        raise ValueError("overlay evidence identifiers exceed their bound")
+    safe_evidence_ids = tuple(
+        _overlay_text(item, maximum=256) for item in evidence_ids
+    )
+    if tuple(sorted(safe_evidence_ids)) != safe_evidence_ids:
+        raise ValueError("overlay evidence identifiers are not canonical")
+    if len(set(safe_evidence_ids)) != len(safe_evidence_ids):
+        raise ValueError("overlay evidence identifiers are duplicated")
+    plain["evidence_ids"] = safe_evidence_ids if model_input else list(safe_evidence_ids)
+
+    generated_at = plain["generated_at"]
+    if model_input:
+        if (
+            type(generated_at) is not _DateTime
+            or object.__getattribute__(generated_at, "tzinfo") is not _Timezone.utc
+        ):
+            raise ValueError("overlay timestamp is invalid")
+        plain["generated_at"] = generated_at.isoformat().replace("+00:00", "Z")
+    else:
+        _overlay_text(generated_at, maximum=40)
+
+    budget = _new_sensitive_prevalidation_budget()
+    for field in _LLM_OVERLAY_IDENTIFIER_FIELDS:
+        identifier = plain[field]
+        if field == "overlay_id" and _LLM_OVERLAY_ID.fullmatch(identifier) is None:
+            raise ValueError("overlay identifier is invalid")
+        validate_sig03_identifier(identifier, _decode_budget=budget)
+    for field in _LLM_OVERLAY_CHECKSUM_FIELDS:
+        validate_sig03_identifier(plain[field], _decode_budget=budget)
+
+    rationale = plain["rationale"]
+    if _identifier_contains_sensitive_candidate(rationale, budget):
+        raise ValueError("overlay rationale is not artifact safe")
+
+    canonical_fields = dict(plain)
+    canonical_fields["multiplier"] = multiplier_text
+    canonical_fields["evidence_ids"] = list(safe_evidence_ids)
+    try:
+        encoded = json.dumps(
+            canonical_fields,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8", "strict")
+    except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
+        raise ValueError("overlay canonical bytes are invalid") from exc
+    if len(HASH_DOMAIN_LLM_OVERLAY.encode("utf-8") + encoded) > MAX_LLM_OVERLAY_BYTES:
+        raise ValueError("overlay canonical bytes exceed their bound")
+    return plain
+
+
+class LLMOverlay(ContractModel):
+    """Immutable SIG-04 wire for one bounded, caller-supplied overlay candidate."""
+
+    schema_version: Literal[CURRENT_SCHEMA_VERSION]
+    overlay_id: StableId
+    note_id: StableId
+    note_hash: CanonicalChecksum
+    quant_signal_id: StableId
+    run_id: StableId
+    bundle_id: StableId
+    bundle_hash: CanonicalChecksum
+    instrument_id: StableId
+    action: Literal["attenuate", "veto"] | None
+    abstain: StrictBool
+    multiplier: Decimal
+    evidence_ids: tuple[StableId, ...]
+    rationale: str
+    model_id: StableId
+    generated_at: UtcDateTime
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        revalidate_instances="always",
+        hide_input_in_errors=True,
+    )
+
+    @classmethod
+    def model_validate_json(
+        cls,
+        json_data: object,
+        *args: object,
+        **kwargs: object,
+    ) -> LLMOverlay:
+        """Reject JSON before parsing; SIG-04 accepts only bounded plain mappings."""
+
+        del json_data, args, kwargs
+        raise ValueError("LLMOverlay accepts plain dictionary input only")
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_bounded_plain_data(cls, value: object) -> object:
+        try:
+            return _overlay_plain_fields(value, cls)
+        except ValidationError:
+            raise ValueError("overlay input is invalid") from None
+        except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
+            raise _validation_error(cls.__name__) from exc
+
+    @field_validator(
+        "schema_version",
+        "overlay_id",
+        "note_id",
+        "note_hash",
+        "quant_signal_id",
+        "run_id",
+        "bundle_id",
+        "bundle_hash",
+        "instrument_id",
+        "model_id",
+        "rationale",
+        mode="before",
+    )
+    @classmethod
+    def validate_exact_overlay_text(cls, value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("overlay text requires an exact string")
+        return value
+
+    @field_validator("multiplier", mode="before")
+    @classmethod
+    def validate_exact_multiplier(cls, value: object) -> Decimal:
+        if type(value) is Decimal:
+            text = str(value)
+        elif type(value) is str:
+            text = value
+        else:
+            raise ValueError("overlay multiplier requires a canonical decimal string")
+        if len(text) > 32 or _LLM_OVERLAY_DECIMAL.fullmatch(text) is None:
+            raise ValueError("overlay multiplier is not canonical")
+        return Decimal(text)
+
+    @field_validator("evidence_ids", mode="before")
+    @classmethod
+    def validate_evidence_sequence(cls, value: object) -> tuple[object, ...]:
+        if type(value) not in (tuple, list) or len(value) > MAX_LLM_OVERLAY_EVIDENCE_IDS:
+            raise ValueError("overlay evidence identifiers are invalid")
+        result = tuple(value)
+        if any(type(item) is not str for item in result):
+            raise ValueError("overlay evidence identifiers require exact strings")
+        return result
+
+    @field_validator("generated_at", mode="before")
+    @classmethod
+    def validate_wire_timestamp(cls, value: object) -> object:
+        if type(value) is str:
+            return value
+        if type(value) is _DateTime and object.__getattribute__(value, "tzinfo") is _Timezone.utc:
+            return value
+        raise ValueError("overlay timestamp requires an exact UTC value")
+
+    @model_validator(mode="after")
+    def validate_overlay(self) -> LLMOverlay:
+        if len(self.evidence_ids) == 0:
+            raise ValueError("overlay evidence identifiers cannot be empty")
+        if tuple(self.evidence_ids) != tuple(sorted(self.evidence_ids)):
+            raise ValueError("overlay evidence identifiers are not canonical")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("overlay evidence identifiers are duplicated")
+        if self.action is None:
+            if self.abstain is not True:
+                raise ValueError("an overlay without an action must abstain")
+        elif self.abstain is True:
+            raise ValueError("an abstaining overlay cannot carry an action")
+        if self.abstain is True and self.multiplier != Decimal("0"):
+            raise ValueError("an abstaining overlay must have zero multiplier")
+        if self.action == "veto" and self.multiplier != Decimal("0"):
+            raise ValueError("a veto overlay must have zero multiplier")
+
+        payload = self.model_dump(mode="json")
+        supplied_id = payload.pop("overlay_id")
+        try:
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8", "strict")
+        except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
+            raise ValueError("overlay canonical bytes are invalid") from exc
+        preimage = HASH_DOMAIN_LLM_OVERLAY.encode("utf-8") + encoded
+        if len(preimage) > MAX_LLM_OVERLAY_BYTES:
+            raise ValueError("overlay canonical bytes exceed their bound")
+        expected_id = f"overlay:{hashlib.sha256(preimage).hexdigest()}"
+        if supplied_id != expected_id:
+            raise ValueError("overlay identifier does not match canonical content")
+        return self
+
+
 __all__ = [
+    "HASH_DOMAIN_LLM_OVERLAY",
     "HASH_DOMAIN_QUANT_SIGNAL",
+    "LLMOverlay",
+    "MAX_LLM_OVERLAY_BYTES",
+    "MAX_LLM_OVERLAY_EVIDENCE_IDS",
+    "MAX_LLM_OVERLAY_RATIONALE_BYTES",
     "MAX_CANONICAL_BYTES",
     "MAX_FEATURES",
     "MAX_IDENTIFIER_LENGTH",

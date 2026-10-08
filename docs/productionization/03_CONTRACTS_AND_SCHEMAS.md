@@ -2,6 +2,8 @@
 
 The Pydantic-style sketches below describe target field semantics, not drop-in implementations or the current wire schema. Introduce each future contract only at its first-use slice. Existing implemented types and approved amendments take precedence; JSON/YAML examples illustrate shape only. Exact names and invariants are stable across historical, paper, and live modes. All timestamps are timezone-aware UTC ISO-8601 strings; all decimals are serialized as strings or fixed-precision decimal values at the API boundary.
 
+SIG-04's `LLMOverlay` wire is implemented in `mytradingalpha/contracts/signals.py`; its exact fields and validation supersede the conceptual sketch below. PR #91 validates only a caller-supplied candidate. It does not call a model provider or define captured inference provenance. Consult GitHub for PR #91's current review and merge status.
+
 ## Implemented contract index
 
 The current Foundation contracts are in `mytradingalpha/contracts/common.py`, `versions.py` and
@@ -141,19 +143,22 @@ class QuantSignal(BaseModel):
     status: Literal["valid", "degraded", "invalid"]
 
 class LLMOverlay(BaseModel):
+    schema_version: str
     overlay_id: str
+    note_id: str
+    note_hash: str
+    quant_signal_id: str
     run_id: str
     bundle_id: str
-    quant_signal_id: str
+    bundle_hash: str
     instrument_id: str
-    action: Literal["attenuate", "veto"] | None = None
-    abstain: bool = False
-    multiplier: Decimal = Field(ge=0, le=1)
-    evidence_ids: list[str]
+    action: Literal["attenuate", "veto"] | None
+    abstain: bool
+    multiplier: Decimal
+    evidence_ids: tuple[str, ...]
     rationale: str
     model_id: str
     generated_at: datetime
-    schema_version: str
 
 class SignalEnvelope(BaseModel):
     envelope_id: str
@@ -281,6 +286,15 @@ class GateEvidence(BaseModel):
     recorded_at: datetime
     rollback_plan: str
 ```
+
+The SIG-04 wire binds `overlay_id` to a domain-separated canonical hash of every other field. Its
+`note_id` and `note_hash` bind the exact canonical `ResearchNote`; `quant_signal_id`, run, bundle,
+bundle hash, and instrument must match the defensive `QuantSignal` copy and the note. Both timestamps
+must be at or before the note cutoff. Evidence IDs must be unique citations in that note. An absent
+action is valid only for abstention; abstention and veto require multiplier zero. Attenuation is
+bounded to [0,1]. Any invalid, unavailable, abstaining, vetoing, or zero-multiplier result is explicit
+no-trade. This guard does not infer an action from rationale prose or combine signals into a
+`SignalEnvelope`; that remains SIG-05.
 
 The worker may split these classes into modules, but field meaning and validation must remain compatible. String decimals avoid binary float surprises in persisted accounting; conversion to `Decimal` happens before validation.
 
