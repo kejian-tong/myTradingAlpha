@@ -8,19 +8,21 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - `schema_version`: 2
 - `last_reconciled_main_sha`: `8f76f341bedf086dd4eb69e4229be33127f5028f`
 - `last_reconciled_main_tree`: `b5a25ecd0994cf8d32d5a525b42831c5be824235`
-- `roadmap_status`: SIG-04 active in draft PR #91; SIG-05 deferred
+- `roadmap_status`: SIG-04 implementation in PR #91; SIG-05 deferred; merge status per GitHub
 - `current_pr_id`: `SIG-04` / PR #91
 - `current_phase`: bounded overlay guard
 - `last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge
   `6de1635a90d6c33aee02079dca5d0932e3a32cec`
 - `autonomy_mode`: disabled outside the explicit scope of an authorized PR
-- `active_writer`: candidate writer currently active; release/review/CI pending
+- `active_writer`: docs/status repair in current candidate; Master release pending after stop
 - `configured_writer_route`: `normal_implementer`, GPT-6 Luna/max; runtime unobserved
 - `red_commits`: `6024cb5e1437f3a91bb95b11a8e649506bf0aee8`,
   `695edf06ebd006ac19f9aeb7974448ea648086a8`,
   `014e6fa6625a89f5be5f4f24f053f71a88139bae`
-- `jit`: PR #91 comments `6049785978`, `6049852668` (RED audit)
-- `merge`: PR #91 draft; review, CI, Master gate pending
+- `jit`: PR #91 comments `6049785978`, `6049852668`, `6050019890`
+- `green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5` / tree `5697aa38ad87b5dacaafd5187539e50e7c5aaf61`
+- `green_writer_lease`: `d625b34ee0f7954560c47bf5a49d0843a58fa5c2aec9f82fcaaef515a8445c86` released; digest `e7dd34d3038effd41922d684131808fe406146e221e487708d87846edf04f40a`
+- `merge`: PR #91 implementation committed; current review/CI/merge status is on GitHub
 - SIG-04 validates caller-supplied candidates only; no inference
 - AGENT_STATE.md and current GitHub state are authoritative for operational status.
 
@@ -117,14 +119,8 @@ PAPER/live, or promotion behavior was introduced.
   read-only review assurance, and all PAPER/live gates.
 - PR #88's policy merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d` remains recoverable in the
   completed Harness sequence below.
-- PR #90 RED commit `54b0a87b032348d50a9a71cbc59cabf43d5f31c4`; final GREEN lease
-  `371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28` is released. Its RED lease
-  `7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a` and refs
-  `215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397` /
-  `daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475` /
-  `b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4` remain recoverable in its PR.
-- PR #90 completed with its exact-head review, required checks, and Master merge gate in the PR conversation.
-- PR #91's JIT and current GREEN lease evidence are tracked in its PR conversation; SIG-05 stays deferred.
+- PR #90's RED/GREEN, writer lease, exact-head review, and required-check evidence remain in its PR conversation.
+- PR #91's JIT and docs/status repair lease lifecycle are tracked in its PR conversation; SIG-05 stays deferred.
 - PR #86's read-only review-assurance policy remains active.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark

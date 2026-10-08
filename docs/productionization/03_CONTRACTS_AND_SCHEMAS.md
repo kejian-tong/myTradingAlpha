@@ -2,7 +2,7 @@
 
 The Pydantic-style sketches below describe target field semantics, not drop-in implementations or the current wire schema. Introduce each future contract only at its first-use slice. Existing implemented types and approved amendments take precedence; JSON/YAML examples illustrate shape only. Exact names and invariants are stable across historical, paper, and live modes. All timestamps are timezone-aware UTC ISO-8601 strings; all decimals are serialized as strings or fixed-precision decimal values at the API boundary.
 
-SIG-04's `LLMOverlay` wire is implemented in `mytradingalpha/contracts/signals.py`; its exact fields and validation supersede the conceptual sketch below. The draft implementation in PR #91 accepts only a caller-supplied candidate. It does not call a model provider or define captured inference provenance.
+SIG-04's `LLMOverlay` wire is implemented in `mytradingalpha/contracts/signals.py`; its exact fields and validation supersede the conceptual sketch below. PR #91 validates only a caller-supplied candidate. It does not call a model provider or define captured inference provenance. Consult GitHub for PR #91's current review and merge status.
 
 ## Implemented contract index
 

@@ -4,7 +4,7 @@
 
 The target is a small, auditable daily research-to-order system around the existing Research Graph. It is not a rewrite of `tradingagents/`. The upstream-derived graph remains useful for evidence interpretation; the existing `mytradingalpha/` package owns Foundation, PIT, and closed cached-response replay. Production-owned numerical decisions, portfolio accounting, risk controls, execution simulation, and broker integration remain later roadmap work.
 
-The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, SIG-01 through SIG-03 are merged at their approved contract scope. The bounded SIG-04 overlay guard is under review in draft PR #91; it validates only a supplied candidate and does not perform model inference or response capture. SIG-05 and later behavior remain deferred. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state rather than interpreting the diagram as merged functionality.
+The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, SIG-01 through SIG-03 are merged at their approved contract scope. SIG-04's bounded overlay guard is implemented by PR #91; it validates only a supplied candidate and does not perform model inference or response capture. Consult GitHub for PR #91's current review and merge status. SIG-05 and later behavior remain deferred. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state rather than interpreting the diagram as merged functionality.
 ## System overview
 
 ```mermaid
@@ -15,7 +15,7 @@ flowchart LR
     E --> R[Research adapter]
     C[Separately sealed cached response] --> R
     R --> L[Bounded LLMOverlay]
-    Q --> S[SignalEnvelope]
+    Q --> S[SIG-05 SignalEnvelope]
     L --> S
     S --> A[Rule allocator]
     A --> T[TargetPortfolio]

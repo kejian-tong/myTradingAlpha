@@ -1,6 +1,6 @@
 # Phase 02 — Evidence and Agent Boundary Design
 
-Status: partially implemented. SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is in draft PR #91 pending independent review, required CI, and the Master merge gate. SIG-05 remains deferred. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
+Status: partially implemented. SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is implemented by PR #91; consult GitHub for its current review and merge status. SIG-05 remains deferred. This phase uses the current Research Graph for interpretation while moving authority for numeric signals and risk-sensitive actions outside the LLM.
 
 ## Goals
 
@@ -10,7 +10,7 @@ Status: partially implemented. SIG-01, SIG-02, and SIG-03 are merged. SIG-04's b
 
 ## Scope
 
-Research adapter, evidence tools, `ResearchNote`, deterministic feature/signal service, overlay validator, `SignalEnvelope`, and explicit Quant-only/Quant+LLM variant registration.
+Research adapter, evidence tools, `ResearchNote`, deterministic feature/signal service, bounded overlay guard, and later `SignalEnvelope`/variant registration.
 
 ## Non-goals
 
@@ -28,7 +28,7 @@ EvidenceBundle ───────────────> Quant feature serv
       +-> SIG-01 read-only adapter ───> legacy prose graph state
                   ^                         |
 Separate exact-bound cached response        +-> SIG-02 ResearchNote ───> optional LLMOverlay
-QuantSignal + optional overlay ─────────> SignalEnvelope
+QuantSignal + optional overlay ─────────> SIG-05 SignalEnvelope (deferred)
 ```
 
 The two branches are independent: QuantSignal does not depend on LLM output, and the Research adapter does not grant the LLM access to network, credentials, weights, or orders. An overlay timeout/schema error or abstain yields no trade. Quant-only is a separate preregistered experiment variant, not runtime fallback.

@@ -1,14 +1,14 @@
 # Phase 02 — Evidence and Agent Boundary Implementation
 
-SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is in draft PR #91 pending exact-head review, required CI, and the Master merge gate. SIG-05 remains deferred. Commands are plans until their PR records exact output.
+SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is implemented by PR #91; consult GitHub for its current review and merge status. SIG-05 remains deferred. Commands are plans until their PR records exact output.
 
 ## Ordered PR/work packages
 
 1. **SIG-01** — read-only Research Graph adapter.
 2. **SIG-02** — EvidenceToolset and ResearchNote.
 3. **SIG-03** — deterministic features and QuantSignal.
-4. **SIG-04** — bounded LLMOverlay validator.
-5. **SIG-05** — SignalEnvelope and variant registry.
+4. **SIG-04** — bounded LLMOverlay validator (implemented by PR #91).
+5. **SIG-05** — SignalEnvelope and variant registry (deferred).
 
 ## Exact existing files to touch
 
@@ -22,7 +22,7 @@ SIG-01, SIG-02, and SIG-03 are merged. SIG-04's bounded LLMOverlay guard is in d
 - `mytradingalpha/data/replay_guard.py`: additive `HistoricalDataGuard.replay_bound(...) -> tuple[EvidenceBundle, RunContext]` returns the guard-validated canonical binding; existing `replay(...) -> EvidenceBundle` remains compatible.
 - `mytradingalpha/research/cached_response.py`: separate v1 canonical response contract, exact selection, byte sealer/parser, append-only repository, hashes, provenance/cutoff checks, and typed errors.
 - `mytradingalpha/research/tradingagents_adapter.py`: constructor-injected exact evidence/response repositories and selection; `ResearchAdapter.run(bundle_id, context, *, ticker, trade_date, asset_type="stock") -> tuple[dict[str, object], str]`.
-- Shared ResearchNote/QuantSignal/LLMOverlay/SignalEnvelope wire classes follow [first-use ownership](../../03_CONTRACTS_AND_SCHEMAS.md#first-use-wire-ownership); no duplicate domain wire classes.
+- Shared ResearchNote/QuantSignal/LLMOverlay/SignalEnvelope wire classes follow [first-use ownership](../../03_CONTRACTS_AND_SCHEMAS.md#first-use-wire-ownership); SIG-04 owns LLMOverlay, and SIG-05 owns SignalEnvelope. No duplicate domain wire classes.
 - `mytradingalpha/research/evidence_tools.py`: `EvidenceToolset.get/list_citations()`.
 - `mytradingalpha/research/notes.py`: `ResearchNoteBuilder.build()`.
 - `mytradingalpha/quant/features.py`: `FeatureSet.compute(bundle, instrument)`.
@@ -51,7 +51,7 @@ Quant-only and Quant+LLM are separate VariantRegistry entries.
 
 SIG-02 is a pure bundle/evidence/cached-state-to-note transformation: no model invocation, capture service, runtime callback or ordinary-graph fallback. SIG-04 also performs no model invocation: it validates a supplied plain candidate against defensive canonical note and quant copies. Preserve genuine cached provenance; citation/rendering tests are not real inference evidence. The future producer is assigned in the [v1 handoff](../../03_CONTRACTS_AND_SCHEMAS.md#closed-response-capture-and-replay-handoff).
 
-The validator rejects extra output fields that represent weights, quantity, order type, broker IDs, or credentials. It rejects multiplier values outside [0,1], veto with nonzero multiplier, and any envelope whose bundle/context hash is inconsistent.
+The SIG-04 candidate validator rejects extra output fields that represent weights, quantity, order type, broker IDs, or credentials. It rejects multiplier values outside [0,1] and veto with nonzero multiplier. SIG-05 owns SignalEnvelope validation and combination.
 
 ## Red-green-refactor
 

@@ -47,16 +47,16 @@ def test_operational_state_tracks_reconciled_main_and_active_sig04_pr() -> None:
     state = _state_text()
     assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
     assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
-    assert "`roadmap_status`: SIG-04 active in draft PR #91; SIG-05 deferred" in state
+    assert "`roadmap_status`: SIG-04 implementation in PR #91; SIG-05 deferred; merge status per GitHub" in state
     assert "`current_pr_id`: `SIG-04` / PR #91" in state
     assert "`current_phase`: bounded overlay guard" in state
     assert "`last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge" in state
     assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
-    assert "`active_writer`: candidate writer currently active; release/review/CI pending" in state
+    assert "`active_writer`: docs/status repair in current candidate; Master release pending after stop" in state
     assert "`configured_writer_route`: `normal_implementer`, GPT-6 Luna/max" in state
-    assert (
-        "`merge`: PR #91 draft; review, CI, Master gate pending"
-    ) in state
+    assert "`green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5`" in state
+    assert "`green_writer_lease`: `d625b34ee0f7954560c47bf5a49d0843a58fa5c2aec9f82fcaaef515a8445c86` released" in state
+    assert "`merge`: PR #91 implementation committed; current review/CI/merge status is on GitHub" in state
     assert "full detached EvidenceBundle semantic revalidation" in state
     assert "exchange-local\ncutoff mapping" in state
     assert MERGE_SHA in state

@@ -15,8 +15,6 @@ COMPATIBILITY_DOC = ROOT / "docs/productionization/PSTACK_COMPATIBILITY.md"
 NOTICE = ROOT / "docs/productionization/PSTACK_MIT_NOTICE.md"
 AGENT_STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 BASE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
-RED_COMMIT = "54b0a87b032348d50a9a71cbc59cabf43d5f31c4"
-GREEN_LEASE_ID = "371ca86fa8b49948eada5ab77520223d836872c4ce99e855040feb1ee1320f28"
 
 EXPECTED_SKILLS = {
     "architect",
@@ -431,12 +429,6 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert f"`last_reconciled_main_sha`: `{BASE_SHA}`" in state
     assert "`current_pr_id`: `SIG-04` / PR #91" in state
     assert "`active_harness_pr`: none" in state
-    assert "`active_writer`: candidate writer currently active; release/review/CI pending" in state
-    assert f"PR #90 RED commit `{RED_COMMIT}`" in state
-    assert "7fe3b7d4f5e36b4e0c02630e1ead731504c22cff325cfdf7582f69041fdfc15a" in state
-    assert "215197cafebffbbcaf535fc1da48da85bf0515f45d9d37a7c6f894e687c95397" in state
-    assert "daf4091fd1ed08400a7ce348d2bb9be76caea79a48e2079fa8711c887f326475" in state
-    assert "b6d291b0664660847707aa3b3f4b345c6b4303adacd3f5ede0a3fcc619875fd4" in state
-    green_lease_lines = [line for line in state.splitlines() if GREEN_LEASE_ID in line]
-    assert green_lease_lines
-    assert any("released" in line.lower() for line in green_lease_lines)
+    assert "`active_writer`: docs/status repair in current candidate; Master release pending after stop" in state
+    assert f"`harness_reconciled_through`: PR #90 / merge `{BASE_SHA}`" in state
+    assert "PR #90's RED/GREEN, writer lease, exact-head review, and required-check evidence remain in its PR conversation" in state
