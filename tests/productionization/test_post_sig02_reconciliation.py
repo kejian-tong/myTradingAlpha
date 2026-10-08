@@ -8,8 +8,8 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "fb3843b678efa18ae54a061821b577d26be1f297"
-RECONCILED_MAIN_TREE = "1b04140f7d83dc5e87e91bdb6f28f0637cdf0d01"
+CURRENT_MAIN_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
+CURRENT_MAIN_TREE = "73bba924315c1cf0421e0c9b6cb44a22fa3e940c"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
 SIG03_ORIGINAL_BASE_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
@@ -44,23 +44,28 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_reconciled_main_and_active_sig05_pr() -> None:
+def test_operational_state_tracks_current_main_and_completed_sig05_pr() -> None:
     state = _state_text()
-    assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
-    assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
-    assert "`roadmap_status`: SIG-05 implementation in PR #92; review/CI/merge status per GitHub" in state
-    assert "`current_pr_id`: `SIG-05` / PR #92" in state
-    assert "`current_phase`: deterministic signal envelope and explicit variant registry" in state
-    assert "`last_completed_roadmap_pr`: `SIG-04` / PR #91 / merge" in state
-    assert "`fb3843b678efa18ae54a061821b577d26be1f297`" in state
+    normalized_state = " ".join(state.split())
+    assert f"`last_reconciled_main_sha`: `{CURRENT_MAIN_SHA}`" in state
+    assert f"`last_reconciled_main_tree`: `{CURRENT_MAIN_TREE}`" in state
+    assert "`roadmap_status`: no active roadmap PR; SIG-05 / PR #92 merged" in state
+    assert "`current_pr_id`: none" in state
+    assert "`current_phase`: none" in state
+    assert (
+        f"`last_completed_roadmap_pr`: `SIG-05` / PR #92 / merge `{CURRENT_MAIN_SHA}`"
+        in normalized_state
+    )
     assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
-    assert "`writer_lease_status`: PR #92 conversation is the durable lease lifecycle record; Master owns it" in state
-    assert "`configured_writer_route`: `normal_implementer`, GPT-6 Luna/max" in state
-    assert "`301ab2eeb1144d3baf2f097d462883d304481ce3`" in state
-    assert "`855b0319a3afe6f38fdcc636f7a2475da374df68`" in state
-    assert "PR #92 comments `6052141530`, `6052177862`, and `6052218183`" in state
-    assert "`merge`: PR #92 implementation, review, CI, and merge status is on GitHub" in state
-    assert "`next_dependency`: BT-01 after SIG-05 merge; requires separate user authorization" in state
+    assert (
+        f"`merge`: PR #92 merged at `{CURRENT_MAIN_SHA}`; implementation, review, and CI records "
+        "remain in its GitHub conversation"
+    ) in normalized_state
+    assert "`next_dependency`: BT-01 remains unauthorized and requires separate user authorization" in state
+    assert (
+        f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "
+        f"its GitHub conversation; it merged at `{CURRENT_MAIN_SHA}`."
+    ) in normalized_state
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
     assert "`active_harness_pr`: none" in state

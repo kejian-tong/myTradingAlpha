@@ -6,21 +6,17 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `fb3843b678efa18ae54a061821b577d26be1f297`
-- `last_reconciled_main_tree`: `1b04140f7d83dc5e87e91bdb6f28f0637cdf0d01`
-- `roadmap_status`: SIG-05 implementation in PR #92; review/CI/merge status per GitHub
-- `current_pr_id`: `SIG-05` / PR #92
-- `current_phase`: deterministic signal envelope and explicit variant registry
-- `last_completed_roadmap_pr`: `SIG-04` / PR #91 / merge
-  `fb3843b678efa18ae54a061821b577d26be1f297`
+- `last_reconciled_main_sha`: `d709f16b37e40837c4ee687a6bc03ab92ea55218`
+- `last_reconciled_main_tree`: `73bba924315c1cf0421e0c9b6cb44a22fa3e940c`
+- `roadmap_status`: no active roadmap PR; SIG-05 / PR #92 merged
+- `current_pr_id`: none
+- `current_phase`: none
+- `last_completed_roadmap_pr`: `SIG-05` / PR #92 / merge
+  `d709f16b37e40837c4ee687a6bc03ab92ea55218`
 - `autonomy_mode`: disabled outside the explicit scope of an authorized PR
-- `configured_writer_route`: `normal_implementer`, GPT-6 Luna/max; runtime unobserved
-- `red_commits`: `301ab2eeb1144d3baf2f097d462883d304481ce3`,
-  `855b0319a3afe6f38fdcc636f7a2475da374df68`
-- `jit`: PR #92 comments `6052141530`, `6052177862`, and `6052218183`
-- `writer_lease_status`: PR #92 conversation is the durable lease lifecycle record; Master owns it
-- `merge`: PR #92 implementation, review, CI, and merge status is on GitHub
-- `next_dependency`: BT-01 after SIG-05 merge; requires separate user authorization
+- `merge`: PR #92 merged at `d709f16b37e40837c4ee687a6bc03ab92ea55218`; implementation, review,
+  and CI records remain in its GitHub conversation
+- `next_dependency`: BT-01 remains unauthorized and requires separate user authorization
 - SIG-04 validates caller-supplied candidates only; no inference
 - SIG-05 adds only in-memory deterministic shadow envelopes; later roadmap work remains deferred
 - SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior; explicit human PAPER/live gates remain mandatory and unexercised
@@ -50,8 +46,9 @@ PAPER/live, or promotion behavior was introduced.
 - PR #88's policy merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d` remains recoverable in the
   completed Harness sequence below.
 - PR #90's RED/GREEN, writer lease, exact-head review, and required-check evidence remain in its PR conversation.
-- PR #91's JIT and lease lifecycle remain recoverable in its PR conversation; its merge is the last completed roadmap slice.
-- PR #92's JIT, RED evidence, and writer lease lifecycle are tracked in its PR conversation; its current status is per GitHub.
+- PR #91's JIT and lease lifecycle remain recoverable in its PR conversation; PR #92 subsequently completed SIG-05.
+- PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in its GitHub
+  conversation; it merged at `d709f16b37e40837c4ee687a6bc03ab92ea55218`.
 - PR #86's read-only review-assurance policy remains active.
 
 The completed Harness sequence is summarized by theme: #74–#77 covered state reconciliation, benchmark
