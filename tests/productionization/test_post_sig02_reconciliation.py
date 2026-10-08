@@ -8,12 +8,13 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
-RECONCILED_MAIN_TREE = "b5a25ecd0994cf8d32d5a525b42831c5be824235"
+RECONCILED_MAIN_SHA = "fb3843b678efa18ae54a061821b577d26be1f297"
+RECONCILED_MAIN_TREE = "1b04140f7d83dc5e87e91bdb6f28f0637cdf0d01"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
 SIG03_ORIGINAL_BASE_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
+SIG03_MERGE_SHA = "6de1635a90d6c33aee02079dca5d0932e3a32cec"
 RULESET_ID = "23141241"
 RULESET_OBSERVED_ON = "2026-09-19"
 
@@ -43,36 +44,35 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_reconciled_main_and_active_sig04_pr() -> None:
+def test_operational_state_tracks_reconciled_main_and_active_sig05_pr() -> None:
     state = _state_text()
     assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
     assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
-    assert "`roadmap_status`: SIG-04 implementation in PR #91; SIG-05 deferred; merge status per GitHub" in state
-    assert "`current_pr_id`: `SIG-04` / PR #91" in state
-    assert "`current_phase`: bounded overlay guard" in state
-    assert "`last_completed_roadmap_pr`: `SIG-03` / PR #87 / merge" in state
+    assert "`roadmap_status`: SIG-05 implementation in PR #92; review/CI/merge status per GitHub" in state
+    assert "`current_pr_id`: `SIG-05` / PR #92" in state
+    assert "`current_phase`: deterministic signal envelope and explicit variant registry" in state
+    assert "`last_completed_roadmap_pr`: `SIG-04` / PR #91 / merge" in state
+    assert "`fb3843b678efa18ae54a061821b577d26be1f297`" in state
     assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
-    assert "`writer_lease_status`: PR #91 conversation records checkpoint, release, and evidence status" in state
+    assert "`writer_lease_status`: PR #92 conversation is the durable lease lifecycle record; Master owns it" in state
     assert "`configured_writer_route`: `normal_implementer`, GPT-6 Luna/max" in state
-    assert "`initial_green_commit`: `ba6769d6b62043e445c02b42d852dd73eb55a0c5`" in state
-    assert "`green_repair_commit`: `2fcdd842173294b10598c13061e7154772087cb0`" in state
-    assert "`writer_lease_status`: PR #91 conversation records checkpoint, release, and evidence status" in state
-    assert "`debede6925a9539dfed0143c26f6b9e17cd607cc`" in state
-    assert "`merge`: PR #91 implementation committed; current review/CI/merge status is on GitHub" in state
-    assert "full detached EvidenceBundle semantic revalidation" in state
-    assert "exchange-local\ncutoff mapping" in state
+    assert "`301ab2eeb1144d3baf2f097d462883d304481ce3`" in state
+    assert "`855b0319a3afe6f38fdcc636f7a2475da374df68`" in state
+    assert "PR #92 comments `6052141530`, `6052177862`, and `6052218183`" in state
+    assert "`merge`: PR #92 implementation, review, CI, and merge status is on GitHub" in state
+    assert "`next_dependency`: BT-01 after SIG-05 merge; requires separate user authorization" in state
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
     assert "`active_harness_pr`: none" in state
     assert f"original JIT base was\n`{SIG03_ORIGINAL_BASE_SHA}`" in state
+    assert SIG03_MERGE_SHA in state
     assert "PR #86's read-only review-assurance policy remains active" in state
-    assert "SIG-03 is the only active roadmap slice" in state
-    assert "SIG-05 and later roadmap work remains deferred" in state
-    assert "No portfolio,\nrisk, order, broker, PAPER/live action" in state
+    assert "SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior" in state
     assert (
         "SIG-04 validates caller-supplied candidates only; no inference"
     ) in state
-    assert "Explicit human PAPER/live promotion gates remain mandatory and unexercised." in state
+    assert "SIG-05 adds only in-memory deterministic shadow envelopes" in state
+    assert "explicit human PAPER/live gates remain mandatory and unexercised" in state
 
 
 def test_current_harness_state_is_reconciled_and_not_prospective() -> None:

@@ -53,11 +53,12 @@ There is no fixed live risk number in this plan. Risk limits, allowlists, creden
 ## Current implementation and evidence index
 
 FND-01 through FND-04, PIT-01 through PIT-06, SIG-01, SIG-02 and SIG-03 are merged at their approved
-contract scope. SIG-04's bounded LLMOverlay guard is implemented by PR #91, based on
-`8f76f341bedf086dd4eb69e4229be33127f5028f`. It validates a supplied candidate against exact
+contract scope. SIG-04's bounded LLMOverlay guard merged in PR #91 at
+`fb3843b678efa18ae54a061821b577d26be1f297`. It validates a supplied candidate against exact
 `ResearchNote` and `QuantSignal` content and cutoff bindings; it does not invoke a model provider or
-capture inference. Consult GitHub for PR #91's current review and merge status. SIG-05 and later
-roadmap slices remain deferred. SIG-02 merged as PR #45 /
+capture inference. SIG-05 adds the full-source `SignalEnvelope`, deterministic composition and
+immutable explicit `VariantRegistry` in PR #92. Check GitHub for the current PR, review, CI and merge
+state. Later roadmap slices remain deferred. SIG-02 merged as PR #45 /
 `376c9c044722ee37f3fa36691b576420e3b6253d` and adds the sealed evidence-tool / deterministic
 `ResearchNote` boundary. These contracts and fixtures are not evidence of complete vendor capture,
 model inference, alpha or trading readiness.

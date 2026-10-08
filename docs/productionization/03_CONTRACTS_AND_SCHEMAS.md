@@ -2,7 +2,13 @@
 
 The Pydantic-style sketches below describe target field semantics, not drop-in implementations or the current wire schema. Introduce each future contract only at its first-use slice. Existing implemented types and approved amendments take precedence; JSON/YAML examples illustrate shape only. Exact names and invariants are stable across historical, paper, and live modes. All timestamps are timezone-aware UTC ISO-8601 strings; all decimals are serialized as strings or fixed-precision decimal values at the API boundary.
 
-SIG-04's `LLMOverlay` wire is implemented in `mytradingalpha/contracts/signals.py`; its exact fields and validation supersede the conceptual sketch below. PR #91 validates only a caller-supplied candidate. It does not call a model provider or define captured inference provenance. Consult GitHub for PR #91's current review and merge status.
+SIG-04's `LLMOverlay` wire is implemented in `mytradingalpha/contracts/signals.py`; its exact fields and validation supersede the conceptual sketch below. PR #91 merged the bounded guard, which validates only a caller-supplied candidate. It does not call a model provider or define captured inference provenance.
+
+SIG-05 implements `SignalVariant` and `SignalEnvelope` in the shared signal contracts,
+`VariantRegistry` in `mytradingalpha/quant/variants.py`, and the pure composition function in
+`mytradingalpha/quant/envelope.py`. The implementation in PR #92 supersedes the conceptual
+`SignalEnvelope` sketch below. Its exact field set, canonical hashes, defensive source validation,
+and failure behavior are defined by the SIG-05 JIT in that PR.
 
 ## Implemented contract index
 
@@ -17,11 +23,11 @@ checks are indexed in [Appendix B](appendices/B_TEST_MATRIX.md#implemented-produ
 
 ## First-use wire ownership
 
-These are delivery assignments, not a claim that future classes already exist. Wire definitions
-have one owner under contracts; algorithms, aggregates and persistence stay in their bounded contexts.
-The existing PIT/SIG-01 domain contracts retain their approved locations and public imports.
+These assignments locate current and future contracts. Wire definitions have one owner under
+contracts; algorithms, aggregates and persistence stay in their bounded contexts. The existing
+PIT/SIG-01 domain contracts retain their approved locations and public imports.
 
-| Contract | First-use PR | Planned owner / consuming behavior |
+| Contract | First-use PR | Wire owner / consuming behavior |
 | --- | --- | --- |
 | ResearchNote | SIG-02 | `mytradingalpha/contracts/research.py`; research notes builder consumes it |
 | QuantSignal | SIG-03 | `mytradingalpha/contracts/signals.py`; quant owns feature/scoring algorithms |
@@ -160,14 +166,27 @@ class LLMOverlay(BaseModel):
     model_id: str
     generated_at: datetime
 
+class SignalVariant(BaseModel):
+    schema_version: str
+    variant_id: str
+    kind: Literal["quant_only", "quant_llm"]
+    variant_hash: str
+
 class SignalEnvelope(BaseModel):
+    schema_version: str
     envelope_id: str
+    variant: SignalVariant
+    context: RunContext
     quant: QuantSignal
-    overlay: LLMOverlay | None = None
+    note: ResearchNote | None
+    overlay: LLMOverlay | None
     effective_score: Decimal
+    effective_multiplier: Decimal
     effective_action: Literal["eligible", "attenuated", "vetoed", "abstain"]
-    reason_codes: list[str]
+    no_trade: bool
+    reason_codes: tuple[str, ...]
     created_at: datetime
+    shadow_only: bool
 
 class PortfolioSnapshot(BaseModel):
     snapshot_id: str
@@ -294,7 +313,18 @@ must be at or before the note cutoff. Evidence IDs must be unique citations in t
 action is valid only for abstention; abstention and veto require multiplier zero. Attenuation is
 bounded to [0,1]. Any invalid, unavailable, abstaining, vetoing, or zero-multiplier result is explicit
 no-trade. This guard does not infer an action from rationale prose or combine signals into a
-`SignalEnvelope`; that remains SIG-05.
+`SignalEnvelope`.
+
+SIG-05 registers only explicit `quant_only` and `quant_llm` variants in immutable snapshots. A
+`quant_only` envelope preserves the valid quantitative score and rejects supplied research sources;
+`quant_llm` requires a fully bound note and overlay and never falls back to `quant_only`. Structural
+context or QuantSignal mismatch raises a typed `no_trade` error. Missing or invalid optional sources
+produce a same-variant zero/no-trade envelope with invalid sources removed. Veto, abstention, zero
+influence, and every failure use an effective multiplier of zero. Effective decimals use 24 places
+under a private deterministic Decimal context. The variant and envelope hashes use the respective
+domain strings `mytradingalpha:sig05:signal-variant:v1\0` and
+`mytradingalpha:sig05:signal-envelope:v1\0`; raw JSON input is not accepted through either model
+or a generic Pydantic JSON adapter.
 
 The worker may split these classes into modules, but field meaning and validation must remain compatible. String decimals avoid binary float surprises in persisted accounting; conversion to `Decimal` happens before validation.
 

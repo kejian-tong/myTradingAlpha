@@ -17,6 +17,7 @@ import os
 import re
 import socket
 import subprocess
+import traceback
 import urllib.request
 from copy import deepcopy
 from decimal import ROUND_UP, Decimal, Inexact, Rounded, getcontext, setcontext
@@ -28,6 +29,7 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from mytradingalpha.contracts.research import ResearchNote, derive_research_note_id
 from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.contracts.signals import QuantSignal
 from tests.productionization.quant import test_signal as quant_fixtures
@@ -248,6 +250,31 @@ def test_registry_is_bounded_and_unknown_identity_has_no_default() -> None:
     _expect_safe_error(api, lambda: registry.resolve("variant-unregistered"))
 
 
+def test_registry_rejects_hostile_subclass_without_attribute_callbacks() -> None:
+    api = _api()
+    invoked: list[str] = []
+
+    class HostileRegistry(api.VariantRegistry):
+        def __getattribute__(self, name: str) -> object:
+            invoked.append(name)
+            raise AssertionError("registry callback must not run")
+
+    hostile = object.__new__(HostileRegistry)
+    _expect_safe_error(
+        api,
+        lambda: api.VariantRegistry.resolve(hostile, "variant-unregistered"),
+    )
+    _expect_safe_error(
+        api,
+        lambda: api.VariantRegistry.register(
+            hostile,
+            "variant-new",
+            kind="quant_only",
+        ),
+    )
+    assert invoked == []
+
+
 def test_variant_ids_are_bounded_and_artifact_safe() -> None:
     api = _api()
     registry = api.VariantRegistry()
@@ -260,6 +287,76 @@ def test_variant_ids_are_bounded_and_artifact_safe() -> None:
             ),
             "SIG05_ID_CANARY",
         )
+
+
+def test_source_prewalk_rejects_hostile_nested_metaclass_without_callbacks(
+    bound_sources: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context, registry, _ = _llm_inputs(note, quant_signal)
+    invoked: list[str] = []
+
+    class HostileMeta(type):
+        def __hash__(cls) -> int:
+            invoked.append("hash")
+            raise AssertionError("hostile type hash must not run")
+
+        def __eq__(cls, other: object) -> bool:
+            del other
+            invoked.append("eq")
+            raise AssertionError("hostile type equality must not run")
+
+    class HostileValue(metaclass=HostileMeta):
+        pass
+
+    storage = object.__getattribute__(note, "__dict__")
+    original = dict.__getitem__(storage, "citations")
+    citation = note.citations[0].model_dump(mode="python")
+    reference = dict(citation["reference"])
+    reference["record_id"] = HostileValue()
+    citation["reference"] = reference
+    dict.__setitem__(storage, "citations", (citation,))
+    try:
+        envelope = api.combine_quant_overlay(
+            quant_signal,
+            context=context,
+            registry=registry,
+            note=note,
+            overlay=None,
+        )
+    finally:
+        dict.__setitem__(storage, "citations", original)
+
+    _assert_no_trade(envelope)
+    assert envelope.note is None
+    assert invoked == []
+
+
+def test_canonically_valid_note_with_overbound_revision_is_sanitized(
+    bound_sources: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    payload = note.model_dump(mode="python")
+    payload["capture_manifest"]["revision"] = 1 << 64
+    provisional = ResearchNote.model_validate(payload)
+    payload["note_id"] = derive_research_note_id(provisional)
+    oversized_note = ResearchNote.model_validate(payload)
+    oversized_note.canonical_bytes()
+    context, registry, _ = _llm_inputs(note, quant_signal)
+
+    envelope = api.combine_quant_overlay(
+        quant_signal,
+        context=context,
+        registry=registry,
+        note=oversized_note,
+        overlay=None,
+    )
+
+    _assert_no_trade(envelope)
+    assert envelope.note is None
+    assert envelope.reason_codes == (api.contracts_module.SignalEnvelopeReasonCode.NOTE_INVALID,)
 
 
 def test_quant_only_preserves_score_and_rejects_any_research_source(
@@ -537,7 +634,8 @@ def test_zero_quant_score_has_zero_influence_and_no_trade(
     _, note, quant_signal = bound_sources
     api = _api()
     quant_payload = quant_signal.model_dump(mode="json")
-    quant_payload["score"] = "0.000000000000"
+    # QuantSignal's existing Decimal serializer writes fixed-scale zero as 0E-12.
+    quant_payload["score"] = "0E-12"
     zero_signal = QuantSignal.model_validate(quant_fixtures._rekey_signal_payload(quant_payload))
     context = _context(note, variant_id="variant-quant-only")
     registry = _registry(api, context.variant_id, "quant_only")
@@ -697,6 +795,19 @@ def test_hostile_context_and_network_policy_are_rejected_before_callbacks(
             overlay=overlay,
         ),
     )
+
+    canary = "SIG05_CONTEXT_SECRET_CANARY"
+    secret_context = context.model_copy(update={"decision_time": canary})
+    with pytest.raises(api.SignalEnvelopeError) as exc_info:
+        api.combine_quant_overlay(
+            quant_signal,
+            context=secret_context,
+            registry=registry,
+            note=note,
+            overlay=overlay,
+        )
+    assert exc_info.value.no_trade is True
+    assert canary not in "".join(traceback.format_exception(exc_info.value))
     assert invoked == []
 
     unsafe_policy = NetworkPolicy.model_construct(live_broker_egress=True)
@@ -767,6 +878,51 @@ def test_nonhistorical_all_egress_false_contexts_are_out_of_scope_and_rejected(
             note=note,
             overlay=overlay,
         ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "canary"),
+    [
+        ("calendar_id", "api-key:SIG05_CONTEXT_CANARY", "SIG05_CONTEXT_CANARY"),
+        (
+            "calendar_id",
+            "YXBpX2tleT1TSUcwNV9DT05URVhUX0NBTkFSWQ",
+            "SIG05_CONTEXT_CANARY",
+        ),
+        ("calendar_id", "c" * 129, None),
+        ("base_currency", "token:SIG05_CURRENCY_CANARY", "SIG05_CURRENCY_CANARY"),
+        (
+            "base_currency",
+            "dG9rZW49U0lHMDVfQ1VSUkVOQ1lfQ0FOQVJZ",
+            "SIG05_CURRENCY_CANARY",
+        ),
+        ("base_currency", "b" * 129, None),
+    ],
+)
+def test_context_calendar_and_currency_ids_are_bounded_and_redacted(
+    bound_sources: tuple[Any, Any, Any],
+    field: str,
+    value: str,
+    canary: str | None,
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context = _context(note, variant_id="variant-quant-only")
+    context_payload = context.model_dump(mode="python")
+    context_payload[field] = value
+    untrusted_context = RunContext.model_validate(context_payload)
+    registry = _registry(api, context.variant_id, "quant_only")
+    error_canaries = () if canary is None else (canary,)
+
+    _expect_safe_error(
+        api,
+        lambda: api.combine_quant_overlay(
+            quant_signal,
+            context=untrusted_context,
+            registry=registry,
+        ),
+        *error_canaries,
     )
 
 
@@ -867,7 +1023,14 @@ def test_invalid_note_or_overlay_is_same_variant_zero_no_trade_without_echo(
 
 @pytest.mark.parametrize(
     "case",
-    ["note_text", "note_depth", "quant_features", "overlay_evidence"],
+    [
+        "note_text",
+        "note_depth",
+        "note_integer",
+        "quant_features",
+        "quant_decimal",
+        "overlay_evidence",
+    ],
 )
 def test_corrupted_supported_model_storage_hits_resource_bounds_fail_closed(
     bound_sources: tuple[Any, Any, Any],
@@ -893,6 +1056,11 @@ def test_corrupted_supported_model_storage_hits_resource_bounds_fail_closed(
         reference["record_id"] = nested
         citation["reference"] = reference
         dict.__setitem__(storage, field, (citation,))
+    elif case == "note_integer":
+        storage = object.__getattribute__(note.capture_manifest, "__dict__")
+        field = "revision"
+        original = dict.__getitem__(storage, field)
+        dict.__setitem__(storage, field, 1 << 4_096)
     elif case == "quant_features":
         storage = object.__getattribute__(quant_signal, "__dict__")
         field = "feature_ids"
@@ -901,6 +1069,15 @@ def test_corrupted_supported_model_storage_hits_resource_bounds_fail_closed(
             storage,
             field,
             tuple(f"feature-{index:03}" for index in range(33)),
+        )
+    elif case == "quant_decimal":
+        storage = object.__getattribute__(quant_signal, "__dict__")
+        field = "score"
+        original = dict.__getitem__(storage, field)
+        dict.__setitem__(
+            storage,
+            field,
+            Decimal("1" + "0" * 100_000 + "E-100000"),
         )
     else:
         storage = object.__getattribute__(overlay, "__dict__")
@@ -913,7 +1090,7 @@ def test_corrupted_supported_model_storage_hits_resource_bounds_fail_closed(
         )
 
     try:
-        if case == "quant_features":
+        if case in {"quant_features", "quant_decimal"}:
             _expect_safe_error(
                 api,
                 lambda: api.combine_quant_overlay(
@@ -934,7 +1111,7 @@ def test_corrupted_supported_model_storage_hits_resource_bounds_fail_closed(
             overlay=overlay,
         )
         _assert_no_trade(envelope)
-        if case in {"note_text", "note_depth"}:
+        if case in {"note_text", "note_depth", "note_integer"}:
             assert envelope.note is None
             assert envelope.overlay is None
         else:
@@ -1113,6 +1290,40 @@ def test_canonical_envelope_contains_complete_context_and_source_contracts(
     assert payload["variant"]["variant_id"] == context.variant_id
     assert payload["variant"]["kind"] == "quant_llm"
     assert payload["shadow_only"] is True
+
+
+def test_canonical_envelope_is_utf8_and_mapping_order_independent(
+    bound_sources: tuple[Any, Any, Any],
+) -> None:
+    _, note, quant_signal = bound_sources
+    api = _api()
+    context, registry, _ = _llm_inputs(note, quant_signal)
+    rationale = "Résumé – Δ after the close"
+    candidate = overlay_fixtures._candidate(note, quant_signal, rationale=rationale)
+    reversed_candidate = dict(reversed(tuple(candidate.items())))
+    overlay_one = api.contracts_module.LLMOverlay.model_validate(candidate)
+    overlay_two = api.contracts_module.LLMOverlay.model_validate(reversed_candidate)
+
+    first = api.combine_quant_overlay(
+        quant_signal,
+        context=context,
+        registry=registry,
+        note=note,
+        overlay=overlay_one,
+    )
+    second = api.combine_quant_overlay(
+        quant_signal,
+        context=context,
+        registry=registry,
+        note=note,
+        overlay=overlay_two,
+    )
+
+    first_bytes = first.canonical_bytes()
+    assert first_bytes == second.canonical_bytes()
+    assert first.envelope_id == second.envelope_id
+    assert rationale.encode("utf-8") in first_bytes
+    assert json.loads(first_bytes)["overlay"]["rationale"] == rationale
 
 
 def test_envelope_has_no_json_consumer_or_research_provider_dependency() -> None:

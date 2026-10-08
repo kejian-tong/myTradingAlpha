@@ -4,7 +4,7 @@
 
 The target is a small, auditable daily research-to-order system around the existing Research Graph. It is not a rewrite of `tradingagents/`. The upstream-derived graph remains useful for evidence interpretation; the existing `mytradingalpha/` package owns Foundation, PIT, and closed cached-response replay. Production-owned numerical decisions, portfolio accounting, risk controls, execution simulation, and broker integration remain later roadmap work.
 
-The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, SIG-01 through SIG-03 are merged at their approved contract scope. SIG-04's bounded overlay guard is implemented by PR #91; it validates only a supplied candidate and does not perform model inference or response capture. Consult GitHub for PR #91's current review and merge status. SIG-05 and later behavior remain deferred. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state rather than interpreting the diagram as merged functionality.
+The MVP supports long-only, unlevered liquid US equities/ETFs from a small allowlist. A run makes a close decision and may execute no earlier than the next eligible session. FND-01 through FND-04, PIT-01 through PIT-06, and SIG-01 through SIG-04 are merged at their approved contract scope; SIG-04's bounded overlay guard validates a supplied candidate and does not perform model inference or response capture. SIG-05 implements a full-source, deterministic `SignalEnvelope` and immutable explicit variants in PR #92. Later behavior remains deferred. Use the [current implementation index](README.md#current-implementation-and-evidence-index) and actual GitHub state for merge status rather than interpreting the diagram as merged functionality.
 ## System overview
 
 ```mermaid
@@ -37,16 +37,19 @@ The simulator and OMS share `OrderIntent`, `OrderEvent`, and `Fill` contracts. A
 mytradingalpha.contracts  <- shared schemas, enums, reason codes
 mytradingalpha.data       <- vendor capture, PIT store, calendars, EvidenceBundle
 mytradingalpha.research   <- adapter around tradingagents; no portfolio authority
-mytradingalpha.quant      <- deterministic features and QuantSignal
+mytradingalpha.quant      <- deterministic features, QuantSignal, SignalEnvelope, VariantRegistry
 mytradingalpha.portfolio  <- allocator and TargetPortfolio
 mytradingalpha.risk       <- hard RiskEngine and persistent halts
 mytradingalpha.backtest   <- clock, simulator, ledger, metrics
 mytradingalpha.execution  <- OMS, broker adapter, reconciliation
-mytradingalpha.experiments<- variants, seeds, reports, statistical tests
+mytradingalpha.experiments<- trial specifications, seeds, reports, statistical tests
 mytradingalpha.ops        <- config, scheduler, alerts, runbooks
 ```
 
 The allowed direction is from production-owned contexts toward `contracts`; `data` feeds `research` and `quant`; `portfolio` consumes signals; `risk` guards portfolios and intents; `backtest` and `execution` consume shared contracts; `experiments` and `ops` orchestrate without changing domain decisions. Only `mytradingalpha.research` may import `tradingagents` through a narrow adapter. No file under `tradingagents/` may import `mytradingalpha`; other production contexts consume contracts and adapters rather than importing the Research Graph. This keeps the current graph's public behavior stable and prevents an LLM node from bypassing controls.
+
+SIG-05's `VariantRegistry` contains only immutable signal-variant identity snapshots. It is separate
+from the later experiment registry, which records trial specifications and references these IDs.
 
 ## Trust and permission boundaries
 
