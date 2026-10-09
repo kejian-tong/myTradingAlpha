@@ -34,13 +34,15 @@ The project configuration is:
 ```toml
 [agents]
 enabled = true
-max_concurrent_threads_per_session = 6
+max_concurrent_threads_per_session = 8
 ```
 
-Six is a concurrently open spawned-thread guardrail and burst headroom, not a lifetime or per-PR spawn
-cap. The Master context is separate. Spawn only lanes with material independent work and close completed
-lanes promptly. There is no fixed numeric limit on cumulative repair/review cycles; every cycle must add
-evidence and must not lower tests or ignore findings.
+Eight is the maximum number of concurrently open spawned-agent threads, not a target or lifetime/per-PR
+spawn cap. The Master context is separate. Spawn only lanes with material independent work and close
+completed lanes promptly. Production implementation and repair remain serialized under one active writer
+per PR; the larger read/review budget does not permit multiple production writers. There is no fixed
+numeric limit on cumulative repair/review cycles; every cycle must add evidence and must not lower tests or
+ignore findings.
 
 ## 3. Phase A — concurrent pre-flight
 

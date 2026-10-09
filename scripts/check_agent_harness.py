@@ -16,13 +16,13 @@ from pathlib import Path
 
 _ROLES = {
     "normal_implementer": ("gpt-6-luna", "max", False),
-    "high_implementer": ("gpt-6-sol", "high", False),
-    "critical_implementer": ("gpt-6-sol", "xhigh", False),
-    "reviewer_high": ("gpt-6-sol", "high", True),
-    "reviewer_xhigh": ("gpt-6-sol", "xhigh", True),
+    "high_implementer": ("gpt-6.1-sol", "xhigh", False),
+    "critical_implementer": ("gpt-6.1-sol", "xhigh", False),
+    "reviewer_high": ("gpt-6.1-sol", "xhigh", True),
+    "reviewer_xhigh": ("gpt-6.1-sol", "xhigh", True),
     "code_explorer": ("gpt-6-luna", "max", True),
     "test_auditor": ("gpt-6-luna", "max", True),
-    "boundary_reviewer": ("gpt-6-sol", "high", True),
+    "boundary_reviewer": ("gpt-6.1-sol", "xhigh", True),
     "external_spec_researcher": ("gpt-6-luna", "max", True),
     "astra_canary": ("gpt-6-astra", "xhigh", True),
 }
@@ -372,9 +372,9 @@ def configuration_errors(root: Path) -> list[str]:
     errors = []
     try:
         config = _toml(root / ".codex/config.toml")
-        if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-6-sol", "xhigh"):
+        if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-6.1-sol", "xhigh"):
             errors.append("Master route differs from reviewed policy")
-        if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 6}:
+        if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 8}:
             errors.append("agent enablement/concurrency differs from reviewed policy")
         errors.extend(_watch_only_feature_errors(root, config))
         actual_paths = {path.name for path in (root / ".codex/agents").glob("*.toml")}

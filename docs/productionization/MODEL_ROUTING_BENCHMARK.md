@@ -14,9 +14,14 @@ review, and master synthesis have different failure costs.
 Use `scripts/model_routing_benchmark.py` on representative replay/shadow records. The script never calls
 a model and never edits `.codex` routing; it only evaluates supplied evidence.
 
-## Current official rate-card priors
+## Historical official rate-card priors
 
-The Work/Codex rate cards were re-checked on 2026-09-07. The benchmark constants use these token rates:
+The Work/Codex rate cards were re-checked on 2026-09-07. The benchmark keeps these values as dated rate
+evidence; they are not a verified current rate card for GPT-6.1 Sol/xhigh. No Work/Codex credit or
+Enterprise USD rates are assigned to that route. It returns `unknown_route_pricing` with null route costs,
+no Pareto frontier, and no promotion-ready status until pricing is verified and added in a reviewed Harness
+change. Astra/xhigh retains its historical rate data; as of 2026-10-08, that card is older than the
+30-day freshness limit and cannot support a cost frontier.
 
 | Model | Input credits / 1M | Cached input / 1M | Output / 1M | Input $ / 1M | Cached $ / 1M | Output $ / 1M |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -30,9 +35,10 @@ Official sources:
 - credits: https://help.openai.com/en/articles/11481834
 - Enterprise token-based USD: https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing
 
-At the current rate, Astra costs 2.5x Sol for the same input/cached/output token mix; Terra costs about
-10x Luna for the same mix. Those are only token-rate priors. A stronger route may use fewer retries or
-less wall-clock time, so compare measured **end-to-end task runs**, not assumed per-message cost.
+Under the historical rate card, Astra costs 2.5x GPT-6 Sol for the same input/cached/output token mix;
+Terra costs about 10x Luna for the same mix. Those are historical token-rate priors. A stronger route may
+use fewer retries or less wall-clock time, so compare measured **end-to-end task runs**, not assumed
+per-message cost.
 
 Rate cards are mutable external facts. `RATE_CARD_AS_OF` is part of the benchmark evidence and cost-based
 Pareto output is allowed only while that rate card is at most 30 days old relative to the supplied
@@ -102,7 +108,7 @@ remain mandatory regardless of any benchmark rate.
 
 A cost frontier is valid only when:
 
-1. the rate card is fresh;
+1. the rate card is fresh and covers every compared model/effort pair;
 2. exact pairing and the five-task minimum are satisfied;
 3. at least one route is reliability-eligible; and
 4. **every reliability-eligible route** has all three observed token fields on every task run.
@@ -110,6 +116,9 @@ A cost frontier is valid only when:
 Token observations are all-or-none per run: `input_tokens`, `cached_input_tokens`, and `output_tokens`.
 If a reliable route lacks token evidence, output is `incomplete_cost_observation` and no other route is
 allowed to become a false cost winner. Unknown usage stays unknown.
+If any supplied route has no verified rate coverage, output is `unknown_route_pricing`; that task class
+receives no Pareto frontier and cannot be promotion-ready. GPT-6.1 Sol/xhigh is deliberately unpriced;
+historical Astra/xhigh rate values remain subject to rate-card freshness.
 
 ### Gate D — Pareto efficiency
 
@@ -135,6 +144,7 @@ The benchmark deliberately emits explicit non-comparison states:
 - `insufficient_sample`;
 - `no_reliable_routes`;
 - `incomplete_cost_observation`;
+- `unknown_route_pricing`;
 - `complete`.
 
 Only `complete` may contain a cost-based Pareto frontier. `promotion_evidence_ready=true` additionally
@@ -143,21 +153,22 @@ not change routing automatically.
 
 ## Benchmark matrix
 
-Initial replay/shadow candidates remain:
+Current policy routes and historical replay candidates:
 
-| Task class | Current baseline | Candidates |
+| Task class | Current policy route | Replay/candidates |
 | --- | --- | --- |
-| read-heavy code exploration | Luna / max | Terra / medium, Terra / high |
-| test/CI audit | Luna / max | Terra / medium, Terra / high |
-| normal bounded implementation | Luna / max | Terra / high, Sol / high |
-| elevated accounting/temporal review | Sol / high | Terra / high, Terra / xhigh, Sol / xhigh |
-| critical/adjudication review | Sol / xhigh | Astra / xhigh canary; no automatic promotion/downgrade |
-| hardest implementation/review synthesis | Sol / xhigh | Astra / xhigh canary; no active-PR authority |
-| master synthesis/merge-gate reasoning | Sol / xhigh | Astra / xhigh historical canary only |
+| read-heavy code exploration | GPT-6 Luna / max | Terra / medium, Terra / high |
+| test/CI audit | GPT-6 Luna / max | Terra / medium, Terra / high |
+| normal bounded implementation | GPT-6 Luna / max | Terra / high; GPT-6.1 Sol / xhigh only for escalation |
+| elevated accounting/temporal review | GPT-6.1 Sol / xhigh | Terra / high, Terra / xhigh; GPT-6 Sol pairs retained for historical replay |
+| critical/adjudication review | GPT-6.1 Sol / xhigh | Astra / xhigh shadow canary; no automatic promotion/downgrade |
+| hardest implementation/review synthesis | GPT-6.1 Sol / xhigh | Astra / xhigh shadow canary; no active-PR authority |
+| master synthesis/merge-gate reasoning | GPT-6.1 Sol / xhigh | Astra / xhigh shadow canary; historical replay only |
 
-The validator accepts only the seven model/effort pairs shown in this matrix: Luna/max;
-Terra/medium, Terra/high, Terra/xhigh; Sol/high, Sol/xhigh; and Astra/xhigh. This constrains
-benchmark evidence only and does not change actual production routing.
+The validator accepts eight model/effort pairs: Luna/max; Terra/medium, Terra/high, Terra/xhigh;
+historical GPT-6 Sol/high and GPT-6 Sol/xhigh; current GPT-6.1 Sol/xhigh; and GPT-6 Astra/xhigh.
+Historical identities and rates remain available for replay and do not describe active Sol routing. This
+constrains benchmark evidence only and does not change actual production routing.
 
 Freeze repository state, task prompt/scope, known findings and acceptance matrix before running routes.
 Historical SIG-02 is a useful hard case because it has an immutable final result and extensive known
@@ -166,10 +177,12 @@ adversarial findings, but one task is not enough for a routing conclusion.
 ## GPT-6 Astra canary protocol
 
 `astra_canary` is deliberately not a production route. A valid Astra A/B case must be a closed historical
-or immutable replay task, use the same evidence and task IDs as Sol/xhigh, run read-only with no child/MCP/
-write/merge/broker authority, and score the same acceptance and known-finding matrix. The specific
-`astra_canary_pairing` output is retained as a convenience, while the generalized pairing gate now
-applies to **all** routes.
+or immutable replay task, use the same evidence and task IDs as the matching Sol route, run read-only with
+no child/MCP/write/merge/broker authority, and score the same acceptance and known-finding matrix. Current
+comparisons use GPT-6.1 Sol/xhigh with Astra/xhigh; historical GPT-6 Sol/xhigh and Astra/xhigh pairings
+remain valid replay evidence. The `astra_canary_pairing` output retains its historical top-level fields; if
+both Sol route generations appear in one task class, current pairing is recorded separately as
+`current_route_pairing`. The generalized pairing gate applies to **all** routes.
 
 Astra promotion remains manual. Require representative paired evidence with zero safety failures and zero
 known BLOCKER/HIGH misses, then compare reliability, quality, duration, retries and observed total credits.
@@ -185,9 +198,11 @@ Until representative paired benchmark evidence accumulates, keep current product
   a stronger route on every task.
 - Terra remains the primary challenger where Luna produces missed evidence, repair churn or materially
   longer completion; its roughly 10x same-token Luna rate must buy measured task-level improvement.
-- Sol remains the controlling review, boundary, difficult implementation and Master model where
-  correctness risk dominates token price.
-- Astra/xhigh remains shadow-only until paired historical evidence justifies a separate promotion PR.
+- GPT-6.1 Sol/xhigh is the active Sol route for controlling review, boundary review, escalated
+  implementation and Master work where correctness risk dominates token price. Historical GPT-6 Sol
+  benchmark records remain replay evidence and do not describe active routing.
+- Astra/xhigh remains shadow-only. GPT-6.1 Sol cost comparisons require verified rates; unknown rates stay
+  unpriced and cannot produce a cost frontier or promotion-ready result.
 
 ## Record format
 

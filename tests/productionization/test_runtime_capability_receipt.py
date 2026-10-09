@@ -76,7 +76,16 @@ def _git(ref: str) -> str:
     ).strip()
 
 
+def _head_role_config(role: str) -> dict[str, object]:
+    config_path = f".codex/agents/{role.replace('_', '-')}.toml"
+    text = subprocess.check_output(
+        ["git", "show", f"HEAD:{config_path}"], cwd=ROOT, text=True, stderr=subprocess.STDOUT
+    )
+    return tomllib.loads(text)
+
+
 def _receipt(**overrides: object) -> dict[str, object]:
+    reviewer_config = _head_role_config("reviewer_high")
     receipt: dict[str, object] = {
         "schema_version": 1,
         "evidence_source": "host_runtime",
@@ -89,8 +98,8 @@ def _receipt(**overrides: object) -> dict[str, object]:
         "config_path": ROLE_CONFIG,
         "runtime_version": "codex-runtime-test",
         "multi_agent_version": "v2",
-        "model": "gpt-6-sol",
-        "reasoning_effort": "high",
+        "model": reviewer_config["model"],
+        "reasoning_effort": reviewer_config["model_reasoning_effort"],
         "base_sha": _git("HEAD"),
         "head_sha": _git("HEAD"),
         "tree_sha": _git("HEAD^{tree}"),
@@ -201,7 +210,10 @@ def _run_cli(path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _temporary_repo(tmp_path: Path, *, model: str = "gpt-6-sol") -> tuple[Path, str, str]:
+def _temporary_repo(tmp_path: Path, *, model: str | None = None) -> tuple[Path, str, str]:
+    reviewer_config = _head_role_config("reviewer_high")
+    model = reviewer_config["model"] if model is None else model
+    effort = reviewer_config["model_reasoning_effort"]
     repo = tmp_path / "repo"
     config = repo / ROLE_CONFIG
     config.parent.mkdir(parents=True)
@@ -210,7 +222,7 @@ def _temporary_repo(tmp_path: Path, *, model: str = "gpt-6-sol") -> tuple[Path, 
             (
                 'name = "reviewer_high"',
                 f'model = "{model}"',
-                'model_reasoning_effort = "high"',
+                f'model_reasoning_effort = "{effort}"',
                 'sandbox_mode = "read-only"',
                 "[agents]",
                 "enabled = false",
@@ -378,7 +390,7 @@ def test_observed_at_must_be_nonnegative() -> None:
     ("field", "value"),
     [
         ("model", "gpt-6-luna"),
-        ("reasoning_effort", "xhigh"),
+        ("reasoning_effort", "low"),
         ("config_path", ".codex/agents/normal-implementer.toml"),
         ("role", "normal_implementer"),
     ],
@@ -478,9 +490,10 @@ def test_trusted_base_must_be_an_ancestor_of_trusted_head(tmp_path: Path) -> Non
 
 def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path: Path) -> None:
     repo, head, tree = _temporary_repo(tmp_path)
+    configured_model = tomllib.loads((repo / ROLE_CONFIG).read_text(encoding="utf-8"))["model"]
     (repo / ROLE_CONFIG).write_text(
         (repo / ROLE_CONFIG).read_text(encoding="utf-8").replace(
-            'model = "gpt-6-sol"', 'model = "dirty-untrusted-model"'
+            f'model = "{configured_model}"', 'model = "dirty-untrusted-model"'
         ),
         encoding="utf-8",
     )
@@ -497,9 +510,10 @@ def test_role_intent_is_loaded_from_exact_head_tree_not_dirty_worktree(tmp_path:
 def test_repository_replace_cannot_substitute_trusted_head_tree(tmp_path: Path) -> None:
     repo, original_head, _original_tree = _temporary_repo(tmp_path)
     role_path = repo / ROLE_CONFIG
+    configured_model = tomllib.loads(role_path.read_text(encoding="utf-8"))["model"]
     role_path.write_text(
         role_path.read_text(encoding="utf-8").replace(
-            'model = "gpt-6-sol"', 'model = "replacement-model"'
+            f'model = "{configured_model}"', 'model = "replacement-model"'
         )
         + 'mcp_policy = "replacement-intent"\n',
         encoding="utf-8",
@@ -907,7 +921,7 @@ def test_noncanonical_external_tool_names_fail_closed(tool_name: str) -> None:
 
 def _configured_role(role: str) -> tuple[str, dict[str, object]]:
     config_path = f".codex/agents/{role.replace('_', '-')}.toml"
-    config = tomllib.loads((ROOT / config_path).read_text(encoding="utf-8"))
+    config = _head_role_config(role)
     return config_path, config
 
 
@@ -925,29 +939,20 @@ def test_every_non_external_role_rejects_mcp_tools(role: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("role", "model", "effort", "config_path"),
+    ("role", "config_path"),
     [
-        (
-            "reviewer_high",
-            "gpt-6-sol",
-            "high",
-            ".codex/agents/reviewer-high.toml",
-        ),
-        (
-            "code_explorer",
-            "gpt-6-luna",
-            "max",
-            ".codex/agents/code-explorer.toml",
-        ),
+        ("reviewer_high", ".codex/agents/reviewer-high.toml"),
+        ("code_explorer", ".codex/agents/code-explorer.toml"),
     ],
 )
 def test_default_read_only_roles_reject_external_mcp_tools(
-    role: str, model: str, effort: str, config_path: str
+    role: str, config_path: str
 ) -> None:
+    config = _head_role_config(role)
     valid = _receipt(
         role=role,
-        model=model,
-        reasoning_effort=effort,
+        model=config["model"],
+        reasoning_effort=config["model_reasoning_effort"],
         config_path=config_path,
         tool_names=["view_image"],
     )

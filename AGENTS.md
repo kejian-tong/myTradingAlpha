@@ -59,7 +59,7 @@ observation is `insufficient_evidence`, while `telemetry_conflict` remains disti
 
 Use hybrid scheduling: independent reads/reviews may run together, but one production writer owns an
 active PR. Never overlap a replacement writer. Review lanes inspect the same frozen exact head; close
-completed lanes. The project guardrail is six concurrently open spawned threads, not a target or lifetime
+completed lanes. The project guardrail is eight concurrently open spawned threads, not a target or lifetime
 cap. The Master alone decides and merges. GitHub Copilot review/coding agents must not be requested, mentioned, assigned, or used.
 
 ### 5.1 Read-only review assurance
@@ -84,14 +84,14 @@ record requested/configured actual route and never invent runtime telemetry.
 
 | Role | Model / effort |
 | --- | --- |
-| Master/orchestrator | GPT-6 Sol / xhigh |
+| Master/orchestrator | GPT-6.1 Sol / xhigh |
 | `normal_implementer` | GPT-6 Luna / max |
-| `high_implementer` | GPT-6 Sol / high |
-| `critical_implementer` | GPT-6 Sol / xhigh |
-| `reviewer_high` | GPT-6 Sol / high |
-| `reviewer_xhigh` | GPT-6 Sol / xhigh |
+| `high_implementer` | GPT-6.1 Sol / xhigh |
+| `critical_implementer` | GPT-6.1 Sol / xhigh |
+| `reviewer_high` | GPT-6.1 Sol / xhigh |
+| `reviewer_xhigh` | GPT-6.1 Sol / xhigh |
 | `code_explorer`, `test_auditor` | GPT-6 Luna / max |
-| `boundary_reviewer` | GPT-6 Sol / high |
+| `boundary_reviewer` | GPT-6.1 Sol / xhigh |
 | `external_spec_researcher` | GPT-6 Luna / max |
 | `astra_canary` | GPT-6 Astra / xhigh, shadow-only |
 

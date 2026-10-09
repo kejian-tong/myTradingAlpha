@@ -120,6 +120,21 @@ def test_current_configuration_is_consistent() -> None:
     assert _checker().configuration_errors(ROOT) == []
 
 
+def test_spawned_thread_cap_above_eight_is_rejected(tmp_path: Path) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    config_path = fixture / ".codex/config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "max_concurrent_threads_per_session = 8",
+            "max_concurrent_threads_per_session = 9",
+        ),
+        encoding="utf-8",
+    )
+    assert "agent enablement/concurrency differs from reviewed policy" in (
+        _checker().configuration_errors(fixture)
+    )
+
+
 def test_external_review_and_coding_agents_are_permanently_disabled() -> None:
     root_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert (
@@ -184,7 +199,7 @@ def test_invalid_role_configuration_is_rejected(tmp_path: Path, mutation: str) -
     elif mutation == "duplicate_name":
         path.write_text(path.read_text().replace('name = "reviewer_high"', 'name = "reviewer_xhigh"'))
     elif mutation == "wrong_effort":
-        path.write_text(path.read_text().replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "low"'))
+        path.write_text(path.read_text().replace('model_reasoning_effort = "xhigh"', 'model_reasoning_effort = "low"'))
     elif mutation == "nested_delegation":
         path.write_text(path.read_text().replace("[agents]\nenabled = false", "[agents]\nenabled = true"))
     else:

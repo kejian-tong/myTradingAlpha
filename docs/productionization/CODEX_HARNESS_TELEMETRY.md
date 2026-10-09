@@ -130,10 +130,11 @@ python scripts/harness_telemetry.py summary
 
 ## Tuning decisions
 
-Use telemetry over a meaningful recent sample rather than a single PR. In particular, keep the six-thread
-concurrency cap unless repeated evidence shows materially independent lanes waiting because all six spawned
-slots are occupied. A suggested trigger for considering 6 -> 8 is at least three affected PRs in a recent
-10-PR sample; a cap increase still requires a separate reviewed harness change.
+The current cap is eight concurrently open spawned-agent threads, raised from the previous six-thread cap
+by a reviewed Harness policy change. Treat it as a maximum rather than a target, and close completed lanes
+promptly. Use a meaningful recent sample to assess future concurrency changes; any further adjustment
+requires a separate reviewed Harness change. Production writes remain serialized under one active writer
+per PR.
 
 Model-routing benchmark policy is separate: correctness/safety eligibility comes before cost/latency.
 Measured `duration_ms`, active concurrency and observed token counts make routing/concurrency decisions
