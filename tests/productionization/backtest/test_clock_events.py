@@ -2622,3 +2622,144 @@ def test_repair_generic_dict_snapshot_growth_keeps_temporary_capture_bounded() -
     assert rejection.reason_code == "resource_limit"
     assert str(rejection) == "BT-01 input rejected"
     assert budget.stack == set()
+
+
+@pytest.mark.parametrize("constructor_name", ("clock_bind", "session_binding"))
+def test_repair_constructor_witness_removal_rejects_before_host_timezone_lookup(
+    constructor_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    constructor = api.SessionClock.bind if constructor_name == "clock_bind" else api.SessionBinding
+    control = constructor(context, bundle, envelope)
+    assert type(control) is api.SessionBinding
+    assert control.context == context
+    assert control.bundle == bundle
+    assert control.session.close_at == context.decision_time
+    assert len(api.BacktestRunner().run((control,))) == 2
+
+    calendar_module = importlib.import_module("mytradingalpha.data.calendar")
+    calendar = object.__getattribute__(bundle, "calendar")
+    storage = object.__getattribute__(calendar, "__dict__")
+    assert type(calendar) is TradingCalendar
+    assert type(storage) is dict
+    assert all(type(key) is str for key in dict.keys(storage))
+    original_witness = dict.__getitem__(storage, "replay_evidence")
+    assert type(original_witness) is calendar_module.CalendarReplayEvidence
+    original_size = dict.__len__(storage)
+    original_zoneinfo = calendar_module.ZoneInfo
+
+    revalidate = api.clock_module._revalidate_sources
+    source_lines, source_start = inspect.getsourcelines(revalidate)
+    source_ast = ast.parse("".join(source_lines))
+    capture_assignments = {
+        field_name: [
+            node
+            for node in ast.walk(source_ast)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == field_name + "_capture"
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_capture_root"
+            and len(node.value.args) == 2
+            and isinstance(node.value.args[0], ast.Name)
+            and node.value.args[0].id == field_name
+        ]
+        for field_name in ("context", "bundle")
+    }
+    assert all(len(assignments) == 1 for assignments in capture_assignments.values())
+    context_assignment = capture_assignments["context"][0]
+    bundle_assignment = capture_assignments["bundle"][0]
+    assert context_assignment.lineno < bundle_assignment.lineno
+    capture_line = source_start + bundle_assignment.lineno - 1
+    capture_paused = Event()
+    witness_removed = Event()
+    removal_done = Event()
+    capture_resumed = Event()
+    stop_removal = Event()
+    trace_hits: list[int] = []
+    thread_errors: list[Exception] = []
+    calls = {"ZoneInfo": 0}
+    wait_seconds = 5.0
+
+    def remove_witness() -> None:
+        try:
+            if not capture_paused.wait(wait_seconds):
+                raise TimeoutError("bundle capture did not reach the synchronized boundary")
+            if stop_removal.is_set():
+                return
+            dict.__setitem__(storage, "replay_evidence", None)
+            assert dict.__len__(storage) == original_size
+            assert dict.__getitem__(storage, "replay_evidence") is None
+            witness_removed.set()
+        except Exception as error:
+            thread_errors.append(error)
+        finally:
+            removal_done.set()
+
+    def trace_capture(frame: FrameType, event: str, arg: object) -> Any:
+        del arg
+        if frame.f_code is not revalidate.__code__ or frame.f_locals.get("bundle") is not bundle:
+            return None
+        if event == "line" and frame.f_lineno == capture_line and not trace_hits:
+            # The live witness check and context capture have completed. Pause
+            # before bundle capture; GREEN retains this same assignment.
+            assert "context_capture" in frame.f_locals
+            assert "bundle_capture" not in frame.f_locals
+            assert dict.__getitem__(storage, "replay_evidence") is original_witness
+            trace_hits.append(frame.f_lineno)
+            capture_paused.set()
+            if not removal_done.wait(wait_seconds):
+                raise TimeoutError("synchronized witness removal did not finish")
+            capture_resumed.set()
+        return trace_capture
+
+    def reject_timezone_lookup(*args: object, **kwargs: object) -> Any:
+        del args, kwargs
+        calls["ZoneInfo"] += 1
+        raise RuntimeError("BT-01 constructor called the host timezone lookup")
+
+    result = None
+    rejection = None
+    previous_trace = sys.gettrace()
+    removal_thread = Thread(target=remove_witness, name="bt01-constructor-witness-removal")
+    # Count the actual calendar lookup after ordinary witnessed controls pass.
+    # This denial guard observes fallback; production behavior is unchanged.
+    with monkeypatch.context() as denial_guard:
+        denial_guard.setattr(calendar_module, "ZoneInfo", reject_timezone_lookup)
+        removal_thread.start()
+        try:
+            # Trace only this thread, leaving production functions and global
+            # threading trace policy intact.
+            sys.settrace(trace_capture)
+            try:
+                result = constructor(context, bundle, envelope)
+            except api.BacktestInputError as error:
+                rejection = error
+        finally:
+            sys.settrace(previous_trace)
+            stop_removal.set()
+            capture_paused.set()
+            removal_thread.join(wait_seconds)
+            if not removal_thread.is_alive():
+                dict.__setitem__(storage, "replay_evidence", original_witness)
+
+    assert not removal_thread.is_alive()
+    assert sys.gettrace() is previous_trace
+    assert calendar_module.ZoneInfo is original_zoneinfo
+    assert dict.__getitem__(storage, "replay_evidence") is original_witness
+    assert thread_errors == []
+    assert trace_hits == [capture_line]
+    assert witness_removed.is_set()
+    assert removal_done.is_set()
+    assert capture_resumed.is_set()
+    assert result is None
+    assert type(rejection) is api.BacktestInputError
+    assert str(rejection) == "BT-01 input rejected"
+    assert calls == {"ZoneInfo": 0}, (
+        f"constructor called ZoneInfo {calls['ZoneInfo']} times; rejection={rejection.reason_code}"
+    )
+    assert rejection.reason_code == "witness_missing"
