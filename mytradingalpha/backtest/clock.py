@@ -587,6 +587,21 @@ def _capture_root(value: object, budget: _CaptureBudget) -> object:
     return _capture_value(value, budget)
 
 
+def _require_captured_witness(bundle_capture: object) -> None:
+    """Require the witness in owned storage before inherited validation."""
+
+    if type(bundle_capture) is not _CapturedModel or bundle_capture.model_type is not EvidenceBundle:
+        _source_error()
+    calendar_capture = dict.__getitem__(bundle_capture.fields, "calendar")
+    if type(calendar_capture) is not _CapturedModel or calendar_capture.model_type is not TradingCalendar:
+        _source_error()
+    witness_capture = dict.__getitem__(calendar_capture.fields, "replay_evidence")
+    if witness_capture is None:
+        _source_error("witness_missing")
+    if type(witness_capture) is not _CapturedModel or witness_capture.model_type is not CalendarReplayEvidence:
+        _source_error()
+
+
 def _revalidate_sources(
     context: object,
     bundle: object,
@@ -600,6 +615,7 @@ def _revalidate_sources(
         # Finish capture of every root before any inherited validation runs.
         context_capture = _capture_root(context, budget)
         bundle_capture = _capture_root(bundle, budget)
+        _require_captured_witness(bundle_capture)
         envelope_capture = _capture_root(envelope, budget)
         context_data = _captured_payload(context_capture, construct=False)
         bundle_data = _captured_payload(bundle_capture, construct=False)
