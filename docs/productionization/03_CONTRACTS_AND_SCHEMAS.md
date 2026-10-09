@@ -39,12 +39,9 @@ PIT/SIG-01 domain contracts retain their approved locations and public imports.
 | ExperimentSpec | EXP-01 | `mytradingalpha/contracts/experiments.py`; ExperimentRegistry references existing VariantRegistry IDs |
 | OrderEvent | OMS-01 | `mytradingalpha/contracts/orders.py`; execution owns aggregate/event application |
 
-BT-01 simulator events and BT-03 internal ledger snapshots are not prematurely implemented OMS or RSK wire models. BT-02 fixtures may use
-explicit simulation-only plan/risk lineage; this cannot authorize dispatch or require RSK/OMS code
-before its slice. EXC extends the BT-02 `mytradingalpha.backtest.costs` package facade without breaking
-its public CostModel import. No later slice introduces a second VariantRegistry: EXP registers trial
-specifications and references SIG-05 variant identities. Each first-use JIT fixes exact fields,
-validation, serialization and public exports; do not create these future files during remediation.
+BT-01 `DecisionEvent`/`OpportunityEvent` and BT-03 internal ledger snapshots are not prematurely implemented OMS or RSK wire models. At BT-02 first use, the conceptual `OrderIntent`/`Fill` fields below are refined with an explicit `simulation_only` execution authority, source lineage, and separate economic fill and later receipt times; these records cannot authorize dispatch or require RSK/OMS code before its slice. EXC extends the BT-02 `mytradingalpha.backtest.costs` package facade without breaking its public `CostModel` import. No later slice introduces a second VariantRegistry: EXP registers trial specifications and references SIG-05 variant identities. Each first-use JIT fixes exact fields, validation, serialization and public exports; do not create these future files during remediation.
+
+OMS-01 dispatch must reject a BT-02 simulation-only v1 `OrderIntent`; any later dispatch-authority extension needs a separately versioned contract and explicit authorization.
 
 ## Shared types and time rule
 
