@@ -6,6 +6,7 @@ dependency-valid base and reports an explicit missing-contract RED.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib
 import json
@@ -2091,3 +2092,79 @@ def test_repair_completion_must_equal_retained_ingress_sources(
     _expect_bt_error(api, "source_changed", run)
     assert builder_calls == ["decision_built"]
     assert result is None
+
+
+@pytest.mark.parametrize("boundary", ("getter", "runner"))
+@pytest.mark.parametrize("changed_field", ("bar_close", "context_decision_time"))
+def test_repair_refresh_rejects_equal_wire_primitive_type_changes_before_copy_or_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    changed_field: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionClock.bind(context, bundle, envelope)
+    assert type(binding.bundle.bars[0].close) is Decimal
+    assert type(binding.context.decision_time) is datetime
+    assert len(api.BacktestRunner().run((binding,))) == 2
+    original_json = _canonical_source_bytes(context, bundle, envelope)
+    assert object.__getattribute__(binding, "_sealed_source_json") == original_json
+
+    if changed_field == "bar_close":
+        snapshot = object.__getattribute__(binding, "_bundle_snapshot")
+        target = snapshot.bars[0]
+        field = "close"
+        replacement = str(target.close)
+        assert type(target.close) is Decimal
+        assert replacement == bundle.model_dump(mode="json")["bars"][0][field]
+    else:
+        target = object.__getattribute__(binding, "_context_snapshot")
+        field = "decision_time"
+        replacement = target.decision_time.isoformat().replace("+00:00", "Z")
+        assert type(target.decision_time) is datetime
+        assert replacement == context.model_dump(mode="json")[field]
+
+    # These strings are identical to the wire/storage projection but destroy
+    # the validated private field types. Reject before copying or serializing.
+    object.__setattr__(target, field, replacement)
+    assert type(object.__getattribute__(target, field)) is str
+    assert object.__getattribute__(binding, "_sealed_source_json") == original_json
+    calls = {"copy": 0, "deepcopy": 0, "json": 0, "model_dump": 0, "model_copy": 0}
+
+    def tracked(original: Callable[..., Any], operation: str) -> Callable[..., Any]:
+        def record(*args: Any, **kwargs: Any) -> Any:
+            calls[operation] += 1
+            return original(*args, **kwargs)
+        return record
+
+    original_json_dumps = json.dumps
+
+    def track_graph_serialization(payload: Any, *args: Any, **kwargs: Any) -> str:
+        # Bounded escaping of checked strings for capture budgets is allowed.
+        if type(payload) is not str:
+            calls["json"] += 1
+        return original_json_dumps(payload, *args, **kwargs)
+
+    result = None
+
+    def action() -> None:
+        nonlocal result
+        if boundary == "runner":
+            result = api.BacktestRunner().run((binding,))
+        elif changed_field == "bar_close":
+            result = binding.bundle
+        else:
+            result = binding.context
+
+    with monkeypatch.context() as guarded:
+        guarded.setattr(copy, "copy", tracked(copy.copy, "copy"))
+        guarded.setattr(copy, "deepcopy", tracked(copy.deepcopy, "deepcopy"))
+        guarded.setattr(json, "dumps", track_graph_serialization)
+        for model_type in (RunContext, EvidenceBundle, type(envelope), DailyBar):
+            for method in ("model_dump", "model_copy"):
+                guarded.setattr(model_type, method, tracked(getattr(model_type, method), method))
+        try:
+            _expect_bt_error(api, "source_changed", action)
+        finally:
+            assert calls == dict.fromkeys(calls, 0)
+        assert result is None
