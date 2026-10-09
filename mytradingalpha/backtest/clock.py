@@ -396,15 +396,22 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
                     _source_error()
                 if not any(field_name == declared for declared in fields):
                     _source_error()
-            keys = tuple(dict.keys(storage))
-            if any(type(key) is not str for key in keys):
+            if dict.__len__(storage) > _MAX_MAPPING_FIELDS:
+                _source_error("resource_limit")
+            pairs = tuple(dict.items(storage))
+            if len(pairs) > _MAX_MAPPING_FIELDS:
+                _source_error("resource_limit")
+            if len(pairs) != len(fields):
                 _source_error()
-            if any(not any(key == field for field in fields) for key in keys):
+            if any(type(key) is not str for key, _ in pairs):
                 _source_error()
+            if any(not any(key == field for field in fields) for key, _ in pairs):
+                _source_error()
+            owned_storage = dict(pairs)
             result = {}
             for field_name in fields:
                 try:
-                    field_value = dict.__getitem__(storage, field_name)
+                    field_value = dict.__getitem__(owned_storage, field_name)
                 except KeyError:
                     _source_error()
                 annotation = value_type.model_fields[field_name].annotation
