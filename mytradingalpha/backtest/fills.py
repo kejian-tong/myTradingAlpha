@@ -198,24 +198,25 @@ def _bar_fields(value: object, model_type: type[object], reason: str) -> dict[st
         or extra is not None
         or private is not None
         or type(fields_set) is not set
-        or set.__len__(fields_set) > 64
-        or dict.__len__(storage) != len(fields)
     ):
-        _reject("resource_limit" if type(fields_set) is set and set.__len__(fields_set) > 64 else reason)
-    keys = tuple(islice(dict.keys(storage), 65))
-    metadata = tuple(islice(set.__iter__(fields_set), 65))
-    if len(keys) > len(fields) or len(metadata) > 64:
+        _reject(reason)
+    try:
+        entries = tuple(islice(dict.items(storage), 65))
+        metadata = tuple(islice(set.__iter__(fields_set), 65))
+    except Exception:
+        _reject(reason)
+    if len(entries) > 64 or len(metadata) > 64:
         _reject("resource_limit")
+    keys = tuple(key for key, _ in entries)
+    if len(keys) != len(fields):
+        _reject(reason)
     if any(type(key) is not str for key in keys):
         _reject(reason)
-    if any(not any(key == field for field in fields) for key in keys):
+    if set(keys) != set(fields):
         _reject(reason)
     if any(type(item) is not str for item in metadata) or set(metadata) != set(fields):
         _reject(reason)
-    metadata = tuple(set.__iter__(fields_set))
-    if any(type(item) is not str for item in metadata) or set(metadata) != set(fields):
-        _reject(reason)
-    return {name: dict.__getitem__(storage, name) for name in fields}
+    return dict(entries)
 
 
 def _manifest_snapshot(value: object) -> SourceManifest:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
-from itertools import islice
 from typing import Literal
 
 from pydantic import StrictStr, model_validator
@@ -14,6 +13,7 @@ from mytradingalpha.contracts.orders import (
     CostBreakdown,
     OrderInputError,
     _canonical_json,
+    _contract_payload,
     _contract_storage_fingerprint,
     _decimal,
     _fixed_context,
@@ -84,38 +84,7 @@ def _validate_policy_payload(p: dict[str, object]) -> None:
 
 
 def _policy_payload(policy: object) -> dict[str, object]:
-    if type(policy) is not CostPolicy:
-        _reject("policy_invalid")
-    try:
-        storage = object.__getattribute__(policy, "__dict__")
-        extra = object.__getattribute__(policy, "__pydantic_extra__")
-        private = object.__getattribute__(policy, "__pydantic_private__")
-        fields_set = object.__getattribute__(policy, "__pydantic_fields_set__")
-    except Exception:
-        _reject("policy_invalid")
-    fields = tuple(CostPolicy.model_fields)
-    if (
-        type(storage) is not dict
-        or extra is not None
-        or private is not None
-        or type(fields_set) is not set
-        or set.__len__(fields_set) > 64
-        or dict.__len__(storage) != len(fields)
-    ):
-        _reject("resource_limit" if type(fields_set) is set and set.__len__(fields_set) > 64 else "policy_invalid")
-    keys = tuple(islice(dict.keys(storage), 65))
-    metadata = tuple(islice(set.__iter__(fields_set), 65))
-    if len(keys) > len(fields) or len(metadata) > 64:
-        _reject("resource_limit")
-    if any(type(item) is not str for item in metadata):
-        _reject("policy_invalid")
-    if set(metadata) != set(fields):
-        _reject("policy_invalid")
-    if any(type(key) is not str for key in keys) or any(
-        not any(key == expected for expected in fields) for key in keys
-    ):
-        _reject("policy_invalid")
-    return {name: dict.__getitem__(storage, name) for name in fields}
+    return _contract_payload(policy, CostPolicy, "policy_invalid")
 
 
 def revalidate_cost_policy(value: object) -> CostPolicy:

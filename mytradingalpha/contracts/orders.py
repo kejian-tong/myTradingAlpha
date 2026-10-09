@@ -18,7 +18,7 @@ from decimal import (
 from itertools import islice
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, model_validator
 from pydantic_core import PydanticSerializationError, core_schema
 
 from mytradingalpha.contracts.redaction import validate_artifact_text
@@ -270,15 +270,33 @@ def _wire_payload(model: _StrictContract, *, include_id: bool) -> dict[str, obje
 def _owned_mapping(value: object, fields: tuple[str, ...]) -> dict[str, object]:
     if type(value) is not dict or dict.__len__(value) > 64:
         _reject("input_invalid")
-    keys = tuple(islice(dict.keys(value), 65))
-    if len(keys) > 64 or len(keys) != dict.__len__(value):
+    try:
+        entries = tuple(islice(dict.items(value), 65))
+    except Exception:
+        _reject("input_invalid")
+    if len(entries) > 64:
         _reject("resource_limit")
+    keys = tuple(key for key, _ in entries)
     if any(type(key) is not str for key in keys):
         _reject("input_invalid")
     allowed = set(fields)
     if any(key not in allowed for key in keys):
         _reject("input_invalid")
-    return {key: dict.__getitem__(value, key) for key in keys}
+    return dict(entries)
+
+
+def _schema_rejection() -> ValidationError:
+    """Keep schema diagnostics independent of caller input and exceptions."""
+
+    return ValidationError.from_exception_data(
+        "BT-02",
+        [{
+            "type": "value_error",
+            "loc": (),
+            "input": None,
+            "ctx": {"error": OrderInputError("input_invalid")},
+        }],
+    )
 
 
 class _StrictContract(BaseModel):
@@ -299,16 +317,19 @@ class _StrictContract(BaseModel):
             return schema
 
         def deny_json(_: object) -> object:
-            _reject("input_invalid")
+            raise _schema_rejection() from None
 
         def validate_fixed(value: object, inner: Any) -> object:
             with localcontext(_fixed_context()):
                 try:
-                    return inner(value)
-                except OrderInputError:
-                    raise
+                    if type(value) is cls:
+                        owned = _contract_payload(value, cls, "input_invalid")
+                    else:
+                        owned = _owned_mapping(value, tuple(cls.model_fields))
+                    guarded = cls._guard_input(owned)
+                    return inner(guarded)
                 except Exception:
-                    _reject("input_invalid")
+                    raise _schema_rejection() from None
 
         def serialize_checked(value: object, inner: Any) -> object:
             if type(value) is not cls:
