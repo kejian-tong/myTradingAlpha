@@ -6,17 +6,21 @@ dependency-valid base and reports an explicit missing-contract RED.
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import importlib
+import inspect
 import json
 import socket
 import subprocess
+import sys
 import urllib.request
 from collections.abc import Callable
 from datetime import date, datetime, time as wall_time, timedelta, timezone, tzinfo
 from decimal import Decimal
-from types import SimpleNamespace
+from threading import Event, Thread
+from types import FrameType, SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -2244,3 +2248,150 @@ def test_repair_witness_stored_keys_reject_before_caller_protocols(
     _expect_bt_error(api, reason, action)
     assert result is None
     assert calls == dict.fromkeys(calls, 0)
+
+
+@pytest.mark.parametrize("boundary", ("constructor", "getter", "runner"))
+def test_repair_model_capture_race_never_invokes_caller_key_protocols(
+    boundary: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionBinding(context, bundle, envelope)
+    expected_context = context.model_dump(mode="python")
+    assert binding.context.model_dump(mode="python") == expected_context
+    expected_events = tuple(
+        event.canonical_bytes() for event in api.BacktestRunner().run((binding,))
+    )
+    assert len(expected_events) == 2
+
+    target = context if boundary == "constructor" else object.__getattribute__(
+        binding, "_context_snapshot"
+    )
+    storage = object.__getattribute__(target, "__dict__")
+    assert type(target) is RunContext
+    assert type(storage) is dict
+    assert all(type(key) is str for key in dict.keys(storage))
+    field_name = "schema_version"
+    assert next(iter(RunContext.model_fields)) == field_name
+    original_value = dict.__getitem__(storage, field_name)
+    original_size = dict.__len__(storage)
+    target_hash = hash(field_name)
+    calls = {"hash": 0, "equality": 0, "attribute": 0}
+
+    class ForeignStoredKey:
+        def __hash__(self) -> int:
+            calls["hash"] += 1
+            return target_hash
+
+        def __eq__(self, other: object) -> bool:
+            calls["equality"] += 1
+            return type(other) is str and other == field_name
+
+        def __getattribute__(self, name: str) -> object:
+            calls["attribute"] += 1
+            return object.__getattribute__(self, name)
+
+    foreign_key = ForeignStoredKey()
+    capture = api.clock_module._capture_value
+    source_lines, source_start = inspect.getsourcelines(capture)
+    field_loops = [
+        node
+        for node in ast.walk(ast.parse("".join(source_lines)))
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "field_name"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "fields"
+    ]
+    assert len(field_loops) == 1
+    # Pause before the first field is consumed, after storage key validation.
+    # This boundary also works when GREEN consumes a checked owned snapshot.
+    consumption_line = source_start + field_loops[0].body[0].lineno - 1
+    capture_paused = Event()
+    capture_resumed = Event()
+    replacement_inserted = Event()
+    replacement_done = Event()
+    stop_replacement = Event()
+    trace_hits: list[int] = []
+    thread_errors: list[Exception] = []
+    wait_seconds = 5.0
+
+    def replace_key() -> None:
+        try:
+            if not capture_paused.wait(wait_seconds):
+                raise TimeoutError("model capture did not reach the synchronized boundary")
+            if stop_replacement.is_set():
+                return
+            dict.__delitem__(storage, field_name)
+            dict.__setitem__(storage, foreign_key, original_value)
+            assert dict.__len__(storage) == original_size
+            assert any(key is foreign_key for key in dict.keys(storage))
+            assert calls["hash"] > 0
+            # Fixture insertion hashes the key. Only subsequent BT operations
+            # are measured, while the capture thread remains paused.
+            calls.update(dict.fromkeys(calls, 0))
+            replacement_inserted.set()
+        except Exception as error:
+            thread_errors.append(error)
+        finally:
+            replacement_done.set()
+
+    def trace_capture(frame: FrameType, event: str, arg: object) -> Any:
+        del arg
+        if frame.f_code is not capture.__code__ or frame.f_locals.get("value") is not target:
+            return None
+        if event == "line" and frame.f_lineno == consumption_line and not trace_hits:
+            assert frame.f_locals["field_name"] == field_name
+            trace_hits.append(frame.f_lineno)
+            capture_paused.set()
+            if not replacement_done.wait(wait_seconds):
+                raise TimeoutError("synchronized storage replacement did not finish")
+            capture_resumed.set()
+        return trace_capture
+
+    result = None
+    rejection = None
+    previous_trace = sys.gettrace()
+    replacement_thread = Thread(target=replace_key, name="bt01-model-storage-race")
+    replacement_thread.start()
+    try:
+        # sys.settrace applies only to this thread; no production function or
+        # process-global/threading trace policy is patched.
+        sys.settrace(trace_capture)
+        try:
+            if boundary == "constructor":
+                result = api.SessionBinding(context, bundle, envelope)
+            elif boundary == "getter":
+                result = binding.context
+            else:
+                result = api.BacktestRunner().run((binding,))
+        except api.BacktestInputError as error:
+            rejection = error
+    finally:
+        sys.settrace(previous_trace)
+        stop_replacement.set()
+        capture_paused.set()
+        replacement_thread.join(wait_seconds)
+
+    assert not replacement_thread.is_alive()
+    assert sys.gettrace() is previous_trace
+    assert thread_errors == []
+    assert trace_hits == [consumption_line]
+    assert replacement_inserted.is_set()
+    assert replacement_done.is_set()
+    assert capture_resumed.is_set()
+    assert calls == dict.fromkeys(calls, 0)
+    if rejection is not None:
+        expected_reason = "source_invalid" if boundary == "constructor" else "source_changed"
+        assert rejection.reason_code == expected_reason
+        assert len(str(rejection)) <= 256
+        assert result is None
+    elif boundary == "constructor":
+        assert type(result) is api.SessionBinding
+        assert result.context.model_dump(mode="python") == expected_context
+    elif boundary == "getter":
+        assert type(result) is RunContext
+        assert result is not target
+        assert result.model_dump(mode="python") == expected_context
+    else:
+        assert tuple(event.canonical_bytes() for event in result) == expected_events
