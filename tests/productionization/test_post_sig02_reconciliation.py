@@ -16,6 +16,16 @@ SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
 SIG03_MERGE_SHA = "6de1635a90d6c33aee02079dca5d0932e3a32cec"
 PH03_DOCS_MERGE_SHA = "2cfc175fe5d07190c740821da5bb20e13877d252"
 PH03_DOCS_TREE_SHA = "5ce0ebd88ac1f08e9b4a80238fb87ced0014bb81"
+BT01_MERGE_SHA = "a713fbb48324ad9da45e254268b9cfe30b0a634b"
+BT01_TREE_SHA = "9fc6e587ca34a297d3183288763f91a933ae054c"
+BT01_SOURCE_SHA = "0b3eee8a98f365c3c3b55c35cd584db617c4d3ff"
+BT01_REVIEW_COMMENT = "6077723821"
+BT01_MATERIAL_CLOSURE_COMMENT = "6077677736"
+BT01_GATE_COMMENT = "6077744423"
+BT01_WRITER_COMMENT = "6077509103"
+BT01_POSTMERGE_COMMENT = "6077864574"
+BT01_CI_RUN = "37908220659"
+BT01_CODEQL_RUN = "37908220735"
 RULESET_ID = "23141241"
 RULESET_OBSERVED_ON = "2026-09-19"
 
@@ -46,7 +56,7 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_authorized_bt01_and_recovery() -> None:
+def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
     state = _state_text()
     normalized_state = " ".join(state.split())
     reconciled_sha = re.search(
@@ -57,37 +67,43 @@ def test_operational_state_tracks_authorized_bt01_and_recovery() -> None:
     )
     assert reconciled_sha is not None
     assert reconciled_tree is not None
-    assert reconciled_sha.group(1) == PH03_DOCS_MERGE_SHA
-    assert reconciled_tree.group(1) == PH03_DOCS_TREE_SHA
+    assert reconciled_sha.group(1) == BT01_MERGE_SHA
+    assert reconciled_tree.group(1) == BT01_TREE_SHA
     docs_recovery = state.split("## Phase 03 documentation recovery", maxsplit=1)[-1]
     assert PH03_DOCS_MERGE_SHA in docs_recovery
     assert PH03_DOCS_TREE_SHA in docs_recovery
 
-    recovery = state.split("## BT-01 current recovery", maxsplit=1)[-1]
-    recovery_base = re.search(r"Base/main: `([0-9a-f]{40})`", recovery)
+    current_recovery = state.split("## BT-02 current recovery", maxsplit=1)[-1]
+    recovery_base = re.search(r"Base/main: `([0-9a-f]{40})`", current_recovery)
     assert recovery_base is not None
-    assert recovery_base.group(1) == reconciled_sha.group(1)
-    assert "route `luna_sol_high`" in recovery
-    assert "normal_implementer` / GPT-6 Luna / max" in recovery
-    assert "reviewer_high` / GPT-6.1 Sol / xhigh" in recovery
+    assert recovery_base.group(1) == BT01_MERGE_SHA
+    assert "route `luna_sol_xhigh`" in current_recovery
+    assert "normal_implementer` / GPT-6 Luna / max" in current_recovery
+    assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
 
-    assert "`roadmap_status`: active BT-01 candidate" in state
-    assert re.search(r"`current_pr_id`: BT-01 / PR #\d+", state)
-    assert "`current_phase`: 03 — Backtest and Ledger" in state
+    bt01_recovery = state.split("## BT-01 completed recovery", maxsplit=1)[-1]
+    assert "route `luna_sol_high`" in bt01_recovery
+    assert "normal_implementer` / GPT-6 Luna / max" in bt01_recovery
+    assert "reviewer_high` / GPT-6.1 Sol / xhigh" in bt01_recovery
     assert (
-        f"`last_completed_roadmap_pr`: `SIG-05` / PR #92 / merge `{SIG05_MERGE_SHA}`"
-        in normalized_state
-    )
+        "Scope: witnessed immutable session binding, deterministic decision/opportunity events and pure runner only. "
+        "No quantity, intent, fill, cost, ledger, action, persistence or metric behavior."
+    ) in bt01_recovery
+
+    assert "`roadmap_status`: active BT-02 candidate" in state
+    assert re.search(r"`current_pr_id`: BT-02 / PR #\d+", state)
+    assert "`current_phase`: 03 — Backtest and Ledger" in state
+    assert f"`last_completed_roadmap_pr`: `BT-01` / PR #96 / merge `{BT01_MERGE_SHA}`" in normalized_state
     assert (
         "`autonomy_mode`: human-authorized BT-01 through BT-06 in six independent "
-        "dependency-ordered PRs and fresh Master sessions; this session owns BT-01 only"
+        "dependency-ordered PRs and fresh Master sessions; this session owns BT-02 only"
     ) in state
     assert (
-        f"`merge`: PR #92 merged at `{SIG05_MERGE_SHA}`; implementation, review, and CI records "
+        f"`merge`: PR #96 merged at `{BT01_MERGE_SHA}`; implementation, review, and CI records "
         "remain in its GitHub conversation"
     ) in normalized_state
     assert (
-        "`next_dependency`: BT-02 is authorized but blocked until BT-01 merges, main is verified, "
+        "`next_dependency`: BT-03 is authorized but blocked until BT-02 merges, main is verified, "
         "and a fresh Master session starts"
     ) in state
     assert (
@@ -104,9 +120,20 @@ def test_operational_state_tracks_authorized_bt01_and_recovery() -> None:
     assert "SIG-04 validates caller-supplied candidates only; no inference" in state
     assert "SIG-05 adds only in-memory deterministic shadow envelopes" in state
     assert (
-        "Scope: witnessed immutable session binding, deterministic decision/opportunity events and pure runner only. "
-        "No quantity, intent, fill, cost, ledger, action, persistence or metric behavior."
-    ) in state
+        "Scope: shared simulation-only intent/fill contracts, internal deterministic order/fill simulator and stable cost facade"
+    ) in current_recovery
+    for reference in (
+        "https://github.com/kejian-tong/myTradingAlpha/pull/96",
+        BT01_SOURCE_SHA,
+        BT01_REVIEW_COMMENT,
+        BT01_MATERIAL_CLOSURE_COMMENT,
+        BT01_GATE_COMMENT,
+        BT01_WRITER_COMMENT,
+        BT01_POSTMERGE_COMMENT,
+        BT01_CI_RUN,
+        BT01_CODEQL_RUN,
+    ):
+        assert reference in state
     assert "Phase 03 gate: insufficient_evidence until all six separately merged slices" in state
     assert "No PAPER/live operation" in state
     assert "explicit human PAPER/live gates remain mandatory and unexercised" in state
