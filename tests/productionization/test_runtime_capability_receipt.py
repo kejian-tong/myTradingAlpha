@@ -390,7 +390,7 @@ def test_observed_at_must_be_nonnegative() -> None:
     ("field", "value"),
     [
         ("model", "gpt-6-luna"),
-        ("reasoning_effort", "xhigh"),
+        ("reasoning_effort", "low"),
         ("config_path", ".codex/agents/normal-implementer.toml"),
         ("role", "normal_implementer"),
     ],
