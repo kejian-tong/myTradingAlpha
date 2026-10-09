@@ -15,6 +15,7 @@ import os
 import socket
 import subprocess
 import urllib.request
+import warnings
 import zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone, tzinfo
@@ -156,6 +157,25 @@ def _bt02_api() -> SimpleNamespace:
 def _case(*, no_trade: bool = False, run_id: str | None = None) -> SimpleNamespace:
     if no_trade:
         context, bundle, envelope = bt01_fixtures._research_inputs()
+        from mytradingalpha.quant.envelope import combine_quant_overlay
+        from mytradingalpha.quant.variants import VariantRegistry
+        from tests.productionization.research import test_overlay as research_fixtures
+
+        no_trade_overlay = research_fixtures._load_sig04().LLMOverlay.model_validate(
+            research_fixtures._candidate(
+                envelope.note,
+                envelope.quant,
+                multiplier="0",
+            )
+        )
+        registry = VariantRegistry().register(context.variant_id, kind="quant_llm")
+        envelope = combine_quant_overlay(
+            envelope.quant,
+            context=context,
+            registry=registry,
+            note=envelope.note,
+            overlay=no_trade_overlay,
+        )
     else:
         context, bundle, envelope = bt01_fixtures._quant_only_inputs(
             run_id=run_id or "run-bt02-fixture"
@@ -166,6 +186,36 @@ def _case(*, no_trade: bool = False, run_id: str | None = None) -> SimpleNamespa
     return SimpleNamespace(
         context=context,
         bundle=bundle,
+        envelope=envelope,
+        binding=binding,
+        decision=decision,
+        opportunity=opportunity,
+    )
+
+
+def _case_for_bundle(
+    *,
+    bundle: Any,
+    run_id: str,
+    variant_id: str,
+    decision_time: str,
+    earliest_execution_time: str,
+) -> SimpleNamespace:
+    context, selected_bundle, envelope = bt01_fixtures._quant_only_inputs(
+        bundle=bundle,
+        decision_time=decision_time,
+        earliest_execution_time=earliest_execution_time,
+        run_id=run_id,
+        variant_id=variant_id,
+    )
+    bt01 = bt01_fixtures._bt_api()
+    binding = bt01.SessionClock.bind(context, selected_bundle, envelope)
+    events = bt01.BacktestRunner().run((binding,))
+    decision = next(event for event in events if type(event).__name__ == "DecisionEvent")
+    opportunity = next(event for event in events if type(event).__name__ == "OpportunityEvent")
+    return SimpleNamespace(
+        context=context,
+        bundle=selected_bundle,
         envelope=envelope,
         binding=binding,
         decision=decision,
@@ -1696,6 +1746,39 @@ def test_json_ingress_unknown_fields_and_type_adapter_bypass_are_rejected() -> N
             api.build_order_intent(**invalid)
 
 
+def test_type_adapter_serialization_rejects_forged_models_without_callbacks() -> None:
+    api = _bt02_api()
+    valid = api.build_order_intent(**_golden_intent_fields())
+    assert api.OrderIntent.model_validate(valid).canonical_bytes() == valid.canonical_bytes()
+    assert TypeAdapter(api.OrderIntent).validate_python(valid).canonical_bytes() == valid.canonical_bytes()
+    policy = _policy(api)
+    assert api.CostPolicy.model_validate(policy).canonical_bytes() == policy.canonical_bytes()
+    assert TypeAdapter(api.CostPolicy).validate_python(policy).canonical_bytes() == policy.canonical_bytes()
+    fill = api.build_fill(**_golden_fill_fields(api))
+    assert api.Fill.model_validate(fill).canonical_bytes() == fill.canonical_bytes()
+    assert api.CostBreakdown.model_validate(fill.cost_breakdown).model_dump(mode="python") == fill.cost_breakdown.model_dump(mode="python")
+    assert TypeAdapter(api.Fill).validate_python(fill).canonical_bytes() == fill.canonical_bytes()
+    assert TypeAdapter(api.CostBreakdown).validate_python(fill.cost_breakdown).model_dump(mode="python") == fill.cost_breakdown.model_dump(mode="python")
+    calls: list[str] = []
+
+    class ReprTrap:
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return "BT02_SERIALIZER_CANARY"
+
+    forged = valid.model_copy(update={"quantity": ReprTrap()})
+    adapter = TypeAdapter(api.OrderIntent)
+    for serialize in (adapter.dump_python, adapter.dump_json):
+        calls.clear()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(ValueError) as error:
+                serialize(forged)
+        assert calls == []
+        assert caught == []
+        _assert_no_secret_echo(error.value, "BT02_SERIALIZER_CANARY", "BT02_SERIALIZER_CANARY")
+
+
 def test_order_string_and_identifier_bounds_are_inclusive_and_bounded() -> None:
     api = _bt02_api()
     valid = _golden_intent_fields()
@@ -2043,9 +2126,10 @@ def test_redaction_rejects_direct_encoded_secret_in_all_new_string_fields() -> N
             manifest = bar.manifest.model_dump(mode="python")
             manifest[field] = encoded
             with pytest.raises((api.OrderInputError, ValidationError, ValueError)) as error:
-                changed_bar = DailyBar.model_validate(
-                    {**bar.model_dump(mode="python"), "manifest": manifest}
-                )
+                hostile_manifest = SourceManifest.model_construct(**manifest)
+                bar_fields = bar.model_dump(mode="python")
+                bar_fields["manifest"] = hostile_manifest
+                changed_bar = DailyBar.model_construct(**bar_fields)
                 close = case.bundle.calendar.session(changed_bar.session_date).close_at
                 api.OutcomeEvidence(
                     changed_bar,
@@ -2066,7 +2150,7 @@ def test_redaction_rejects_direct_encoded_secret_in_all_new_string_fields() -> N
             changed = bar.model_dump(mode="python")
             changed[field] = encoded
             with pytest.raises((api.OrderInputError, ValidationError, ValueError)) as error:
-                changed_bar = DailyBar.model_validate(changed)
+                changed_bar = DailyBar.model_construct(**changed)
                 close = case.bundle.calendar.session(changed_bar.session_date).close_at
                 api.OutcomeEvidence(
                     changed_bar,
@@ -2368,6 +2452,99 @@ def test_duplicate_intents_and_reordered_valid_inputs_have_explicit_semantics() 
     )
     assert first.fills == second.fills
     assert first.orders == second.orders
+
+
+def test_simulator_accepts_distinct_decision_slots_for_the_same_instrument() -> None:
+    api = _bt02_api()
+    first = _case()
+    second = _case_for_bundle(
+        bundle=first.bundle,
+        run_id=first.context.run_id,
+        variant_id=first.context.variant_id,
+        decision_time="2024-07-03T17:00:00Z",
+        earliest_execution_time="2024-07-05T13:30:00Z",
+    )
+    first_bar = _make_bar(first, session=date(2024, 7, 3))
+    second_bar = _make_bar(second, session=date(2024, 7, 5))
+    intents = (
+        _intent(api, first, bar=first_bar, quantity=D("1")),
+        _intent(api, second, bar=second_bar, quantity=D("1")),
+    )
+    result = api.Simulator().run(
+        (first.binding, second.binding),
+        intents,
+        (
+            _outcome(api, first, bar=first_bar),
+            _outcome(api, second, bar=second_bar),
+        ),
+        _policy(api),
+        initial_cash=D("2000"),
+        initial_holdings=(),
+        end_session=date(2024, 7, 5),
+    )
+
+    assert tuple(fill.session_date for fill in result.fills) == (
+        date(2024, 7, 3),
+        date(2024, 7, 5),
+    )
+    assert tuple(fill.decision_event_id for fill in result.fills) == tuple(
+        intent.decision_event_id for intent in intents
+    )
+
+
+def test_simulator_rejects_duplicate_decision_slots() -> None:
+    api = _bt02_api()
+    case = _case()
+    with pytest.raises(api.OrderInputError) as duplicate:
+        api.Simulator().run(
+            (case.binding, case.binding),
+            (),
+            (),
+            _policy(api),
+            initial_cash=D("2000"),
+            initial_holdings=(),
+            end_session=case.binding.next_session.session_date,
+        )
+    assert getattr(duplicate.value.reason_code, "value", duplicate.value.reason_code) == "binding_mismatch"
+
+
+def test_simulator_rejects_same_id_bindings_with_different_calendar_witnesses() -> None:
+    api = _bt02_api()
+    first = _case()
+    calendar_module = importlib.import_module("mytradingalpha.data.calendar")
+    calendar_payload = first.bundle.calendar.model_dump(mode="python")
+    calendar_payload["replay_evidence"] = None
+    calendar_payload["timezone"] = "America/Chicago"
+    changed_calendar = TradingCalendar.model_validate(calendar_payload)
+    changed_witness = calendar_module.capture_calendar_replay_evidence(changed_calendar)
+    changed_calendar = TradingCalendar.model_validate(
+        {**changed_calendar.model_dump(mode="python"), "replay_evidence": changed_witness}
+    )
+    changed_bundle = quant_fixtures._bundle(
+        calendar=changed_calendar,
+        cutoff=first.bundle.knowledge_cutoff.isoformat(),
+    )
+    second = _case_for_bundle(
+        bundle=changed_bundle,
+        run_id=first.context.run_id,
+        variant_id=first.context.variant_id,
+        decision_time="2024-07-03T17:00:00Z",
+        earliest_execution_time="2024-07-05T13:30:00Z",
+    )
+
+    assert first.bundle.calendar.calendar_id == second.bundle.calendar.calendar_id
+    assert first.bundle.calendar.replay_evidence != second.bundle.calendar.replay_evidence
+    with pytest.raises(api.OrderInputError) as conflict:
+        api.Simulator().run(
+            (first.binding, second.binding),
+            (),
+            (),
+            _policy(api),
+            initial_cash=D("2000"),
+            initial_holdings=(),
+            end_session=date(2024, 7, 5),
+        )
+    assert getattr(conflict.value.reason_code, "value", conflict.value.reason_code) == "binding_mismatch"
 
 
 def test_cost_quote_search_and_sale_rounding_have_bounded_call_counts(
