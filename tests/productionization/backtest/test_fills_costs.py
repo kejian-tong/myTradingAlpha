@@ -2991,3 +2991,495 @@ def test_repair_holding_ids_use_ascii_stable_tokens(instrument_id: str) -> None:
         assert result.fills == result.orders == ()
     else:
         _assert_order_error(api, "input_invalid", lambda: _run(api, case, (), (), policy, holdings=holdings))
+
+
+def _repair2_hostile_key(
+    native: str, calls: list[str], *, kind: str, throwing: bool,
+) -> tuple[Any, list[bool], str]:
+    """Build a colliding key; arm callbacks only after constructing fixtures."""
+
+    armed = [False]
+    canary = "BT02_REPAIR2_DIAGNOSTIC_CANARY"
+    base = str if kind == "str_subclass" else object
+
+    def record(protocol: str) -> None:
+        calls.append(protocol)
+        if armed[0] and throwing:
+            raise RuntimeError(canary)
+
+    class HostileKey(base):
+        def __new__(cls) -> Any:
+            return str.__new__(cls, native) if base is str else object.__new__(cls)
+
+        def __hash__(self) -> int:
+            record("hash")
+            return hash(native)
+
+        def __eq__(self, other: object) -> bool:
+            record("eq")
+            return type(other) is str and native == other
+
+        def __repr__(self) -> str:
+            record("repr")
+            return canary
+
+        def __str__(self) -> str:
+            record("str")
+            return canary
+
+        def __iter__(self) -> Any:
+            record("iter")
+            return iter(())
+
+        def __len__(self) -> int:
+            record("len")
+            return 0
+
+        def __getitem__(self, index: Any) -> str:
+            record("getitem")
+            return canary
+
+        def __lt__(self, other: object) -> bool:
+            record("lt")
+            return False
+
+        def __format__(self, specification: str) -> str:
+            record("format")
+            return canary
+
+    return HostileKey(), armed, canary
+
+
+def _repair2_fixed_error(api: SimpleNamespace, error: BaseException) -> None:
+    assert type(error) is api.OrderInputError
+    assert error.reason_code in {
+        "input_invalid", "intent_invalid", "policy_invalid", "outcome_invalid",
+        "source_changed", "resource_limit",
+    }
+    assert str(error) == f"BT-02 input rejected ({error.reason_code})"
+    assert len(str(error)) <= 256
+    assert error.errors() == [{
+        "type": "order_input_error", "loc": (), "msg": str(error), "input": None,
+    }]
+
+
+def _repair2_schema_error(
+    api: SimpleNamespace, error: BaseException, calls: list[str], canary: str,
+) -> None:
+    """Inspect public diagnostics, including their structured representation."""
+
+    assert type(error) is ValidationError
+    encoded = base64.b64encode(canary.encode()).decode()
+    details = error.errors(include_url=False)
+    rendered: list[str] = []
+    inspection_errors: list[BaseException] = []
+    try:
+        rendered.extend((str(error), repr(error), repr(details), repr(error.errors())))
+    except BaseException as inspection_error:
+        inspection_errors.append(inspection_error)
+    print(
+        f"schema diagnostics: callbacks={calls}; lines={len(details)}; "
+        f"inspection_errors={len(inspection_errors)}"
+    )
+    assert calls == [], "schema ingress or diagnostic inspection invoked caller protocols"
+    assert inspection_errors == []
+    assert len(details) == 1
+    line = details[0]
+    assert set(line) == {"type", "loc", "msg", "input", "ctx"}
+    assert line["type"] == "value_error"
+    assert line["loc"] == ()
+    assert line["input"] is None
+    assert line["msg"] == "Value error, BT-02 input rejected (input_invalid)"
+    assert set(line["ctx"]) == {"error"}
+    cause = line["ctx"]["error"]
+    assert type(cause) is api.OrderInputError
+    assert cause.reason_code == "input_invalid"
+    assert str(cause) == "BT-02 input rejected (input_invalid)"
+    assert cause.args == ("BT-02 input rejected (input_invalid)",)
+    assert cause.__cause__ is None and cause.__context__ is None
+    assert all(canary not in text and encoded not in text for text in rendered)
+    assert all(len(text) <= 2048 for text in rendered)
+    assert calls == []
+
+
+def _repair2_data_race(
+    *, source: Any, action: Any, mutate: Any, restore: Any, capture: str,
+    capture_owner: str | None = None,
+) -> tuple[list[Any], list[BaseException], list[int]]:
+    """Pause at an owned snapshot shape, never at a fixed source line.
+
+    Both the parent's native-key tuple and a capped key/value-entry tuple are
+    recognized. Metadata pauses follow its first bounded capture. The schema
+    control pauses at the public outer wrapper before Pydantic's kwargs path.
+    Only data changes across threads; source code and functions stay intact.
+    """
+
+    files = {
+        importlib.import_module(name).__file__
+        for name in (
+            "mytradingalpha.contracts.orders", "mytradingalpha.backtest.costs",
+            "mytradingalpha.backtest.fills",
+        )
+    }
+    helpers = {
+        "_owned_mapping", "_policy_payload", "_bar_fields", "_contract_snapshot",
+        "validate_fixed", "__init__",
+    }
+    paused, resume = Event(), Event()
+    results: list[Any] = []
+    errors: list[BaseException] = []
+    widths: list[int] = []
+    restored: list[bool] = []
+    original_width = dict.__len__(source) if type(source) is dict else set.__len__(source)
+
+    def trace(frame: FrameType, event: str, arg: Any) -> Any:
+        if frame.f_code.co_filename not in files or frame.f_code.co_name not in helpers:
+            return None
+        local_values = frame.f_locals
+        snapshots: list[tuple[str, Any]] = []
+        for name, value in local_values.items():
+            if type(value) not in (tuple, list):
+                continue
+            pairs = bool(value) and all(type(item) is tuple and len(item) == 2 for item in value)
+            if "metadata" in name or "fields_set" in name:
+                snapshots.append(("metadata", value))
+            elif "keys" in name or pairs:
+                snapshots.append(("entries", value))
+        widths.extend(len(value) for _, value in snapshots)
+        # A model constructor's kwargs dict is consumer-created, unlike the
+        # deliberately oversized submitted source. It must also stay bounded.
+        if frame.f_code.co_name in {"validate_fixed", "__init__"}:
+            widths.extend(
+                dict.__len__(value) for value in local_values.values()
+                if type(value) is dict and value is not source
+            )
+        if event == "return" and type(arg) is dict and arg is not source:
+            widths.append(dict.__len__(arg))
+        reaches_source = any(value is source for value in local_values.values())
+        captured = any(kind == capture and len(value) == original_width for kind, value in snapshots)
+        outer_schema = capture == "schema" and frame.f_code.co_name == "validate_fixed"
+        ancestors: set[str] = set()
+        current: FrameType | None = frame
+        while current is not None:
+            ancestors.add(current.f_code.co_name)
+            current = current.f_back
+        owned_path = capture_owner is None or capture_owner in ancestors
+        if (
+            event == "line" and not paused.is_set() and reaches_source and owned_path
+            and (captured or outer_schema)
+        ):
+            paused.set()
+            if not resume.wait(10):
+                raise TimeoutError("data-only race was not released")
+        return trace
+
+    def consume() -> None:
+        previous = sys.gettrace()
+        try:
+            sys.settrace(trace)
+            results.append(action())
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            sys.settrace(previous)
+            restored.append(sys.gettrace() is previous)
+
+    thread = Thread(target=consume, daemon=True)
+    thread.start()
+    try:
+        assert paused.wait(10), "consumer did not reach the semantic capture boundary"
+        mutate()
+        resume.set()
+        thread.join(10)
+        assert not thread.is_alive()
+        assert restored == [True]
+    finally:
+        resume.set()
+        thread.join(10)
+        restore()
+    assert not thread.is_alive()
+    return results, errors, widths
+
+
+def _repair2_public_mapping_case(api: SimpleNamespace, location: str) -> SimpleNamespace:
+    if location == "intent":
+        original = api.build_order_intent(**_golden_intent_fields())
+        storage = original.model_dump(mode="python")
+        return SimpleNamespace(
+            storage=storage, key="quantity", expected=original.canonical_bytes(),
+            action=lambda: api.OrderIntent.model_validate(storage), capture_owner="_owned_mapping",
+        )
+    if location == "policy":
+        policy = _policy(api)
+        return SimpleNamespace(
+            storage=object.__getattribute__(policy, "__dict__"), key="half_spread_bps",
+            expected=_quote(api, policy), action=lambda: _quote(api, policy),
+            capture_owner="_policy_payload",
+        )
+    case = _case()
+    bar = _make_bar(case)
+    target = bar if location == "bar" else bar.manifest
+    expected = _outcome(api, case, bar=bar)
+    return SimpleNamespace(
+        storage=object.__getattribute__(target, "__dict__"),
+        key="close" if location == "bar" else "source", target=target, bar=bar,
+        expected=object.__getattribute__(expected, "_sealed_bytes"),
+        action=lambda: _outcome(api, case, bar=bar), capture_owner="_bar_fields",
+    )
+
+
+def _repair2_assert_before_image(location: str, case: SimpleNamespace, accepted: Any) -> None:
+    if location == "intent":
+        assert accepted.canonical_bytes() == case.expected
+        assert object.__getattribute__(accepted, "__dict__") is not case.storage
+        models = (accepted,)
+    elif location == "policy":
+        assert accepted == case.expected
+        models = (accepted.cost_breakdown,)
+    else:
+        assert object.__getattribute__(accepted, "_sealed_bytes") == case.expected
+        owned_bar = accepted.bar
+        assert owned_bar is not case.bar
+        assert owned_bar.manifest is not case.bar.manifest
+        models = (owned_bar, owned_bar.manifest)
+    for model in models:
+        storage = object.__getattribute__(model, "__dict__")
+        metadata = object.__getattribute__(model, "__pydantic_fields_set__")
+        assert type(storage) is dict and dict.__len__(storage) <= 64
+        assert all(type(key) is str for key in dict.keys(storage))
+        assert type(metadata) is set and set.__len__(metadata) <= 64
+        assert all(type(item) is str for item in set.__iter__(metadata))
+
+
+@pytest.mark.parametrize("location", ("intent", "policy", "bar", "manifest"))
+@pytest.mark.parametrize("key_kind", ("object", "str_subclass"))
+@pytest.mark.parametrize("throwing", (False, True))
+def test_repair2_public_key_replacement_owns_values_before_protocols(
+    location: str, key_kind: str, throwing: bool,
+) -> None:
+    api = _bt02_api()
+    case = _repair2_public_mapping_case(api, location)
+    storage = case.storage
+    before = dict(storage)
+    calls: list[str] = []
+    key, armed, canary = _repair2_hostile_key(case.key, calls, kind=key_kind, throwing=throwing)
+    replacement = {key: before[case.key]}
+    assert calls == ["hash"]
+    calls.clear()
+    armed[0] = True
+
+    def mutate() -> None:
+        dict.__delitem__(storage, case.key)
+        dict.update(storage, replacement)
+
+    def restore() -> None:
+        dict.clear(storage)
+        dict.update(storage, before)
+
+    results, errors, widths = _repair2_data_race(
+        source=storage, action=case.action, mutate=mutate, restore=restore, capture="entries",
+        capture_owner=case.capture_owner,
+    )
+    print(
+        f"key race {location}/{key_kind}/{throwing}: callbacks={calls}; "
+        f"max_capture={max(widths, default=0)}; results={len(results)}; "
+        f"errors={[type(error).__name__ for error in errors]}; "
+        f"canary_echo={any(type(error) is RuntimeError and canary in str(error) for error in errors)}"
+    )
+    assert calls == [], "live caller lookup executed a colliding hostile key"
+    assert widths and max(widths) <= 65
+    if errors:
+        assert results == [] and len(errors) == 1
+        _repair2_fixed_error(api, errors[0])
+        _assert_no_secret_echo(errors[0], canary, canary)
+    else:
+        assert len(results) == 1
+        _repair2_assert_before_image(location, case, results[0])
+    assert calls == []
+
+
+@pytest.mark.parametrize("location", ("intent", "policy", "bar", "manifest"))
+def test_repair2_public_mapping_growth_keeps_all_owned_captures_bounded(location: str) -> None:
+    api = _bt02_api()
+    case = _repair2_public_mapping_case(api, location)
+    storage = case.storage
+    before = dict(storage)
+    growth = {f"repair2-extra-{index}": None for index in range(257)}
+
+    def restore() -> None:
+        dict.clear(storage)
+        dict.update(storage, before)
+
+    results, errors, widths = _repair2_data_race(
+        source=storage, action=case.action, mutate=lambda: dict.update(storage, growth),
+        restore=restore, capture="entries", capture_owner=case.capture_owner,
+    )
+    print(f"mapping growth {location}: max_capture={max(widths, default=0)}")
+    assert widths and max(widths) <= 65
+    if errors:
+        assert results == [] and len(errors) == 1
+        _repair2_fixed_error(api, errors[0])
+    else:
+        assert len(results) == 1
+        _repair2_assert_before_image(location, case, results[0])
+
+
+@pytest.mark.parametrize("location", ("bar", "manifest"))
+@pytest.mark.parametrize("mutation,key_kind", (
+    ("grow", "native"), ("replace_hostile", "object"), ("mutate_hostile", "object"),
+    ("replace_hostile", "str_subclass"), ("mutate_hostile", "str_subclass"),
+))
+def test_repair2_outcome_metadata_uses_only_its_first_bounded_capture(
+    location: str, mutation: str, key_kind: str,
+) -> None:
+    api = _bt02_api()
+    case = _repair2_public_mapping_case(api, location)
+    original = object.__getattribute__(case.target, "__pydantic_fields_set__")
+    before = set(original)
+    calls: list[str] = []
+    hostile, armed, canary = _repair2_hostile_key(
+        "repair2-hostile-metadata", calls, kind=key_kind, throwing=True,
+    )
+    replacement = {hostile}
+    growth = before | {f"repair2-metadata-{index}" for index in range(257)}
+    assert calls == ["hash"]
+    calls.clear()
+    armed[0] = True
+
+    def mutate() -> None:
+        if mutation == "replace_hostile":
+            object.__setattr__(case.target, "__pydantic_fields_set__", replacement)
+        else:
+            set.clear(original)
+            set.update(original, growth if mutation == "grow" else replacement)
+
+    def restore() -> None:
+        set.clear(original)
+        set.update(original, before)
+        object.__setattr__(case.target, "__pydantic_fields_set__", original)
+
+    results, errors, widths = _repair2_data_race(
+        source=original, action=case.action, mutate=mutate, restore=restore, capture="metadata",
+        capture_owner=case.capture_owner,
+    )
+    print(
+        f"outcome metadata {location}/{mutation}/{key_kind}: callbacks={calls}; "
+        f"max_capture={max(widths, default=0)}; results={len(results)}; errors={len(errors)}"
+    )
+    assert calls == []
+    assert widths and max(widths) <= 65
+    if errors:
+        assert results == [] and len(errors) == 1
+        _repair2_fixed_error(api, errors[0])
+        _assert_no_secret_echo(errors[0], canary, canary)
+    else:
+        assert len(results) == 1
+        _repair2_assert_before_image(location, case, results[0])
+    assert calls == []
+
+
+def _repair2_adapter_case(api: SimpleNamespace, contract: str) -> SimpleNamespace:
+    if contract == "OrderIntent":
+        valid = api.build_order_intent(**_golden_intent_fields())
+    elif contract == "Fill":
+        valid = api.build_fill(**_golden_fill_fields(api))
+    elif contract == "CostBreakdown":
+        valid = api.build_fill(**_golden_fill_fields(api)).cost_breakdown
+    else:
+        valid = _policy(api)
+    model = type(valid)
+    payload = {name: object.__getattribute__(valid, name) for name in model.model_fields}
+    adapter = TypeAdapter(model)
+    assert type(adapter.validate_python(payload)) is model
+    return SimpleNamespace(
+        model=model, payload=payload, adapter=adapter,
+        key="quantity" if contract in {"OrderIntent", "Fill"} else "half_spread_bps",
+    )
+
+
+@pytest.mark.parametrize("contract", ("OrderIntent", "Fill", "CostBreakdown", "CostPolicy"))
+@pytest.mark.parametrize("throwing", (False, True))
+def test_repair2_type_adapter_rejects_hostile_string_keys_without_protocols(
+    contract: str, throwing: bool,
+) -> None:
+    api = _bt02_api()
+    case = _repair2_adapter_case(api, contract)
+    calls: list[str] = []
+    key, armed, canary = _repair2_hostile_key(
+        case.key, calls, kind="str_subclass", throwing=throwing,
+    )
+    value = case.payload.pop(case.key)
+    replacement = {key: value}
+    dict.update(case.payload, replacement)
+    assert calls == ["hash"]
+    calls.clear()
+    armed[0] = True
+    errors: list[BaseException] = []
+    try:
+        case.adapter.validate_python(case.payload)
+    except BaseException as error:
+        errors.append(error)
+    print(
+        f"adapter key {contract}/{throwing}: callbacks={calls}; "
+        f"errors={[type(error).__name__ for error in errors]}"
+    )
+    assert calls == []
+    assert len(errors) == 1
+    _repair2_schema_error(api, errors[0], calls, canary)
+
+
+@pytest.mark.parametrize("contract", ("OrderIntent", "Fill", "CostBreakdown", "CostPolicy"))
+@pytest.mark.parametrize("throwing", (False, True))
+def test_repair2_type_adapter_malformed_dict_diagnostics_are_fixed_and_callback_free(
+    contract: str, throwing: bool,
+) -> None:
+    api = _bt02_api()
+    case = _repair2_adapter_case(api, contract)
+    calls: list[str] = []
+    opaque, armed, canary = _repair2_hostile_key(
+        "diagnostic-value", calls, kind="object", throwing=throwing,
+    )
+    encoded = base64.b64encode(canary.encode()).decode()
+    case.payload["unexpected"] = {"direct": canary, "encoded": encoded, "opaque": opaque}
+    calls.clear()
+    armed[0] = True
+    with pytest.raises(ValidationError) as captured:
+        case.adapter.validate_python(case.payload)
+    _repair2_schema_error(api, captured.value, calls, canary)
+
+
+@pytest.mark.parametrize("contract", ("OrderIntent", "Fill", "CostBreakdown", "CostPolicy"))
+@pytest.mark.parametrize("wire_type", ("str", "bytes"))
+def test_repair2_type_adapter_denied_json_diagnostics_never_retain_submitted_payload(
+    contract: str, wire_type: str,
+) -> None:
+    api = _bt02_api()
+    case = _repair2_adapter_case(api, contract)
+    canary = "BT02_REPAIR2_DIAGNOSTIC_CANARY"
+    encoded = base64.b64encode(canary.encode()).decode()
+    wire = json.dumps({"direct": canary, "encoded": encoded})
+    submitted = wire if wire_type == "str" else wire.encode()
+    with pytest.raises(ValidationError) as captured:
+        case.adapter.validate_json(submitted)
+    _repair2_schema_error(api, captured.value, [], canary)
+
+
+@pytest.mark.parametrize("contract", ("OrderIntent", "Fill", "CostBreakdown", "CostPolicy"))
+def test_repair2_type_adapter_outer_growth_is_bounded_before_model_kwargs(contract: str) -> None:
+    api = _bt02_api()
+    case = _repair2_adapter_case(api, contract)
+    before = dict(case.payload)
+    growth = {f"repair2-outer-{index}": None for index in range(257)}
+
+    def restore() -> None:
+        dict.clear(case.payload)
+        dict.update(case.payload, before)
+
+    results, errors, widths = _repair2_data_race(
+        source=case.payload, action=lambda: case.adapter.validate_python(case.payload),
+        mutate=lambda: dict.update(case.payload, growth), restore=restore, capture="schema",
+    )
+    print(f"outer adapter growth {contract}: max_capture={max(widths, default=0)}")
+    assert max(widths, default=0) <= 65
+    assert results == [] and len(errors) == 1
+    _repair2_schema_error(api, errors[0], [], "BT02_REPAIR2_DIAGNOSTIC_CANARY")
