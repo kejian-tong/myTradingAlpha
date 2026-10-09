@@ -770,7 +770,13 @@ def build_fill(**fields: object) -> Fill:
     return Fill(**{**payload, "fill_id": fill_id})
 
 
-def _contract_payload(value: object, model_type: type[_StrictContract], reason: str) -> dict[str, object]:
+def _contract_snapshot(
+    value: object,
+    model_type: type[_StrictContract],
+    reason: str,
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    """Own bounded raw fields and metadata before inspecting their contents."""
+
     if type(value) is not model_type:
         _reject(reason)
     try:
@@ -780,32 +786,42 @@ def _contract_payload(value: object, model_type: type[_StrictContract], reason: 
         fields_set = object.__getattribute__(value, "__pydantic_fields_set__")
     except Exception:
         _reject(reason)
-    names = tuple(model_type.model_fields)
     if (
         type(storage) is not dict
         or extras is not None
         or private is not None
         or type(fields_set) is not set
-        or set.__len__(fields_set) > 64
-        or dict.__len__(storage) != len(names)
     ):
-        _reject("resource_limit" if type(fields_set) is set and set.__len__(fields_set) > 64 else reason)
-    keys = tuple(islice(dict.keys(storage), 65))
-    metadata = tuple(islice(set.__iter__(fields_set), 65))
-    if len(keys) > len(names) or len(metadata) > 64:
+        _reject(reason)
+    try:
+        entries = tuple(islice(dict.items(storage), 65))
+        metadata = tuple(islice(set.__iter__(fields_set), 65))
+    except Exception:
+        _reject(reason)
+    if len(entries) > 64 or len(metadata) > 64:
         _reject("resource_limit")
+    names = tuple(model_type.model_fields)
+    keys = tuple(key for key, _ in entries)
+    if len(keys) != len(names):
+        _reject(reason)
     if any(type(key) is not str for key in keys):
         _reject(reason)
-    for key in keys:
-        if not any(key == name for name in names):
-            _reject(reason)
+    if set(keys) != set(names):
+        _reject(reason)
     if any(type(item) is not str for item in metadata) or set(metadata) != set(names):
         _reject(reason)
-    payload = {name: dict.__getitem__(storage, name) for name in names}
-    return payload
+    return dict(entries), metadata
 
 
-def _typed_storage_value(value: object) -> object:
+def _contract_payload(value: object, model_type: type[_StrictContract], reason: str) -> dict[str, object]:
+    return _contract_snapshot(value, model_type, reason)[0]
+
+
+def _typed_storage_value(
+    value: object,
+    *,
+    cost_snapshot: tuple[dict[str, object], tuple[str, ...]] | None = None,
+) -> object:
     value_type = type(value)
     if value is None or value_type in (bool, int, str):
         return value
@@ -828,11 +844,15 @@ def _typed_storage_value(value: object) -> object:
         checked_date = _safe_date(value)
         return ("date", checked_date.year, checked_date.month, checked_date.day)
     if value_type is CostBreakdown:
-        nested = _contract_payload(value, CostBreakdown, "input_invalid")
+        nested, metadata = (
+            _contract_snapshot(value, CostBreakdown, "input_invalid")
+            if cost_snapshot is None else cost_snapshot
+        )
+        CostBreakdown._guard_input(nested)
         return (
             "CostBreakdown",
             tuple((name, _typed_storage_value(nested[name])) for name in CostBreakdown.model_fields),
-            tuple(sorted(object.__getattribute__(value, "__pydantic_fields_set__"))),
+            tuple(sorted(metadata)),
         )
     _reject("input_invalid")
     raise AssertionError("unreachable")
@@ -846,18 +866,32 @@ def _contract_storage_fingerprint(
 ) -> tuple[object, ...]:
     """Capture exact typed fields independently of normalized wire bytes."""
 
-    payload = _contract_payload(value, model_type, "input_invalid")
+    payload, metadata = _contract_snapshot(value, model_type, "input_invalid")
+    cost_snapshot = None
+    if model_type is Fill:
+        cost_snapshot = _contract_snapshot(payload["cost_breakdown"], CostBreakdown, "input_invalid")
     try:
-        model_type._guard_input(payload)
+        validation_payload = payload
+        if cost_snapshot is not None:
+            validation_payload = {
+                **payload,
+                "cost_breakdown": CostBreakdown.model_validate(cost_snapshot[0]),
+            }
+        model_type._guard_input(validation_payload)
     except OrderInputError:
         _reject(reason)
     except Exception:
         _reject(reason)
-    metadata = object.__getattribute__(value, "__pydantic_fields_set__")
-    metadata_snapshot = tuple(sorted(set.__iter__(metadata)))
+    metadata_snapshot = tuple(sorted(metadata))
     return (
         model_type.__name__,
-        tuple((name, _typed_storage_value(payload[name])) for name in model_type.model_fields),
+        tuple(
+            (name, _typed_storage_value(
+                payload[name],
+                cost_snapshot=cost_snapshot if name == "cost_breakdown" else None,
+            ))
+            for name in model_type.model_fields
+        ),
         metadata_snapshot,
     )
 

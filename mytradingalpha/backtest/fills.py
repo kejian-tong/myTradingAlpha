@@ -963,6 +963,9 @@ class FillModel:
         data = _binding_for_intent(intent_copy, {data.decision_event_id: data})
         session = _session_for(data, session_date)
         _check_intent_session(intent_copy, session)
+        close_at = object.__getattribute__(session, "close_at")
+        if not intent_copy.earliest_submit_time <= close_at <= intent_copy.expires_at:
+            _reject("intent_invalid")
         _validate_outcome_context(outcome, data, session_date, intent=intent_copy)
         checked = _fill_context_check(
             fill_copy, intent_copy, outcome, policy_copy, data, session, remaining, cumulative
@@ -1188,7 +1191,7 @@ def _validate_initial_holdings(value: object) -> tuple[tuple[str, Decimal], ...]
     for entry in value:
         if type(entry) is not tuple or len(entry) != 2:
             _reject("input_invalid")
-        instrument = _safe_string(entry[0])
+        instrument = _safe_id_token(entry[0])
         shares = _decimal_value(entry[1], kind="holding")
         if shares < 0 or (prior is not None and instrument <= prior):
             _reject("numeric_invalid")
@@ -1364,7 +1367,14 @@ class Simulator:
             except Exception:
                 _reject("session_unavailable")
             binding_map[data.decision_event_id] = data
-            outcome_bindings.setdefault(data.instrument_id, data)
+            representative = outcome_bindings.get(data.instrument_id)
+            if representative is None or (
+                object.__getattribute__(data.next_session, "close_at"), data.decision_event_id
+            ) < (
+                object.__getattribute__(representative.next_session, "close_at"),
+                representative.decision_event_id,
+            ):
+                outcome_bindings[data.instrument_id] = data
             binding_ingress.append((data, ingress))
         if not binding_map and intents:
             _reject("binding_mismatch")
