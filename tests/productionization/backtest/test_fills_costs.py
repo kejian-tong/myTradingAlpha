@@ -14,15 +14,17 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import urllib.request
 import warnings
 import zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from decimal import Decimal, Inexact, InvalidOperation, Rounded, localcontext
+from itertools import product
 from pathlib import Path
 from threading import Event, Thread
-from types import SimpleNamespace
+from types import FrameType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -2693,3 +2695,299 @@ def test_simulator_denies_file_process_environment_network_and_timezone_fallback
     result = _run(api, case, (intent,), (outcome,), policy)
     assert result.fills
     assert attempted == []
+
+
+@pytest.mark.parametrize(
+    ("timing", "expected_reason"),
+    (
+        ("expiry_before_close", "expired"),
+        ("submission_after_close", "not_yet_eligible"),
+        ("submit_and_expiry_at_close", None),
+    ),
+)
+def test_repair_contextual_fill_checks_rehashed_submit_and_expiry_window(
+    timing: str, expected_reason: str | None
+) -> None:
+    api = _bt02_api()
+    case = _case()
+    outcome = _outcome(api, case)
+    policy = _policy(api)
+    original_intent = _intent(api, case, bar=outcome.bar)
+    original_fill = _simulate_direct(api, case, original_intent, outcome, policy).fill
+    assert original_fill is not None
+    close = case.binding.next_session.close_at
+    submit = close if timing == "submit_and_expiry_at_close" else case.context.earliest_execution_time
+    expiry = close
+    if timing == "expiry_before_close":
+        expiry -= timedelta(microseconds=1)
+    elif timing == "submission_after_close":
+        submit = close + timedelta(microseconds=1)
+        expiry += timedelta(hours=1)
+    changed_intent = _intent(
+        api, case, bar=outcome.bar, earliest_submit_time=submit, expires_at=expiry
+    )
+    fields = original_fill.model_dump(mode="python")
+    fields.pop("fill_id")
+    fields["intent_id"] = changed_intent.intent_id
+    fields["intent_hash"] = "sha256:" + hashlib.sha256(changed_intent.canonical_bytes()).hexdigest()
+    rehashed_fill = api.build_fill(**fields)
+    assert rehashed_fill.fill_id != original_fill.fill_id
+    assert rehashed_fill.intent_id == changed_intent.intent_id
+    simulated = _simulate_direct(api, case, changed_intent, outcome, policy)
+    if expected_reason is None:
+        assert _status(simulated) == "filled"
+        accepted = _validate_fill_context(api, case, rehashed_fill, changed_intent, outcome, policy)
+        assert accepted.canonical_bytes() == rehashed_fill.canonical_bytes()
+    else:
+        assert _status(simulated) == "no_fill"
+        assert simulated.reason_code == expected_reason
+        assert simulated.fill is None
+        _assert_order_error(
+            api,
+            "intent_invalid",
+            lambda: _validate_fill_context(api, case, rehashed_fill, changed_intent, outcome, policy),
+        )
+
+
+@pytest.mark.parametrize(
+    ("reverse_bindings", "reverse_intents", "reverse_outcomes"),
+    tuple(product((False, True), repeat=3)),
+)
+def test_repair_outcome_prevalidation_is_independent_of_all_collection_permutations(
+    reverse_bindings: bool, reverse_intents: bool, reverse_outcomes: bool
+) -> None:
+    api = _bt02_api()
+    first = _case()
+    second = _case_for_bundle(
+        bundle=first.bundle,
+        run_id=first.context.run_id,
+        variant_id=first.context.variant_id,
+        decision_time="2024-07-03T17:00:00Z",
+        earliest_execution_time="2024-07-05T13:30:00Z",
+    )
+    first_bar = _make_bar(first, session=date(2024, 7, 3))
+    second_bar = _make_bar(second, session=date(2024, 7, 5))
+    bindings = (first.binding, second.binding)
+    intents = (
+        _intent(api, first, bar=first_bar, quantity=ONE),
+        _intent(api, second, bar=second_bar, quantity=ONE),
+    )
+    outcomes = (_outcome(api, first, bar=first_bar), _outcome(api, second, bar=second_bar))
+    policy = _policy(api)
+
+    def run(bs: tuple[Any, ...], ins: tuple[Any, ...], outs: tuple[Any, ...]) -> Any:
+        return api.Simulator().run(
+            bs, ins, outs, policy,
+            initial_cash=CASH_DEFAULT, initial_holdings=(), end_session=date(2024, 7, 5),
+        )
+
+    baseline = run(bindings, intents, outcomes)
+    assert tuple(fill.session_date for fill in baseline.fills) == (date(2024, 7, 3), date(2024, 7, 5))
+    assert tuple(fill.decision_event_id for fill in baseline.fills) == tuple(
+        intent.decision_event_id for intent in intents
+    )
+    actual = run(
+        tuple(reversed(bindings)) if reverse_bindings else bindings,
+        tuple(reversed(intents)) if reverse_intents else intents,
+        tuple(reversed(outcomes)) if reverse_outcomes else outcomes,
+    )
+    assert actual.fills == baseline.fills
+    assert actual.orders == baseline.orders
+    assert actual.cash == baseline.cash
+    assert actual.holdings == baseline.holdings
+    assert actual.accounting_basis == baseline.accounting_basis
+
+
+def _assert_public_metadata_race_is_bounded_and_callback_free(
+    api: SimpleNamespace,
+    *,
+    target: Any,
+    action: Any,
+    expected: Any,
+    location: str,
+    mutation: str,
+) -> None:
+    """Pause after metadata capture; mutate data only, with no production patch.
+
+    The trace follows the known contract fingerprint and its owned metadata
+    locals rather than fixed line numbers. On the repair parent these pauses
+    precede the live rereads at orders.py:856-857 and the nested projection:835.
+    """
+
+    calls: list[str] = []
+
+    class HostileMetadata:
+        def __init__(self, rank: int) -> None:
+            self.rank = rank
+
+        def __hash__(self) -> int:
+            calls.append("hash")
+            return self.rank
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            return self is other
+
+        def __lt__(self, other: object) -> bool:
+            calls.append("lt")
+            return type(other) is HostileMetadata and self.rank < other.rank
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return "<hostile-metadata>"
+
+        def __iter__(self) -> Any:
+            calls.append("iter")
+            return iter(())
+
+    original = object.__getattribute__(target, "__pydantic_fields_set__")
+    assert type(original) is set
+    original_contents = set(original)
+    hostile = {HostileMetadata(index) for index in range(12)}
+    assert len(hostile) == 12
+    assert calls == ["hash"] * 12
+    calls.clear()  # Fixture construction is outside the consuming API boundary.
+    growth = original_contents | {f"metadata-growth-{index}" for index in range(257)}
+    paused, resume = Event(), Event()
+    results: list[Any] = []
+    errors: list[BaseException] = []
+    widths: list[int] = []
+    trace_restored: list[bool] = []
+    contracts_file = importlib.import_module("mytradingalpha.contracts.orders").__file__
+
+    def trace(frame: FrameType, event: str, arg: Any) -> Any:
+        if frame.f_code.co_filename != contracts_file:
+            return trace
+        local_values = frame.f_locals
+        metadata = [
+            value for name, value in local_values.items()
+            if "metadata" in name and type(value) in (tuple, list)
+        ]
+        widths.extend(len(value) for value in metadata)
+        # The typed nested projection has no local for its final metadata tuple.
+        if (
+            event == "return"
+            and frame.f_code.co_name in {"_typed_storage_value", "_contract_storage_fingerprint"}
+            and type(arg) is tuple and len(arg) == 3 and type(arg[2]) is tuple
+        ):
+            widths.append(len(arg[2]))
+        ancestors: set[str] = set()
+        current: FrameType | None = frame
+        while current is not None:
+            ancestors.add(current.f_code.co_name)
+            current = current.f_back
+        if (
+            event == "line" and not paused.is_set()
+            and any(value is target for value in local_values.values())
+            and "_contract_storage_fingerprint" in ancestors
+            and "_guard_input" not in ancestors
+            and any(
+                len(value) == len(original_contents) and all(type(item) is str for item in value)
+                for value in metadata
+            )
+        ):
+            paused.set()
+            if not resume.wait(5):
+                raise TimeoutError("metadata race was not released")
+        return trace
+
+    def consume() -> None:
+        previous = sys.gettrace()
+        try:
+            sys.settrace(trace)
+            results.append(action())
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            sys.settrace(previous)
+            trace_restored.append(sys.gettrace() is previous)
+
+    thread = Thread(target=consume, daemon=True)
+    thread.start()
+    try:
+        assert paused.wait(5), "public API did not reach its metadata capture boundary"
+        if mutation == "replace_hostile":
+            object.__setattr__(target, "__pydantic_fields_set__", hostile)
+        else:
+            original.clear()
+            original.update(growth if mutation == "grow" else hostile)
+        resume.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert trace_restored == [True]
+        print(
+            f"metadata race {location}/{mutation}: callbacks={calls}; "
+            f"max_snapshot={max(widths)}; results={len(results)}; errors={len(errors)}"
+        )
+        assert calls == []
+        assert widths and max(widths) <= 65
+        if errors:
+            assert results == []
+            assert len(errors) == 1
+            assert isinstance(errors[0], api.OrderInputError)
+            assert errors[0].reason_code in {"input_invalid", "policy_invalid", "source_changed", "resource_limit"}
+            assert len(str(errors[0])) <= 256
+        else:
+            assert len(results) == 1
+            accepted = results[0]
+            cost = accepted.cost_breakdown
+            owned_metadata = object.__getattribute__(cost, "__pydantic_fields_set__")
+            assert type(owned_metadata) is set
+            assert set.__len__(owned_metadata) <= 64
+            assert all(type(item) is str for item in set.__iter__(owned_metadata))
+            if location == "policy":
+                assert accepted == expected
+            else:
+                assert accepted.canonical_bytes() == expected
+            assert calls == []
+    finally:
+        resume.set()
+        thread.join(5)
+        original.clear()
+        original.update(original_contents)
+        object.__setattr__(target, "__pydantic_fields_set__", original)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("location", ("policy", "nested_cost"))
+@pytest.mark.parametrize("mutation", ("replace_hostile", "mutate_hostile", "grow"))
+def test_repair_public_metadata_races_never_call_protocols_or_expand_snapshots(
+    location: str, mutation: str
+) -> None:
+    api = _bt02_api()
+    policy = _policy(api)
+    if location == "policy":
+        expected = _quote(api, policy)
+        target = policy
+
+        def action() -> Any:
+            return _quote(api, policy)
+    else:
+        case = _case()
+        outcome = _outcome(api, case)
+        intent = _intent(api, case, bar=outcome.bar)
+        fill = _simulate_direct(api, case, intent, outcome, policy).fill
+        assert fill is not None
+        expected = fill.canonical_bytes()
+        target = fill.cost_breakdown
+
+        def action() -> Any:
+            return _validate_fill_context(api, case, fill, intent, outcome, policy)
+    _assert_public_metadata_race_is_bounded_and_callback_free(
+        api, target=target, action=action, expected=expected, location=location, mutation=mutation,
+    )
+
+
+@pytest.mark.parametrize("instrument_id", ("é", "inst/path", "inst-stable_1:USD"))
+def test_repair_holding_ids_use_ascii_stable_tokens(instrument_id: str) -> None:
+    api = _bt02_api()
+    case = _case(no_trade=True)
+    policy = _policy(api)
+    holdings = ((instrument_id, ONE),)
+    if instrument_id == "inst-stable_1:USD":
+        result = _run(api, case, (), (), policy, holdings=holdings)
+        assert result.holdings == holdings
+        assert result.cash == CASH_DEFAULT
+        assert result.fills == result.orders == ()
+    else:
+        _assert_order_error(api, "input_invalid", lambda: _run(api, case, (), (), policy, holdings=holdings))

@@ -73,12 +73,15 @@ def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
     assert PH03_DOCS_MERGE_SHA in docs_recovery
     assert PH03_DOCS_TREE_SHA in docs_recovery
 
-    current_recovery = state.split("## BT-02 current recovery", maxsplit=1)[-1]
+    current_recovery = state.split("## BT-02 current recovery", maxsplit=1)[-1].split(
+        "## BT-01 completed recovery", maxsplit=1
+    )[0]
     recovery_base = re.search(r"Base/main: `([0-9a-f]{40})`", current_recovery)
     assert recovery_base is not None
     assert recovery_base.group(1) == BT01_MERGE_SHA
-    assert "route `luna_sol_xhigh`" in current_recovery
-    assert "normal_implementer` / GPT-6 Luna / max" in current_recovery
+    assert "implementation escalation route `sol_high_sol_xhigh`" in current_recovery
+    assert "high_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
+    assert "Initial route `luna_sol_xhigh`, `normal_implementer` / GPT-6 Luna / max remains historical" in current_recovery
     assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
 
     bt01_recovery = state.split("## BT-01 completed recovery", maxsplit=1)[-1]
