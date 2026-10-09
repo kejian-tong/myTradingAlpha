@@ -30,11 +30,15 @@ from mytradingalpha.contracts.research import (
 from mytradingalpha.contracts.schemas import Mode, NetworkPolicy, RunContext
 from mytradingalpha.contracts.signals import LLMOverlay, QuantSignal
 from mytradingalpha.data.bars import DailyBar
-from mytradingalpha.data.bundle import EvidenceBundle, build_evidence_bundle
+from mytradingalpha.data.bundle import (
+    BundleReplayPolicy,
+    EvidenceBundle,
+    build_evidence_bundle,
+)
 from mytradingalpha.data.calendar import TradingCalendar
 from mytradingalpha.data.events import EventKind, NewsEvent, ReplayPolicy
 from mytradingalpha.data.provenance import SourceManifest
-from mytradingalpha.data.universe import Instrument, UniverseMembership
+from mytradingalpha.data.universe import Instrument, SymbolAlias, UniverseMembership
 from mytradingalpha.quant.envelope import combine_quant_overlay
 from mytradingalpha.quant.variants import VariantRegistry
 from tests.productionization.quant import test_signal as quant_fixtures
@@ -248,6 +252,7 @@ def _rebuild_bundle(
     *,
     bundle_id: str | None = None,
     instruments: tuple[Instrument, ...] | None = None,
+    aliases: tuple[SymbolAlias, ...] | None = None,
     memberships: tuple[UniverseMembership, ...] | None = None,
 ) -> EvidenceBundle:
     return build_evidence_bundle(
@@ -260,7 +265,7 @@ def _rebuild_bundle(
         missing_optional=bundle.missing_optional,
         calendar=bundle.calendar,
         instrument_candidates=instruments or bundle.instruments,
-        alias_candidates=bundle.aliases,
+        alias_candidates=aliases or bundle.aliases,
         membership_candidates=memberships or bundle.memberships,
         action_candidates=bundle.actions,
         bar_candidates=bundle.bars,
@@ -778,9 +783,24 @@ def test_later_than_next_close_is_retained_as_descriptive_lower_bound() -> None:
 
 def test_legacy_calendar_without_presealed_replay_witness_is_rejected() -> None:
     api = _bt_api()
-    context, bundle, envelope = _quant_only_inputs(
-        legacy_calendar=True,
+    witnessed_context, _, witnessed_envelope = _quant_only_inputs(
         run_id="run-bt01-no-calendar-witness",
+    )
+    bundle = quant_fixtures._bundle(cutoff=PRE_CLOSE_CUTOFF, legacy_calendar=True)
+    context = _context(
+        bundle,
+        run_id=witnessed_context.run_id,
+        variant_id=witnessed_context.variant_id,
+        decision_time=DECISION_TIME,
+        earliest_execution_time=witnessed_context.earliest_execution_time.isoformat(),
+    )
+    quant = _rehashed_quant_signal(
+        witnessed_envelope.quant, bundle_id=bundle.bundle_id, bundle_hash=bundle.bundle_hash
+    )
+    envelope = combine_quant_overlay(
+        quant,
+        context=context,
+        registry=VariantRegistry().register(context.variant_id, kind="quant_only"),
     )
     assert bundle.calendar.replay_evidence is None
     _expect_bt_error(
@@ -1411,9 +1431,23 @@ def test_context_currency_and_witnessed_universe_date_must_match_instrument() ->
         )
         for membership in original_bundle.memberships
     )
+    expired_aliases = tuple(
+        SymbolAlias.model_validate(
+            {
+                **alias.model_dump(mode="python"),
+                **(
+                    {"valid_to": date(2024, 7, 2)}
+                    if alias.instrument_id == "inst-survivor"
+                    else {}
+                ),
+            }
+        )
+        for alias in original_bundle.aliases
+    )
     expired_bundle = _rebuild_bundle(
         original_bundle,
         instruments=expired_instruments,
+        aliases=expired_aliases,
         memberships=expired_memberships,
     )
     expired_context, expired_bundle, expired_envelope = _quant_only_inputs(
@@ -1750,3 +1784,310 @@ def test_source_text_utf8_limit_accepts_exact_bytes_and_rejects_one_more() -> No
         "resource_limit",
         lambda: api.SessionClock.bind(over_context, over_bundle, over_envelope),
     )
+
+
+@pytest.mark.parametrize("changed_cache", ("fingerprint", "json", "json_and_fingerprint"))
+def test_repair_cached_source_seals_must_match_independently_derived_sources(
+    changed_cache: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionClock.bind(context, bundle, envelope)
+    original_bytes = _canonical_source_bytes(context, bundle, envelope)
+    original_fingerprint = _source_fingerprint(context, bundle, envelope)
+    assert object.__getattribute__(binding, "_sealed_source_json") == original_bytes
+    assert object.__getattribute__(binding, "_source_fingerprint") == original_fingerprint
+    assert len(api.BacktestRunner().run((binding,))) == 2
+
+    wrong_json = b"{}"
+    if changed_cache in ("json", "json_and_fingerprint"):
+        object.__setattr__(binding, "_sealed_source_json", wrong_json)
+    if changed_cache == "fingerprint":
+        object.__setattr__(binding, "_source_fingerprint", "sha256:" + "0" * 64)
+    elif changed_cache == "json_and_fingerprint":
+        wrong_fingerprint = "sha256:" + hashlib.sha256(
+            BINDING_HASH_DOMAIN + wrong_json
+        ).hexdigest()
+        assert wrong_fingerprint != original_fingerprint
+        object.__setattr__(binding, "_source_fingerprint", wrong_fingerprint)
+    _expect_bt_error(
+        api,
+        "source_changed",
+        lambda: api.BacktestRunner().run((binding,)),
+    )
+
+
+def test_repair_full_envelope_context_currency_must_equal_ingress_context() -> None:
+    api = _bt_api()
+    envelope_context, bundle, envelope = _quant_only_inputs(base_currency="EUR")
+    context = _context(
+        bundle,
+        run_id=envelope_context.run_id,
+        variant_id=envelope_context.variant_id,
+        decision_time=DECISION_TIME,
+        earliest_execution_time=envelope_context.earliest_execution_time.isoformat(),
+        base_currency="USD",
+    )
+    assert envelope.context.base_currency == "EUR"
+    assert context.base_currency == bundle.instruments[0].currency == "USD"
+    _expect_bt_error(
+        api,
+        "binding_mismatch",
+        lambda: api.SessionClock.bind(context, bundle, envelope),
+    )
+
+
+def test_repair_short_source_caches_cannot_underreport_actual_aggregate_bytes() -> None:
+    api = _bt_api()
+    event_count = 32
+    base_bundle = _bundle_with_large_event_bodies((1,) * event_count)
+    base_context, _, base_envelope = _large_event_research_inputs(
+        base_bundle, variant_id="variant-bt01-budget-a"
+    )
+    base_size = len(BINDING_HASH_DOMAIN) + len(
+        _canonical_source_bytes(base_context, base_bundle, base_envelope)
+    )
+    per_event, remainder = divmod(MAX_SOURCE_BYTES - base_size, event_count)
+    body_lengths = tuple(
+        1 + per_event + (1 if index < remainder else 0)
+        for index in range(event_count)
+    )
+    boundary_bundle = _bundle_with_large_event_bodies(body_lengths)
+    bindings = []
+    actual_run_bytes = 0
+    for suffix in "abcdefghi":
+        context, bundle, envelope = _large_event_research_inputs(
+            boundary_bundle, variant_id=f"variant-bt01-budget-{suffix}"
+        )
+        actual_bytes = len(BINDING_HASH_DOMAIN) + len(
+            _canonical_source_bytes(context, bundle, envelope)
+        )
+        assert actual_bytes == MAX_SOURCE_BYTES
+        actual_run_bytes += actual_bytes
+        bindings.append(api.SessionClock.bind(context, bundle, envelope))
+    assert actual_run_bytes == 9 * MAX_SOURCE_BYTES > MAX_RUN_SOURCE_BYTES
+
+    # The coherent pair is still false evidence of the retained source content.
+    short_json = b"{}"
+    short_fingerprint = "sha256:" + hashlib.sha256(
+        BINDING_HASH_DOMAIN + short_json
+    ).hexdigest()
+    for binding in bindings:
+        object.__setattr__(binding, "_sealed_source_json", short_json)
+        object.__setattr__(binding, "_source_fingerprint", short_fingerprint)
+    assert sum(
+        len(BINDING_HASH_DOMAIN)
+        + len(object.__getattribute__(binding, "_sealed_source_json"))
+        for binding in bindings
+    ) < MAX_RUN_SOURCE_BYTES
+    _expect_bt_error(
+        api,
+        "source_changed",
+        lambda: api.BacktestRunner().run(tuple(bindings)),
+    )
+
+
+@pytest.mark.parametrize("boundary", ("ingress", "getter", "runner"))
+@pytest.mark.parametrize("metadata_kind", ("foreign", "set_subclass", "unknown_field", "foreign_field"))
+def test_repair_model_fields_set_metadata_rejects_before_caller_protocols(
+    boundary: str,
+    metadata_kind: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionClock.bind(context, bundle, envelope)
+    assert binding.context == context
+    assert len(api.BacktestRunner().run((binding,))) == 2
+    calls = {"copy": 0, "deepcopy": 0, "iteration": 0, "hash": 0, "equality": 0}
+
+    class ForeignMetadata:
+        def __copy__(self) -> object:
+            calls["copy"] += 1
+            return self
+
+        def __deepcopy__(self, memo: object) -> object:
+            del memo
+            calls["deepcopy"] += 1
+            return self
+
+        def __iter__(self) -> object:
+            calls["iteration"] += 1
+            return iter(())
+
+        def __hash__(self) -> int:
+            calls["hash"] += 1
+            return 1
+
+        def __eq__(self, other: object) -> bool:
+            del other
+            calls["equality"] += 1
+            return False
+
+    class MetadataSet(set, ForeignMetadata):
+        def __copy__(self) -> object:
+            return ForeignMetadata.__copy__(self)
+
+        def __iter__(self) -> object:
+            return ForeignMetadata.__iter__(self)
+
+    if metadata_kind == "foreign":
+        metadata = ForeignMetadata()
+    elif metadata_kind == "set_subclass":
+        metadata = MetadataSet(RunContext.model_fields)
+    elif metadata_kind == "unknown_field":
+        metadata = {"foreign_stored_field"}
+    else:
+        metadata = {ForeignMetadata()}
+    calls.update(dict.fromkeys(calls, 0))
+    target = context if boundary == "ingress" else object.__getattribute__(
+        binding, "_context_snapshot"
+    )
+    object.__setattr__(target, "__pydantic_fields_set__", metadata)
+    reason = "source_invalid" if boundary == "ingress" else "source_changed"
+
+    def action() -> object:
+        if boundary == "ingress":
+            return api.SessionClock.bind(context, bundle, envelope)
+        if boundary == "getter":
+            return binding.context
+        return api.BacktestRunner().run((binding,))
+    try:
+        _expect_bt_error(api, reason, action)
+    finally:
+        assert calls == dict.fromkeys(calls, 0)
+
+
+def _forged_archive_policy_inputs() -> tuple[RunContext, EvidenceBundle, Any]:
+    """Make an explicit malicious fixture, without a source authenticity claim."""
+
+    original_context, original_bundle, original_envelope = _quant_only_inputs()
+    fake_policy = str.__new__(BundleReplayPolicy, "archive_realistic")
+    object.__setattr__(fake_policy, "_name_", "ARCHIVE_REALISTIC")
+    object.__setattr__(fake_policy, "_value_", "archive_realistic")
+    assert type(fake_policy) is BundleReplayPolicy
+    assert fake_policy is not BundleReplayPolicy.ARCHIVE_REALISTIC
+    assert fake_policy.value == BundleReplayPolicy.ARCHIVE_REALISTIC.value
+
+    first_bar = original_bundle.bars[0]
+    late_manifest = SourceManifest.model_validate(
+        {
+            **first_bar.manifest.model_dump(mode="python"),
+            "ingested_at": original_bundle.knowledge_cutoff + timedelta(minutes=1),
+        }
+    )
+    late_bar = DailyBar.model_validate(
+        {**first_bar.model_dump(mode="python"), "manifest": late_manifest}
+    )
+    bars = (late_bar, *original_bundle.bars[1:])
+    wire = original_bundle.model_dump(mode="json")
+    wire["bars"] = [bar.model_dump(mode="json") for bar in bars]
+    semantic = {
+        key: value
+        for key, value in wire.items()
+        if key not in ("bundle_id", "bundle_hash", "created_at")
+    }
+    rehashed_bundle_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            semantic, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+    ).hexdigest()
+    payload = original_bundle.model_dump(mode="python")
+    payload.update(bars=bars, bundle_hash=rehashed_bundle_hash)
+    with pytest.raises(ValueError, match="ineligible_bars_evidence_in_sealed_bundle"):
+        EvidenceBundle.model_validate(payload)
+    payload["replay_policy"] = fake_policy
+    bundle = EvidenceBundle.model_validate(payload)
+    assert bundle.replay_policy is fake_policy
+    assert bundle.bars[0].manifest.ingested_at > bundle.knowledge_cutoff
+    context = _context(
+        bundle,
+        run_id=original_context.run_id,
+        variant_id=original_context.variant_id,
+        decision_time=DECISION_TIME,
+        earliest_execution_time=original_context.earliest_execution_time.isoformat(),
+    )
+    quant = _rehashed_quant_signal(
+        original_envelope.quant, bundle_id=bundle.bundle_id, bundle_hash=bundle.bundle_hash
+    )
+    envelope = combine_quant_overlay(
+        quant,
+        context=context,
+        registry=VariantRegistry().register(context.variant_id, kind="quant_only"),
+    )
+    return context, bundle, envelope
+
+
+def test_repair_forged_archive_enum_rejects_before_inherited_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _bt_api()
+    canonical_context, canonical_bundle, canonical_envelope = _quant_only_inputs()
+    assert canonical_bundle.replay_policy is BundleReplayPolicy.ARCHIVE_REALISTIC
+    canonical_binding = api.SessionClock.bind(
+        canonical_context, canonical_bundle, canonical_envelope
+    )
+    assert len(api.BacktestRunner().run((canonical_binding,))) == 2
+    context, bundle, envelope = _forged_archive_policy_inputs()
+    original_validate = EvidenceBundle.model_validate
+    inherited_calls: list[str] = []
+
+    def track_validation(cls: type, *args: Any, **kwargs: Any) -> EvidenceBundle:
+        del cls
+        inherited_calls.append("bundle_validation")
+        return original_validate(*args, **kwargs)
+
+    monkeypatch.setattr(EvidenceBundle, "model_validate", classmethod(track_validation))
+    try:
+        _expect_bt_error(
+            api, "source_invalid", lambda: api.SessionClock.bind(context, bundle, envelope)
+        )
+    finally:
+        assert inherited_calls == []
+
+
+@pytest.mark.parametrize("mutation", ("cache_only", "coherent_sources_and_seals"))
+def test_repair_completion_must_equal_retained_ingress_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionClock.bind(context, bundle, envelope)
+    new_context, new_bundle, new_envelope = _quant_only_inputs(run_id="run-bt01-replacement")
+    replacement = api.SessionClock.bind(new_context, new_bundle, new_envelope)
+    original_events = api.BacktestRunner().run((binding,))
+    replacement_events = api.BacktestRunner().run((replacement,))
+    assert tuple(event.run_id for event in original_events) == (context.run_id,) * 2
+    assert tuple(event.run_id for event in replacement_events) == (new_context.run_id,) * 2
+    assert original_events[0].source_fingerprint != replacement_events[0].source_fingerprint
+    original_builder = api.runner_module._build_decision_event
+    builder_calls: list[str] = []
+
+    def mutate_after_decision(**kwargs: Any) -> Any:
+        decision = original_builder(**kwargs)
+        assert decision.run_id == context.run_id
+        builder_calls.append("decision_built")
+        if mutation == "cache_only":
+            changed_json = b"{}"
+            object.__setattr__(binding, "_sealed_source_json", changed_json)
+            object.__setattr__(
+                binding,
+                "_source_fingerprint",
+                "sha256:" + hashlib.sha256(BINDING_HASH_DOMAIN + changed_json).hexdigest(),
+            )
+        else:
+            # Replace every private source and seal with another valid binding.
+            for slot in type(binding).__slots__:
+                object.__setattr__(binding, slot, object.__getattribute__(replacement, slot))
+        return decision
+
+    monkeypatch.setattr(api.runner_module, "_build_decision_event", mutate_after_decision)
+    result = None
+
+    def run() -> None:
+        nonlocal result
+        result = api.BacktestRunner().run((binding,))
+
+    _expect_bt_error(api, "source_changed", run)
+    assert builder_calls == ["decision_built"]
+    assert result is None
