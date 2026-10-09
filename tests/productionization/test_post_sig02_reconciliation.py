@@ -8,13 +8,14 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-CURRENT_MAIN_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
-CURRENT_MAIN_TREE = "73bba924315c1cf0421e0c9b6cb44a22fa3e940c"
+SIG05_MERGE_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
 SIG03_ORIGINAL_BASE_SHA = "49d5980b640638ed687b6c7771f5f28367072c9a"
 MERGE_SHA = "376c9c044722ee37f3fa36691b576420e3b6253d"
 SOURCE_SHA = "de51698180ff6873c7512c70828add3c55728fb9"
 SIG03_MERGE_SHA = "6de1635a90d6c33aee02079dca5d0932e3a32cec"
+PH03_DOCS_MERGE_SHA = "2cfc175fe5d07190c740821da5bb20e13877d252"
+PH03_DOCS_TREE_SHA = "5ce0ebd88ac1f08e9b4a80238fb87ced0014bb81"
 RULESET_ID = "23141241"
 RULESET_OBSERVED_ON = "2026-09-19"
 
@@ -37,6 +38,7 @@ HARNESS_MERGES = {
     86: "49d5980b640638ed687b6c7771f5f28367072c9a",
     88: "a42ce7a654994d8071824c3aaba4c9e5503a7e9d",
     90: HARNESS_PR90_MERGE_SHA,
+    94: "afa7c35b9f8a71170d6a9d14b051d2e83f54fc0f",
 }
 
 
@@ -44,27 +46,53 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_current_main_and_completed_sig05_pr() -> None:
+def test_operational_state_tracks_authorized_bt01_and_recovery() -> None:
     state = _state_text()
     normalized_state = " ".join(state.split())
-    assert f"`last_reconciled_main_sha`: `{CURRENT_MAIN_SHA}`" in state
-    assert f"`last_reconciled_main_tree`: `{CURRENT_MAIN_TREE}`" in state
-    assert "`roadmap_status`: no active roadmap PR; SIG-05 / PR #92 merged" in state
-    assert "`current_pr_id`: none" in state
-    assert "`current_phase`: none" in state
+    reconciled_sha = re.search(
+        r"`last_reconciled_main_sha`: `([0-9a-f]{40})`", state
+    )
+    reconciled_tree = re.search(
+        r"`last_reconciled_main_tree`: `([0-9a-f]{40})`", state
+    )
+    assert reconciled_sha is not None
+    assert reconciled_tree is not None
+    assert reconciled_sha.group(1) == PH03_DOCS_MERGE_SHA
+    assert reconciled_tree.group(1) == PH03_DOCS_TREE_SHA
+    docs_recovery = state.split("## Phase 03 documentation recovery", maxsplit=1)[-1]
+    assert PH03_DOCS_MERGE_SHA in docs_recovery
+    assert PH03_DOCS_TREE_SHA in docs_recovery
+
+    recovery = state.split("## BT-01 current recovery", maxsplit=1)[-1]
+    recovery_base = re.search(r"Base/main: `([0-9a-f]{40})`", recovery)
+    assert recovery_base is not None
+    assert recovery_base.group(1) == reconciled_sha.group(1)
+    assert "route `luna_sol_high`" in recovery
+    assert "normal_implementer` / GPT-6 Luna / max" in recovery
+    assert "reviewer_high` / GPT-6.1 Sol / xhigh" in recovery
+
+    assert "`roadmap_status`: active BT-01 candidate" in state
+    assert re.search(r"`current_pr_id`: BT-01 / PR #\d+", state)
+    assert "`current_phase`: 03 — Backtest and Ledger" in state
     assert (
-        f"`last_completed_roadmap_pr`: `SIG-05` / PR #92 / merge `{CURRENT_MAIN_SHA}`"
+        f"`last_completed_roadmap_pr`: `SIG-05` / PR #92 / merge `{SIG05_MERGE_SHA}`"
         in normalized_state
     )
-    assert "`autonomy_mode`: disabled outside the explicit scope of an authorized PR" in state
     assert (
-        f"`merge`: PR #92 merged at `{CURRENT_MAIN_SHA}`; implementation, review, and CI records "
+        "`autonomy_mode`: human-authorized BT-01 through BT-06 in six independent "
+        "dependency-ordered PRs and fresh Master sessions; this session owns BT-01 only"
+    ) in state
+    assert (
+        f"`merge`: PR #92 merged at `{SIG05_MERGE_SHA}`; implementation, review, and CI records "
         "remain in its GitHub conversation"
     ) in normalized_state
-    assert "`next_dependency`: BT-01 remains unauthorized and requires separate user authorization" in state
+    assert (
+        "`next_dependency`: BT-02 is authorized but blocked until BT-01 merges, main is verified, "
+        "and a fresh Master session starts"
+    ) in state
     assert (
         f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "
-        f"its GitHub conversation; it merged at `{CURRENT_MAIN_SHA}`."
+        f"its GitHub conversation; it merged at `{SIG05_MERGE_SHA}`."
     ) in normalized_state
     assert MERGE_SHA in state
     assert SOURCE_SHA in state
@@ -73,23 +101,36 @@ def test_operational_state_tracks_current_main_and_completed_sig05_pr() -> None:
     assert SIG03_MERGE_SHA in state
     assert "PR #86's read-only review-assurance policy remains active" in state
     assert "SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior" in state
-    assert (
-        "SIG-04 validates caller-supplied candidates only; no inference"
-    ) in state
+    assert "SIG-04 validates caller-supplied candidates only; no inference" in state
     assert "SIG-05 adds only in-memory deterministic shadow envelopes" in state
+    assert (
+        "Scope: witnessed immutable session binding, deterministic decision/opportunity events and pure runner only. "
+        "No quantity, intent, fill, cost, ledger, action, persistence or metric behavior."
+    ) in state
+    assert "Phase 03 gate: insufficient_evidence until all six separately merged slices" in state
+    assert "No PAPER/live operation" in state
     assert "explicit human PAPER/live gates remain mandatory and unexercised" in state
 
 
 def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     state = _state_text()
-    harness_marker = "`harness_reconciled_through`: PR #90 / merge"
-    required = (
-        "## Current harness policy",
-        f"{harness_marker} `{HARNESS_PR90_MERGE_SHA}`",
-        "PR #86's read-only review-assurance policy remains active",
+    marker_lines = [
+        line for line in state.splitlines() if "`harness_reconciled_through`:" in line
+    ]
+    assert marker_lines, "current Harness reconciliation is missing"
+    marker = re.search(
+        r"PR #(\d+) / merge `([0-9a-f]{40})`", " ".join(marker_lines)
     )
-    missing = [marker for marker in required if marker not in state]
-    assert not missing, f"current Harness reconciliation is missing: {missing}"
+    assert marker is not None
+    latest_verified_harness_pr = max(HARNESS_MERGES)
+    assert int(marker.group(1)) == latest_verified_harness_pr
+    assert marker.group(2) == HARNESS_MERGES[latest_verified_harness_pr]
+    assert (
+        f"PR #94 refreshed Master/Sol routes to GPT-6.1 Sol/xhigh and the concurrent "
+        f"spawned-thread guardrail to eight; merge `{HARNESS_MERGES[94]}`"
+    ) in " ".join(state.split())
+    assert "## Current harness policy" in state
+    assert "PR #86's read-only review-assurance policy remains active" in state
     assert "`last_completed_harness_pr`" not in state
     assert "`active_harness_pr`: none" in state
     assert "Prospective harness policy" not in state
@@ -100,6 +141,7 @@ def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
         state,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    assert HARNESS_PR90_MERGE_SHA in state
 
 
 def test_every_merged_post_sig02_harness_pr_remains_recoverable() -> None:
