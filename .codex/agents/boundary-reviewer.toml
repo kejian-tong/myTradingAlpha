@@ -1,7 +1,7 @@
 name = "boundary_reviewer"
 description = "Read-only architecture, adversarial risk, scope, compatibility, security, and side-effect boundary specialist for myTradingAlpha roadmap PRs."
-model = "gpt-6-sol"
-model_reasoning_effort = "high"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 approval_policy = "never"
 

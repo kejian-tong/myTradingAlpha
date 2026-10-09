@@ -287,9 +287,9 @@ Include at minimum:
 - **Master route:** `<configured/requested route>`
 - **Escalation triggers specific to this PR:** `<conditions>`
 
-Master defaults to Sol/xhigh; normal/high/critical implementation remains Luna/max with Sol/high or
-Sol/xhigh review; difficult escalation uses Sol/high implementation and Sol/xhigh review; the hardest
-route uses Sol/xhigh implementation and fresh Sol/xhigh review. Review escalation follows
+Master defaults to GPT-6.1 Sol/xhigh; normal/high/critical implementation remains Luna/max with
+GPT-6.1 Sol/xhigh review; difficult escalation uses GPT-6.1 Sol/xhigh implementation and review; the
+hardest route uses GPT-6.1 Sol/xhigh implementation and fresh GPT-6.1 Sol/xhigh review. Review escalation follows
 `reviewer_high -> reviewer_xhigh`. Record an evidence-based reason before the
 difficult or hardest route, retain the underlying safety class, keep one writer, and preserve all
 safety/promotion/stop gates.

@@ -38,7 +38,6 @@ USD_RATES = {
     "gpt-6-astra": {"input": 10.00, "cached_input": 1.00, "output": 50.00},
 }
 
-_MODELS = frozenset(CREDIT_RATES)
 _TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens")
 MAX_SIGNED_INT = 2**63 - 1
 _NONNEGATIVE_INTEGER_FIELDS = ("missed_blocker_high", "duration_ms", "retries")
@@ -53,8 +52,25 @@ _ALLOWED_EFFORTS = {
     "gpt-6-luna": frozenset({"max"}),
     "gpt-5.6-terra": frozenset({"medium", "high", "xhigh"}),
     "gpt-6-sol": frozenset({"high", "xhigh"}),
+    "gpt-6.1-sol": frozenset({"xhigh"}),
     "gpt-6-astra": frozenset({"xhigh"}),
 }
+_MODELS = frozenset(_ALLOWED_EFFORTS)
+
+# These route pairs are the dated rate-card coverage. Current GPT-6.1 Sol/xhigh
+# is accepted benchmark evidence but remains unpriced until verified Work/Codex
+# and Enterprise rates are available.
+_RATE_CARD_ROUTE_PAIRS = frozenset(
+    {
+        ("gpt-6-luna", "max"),
+        ("gpt-5.6-terra", "medium"),
+        ("gpt-5.6-terra", "high"),
+        ("gpt-5.6-terra", "xhigh"),
+        ("gpt-6-sol", "high"),
+        ("gpt-6-sol", "xhigh"),
+        ("gpt-6-astra", "xhigh"),
+    }
+)
 _REQUIRED = {
     "task_id", "task_class", "model", "effort", "acceptance_pass", "safety_gate_pass",
     "missed_blocker_high", "quality_score", "duration_ms", "retries", *_PROVENANCE_FIELDS,
@@ -140,7 +156,11 @@ def eligible(record: dict) -> bool:
 def token_cost(record: dict, rates: dict[str, dict[str, float]]) -> float | None:
     if not all(key in record for key in _TOKEN_FIELDS):
         return None
-    model_rates = rates[record["model"]]
+    if (record["model"], record["effort"]) not in _RATE_CARD_ROUTE_PAIRS:
+        return None
+    model_rates = rates.get(record["model"])
+    if model_rates is None:
+        return None
     return (
         record["input_tokens"] / 1_000_000 * model_rates["input"]
         + record["cached_input_tokens"] / 1_000_000 * model_rates["cached_input"]
@@ -236,22 +256,29 @@ def _comparison_pairing(rows: list[dict]) -> dict[str, dict]:
 
 
 def _astra_pairing(rows: list[dict]) -> dict[str, dict]:
-    by_class: dict[str, dict[str, set[str]]] = defaultdict(lambda: {"sol_xhigh": set(), "astra_xhigh": set()})
+    pair_specs = {
+        "historical": (("gpt-6-sol", "xhigh"), ("gpt-6-astra", "xhigh")),
+        "current": (("gpt-6.1-sol", "xhigh"), ("gpt-6-astra", "xhigh")),
+    }
+    by_class: dict[str, dict[str, dict[str, set[str]]]] = defaultdict(
+        lambda: {
+            variant: {"baseline": set(), "canary": set()}
+            for variant in pair_specs
+        }
+    )
     for row in rows:
-        key = None
-        if (row["model"], row["effort"]) == ("gpt-6-sol", "xhigh"):
-            key = "sol_xhigh"
-        elif (row["model"], row["effort"]) == ("gpt-6-astra", "xhigh"):
-            key = "astra_xhigh"
-        if key is not None:
-            by_class[row["task_class"]][key].add(row["task_id"])
+        identity = (row["model"], row["effort"])
+        for variant, (baseline_route, canary_route) in pair_specs.items():
+            if identity == baseline_route:
+                by_class[row["task_class"]][variant]["baseline"].add(row["task_id"])
+            elif identity == canary_route:
+                by_class[row["task_class"]][variant]["canary"].add(row["task_id"])
 
-    result = {}
-    for task_class, ids in sorted(by_class.items()):
-        baseline = ids["sol_xhigh"]
-        canary = ids["astra_xhigh"]
+    def summarize(ids: dict[str, set[str]]) -> dict[str, object]:
+        baseline = ids["baseline"]
+        canary = ids["canary"]
         shared = baseline & canary
-        result[task_class] = {
+        return {
             "baseline_task_ids": sorted(baseline),
             "canary_task_ids": sorted(canary),
             "shared_task_ids": sorted(shared),
@@ -259,6 +286,20 @@ def _astra_pairing(rows: list[dict]) -> dict[str, dict]:
             "canary_only": sorted(canary - baseline),
             "pairing_complete": bool(shared) and baseline == canary,
         }
+
+    result = {}
+    for task_class, variants in sorted(by_class.items()):
+        historical_present = bool(variants["historical"]["baseline"])
+        current_present = bool(variants["current"]["baseline"])
+        canary_present = bool(variants["historical"]["canary"])
+        if historical_present:
+            result[task_class] = summarize(variants["historical"])
+            if current_present:
+                result[task_class]["current_route_pairing"] = summarize(variants["current"])
+        elif current_present:
+            result[task_class] = summarize(variants["current"])
+        elif canary_present:
+            result[task_class] = summarize(variants["historical"])
     return result
 
 
@@ -294,6 +335,8 @@ def _rate_card_freshness(evaluation_date: date | None) -> dict:
 
 
 def _comparison_status(routes: list[dict], pairing: dict, freshness: dict) -> str:
+    if any((route["model"], route["effort"]) not in _RATE_CARD_ROUTE_PAIRS for route in routes):
+        return "unknown_route_pricing"
     if not freshness["fresh"]:
         return {
             "unchecked": "unchecked_rate_card",

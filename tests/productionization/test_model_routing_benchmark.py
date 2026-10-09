@@ -64,6 +64,7 @@ def _route_rows(model: str, *, count: int = 5, effort: str | None = None, **kwar
             "gpt-6-luna": "max",
             "gpt-5.6-terra": "medium",
             "gpt-6-sol": "high",
+            "gpt-6.1-sol": "xhigh",
             "gpt-6-astra": "xhigh",
         }[model]
     return [
@@ -230,6 +231,7 @@ _ALLOWED_MODEL_EFFORT_PAIRS = (
     ("gpt-5.6-terra", "xhigh"),
     ("gpt-6-sol", "high"),
     ("gpt-6-sol", "xhigh"),
+    ("gpt-6.1-sol", "xhigh"),
     ("gpt-6-astra", "xhigh"),
 )
 
@@ -248,6 +250,9 @@ _DISALLOWED_MODEL_EFFORT_PAIRS = (
     ("gpt-5.6-terra", "max"),
     ("gpt-6-sol", "max"),
     ("gpt-6-sol", "medium"),
+    ("gpt-6.1-sol", "high"),
+    ("gpt-6.1-sol", "medium"),
+    ("gpt-6.1-sol", "max"),
     ("gpt-6-astra", "max"),
     ("gpt-6-astra", "medium"),
     ("gpt-6-astra", "high"),
@@ -395,6 +400,52 @@ def test_astra_and_sol_tradeoff_survives_paired_reliability_gate() -> None:
     assert pairing["shared_task_ids"] == ["t1", "t2", "t3", "t4", "t5"]
     assert pairing["pairing_complete"] is True
     assert result["task_classes"]["exploration"]["promotion_evidence_ready"] is False
+
+
+def test_current_sol_and_astra_pair_is_supported_but_unpriced() -> None:
+    benchmark = _module()
+    rows = [
+        *_route_rows("gpt-6.1-sol", effort="xhigh"),
+        *_route_rows("gpt-6-astra", effort="xhigh"),
+    ]
+
+    result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)
+    task_class = result["task_classes"]["exploration"]
+    assert task_class["comparison_status"] == "unknown_route_pricing"
+    assert task_class["cost_comparison_status"] == "unknown_route_pricing"
+    assert task_class["pareto_frontier"] == []
+    assert task_class["promotion_evidence_ready"] is False
+    sol_summary = next(route for route in task_class["routes"] if route["model"] == "gpt-6.1-sol")
+    astra_summary = next(route for route in task_class["routes"] if route["model"] == "gpt-6-astra")
+    assert sol_summary["credits_mean"] is None
+    assert sol_summary["usd_mean"] is None
+    assert sol_summary["cost_observation_complete"] is False
+    assert astra_summary["credits_mean"] is not None
+    assert astra_summary["usd_mean"] is not None
+    assert astra_summary["cost_observation_complete"] is True
+    sol_rows = [row for row in rows if row["model"] == "gpt-6.1-sol"]
+    assert all(
+        benchmark.token_cost(row, benchmark.CREDIT_RATES) is None
+        and benchmark.token_cost(row, benchmark.USD_RATES) is None
+        for row in sol_rows
+    )
+    pairing = result["astra_canary_pairing"]["exploration"]
+    assert pairing["shared_task_ids"] == ["t1", "t2", "t3", "t4", "t5"]
+    assert pairing["pairing_complete"] is True
+
+
+def test_historical_and_current_astra_pairings_remain_separate() -> None:
+    benchmark = _module()
+    rows = [
+        _row("gpt-6-sol", task_id="historical-1", effort="xhigh"),
+        _row("gpt-6-astra", task_id="historical-1", effort="xhigh"),
+        _row("gpt-6.1-sol", task_id="current-1", effort="xhigh"),
+        _row("gpt-6-astra", task_id="current-1", effort="xhigh"),
+    ]
+
+    pairings = benchmark.analyze(rows, evaluation_date=EVAL_DATE)["astra_canary_pairing"]["exploration"]
+    assert pairings["shared_task_ids"] == ["historical-1"]
+    assert pairings["current_route_pairing"]["shared_task_ids"] == ["current-1"]
 
 
 def test_missing_token_observation_blocks_cost_frontier_for_all_reliable_routes() -> None:
