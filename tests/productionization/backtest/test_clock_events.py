@@ -2395,3 +2395,230 @@ def test_repair_model_capture_race_never_invokes_caller_key_protocols(
         assert result.model_dump(mode="python") == expected_context
     else:
         assert tuple(event.canonical_bytes() for event in result) == expected_events
+
+
+def _synchronized_mapping_snapshot_growth(
+    api: SimpleNamespace,
+    *,
+    capture: Callable[..., object],
+    target: object,
+    target_argument: str,
+    container: dict[str, object] | set[str],
+    container_name: str,
+    snapshot_name: str,
+    action: Callable[[], object],
+) -> tuple[int, object, Exception | None]:
+    """Measure the temporary copy after growth beyond a checked builtin size."""
+
+    source_lines, source_start = inspect.getsourcelines(capture)
+    assignments = [
+        node
+        for node in ast.walk(ast.parse("".join(source_lines)))
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(assigned, ast.Name) and assigned.id == snapshot_name
+            for assigned in node.targets
+        )
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id in ("dict", "set")
+            and call.func.attr in ("items", "__iter__")
+            and len(call.args) == 1
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == container_name
+            for call in ast.walk(node.value)
+        )
+    ]
+    assert len(assignments) == 1
+    assignment = assignments[0]
+    assert assignment.end_lineno is not None
+    capture_line = source_start + assignment.lineno - 1
+    capture_end_line = source_start + assignment.end_lineno - 1
+    is_mapping = type(container) is dict
+    assert is_mapping or type(container) is set
+    original_size = dict.__len__(container) if is_mapping else set.__len__(container)
+    assert 0 < original_size <= 64
+    original_members = tuple(dict.keys(container)) if is_mapping else tuple(set.__iter__(container))
+    assert all(type(member) is str for member in original_members)
+    capture_paused = Event()
+    growth_done = Event()
+    capture_resumed = Event()
+    stop_growth = Event()
+    trace_hits: list[int] = []
+    copied_widths: list[int] = []
+    inserted: list[int] = []
+    thread_errors: list[Exception] = []
+    wait_seconds = 5.0
+    growth_count = 257
+
+    def grow_storage() -> None:
+        try:
+            if not capture_paused.wait(wait_seconds):
+                raise TimeoutError("snapshot capture did not reach the synchronized boundary")
+            if stop_growth.is_set():
+                return
+            for index in range(growth_count):
+                member = f"bt01-snapshot-growth-{index}"
+                if is_mapping:
+                    dict.__setitem__(container, member, "bounded fixture value")
+                else:
+                    set.add(container, member)
+                inserted.append(index)
+            current_size = dict.__len__(container) if is_mapping else set.__len__(container)
+            assert current_size == original_size + growth_count
+        except Exception as error:
+            thread_errors.append(error)
+        finally:
+            growth_done.set()
+
+    def trace_capture(frame: FrameType, event: str, arg: object) -> Any:
+        del arg
+        if frame.f_code is not capture.__code__ or frame.f_locals.get(target_argument) is not target:
+            return None
+        if event == "line" and frame.f_lineno == capture_line and not trace_hits:
+            assert frame.f_locals[container_name] is container
+            trace_hits.append(frame.f_lineno)
+            capture_paused.set()
+            if not growth_done.wait(wait_seconds):
+                raise TimeoutError("synchronized snapshot growth did not finish")
+            capture_resumed.set()
+        elif (
+            event == "line"
+            and trace_hits
+            and not copied_widths
+            and not capture_line <= frame.f_lineno <= capture_end_line
+        ):
+            # The first statement after the assignment runs before validation
+            # can reject the enlarged container. Inspect only the owned tuple.
+            snapshot = frame.f_locals[snapshot_name]
+            assert type(snapshot) is tuple
+            copied_widths.append(tuple.__len__(snapshot))
+        return trace_capture
+
+    result = None
+    rejection = None
+    previous_trace = sys.gettrace()
+    growth_thread = Thread(target=grow_storage, name="bt01-bounded-snapshot-growth")
+    growth_thread.start()
+    try:
+        # Trace only this thread. Production functions and global/threading
+        # tracing policy remain unchanged throughout the synchronized probe.
+        sys.settrace(trace_capture)
+        try:
+            result = action()
+        except api.BacktestInputError as error:
+            rejection = error
+    finally:
+        sys.settrace(previous_trace)
+        stop_growth.set()
+        capture_paused.set()
+        growth_thread.join(wait_seconds)
+
+    assert not growth_thread.is_alive()
+    assert sys.gettrace() is previous_trace
+    assert thread_errors == []
+    assert trace_hits == [capture_line]
+    assert capture_paused.is_set()
+    assert growth_done.is_set()
+    assert capture_resumed.is_set()
+    assert inserted == list(range(growth_count))
+    assert len(copied_widths) == 1
+    return copied_widths[0], result, rejection
+
+
+@pytest.mark.parametrize("boundary", ("constructor", "getter", "runner"))
+@pytest.mark.parametrize("capture_site", ("raw_witness", "model_storage", "fields_set"))
+def test_repair_public_snapshot_growth_keeps_temporary_capture_bounded(
+    boundary: str,
+    capture_site: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionBinding(context, bundle, envelope)
+    assert binding.context == context
+    assert binding.bundle == bundle
+    assert len(api.BacktestRunner().run((binding,))) == 2
+
+    if capture_site == "raw_witness":
+        target = bundle if boundary == "constructor" else object.__getattribute__(
+            binding, "_bundle_snapshot"
+        )
+        capture = api.clock_module._raw_model_field
+        target_argument = "model"
+        container_name = "storage"
+        snapshot_name = "pairs"
+        container = object.__getattribute__(target, "__dict__")
+    else:
+        target = context if boundary == "constructor" else object.__getattribute__(
+            binding, "_context_snapshot"
+        )
+        capture = api.clock_module._capture_value
+        target_argument = "value"
+        if capture_site == "model_storage":
+            container_name = "storage"
+            snapshot_name = "pairs"
+            container = object.__getattribute__(target, "__dict__")
+        else:
+            container_name = "fields_set"
+            snapshot_name = "captured_fields_set"
+            container = object.__getattribute__(target, "__pydantic_fields_set__")
+
+    def action() -> object:
+        if boundary == "constructor":
+            return api.SessionBinding(context, bundle, envelope)
+        if boundary == "getter":
+            return binding.context
+        return api.BacktestRunner().run((binding,))
+
+    copied_width, result, rejection = _synchronized_mapping_snapshot_growth(
+        api,
+        capture=capture,
+        target=target,
+        target_argument=target_argument,
+        container=container,
+        container_name=container_name,
+        snapshot_name=snapshot_name,
+        action=action,
+    )
+    assert result is None
+    assert type(rejection) is api.BacktestInputError
+    assert str(rejection) == "BT-01 input rejected"
+    assert rejection.reason_code in ("source_invalid", "resource_limit", "source_changed")
+    assert copied_width <= 65, (
+        f"temporary snapshot captured {copied_width} entries; rejection={rejection.reason_code}"
+    )
+    expected_reasons = (
+        ("source_invalid", "resource_limit") if boundary == "constructor" else ("source_changed",)
+    )
+    assert rejection.reason_code in expected_reasons
+
+
+def test_repair_generic_dict_snapshot_growth_keeps_temporary_capture_bounded() -> None:
+    api = _bt_api()
+    capture = api.clock_module._capture_value
+    storage: dict[str, object] = {"known": "bounded fixture value"}
+    control_budget = api.clock_module._CaptureBudget()
+    control_budget.begin_source()
+    assert capture(storage, control_budget) == storage
+    budget = api.clock_module._CaptureBudget()
+    budget.begin_source()
+    copied_width, result, rejection = _synchronized_mapping_snapshot_growth(
+        api,
+        capture=capture,
+        target=storage,
+        target_argument="value",
+        container=storage,
+        container_name="value",
+        snapshot_name="pairs",
+        action=lambda: capture(storage, budget),
+    )
+    # No public source contract currently declares stored dict data. Exercise
+    # the existing defensive branch directly without inventing a public field.
+    assert copied_width <= 65, f"temporary snapshot captured {copied_width} entries"
+    assert result is None
+    assert type(rejection) is api.BacktestInputError
+    assert rejection.reason_code == "resource_limit"
+    assert str(rejection) == "BT-01 input rejected"
+    assert budget.stack == set()
