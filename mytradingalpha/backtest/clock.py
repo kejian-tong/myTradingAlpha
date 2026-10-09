@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
+from itertools import islice
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from mytradingalpha.contracts.research import (
@@ -365,7 +366,9 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
             if value_type is dict:
                 if dict.__len__(value) > _MAX_MAPPING_FIELDS:  # type: ignore[arg-type]
                     _source_error("resource_limit")
-                pairs = tuple(dict.items(value))  # type: ignore[arg-type]
+                pairs = tuple(islice(dict.items(value), _MAX_MAPPING_FIELDS + 1))  # type: ignore[arg-type]
+                if len(pairs) > _MAX_MAPPING_FIELDS:
+                    _source_error("resource_limit")
                 result: dict[str, object] = {}
                 for key, item in pairs:
                     if type(key) is not str:
@@ -390,7 +393,9 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
                 _source_error()
             if set.__len__(fields_set) > _MAX_MAPPING_FIELDS:
                 _source_error("resource_limit")
-            captured_fields_set = tuple(set.__iter__(fields_set))
+            captured_fields_set = tuple(islice(set.__iter__(fields_set), _MAX_MAPPING_FIELDS + 1))
+            if len(captured_fields_set) > _MAX_MAPPING_FIELDS:
+                _source_error("resource_limit")
             for field_name in captured_fields_set:
                 if type(field_name) is not str:
                     _source_error()
@@ -398,7 +403,7 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
                     _source_error()
             if dict.__len__(storage) > _MAX_MAPPING_FIELDS:
                 _source_error("resource_limit")
-            pairs = tuple(dict.items(storage))
+            pairs = tuple(islice(dict.items(storage), _MAX_MAPPING_FIELDS + 1))
             if len(pairs) > _MAX_MAPPING_FIELDS:
                 _source_error("resource_limit")
             if len(pairs) != len(fields):
@@ -556,7 +561,7 @@ def _raw_model_field(model: object, field_name: str) -> object:
     storage = object.__getattribute__(model, "__dict__")
     if type(storage) is not dict or dict.__len__(storage) > _MAX_MAPPING_FIELDS:
         _source_error()
-    pairs = tuple(dict.items(storage))
+    pairs = tuple(islice(dict.items(storage), _MAX_MAPPING_FIELDS + 1))
     if len(pairs) > _MAX_MAPPING_FIELDS or any(type(key) is not str for key, _ in pairs):
         _source_error()
     # Compare only checked strings and read only the captured snapshot.
