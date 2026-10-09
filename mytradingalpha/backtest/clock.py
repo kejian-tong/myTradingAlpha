@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import types
@@ -213,13 +212,22 @@ def _exact_utc_datetime(value: object) -> bool:
     return type(offset) is timedelta and offset == timedelta(0)
 
 
+@dataclass(frozen=True, slots=True)
+class _CapturedModel:
+    """Owned typed storage, captured before any model copy or serializer."""
+
+    model_type: type[Any]
+    fields: dict[str, object]
+    fields_set: tuple[str, ...]
+
+
 def _annotation_storage_matches(
     value: object,
     annotation: object,
     budget: _CaptureBudget,
     depth: int = 0,
 ) -> bool:
-    """Bound schema checks before recursively capturing the stored value."""
+    """Check exact declared storage types, including collection members."""
 
     budget.run_nodes += 1
     budget.source_nodes += 1
@@ -237,69 +245,43 @@ def _annotation_storage_matches(
             for item in args
         )
     if origin is Literal:
-        value_is_primitive = (
-            type(value) is str or type(value) is int or type(value) is bool
-        )
-        if value_is_primitive:
+        if type(value) is str or type(value) is int or type(value) is bool:
             return any(type(value) is type(item) and value == item for item in args)
         if _is_enum_type(type(value)):
             return any(value is item for item in args)
         return False
-    if origin is tuple:
-        if type(value) is not tuple:
+    if origin is tuple or origin is list:
+        expected_type = tuple if origin is tuple else list
+        if type(value) is not expected_type:
             return False
         if len(value) > _MAX_COLLECTION_ITEMS:
             _source_error("resource_limit")
-        if len(args) == 2 and args[1] is Ellipsis:
-            return _check_expected_tuple_members(value, args[0], budget, depth + 1)
+        if origin is list or (len(args) == 2 and args[1] is Ellipsis):
+            return len(args) >= 1 and all(
+                _annotation_storage_matches(item, args[0], budget, depth + 1)
+                for item in value
+            )
         return len(value) == len(args) and all(
             _annotation_storage_matches(item, expected, budget, depth + 1)
             for item, expected in zip(value, args, strict=True)
         )
-    if origin is list:
-        if type(value) is not list:
-            return False
-        if len(value) > _MAX_COLLECTION_ITEMS:
-            _source_error("resource_limit")
-        return True
     if origin is dict:
-        if type(value) is not dict:
+        if type(value) is not dict or len(args) != 2:
             return False
         if dict.__len__(value) > _MAX_MAPPING_FIELDS:
             _source_error("resource_limit")
-        return True
+        return all(
+            _annotation_storage_matches(key, args[0], budget, depth + 1)
+            and _annotation_storage_matches(item, args[1], budget, depth + 1)
+            for key, item in dict.items(value)
+        )
     if annotation is type(None):
         return value is None
+    if any(annotation is known for known in (str, bool, int, Decimal, date, datetime)):
+        return type(value) is annotation
     if _is_model_type(annotation) or _is_enum_type(annotation):
         return type(value) is annotation
-    return True
-
-
-def _check_expected_tuple_members(
-    values: tuple[object, ...],
-    annotation: object,
-    budget: _CaptureBudget,
-    depth: int,
-) -> bool:
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin is types.UnionType or origin is Union:
-        for item in values:
-            if not any(
-                _annotation_storage_matches(item, option, budget, depth + 1)
-                for option in args
-            ):
-                return False
-        return True
-    if _is_model_type(annotation) or _is_enum_type(annotation):
-        for item in values:
-            budget.run_nodes += 1
-            budget.source_nodes += 1
-            if budget.run_nodes > _MAX_RUN_NODES or budget.source_nodes > _MAX_SOURCE_NODES:
-                _source_error("resource_limit")
-            if type(item) is not annotation:
-                return False
-    return True
+    return False
 
 
 def _capture_string(value: str, budget: _CaptureBudget) -> str:
@@ -396,14 +378,24 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
             storage = object.__getattribute__(value, "__dict__")
             extra = object.__getattribute__(value, "__pydantic_extra__")
             private = object.__getattribute__(value, "__pydantic_private__")
+            fields_set = object.__getattribute__(value, "__pydantic_fields_set__")
             fields = tuple(value_type.model_fields)
             if (
                 type(storage) is not dict
                 or extra is not None
                 or private is not None
                 or dict.__len__(storage) != len(fields)
+                or type(fields_set) is not set
             ):
                 _source_error()
+            if set.__len__(fields_set) > _MAX_MAPPING_FIELDS:
+                _source_error("resource_limit")
+            captured_fields_set = tuple(set.__iter__(fields_set))
+            for field_name in captured_fields_set:
+                if type(field_name) is not str:
+                    _source_error()
+                if not any(field_name == declared for declared in fields):
+                    _source_error()
             keys = tuple(dict.keys(storage))
             if any(type(key) is not str for key in keys):
                 _source_error()
@@ -419,7 +411,7 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
                 if not _annotation_storage_matches(field_value, annotation, budget):
                     _source_error()
                 result[field_name] = _capture_value(field_value, budget, depth + 1)
-            return result
+            return _CapturedModel(value_type, result, tuple(sorted(captured_fields_set)))
         except BacktestInputError:
             raise
         except Exception:
@@ -427,6 +419,8 @@ def _capture_value(value: object, budget: _CaptureBudget, depth: int = 0) -> obj
         finally:
             budget.stack.remove(identity)
     if _is_enum_type(value_type):
+        if not any(value is member for member in value_type.__members__.values()):
+            _source_error()
         enum_value = object.__getattribute__(value, "_value_")
         enum_value_type = type(enum_value)
         if enum_value_type is str:
@@ -454,29 +448,68 @@ def _canonical_json(payload: object) -> bytes:
 
 
 def _storage_projection(value: object) -> object:
+    """Seal exact typed storage; this private seal never changes v1 source bytes."""
+
     value_type = type(value)
     if value is None or value_type is bool or value_type is int or value_type is str:
         return value
     if value_type is Decimal:
-        return str(value)
+        return ["Decimal", str(value)]
     if value_type is datetime:
-        if not _exact_utc_datetime(value):
-            _source_error()
-        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        return ["datetime", value.isoformat()]
     if value_type is date:
-        return value.isoformat()
+        return ["date", value.isoformat()]
     if _is_enum_type(value_type):
-        return _storage_projection(object.__getattribute__(value, "_value_"))
+        return [
+            "enum",
+            value_type.__name__,
+            _storage_projection(object.__getattribute__(value, "_value_")),
+        ]
+    if value_type is _CapturedModel:
+        return [
+            "model",
+            value.model_type.__name__,
+            _storage_projection(value.fields),
+            list(value.fields_set),
+        ]
     if value_type is tuple or value_type is list:
-        return [_storage_projection(item) for item in value]
+        return [
+            "tuple" if value_type is tuple else "list",
+            [_storage_projection(item) for item in value],
+        ]
     if value_type is dict:
-        result: dict[str, object] = {}
-        for key, item in dict.items(value):
-            if type(key) is not str:
-                _source_error()
-            result[key] = _storage_projection(item)
-        return result
+        return {key: _storage_projection(item) for key, item in dict.items(value)}
     _source_error()
+
+
+def _captured_payload(value: object, *, construct: bool) -> Any:
+    """Build only from the checked graph, never reread a mutable source root.
+
+    Construction on refresh carries forward the constructor's semantic validation
+    only after the exact typed storage seal matches. It is not validation itself.
+    """
+
+    value_type = type(value)
+    if value_type is _CapturedModel:
+        fields = {
+            key: _captured_payload(item, construct=construct)
+            for key, item in dict.items(value.fields)
+        }
+        if construct:
+            return value.model_type.model_construct(
+                _fields_set=set(value.fields_set), **fields
+            )
+        return fields
+    if value_type is tuple:
+        return tuple(_captured_payload(item, construct=construct) for item in value)
+    if value_type is list:
+        return [_captured_payload(item, construct=construct) for item in value]
+    if value_type is dict:
+        return {
+            key: _captured_payload(item, construct=construct)
+            for key, item in dict.items(value)
+        }
+    return value
 
 
 def _storage_bytes(*values: object) -> bytes:
@@ -543,17 +576,18 @@ def _revalidate_sources(
     bundle: object,
     envelope: object,
     budget: _CaptureBudget,
-) -> tuple[RunContext, EvidenceBundle, SignalEnvelope, bytes, str, object, object, object]:
+) -> tuple[RunContext, EvidenceBundle, SignalEnvelope, bytes, str]:
     if type(context) is not RunContext or type(bundle) is not EvidenceBundle or type(envelope) is not SignalEnvelope:
         _source_error("input_invalid")
     _require_presealed_witness(bundle)
     try:
-        context_data = _capture_root(context, budget)
-        bundle_data = _capture_root(bundle, budget)
-        envelope_data = _capture_root(envelope, budget)
-        storage_context_data = context_data
-        storage_bundle_data = bundle_data
-        storage_envelope_data = copy.deepcopy(envelope_data)
+        # Finish capture of every root before any inherited validation runs.
+        context_capture = _capture_root(context, budget)
+        bundle_capture = _capture_root(bundle, budget)
+        envelope_capture = _capture_root(envelope, budget)
+        context_data = _captured_payload(context_capture, construct=False)
+        bundle_data = _captured_payload(bundle_capture, construct=False)
+        envelope_data = _captured_payload(envelope_capture, construct=False)
         overlay_data = envelope_data.get("overlay") if type(envelope_data) is dict else None
         if overlay_data is not None:
             if type(overlay_data) is not dict:
@@ -592,9 +626,6 @@ def _revalidate_sources(
         copied_envelope,
         payload,
         fingerprint,
-        storage_context_data,
-        storage_bundle_data,
-        storage_envelope_data,
     )
 
 
@@ -845,21 +876,18 @@ def _prepare_sources(
         copied_envelope,
         source_json,
         fingerprint,
-        storage_context_data,
-        storage_bundle_data,
-        storage_envelope_data,
     ) = _revalidate_sources(
         context, bundle, envelope, budget
     )
     session, next_session = _validate_binding_contract(copied_context, copied_bundle, copied_envelope)
-    session_data = _capture_root(session, budget)
-    next_session_data = _capture_root(next_session, budget)
+    # Seal the fully validated private values, including normalized storage and
+    # metadata. This fixed pass is not a second charge for caller input.
+    seal_budget = _CaptureBudget()
     sealed_storage = _storage_bytes(
-        storage_context_data,
-        storage_bundle_data,
-        storage_envelope_data,
-        session_data,
-        next_session_data,
+        *(
+            _capture_root(value, seal_budget)
+            for value in (copied_context, copied_bundle, copied_envelope, session, next_session)
+        )
     )
     return (
         copied_context,
@@ -927,7 +955,7 @@ class SessionBinding:
 def _refresh_binding(
     binding: SessionBinding,
     budget: _CaptureBudget,
-) -> tuple[RunContext, EvidenceBundle, SignalEnvelope, TradingSession, TradingSession, bytes, str]:
+) -> tuple[RunContext, EvidenceBundle, SignalEnvelope, TradingSession, TradingSession, bytes, str, bytes]:
     try:
         context = object.__getattribute__(binding, "_context_snapshot")
         bundle = object.__getattribute__(binding, "_bundle_snapshot")
@@ -938,18 +966,14 @@ def _refresh_binding(
             _source_error("source_changed")
         if type(session) is not TradingSession or type(next_session) is not TradingSession:
             _source_error("source_changed")
-        context_data = _capture_root(context, budget)
-        bundle_data = _capture_root(bundle, budget)
-        envelope_data = _capture_root(envelope, budget)
-        session_data = _capture_root(session, budget)
-        next_session_data = _capture_root(next_session, budget)
-        current_storage = _storage_bytes(
-            context_data,
-            bundle_data,
-            envelope_data,
-            session_data,
-            next_session_data,
+        _require_presealed_witness(bundle)
+        # Capture all storage and metadata first. Copy/serialization cannot see a
+        # caller-injected object between the check and construction.
+        captures = tuple(
+            _capture_root(value, budget)
+            for value in (context, bundle, envelope, session, next_session)
         )
+        current_storage = _storage_bytes(*captures)
         sealed = object.__getattribute__(binding, "_sealed_source_json")
         expected_fingerprint = object.__getattribute__(binding, "_source_fingerprint")
         sealed_storage = object.__getattribute__(binding, "_sealed_storage_bytes")
@@ -960,10 +984,40 @@ def _refresh_binding(
             or type(expected_fingerprint) is not str
         ):
             _source_error("source_changed")
-        # The private storage was semantically revalidated at binding creation.
-        # Requiring its captured bytes to remain identical is the bounded revalidation
-        # gate before and after reduction, without rerunning legacy host-dependent validators.
-        return context, bundle, envelope, session, next_session, sealed, expected_fingerprint
+        copied_context, copied_bundle, copied_envelope, copied_session, copied_next_session = (
+            _captured_payload(capture, construct=True) for capture in captures
+        )
+        source_json = _source_json(copied_context, copied_bundle, copied_envelope)
+        if len(_BINDING_DOMAIN) + len(source_json) > _MAX_SOURCE_BYTES:
+            _source_error("resource_limit")
+        fingerprint = "sha256:" + hashlib.sha256(_BINDING_DOMAIN + source_json).hexdigest()
+        if sealed != source_json or expected_fingerprint != fingerprint:
+            _source_error("source_changed")
+        derived_session, derived_next_session = _validate_binding_contract(
+            copied_context, copied_bundle, copied_envelope
+        )
+        # The private session slots must also agree with the witnessed calendar.
+        session_budget = _CaptureBudget()
+        current_sessions = _storage_bytes(
+            _capture_root(copied_session, session_budget),
+            _capture_root(copied_next_session, session_budget),
+        )
+        derived_sessions = _storage_bytes(
+            _capture_root(derived_session, session_budget),
+            _capture_root(derived_next_session, session_budget),
+        )
+        if current_sessions != derived_sessions:
+            _source_error("source_changed")
+        return (
+            copied_context,
+            copied_bundle,
+            copied_envelope,
+            derived_session,
+            derived_next_session,
+            source_json,
+            fingerprint,
+            current_storage,
+        )
     except BacktestInputError as error:
         if error.reason_code == "resource_limit":
             raise
@@ -975,14 +1029,14 @@ def _refresh_binding(
 def _defensive_snapshot(binding: SessionBinding, name: str) -> Any:
     prepared = _refresh_binding(binding, _CaptureBudget())
     if name == "context":
-        return copy.deepcopy(prepared[0])
+        return prepared[0]
     if name == "bundle":
-        return copy.deepcopy(prepared[1])
+        return prepared[1]
     if name == "envelope":
-        return copy.deepcopy(prepared[2])
+        return prepared[2]
     if name == "session":
-        return copy.deepcopy(prepared[3])
-    return copy.deepcopy(prepared[4])
+        return prepared[3]
+    return prepared[4]
 
 
 class SessionClock:

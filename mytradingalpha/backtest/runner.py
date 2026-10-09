@@ -9,7 +9,6 @@ from .clock import (
     _MAX_EVENTS,
     _MAX_RUN_SOURCE_BYTES,
     _MAX_SEQUENCE,
-    _MAX_SOURCE_BYTES,
     BacktestInputError,
     SessionBinding,
     _CaptureBudget,
@@ -63,23 +62,15 @@ class BacktestRunner:
             if type(binding) is not SessionBinding:
                 _reject("input_invalid")
 
-        stored_source_bytes = 0
-        for binding in bindings:
-            source_json = object.__getattribute__(binding, "_sealed_source_json")
-            if type(source_json) is not bytes:
-                _reject("source_changed")
-            source_size = _BINDING_DOMAIN_SIZE + len(source_json)
-            if source_size > _MAX_SOURCE_BYTES:
-                _reject("resource_limit")
-            stored_source_bytes += source_size
-            if stored_source_bytes > _MAX_RUN_SOURCE_BYTES:
-                _reject("resource_limit")
-
         budget = _CaptureBudget()
+        actual_source_bytes = 0
         checked: list[tuple[SessionBinding, tuple[object, ...]]] = []
         decision_slots: set[tuple[object, ...]] = set()
         for binding in bindings:
             prepared = _refresh_binding(binding, budget)
+            actual_source_bytes += _BINDING_DOMAIN_SIZE + len(prepared[5])
+            if actual_source_bytes > _MAX_RUN_SOURCE_BYTES:
+                _reject("resource_limit")
             context, _, envelope, session = (
                 prepared[0],
                 prepared[1],
@@ -100,7 +91,7 @@ class BacktestRunner:
         drafts: list[BacktestEvent] = []
         try:
             for _, prepared in checked:
-                context, bundle, envelope, session, next_session, _, fingerprint = prepared
+                context, bundle, envelope, session, next_session, _, fingerprint, _ = prepared
                 decision = _build_decision_event(
                     context=context,
                     bundle=bundle,
@@ -155,8 +146,10 @@ class BacktestRunner:
             _reject("event_invalid")
 
         completion_budget = _CaptureBudget()
-        for binding, _ in checked:
-            _refresh_binding(binding, completion_budget)
+        for binding, ingress in checked:
+            completion = _refresh_binding(binding, completion_budget)
+            if completion[5:] != ingress[5:]:
+                _reject("source_changed")
         return result
 
 
