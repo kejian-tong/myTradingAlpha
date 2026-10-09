@@ -2589,10 +2589,10 @@ def test_repair_public_snapshot_growth_keeps_temporary_capture_bounded(
     assert copied_width <= 65, (
         f"temporary snapshot captured {copied_width} entries; rejection={rejection.reason_code}"
     )
-    expected_reasons = (
-        ("source_invalid", "resource_limit") if boundary == "constructor" else ("source_changed",)
-    )
-    assert rejection.reason_code in expected_reasons
+    expected_reason = "resource_limit"
+    if capture_site == "raw_witness":
+        expected_reason = "source_invalid" if boundary == "constructor" else "source_changed"
+    assert rejection.reason_code == expected_reason
 
 
 def test_repair_generic_dict_snapshot_growth_keeps_temporary_capture_bounded() -> None:
