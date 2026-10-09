@@ -549,10 +549,14 @@ def _raw_model_field(model: object, field_name: str) -> object:
     storage = object.__getattribute__(model, "__dict__")
     if type(storage) is not dict or dict.__len__(storage) > _MAX_MAPPING_FIELDS:
         _source_error()
-    try:
-        return dict.__getitem__(storage, field_name)
-    except KeyError:
+    pairs = tuple(dict.items(storage))
+    if len(pairs) > _MAX_MAPPING_FIELDS or any(type(key) is not str for key, _ in pairs):
         _source_error()
+    # Compare only checked strings and read only the captured snapshot.
+    for key, value in pairs:
+        if key == field_name:
+            return value
+    _source_error()
 
 
 def _require_presealed_witness(bundle: EvidenceBundle) -> None:
