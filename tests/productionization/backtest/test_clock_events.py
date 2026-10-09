@@ -2168,3 +2168,79 @@ def test_repair_refresh_rejects_equal_wire_primitive_type_changes_before_copy_or
         finally:
             assert calls == dict.fromkeys(calls, 0)
         assert result is None
+
+
+@pytest.mark.parametrize("boundary", ("constructor", "getter", "runner"))
+@pytest.mark.parametrize("key_target", ("bundle_calendar", "calendar_replay_evidence"))
+def test_repair_witness_stored_keys_reject_before_caller_protocols(
+    boundary: str,
+    key_target: str,
+) -> None:
+    api = _bt_api()
+    context, bundle, envelope = _quant_only_inputs()
+    binding = api.SessionBinding(context, bundle, envelope)
+    assert type(binding) is api.SessionBinding
+    assert binding.bundle == bundle
+    assert len(api.BacktestRunner().run((binding,))) == 2
+
+    target_bundle = bundle if boundary == "constructor" else object.__getattribute__(
+        binding, "_bundle_snapshot"
+    )
+    assert type(target_bundle) is EvidenceBundle
+    bundle_storage = object.__getattribute__(target_bundle, "__dict__")
+    assert type(bundle_storage) is dict
+    assert all(type(key) is str for key in dict.keys(bundle_storage))
+    if key_target == "bundle_calendar":
+        storage = bundle_storage
+        field_name = "calendar"
+    else:
+        calendar = dict.__getitem__(bundle_storage, "calendar")
+        assert type(calendar) is TradingCalendar
+        storage = object.__getattribute__(calendar, "__dict__")
+        field_name = "replay_evidence"
+    assert type(storage) is dict
+    assert all(type(key) is str for key in dict.keys(storage))
+    original_value = dict.__getitem__(storage, field_name)
+    original_size = dict.__len__(storage)
+    target_hash = hash(field_name)
+    calls = {"hash": 0, "equality": 0, "attribute": 0}
+
+    class ForeignStoredKey:
+        def __hash__(self) -> int:
+            calls["hash"] += 1
+            return target_hash
+
+        def __eq__(self, other: object) -> bool:
+            calls["equality"] += 1
+            return type(other) is str and other == field_name
+
+        def __getattribute__(self, name: str) -> object:
+            calls["attribute"] += 1
+            return object.__getattribute__(self, name)
+
+    foreign_key = ForeignStoredKey()
+    dict.__delitem__(storage, field_name)
+    dict.__setitem__(storage, foreign_key, original_value)
+    assert dict.__len__(storage) == original_size
+    stored_keys = tuple(dict.keys(storage))
+    assert any(key is foreign_key for key in stored_keys)
+    assert not any(type(key) is str and key == field_name for key in stored_keys)
+    assert calls["hash"] > 0
+    # Dictionary insertion necessarily hashes the fixture key. Measure only
+    # callbacks caused by the BT boundary after the valid field is replaced.
+    calls.update(dict.fromkeys(calls, 0))
+    result = None
+
+    def action() -> None:
+        nonlocal result
+        if boundary == "constructor":
+            result = api.SessionBinding(context, bundle, envelope)
+        elif boundary == "getter":
+            result = binding.bundle
+        else:
+            result = api.BacktestRunner().run((binding,))
+
+    reason = "source_invalid" if boundary == "constructor" else "source_changed"
+    _expect_bt_error(api, reason, action)
+    assert result is None
+    assert calls == dict.fromkeys(calls, 0)
