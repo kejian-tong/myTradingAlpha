@@ -3035,7 +3035,7 @@ def test_genuine_event_retained_charge_cannot_be_understated() -> None:
     assert ledger.events[0]._retained_size == retained_charge
 
     object.__setattr__(event, "_retained_size", len(event_bytes))
-    assert event.canonical_bytes() == event_bytes
+    _expect_rejection(lambda: event.canonical_bytes())
     assert _snapshot(ledger) == accepted_snapshot
     assert ledger.events[0]._retained_size == retained_charge
     _expect_rejection(lambda: ledger.append(event))
@@ -3162,7 +3162,7 @@ def test_genuine_balance_rejects_nested_hostiles_before_protocols() -> None:
             invoke("text.str")
 
     def tamper(balance: Any, field: str, value: object) -> Any:
-        candidate = copy.copy(balance)
+        candidate = copy.deepcopy(balance)
         assert type(candidate) is api.LedgerBalance
         assert candidate is not balance
         object.__setattr__(candidate, field, value)
@@ -3211,14 +3211,34 @@ def test_genuine_balance_rejects_nested_hostiles_before_protocols() -> None:
             lambda: api.NAVCalculator().compute(hostile_position_id, (mark,), nav_policy)
         )
 
-        hostile_saved_witness = tamper(
+        hostile_prefix = tamper(
             genuine_balance,
             "prefix_hashes",
             (HostileText(genuine_balance.prefix_hashes[-1]),),
         )
+        reject_without_protocol(lambda: hostile_prefix.canonical_bytes())
+        reject_without_protocol(lambda: hostile_prefix == genuine_balance)
+        reject_without_protocol(lambda: genuine_balance == hostile_prefix)
+
+        saved_witness = genuine_balance._witness
+        assert type(saved_witness) is tuple
+        assert type(saved_witness[0]) is tuple
+        assert len(saved_witness[0]) > 0
+        hostile_witness = (
+            (HostileIterable(),) + saved_witness[0][1:],
+        ) + saved_witness[1:]
+        hostile_saved_witness = tamper(genuine_balance, "_witness", hostile_witness)
+        assert hostile_saved_witness.prefix_hashes == genuine_balance.prefix_hashes
+        assert hostile_saved_witness._prefix_witness is hostile_saved_witness.prefix_hashes
         reject_without_protocol(lambda: hostile_saved_witness.canonical_bytes())
         reject_without_protocol(lambda: hostile_saved_witness == genuine_balance)
         reject_without_protocol(lambda: genuine_balance == hostile_saved_witness)
+        reject_without_protocol(
+            lambda: api.NAVCalculator().compute(hostile_saved_witness, (mark,), nav_policy)
+        )
+        reject_without_protocol(
+            lambda: api.AccountingInvariant.check(after_obligation, fill_event, hostile_saved_witness)
+        )
 
         pathological_exponent = tamper(
             after_obligation,
@@ -3299,7 +3319,7 @@ def test_balance_rejects_rewritten_earlier_prefix_with_unchanged_tail() -> None:
     assert len(altered_prefixes) == len(original_prefixes)
     assert altered_prefixes[-1] == original_prefixes[-1]
 
-    tampered = copy.copy(after_settlement)
+    tampered = copy.deepcopy(after_settlement)
     object.__setattr__(tampered, "prefix_hashes", altered_prefixes)
     object.__setattr__(tampered, "_prefix_witness", altered_prefixes)
     assert tampered.event_count == after_settlement.event_count
