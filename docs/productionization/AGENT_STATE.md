@@ -6,29 +6,35 @@ immutable detail remains in commits, pull requests, and workflow runs.
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `a713fbb48324ad9da45e254268b9cfe30b0a634b`
-- `last_reconciled_main_tree`: `9fc6e587ca34a297d3183288763f91a933ae054c`
-- `roadmap_status`: active BT-02 candidate; BT-01 / PR #96 merged; BT-03 through BT-06 await dependency gates
-- `current_pr_id`: BT-02 / PR #97
+- `last_reconciled_main_sha`: `e0025b3990334d48664a4caf3bef6839421ef586`
+- `last_reconciled_main_tree`: `d7b159ae4eb6d1caf2632014fc37006b00e4a5de`
+- `roadmap_status`: active BT-03 candidate; BT-02 / PR #97 merged; BT-04 through BT-06 await dependency gates
+- `current_pr_id`: BT-03 / PR #99
 - `current_phase`: 03 — Backtest and Ledger
-- `last_completed_roadmap_pr`: `BT-01` / PR #96 / merge
-  `a713fbb48324ad9da45e254268b9cfe30b0a634b`
-- `autonomy_mode`: human-authorized BT-01 through BT-06 in six independent dependency-ordered PRs and fresh Master sessions; this session owns BT-02 only
-- `merge`: PR #96 merged at `a713fbb48324ad9da45e254268b9cfe30b0a634b`; implementation, review,
+- `last_completed_roadmap_pr`: `BT-02` / PR #97 / merge
+  `7b818c3f78916375ef80d1a5c65d24a95b5423d5`
+- `autonomy_mode`: human-authorized BT-01 through BT-06 in six independent dependency-ordered PRs and fresh Master sessions; this session owns BT-03 only
+- `merge`: PR #97 merged at `7b818c3f78916375ef80d1a5c65d24a95b5423d5`; implementation, review,
   and CI records remain in its GitHub conversation
-- `next_dependency`: BT-03 is authorized but blocked until BT-02 merges, main is verified, and a fresh Master session starts
+- `next_dependency`: BT-04 is authorized but blocked until BT-03 merges, main is verified, and a fresh Master session starts; exhausted lease capacity also fails closed
 - SIG-04 validates caller-supplied candidates only; no inference
 - SIG-05 adds only in-memory deterministic shadow envelopes; later roadmap work remains deferred
 - SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior; explicit human PAPER/live gates remain mandatory and unexercised
 
-## BT-02 current recovery
+## BT-03 current recovery
 
-- PR: [#97](https://github.com/kejian-tong/myTradingAlpha/pull/97); exact-base [JIT](https://github.com/kejian-tong/myTradingAlpha/pull/97#issuecomment-6078584355). Base/main: `a713fbb48324ad9da45e254268b9cfe30b0a634b`. Dedicated RED `00d4418afde9ad31900d76926e817235ab77992d`; current candidate/review/CI/lease evidence is recorded in the PR conversation as available; no future merge or approval is claimed here.
-- Complexity critical; implementation escalation route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh and controlling `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Initial route `luna_sol_xhigh`, `normal_implementer` / GPT-6 Luna / max remains historical. Master same configured Sol/xhigh; runtime telemetry/isolation attestation unavailable.
-- Scope: shared simulation-only intent/fill contracts, internal deterministic order/fill simulator and stable cost facade, plus this normal-branch state reconciliation and narrow operational-test migrations. Precommitted fixture intents, witnessed next-session final close, later receipt, adverse spread/slippage, cumulative USD fees and fixed-share cap/lot/TIF only. No ledger, NAV, actions, persistence, RSK allocation, OMS, broker or later-slice behavior.
-- Writer lane: `refs/heads/codex/bt-02-fills-costs`; derived lane `de0c924e2a3882ee1ec48329eecfdf79f5e50b391a26e4f159aefc59d48d3f57`. Separate RED/GREEN leases acquired by Master from trusted main; monotonically ordered checkpoints and host-stopped observation precede release/export. Canonical artifacts and actual validation belong to the PR conversation. Cooperative evidence is not runtime authentication.
-- H5 repair parent `c33bec3614087d2cf9baf56ef3f95ecd757b2346`; RED `fac3218821e0a7148432d2ba8aa6b7ce6e9e875a`. Parent controlling/material `6091388117` / `6091388325`; scope/preflight `6091428485` / `6091428664`; diagnostic clarification `6091524595`, all in PR #97. H1-H4/M1/M2/schema diagnostics closed at the parent; H5 needs fresh exact-head closure. Prior repair/JIT/RED and lifecycle evidence remains immutable in Git/PR #97. Final validation/review/CI/Master gate are pending; no approval claimed.
-- Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 integrated goldens pass. No PAPER/live operation, Phase 04, release, validated-alpha or promotion authorization; explicit human PAPER/live gates remain mandatory and unexercised.
+- PR99 JIT6094290872; current RED `6ff2f9c6ae008bb7363f542b8d20a67ab21adc12`/lease6098196615; initial RED/lease6094291082. Base/main: `e0025b3990334d48664a4caf3bef6839421ef586`. H1/M1 review6097264525; final GREEN/review/CI/Master gate pending.
+- Critical initial route `luna_sol_xhigh`: `normal_implementer` / GPT-6 Luna / max; controlling `reviewer_xhigh` / GPT-6.1 Sol / xhigh; Master configured Sol/xhigh; runtime attestation unavailable.
+- Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; recovery6095121331; prior reentry timeout preserved.
+- Scope: internal ledger/NAV/accounting only. Branch `refs/heads/codex/bt-03-ledger-nav`; separate ordinary RED/GREEN leases; current capacity6400 fails closed, preserve evidence. Aborted original RED remains historical; no bootstrap exception applies here.
+- Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 integrated goldens pass. No PAPER/live operation, Phase04, release, validated-alpha or promotion authorization; explicit human PAPER/live gates remain mandatory and unexercised.
+
+## BT-02 completed recovery
+
+- [PR #97](https://github.com/kejian-tong/myTradingAlpha/pull/97). Base/main: `a713fbb48324ad9da45e254268b9cfe30b0a634b`. Merge `7b818c3f78916375ef80d1a5c65d24a95b5423d5`; source `60878adab64c138ccad5cf571a648e6cd909b3d9`; identical tree `d89d1321aa62864ba7a2362a3794259831435ae7`.
+- Critical implementation escalation route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; controlling `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Initial route `luna_sol_xhigh`, `normal_implementer` / GPT-6 Luna / max remains historical.
+- Scope: shared simulation-only intent/fill contracts, internal deterministic order/fill simulator and stable cost facade.
+- H1-H5/M1/M2/schema closed; PR97 durable comments: APPROVE6092025678, closure6092025513, Master6092102850, leases6091815683, postmerge6092297315. RED/JIT/floor/CI detail remains immutable in PR97; merged tree/ancestry/checks verified at BT03 preflight.
 
 ## BT-01 completed recovery
 
@@ -39,7 +45,7 @@ immutable detail remains in commits, pull requests, and workflow runs.
 - Final independent validation: 85 clock, 22 state/package, 1817 PIT/SIG/research, 3206 productionization with two skips, 3782 full with four skips/18 warnings/69 subtests. Ruff, four validators, diff, network canary and rebuilt noneditable 18+3 installed origins/exact source passed; skips are not passes.
 - All nine app-15368 source contexts passed at the reviewed source: CI `37906143567`, CodeQL `37906143593`, Dependency Review `37906143519`. Exact merge main CI `37908220659` and CodeQL `37908220735` passed all eight applicable main-push contexts plus Foundation contract/docs/lock. Merge tree matches reviewed tree and SIG-05 prerequisite remains an ancestor, independently reverified at BT-02 preflight.
 - Preserved ownership/purity boundary: exact typed captured graphs, bounded 65-entry metadata/raw snapshots, early witness denial and owned bundle/calendar/witness guard before inherited validation; pure getters/reducer do not revalidate through environment-dependent PIT paths. Actual canonical source bytes/fingerprints and retained ingress/completion checks remain required. BT-02 consumes these unchanged guarantees.
-- Cleanup completed per durable postmerge evidence; immutable writer/review recovery remains in PR96. Repository-global lease capacity64 fails closed; inspect before every acquisition, preserve evidence and never bypass policy.
+- Cleanup completed per durable postmerge evidence; immutable writer/review recovery remains in PR96. Historical BT01 lease capacity64 failed closed. Current capacity6400 is reconciled below; inspect every acquisition and preserve evidence.
 
 ## Phase 03 documentation recovery
 
@@ -67,8 +73,9 @@ PAPER/live, or promotion behavior was introduced.
 
 ## Current harness policy
 
-- `harness_reconciled_through`: PR #94 / merge `afa7c35b9f8a71170d6a9d14b051d2e83f54fc0f`
+- `harness_reconciled_through`: PR #98 / merge `e0025b3990334d48664a4caf3bef6839421ef586`
 - `active_harness_pr`: none
+- [PR #98](https://github.com/kejian-tong/myTradingAlpha/pull/98) raised lease archive64 to6400, preserving all evidence. Source `2f1a0644f328a8a0bfb89c95bb5f91776b977be2`, merge tree `d7b159ae4eb6d1caf2632014fc37006b00e4a5de`. Durable TDD/CI/APPROVE/Master gate/postmerge facts remain in PR98. Human-authorized unleased test-only RED applied solely to this prerequisite; GREEN used a genuine old-helper lease.
 - PR #90 merge `8f76f341bedf086dd4eb69e4229be33127f5028f` completed bounded pstack compatibility replay and preserves PR #88 model routing, PR #86
   read-only review assurance, and all PAPER/live gates.
 - PR #88's policy merge `a42ce7a654994d8071824c3aaba4c9e5503a7e9d` remains recoverable in the

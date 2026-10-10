@@ -26,6 +26,10 @@ BT01_WRITER_COMMENT = "6077509103"
 BT01_POSTMERGE_COMMENT = "6077864574"
 BT01_CI_RUN = "37908220659"
 BT01_CODEQL_RUN = "37908220735"
+BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
+BT02_SOURCE_SHA = "60878adab64c138ccad5cf571a648e6cd909b3d9"
+BT03_BASE_SHA = "e0025b3990334d48664a4caf3bef6839421ef586"
+BT03_BASE_TREE_SHA = "d7b159ae4eb6d1caf2632014fc37006b00e4a5de"
 RULESET_ID = "23141241"
 RULESET_OBSERVED_ON = "2026-09-19"
 
@@ -49,6 +53,7 @@ HARNESS_MERGES = {
     88: "a42ce7a654994d8071824c3aaba4c9e5503a7e9d",
     90: HARNESS_PR90_MERGE_SHA,
     94: "afa7c35b9f8a71170d6a9d14b051d2e83f54fc0f",
+    98: BT03_BASE_SHA,
 }
 
 
@@ -56,7 +61,7 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
+def test_operational_state_tracks_authorized_bt03_and_completed_bt02_bt01_recovery() -> None:
     state = _state_text()
     normalized_state = " ".join(state.split())
     reconciled_sha = re.search(
@@ -67,22 +72,32 @@ def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
     )
     assert reconciled_sha is not None
     assert reconciled_tree is not None
-    assert reconciled_sha.group(1) == BT01_MERGE_SHA
-    assert reconciled_tree.group(1) == BT01_TREE_SHA
+    assert reconciled_sha.group(1) == BT03_BASE_SHA
+    assert reconciled_tree.group(1) == BT03_BASE_TREE_SHA
     docs_recovery = state.split("## Phase 03 documentation recovery", maxsplit=1)[-1]
     assert PH03_DOCS_MERGE_SHA in docs_recovery
     assert PH03_DOCS_TREE_SHA in docs_recovery
 
-    current_recovery = state.split("## BT-02 current recovery", maxsplit=1)[-1].split(
-        "## BT-01 completed recovery", maxsplit=1
+    current_recovery = state.split("## BT-03 current recovery", maxsplit=1)[-1].split(
+        "## BT-02 completed recovery", maxsplit=1
     )[0]
     recovery_base = re.search(r"Base/main: `([0-9a-f]{40})`", current_recovery)
     assert recovery_base is not None
-    assert recovery_base.group(1) == BT01_MERGE_SHA
-    assert "implementation escalation route `sol_high_sol_xhigh`" in current_recovery
-    assert "high_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
-    assert "Initial route `luna_sol_xhigh`, `normal_implementer` / GPT-6 Luna / max remains historical" in current_recovery
+    assert recovery_base.group(1) == BT03_BASE_SHA
+    assert "Critical initial route `luna_sol_xhigh`: `normal_implementer` / GPT-6 Luna / max" in current_recovery
     assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
+    assert "Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
+    assert "6ff2f9c6ae008bb7363f542b8d20a67ab21adc12" in current_recovery
+
+    bt02_recovery = state.split("## BT-02 completed recovery", maxsplit=1)[-1].split(
+        "## BT-01 completed recovery", maxsplit=1
+    )[0]
+    assert "Critical implementation escalation route `sol_high_sol_xhigh`" in bt02_recovery
+    assert "high_implementer` / GPT-6.1 Sol / xhigh" in bt02_recovery
+    assert "Initial route `luna_sol_xhigh`, `normal_implementer` / GPT-6 Luna / max remains historical" in bt02_recovery
+    assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in bt02_recovery
+    assert BT02_SOURCE_SHA in bt02_recovery
+    assert BT02_MERGE_SHA in bt02_recovery
 
     bt01_recovery = state.split("## BT-01 completed recovery", maxsplit=1)[-1]
     assert "route `luna_sol_high`" in bt01_recovery
@@ -93,20 +108,20 @@ def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
         "No quantity, intent, fill, cost, ledger, action, persistence or metric behavior."
     ) in bt01_recovery
 
-    assert "`roadmap_status`: active BT-02 candidate" in state
-    assert re.search(r"`current_pr_id`: BT-02 / PR #\d+", state)
+    assert "`roadmap_status`: active BT-03 candidate" in state
+    assert re.search(r"`current_pr_id`: BT-03 / PR #99", state)
     assert "`current_phase`: 03 — Backtest and Ledger" in state
-    assert f"`last_completed_roadmap_pr`: `BT-01` / PR #96 / merge `{BT01_MERGE_SHA}`" in normalized_state
+    assert f"`last_completed_roadmap_pr`: `BT-02` / PR #97 / merge `{BT02_MERGE_SHA}`" in normalized_state
     assert (
         "`autonomy_mode`: human-authorized BT-01 through BT-06 in six independent "
-        "dependency-ordered PRs and fresh Master sessions; this session owns BT-02 only"
+        "dependency-ordered PRs and fresh Master sessions; this session owns BT-03 only"
     ) in state
     assert (
-        f"`merge`: PR #96 merged at `{BT01_MERGE_SHA}`; implementation, review, and CI records "
+        f"`merge`: PR #97 merged at `{BT02_MERGE_SHA}`; implementation, review, and CI records "
         "remain in its GitHub conversation"
     ) in normalized_state
     assert (
-        "`next_dependency`: BT-03 is authorized but blocked until BT-02 merges, main is verified, "
+        "`next_dependency`: BT-04 is authorized but blocked until BT-03 merges, main is verified, "
         "and a fresh Master session starts"
     ) in state
     assert (
@@ -124,7 +139,7 @@ def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
     assert "SIG-05 adds only in-memory deterministic shadow envelopes" in state
     assert (
         "Scope: shared simulation-only intent/fill contracts, internal deterministic order/fill simulator and stable cost facade"
-    ) in current_recovery
+    ) in bt02_recovery
     for reference in (
         "https://github.com/kejian-tong/myTradingAlpha/pull/96",
         BT01_SOURCE_SHA,
@@ -138,6 +153,7 @@ def test_operational_state_tracks_authorized_bt02_and_bt01_recovery() -> None:
     ):
         assert reference in state
     assert "Phase 03 gate: insufficient_evidence until all six separately merged slices" in state
+    assert "Scope: internal ledger/NAV/accounting only" in current_recovery
     assert "No PAPER/live operation" in state
     assert "explicit human PAPER/live gates remain mandatory and unexercised" in state
 
@@ -158,6 +174,10 @@ def test_current_harness_state_is_reconciled_and_not_prospective() -> None:
     assert (
         f"PR #94 refreshed Master/Sol routes to GPT-6.1 Sol/xhigh and the concurrent "
         f"spawned-thread guardrail to eight; merge `{HARNESS_MERGES[94]}`"
+    ) in " ".join(state.split())
+    assert (
+        f"[PR #98](https://github.com/kejian-tong/myTradingAlpha/pull/98) raised lease archive64 to6400, preserving all evidence. Source "
+        f"`2f1a0644f328a8a0bfb89c95bb5f91776b977be2`, merge tree `{BT03_BASE_TREE_SHA}`"
     ) in " ".join(state.split())
     assert "## Current harness policy" in state
     assert "PR #86's read-only review-assurance policy remains active" in state

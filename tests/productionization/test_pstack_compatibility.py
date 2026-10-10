@@ -16,6 +16,7 @@ NOTICE = ROOT / "docs/productionization/PSTACK_MIT_NOTICE.md"
 AGENT_STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 SIG05_MERGE_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 BT01_MERGE_SHA = "a713fbb48324ad9da45e254268b9cfe30b0a634b"
+BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
 
 EXPECTED_SKILLS = {
@@ -430,8 +431,9 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "https://github.com/cursor/plugins/tree/main/pstack" in notice
     normalized_state = " ".join(state.split())
     assert (
-        f"`last_completed_roadmap_pr`: `BT-01` / PR #96 / merge `{BT01_MERGE_SHA}`"
+        f"`last_completed_roadmap_pr`: `BT-02` / PR #97 / merge `{BT02_MERGE_SHA}`"
     ) in normalized_state
+    assert BT01_MERGE_SHA in state
     assert (
         f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "
         f"its GitHub conversation; it merged at `{SIG05_MERGE_SHA}`."
