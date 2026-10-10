@@ -3254,6 +3254,170 @@ def test_genuine_balance_rejects_nested_hostiles_before_protocols() -> None:
     assert _snapshot(ledger) == owner_snapshot
 
 
+def _assert_saved_native_witness_rejections(
+    monkeypatch: pytest.MonkeyPatch,
+    actions: tuple[tuple[str, Callable[[], object]], ...],
+) -> None:
+    attempts: list[str] = []
+    accepted: list[str] = []
+    canary = "bt03-native-witness-canary-secret"
+
+    def deny(name: str) -> Callable[..., Any]:
+        def blocked(*args: Any, **kwargs: Any) -> Any:
+            attempts.append(name)
+            raise RuntimeError(canary)
+
+        return blocked
+
+    with monkeypatch.context() as guard, warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+        guard.setattr(builtins, "open", deny("builtins.open"))
+        guard.setattr(pathlib.Path, "open", deny("Path.open"))
+        guard.setattr(socket, "socket", deny("socket.socket"))
+        guard.setattr(socket, "create_connection", deny("socket.create_connection"))
+        guard.setattr(urllib.request, "urlopen", deny("urlopen"))
+        guard.setattr(subprocess, "Popen", deny("subprocess.Popen"))
+        guard.setattr(subprocess, "run", deny("subprocess.run"))
+        guard.setattr(os, "getenv", deny("os.getenv"))
+        guard.setattr(os, "system", deny("os.system"))
+        guard.setattr(zoneinfo, "ZoneInfo", deny("ZoneInfo"))
+        for name, action in actions:
+            try:
+                action()
+            except (ValueError, TypeError, OverflowError) as error:
+                assert getattr(error, "reason_code", None) == "source_changed"
+                assert str(error) == "BT-03 input rejected (source_changed)"
+                assert error.args == ("BT-03 input rejected (source_changed)",)
+                assert error.__cause__ is None
+                assert error.__context__ is None
+                assert canary not in repr(error)
+            else:
+                accepted.append(name)
+
+    assert attempts == []
+    assert observed == []
+    assert accepted == [], f"saved native int/bool witness alias accepted: {accepted}"
+
+
+def test_genuine_event_saved_native_zero_cannot_alias_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _bt03_api()
+    ledger, event = _golden_ledger(api)
+    before = ledger.balance()
+    event_bytes = event.canonical_bytes()
+    storage_bytes = event._storage_bytes
+    seal = event._seal
+    assert event_bytes == EXPECTED_EVENT_BYTES
+    after = ledger.append(event)
+    assert api.AccountingInvariant.check(before, event, after) is None
+    assert ledger.append(event) == after
+    control_replay, _ = _golden_ledger(api)
+    assert control_replay.replay(ledger.events) == after
+    append_owner, _ = _golden_ledger(api)
+    replay_owner, _ = _golden_ledger(api)
+    owners = (ledger, append_owner, replay_owner)
+    owner_bytes = tuple(
+        (owner.balance().canonical_bytes(), tuple(item.canonical_bytes() for item in owner.events))
+        for owner in owners
+    )
+
+    # Change only the saved sequence witness; the genuine payload and seals stay intact.
+    saved = event._storage_witness
+    assert type(saved) is tuple
+    assert type(saved[3]) is int and saved[3] == 0
+    changed = saved[:3] + (False,) + saved[4:]
+    assert saved == changed  # Python equality conceals the native-type difference.
+    assert type(changed[3]) is bool
+    object.__setattr__(event, "_storage_witness", changed)
+    assert type(event.sequence) is int and event.sequence == 0
+    assert event._canonical == event_bytes
+    assert event._storage_bytes == storage_bytes
+    assert event._seal == seal
+
+    _assert_saved_native_witness_rejections(
+        monkeypatch,
+        (
+            ("canonical", event.canonical_bytes),
+            ("check", lambda: api.AccountingInvariant.check(before, event, after)),
+            ("fresh_append", lambda: append_owner.append(event)),
+            ("replay", lambda: replay_owner.replay((event,))),
+            ("accepted_retry", lambda: ledger.append(event)),
+        ),
+    )
+    assert event._canonical == event_bytes
+    assert event._storage_bytes == storage_bytes
+    assert event._seal == seal
+    assert tuple(
+        (owner.balance().canonical_bytes(), tuple(item.canonical_bytes() for item in owner.events))
+        for owner in owners
+    ) == owner_bytes
+
+
+def test_genuine_balance_saved_native_zero_cannot_alias_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _bt03_api()
+    bt02 = bt02_fixtures._bt02_api()
+    case = _case()
+    outcome = bt02_fixtures._outcome(bt02, case)
+    ledger = _new_ledger(api, case)
+    before = ledger.balance()
+    before_bytes = before.canonical_bytes()
+    nav_policy = _accounting_policy(api, case, outcome)
+    nav = api.NAVCalculator().compute(before, (), nav_policy)
+    assert _result_status(nav) == "available"
+    assert nav.value == DEFAULT_OPENING_CASH
+    assert nav.run_valid is True
+    event = _obligation_event(
+        api,
+        ledger,
+        event_id="native-witness-claim-create",
+        kind="receivable_create",
+        obligation_id="native-witness-claim",
+        amount=D("3"),
+        economic_time=EVENT_ECONOMIC_TIME,
+        observed_at=EVENT_OBSERVED_AT,
+        due_at=EVENT_OBSERVED_AT + timedelta(days=1),
+    )
+    after = ledger.append(event)
+    assert api.AccountingInvariant.check(before, event, after) is None
+    candidate = copy.deepcopy(before)
+    assert candidate == before and before == candidate
+    owner_bytes = ledger.balance().canonical_bytes()
+    history_bytes = tuple(item.canonical_bytes() for item in ledger.events)
+    seal = candidate._seal
+
+    # The empty balance's native event count remains zero; only its saved witness changes.
+    saved = candidate._witness
+    assert type(saved) is tuple
+    assert type(saved[15]) is int and saved[15] == 0
+    changed = saved[:15] + (False,) + saved[16:]
+    assert saved == changed
+    assert type(changed[15]) is bool
+    object.__setattr__(candidate, "_witness", changed)
+    assert type(candidate.event_count) is int and candidate.event_count == 0
+    assert candidate._canonical == before_bytes
+    assert candidate._seal == seal
+    assert candidate.cash == DEFAULT_OPENING_CASH and candidate.positions == ()
+
+    _assert_saved_native_witness_rejections(
+        monkeypatch,
+        (
+            ("canonical", candidate.canonical_bytes),
+            ("equality_left", lambda: candidate == before),
+            ("equality_right", lambda: before == candidate),
+            ("check", lambda: api.AccountingInvariant.check(candidate, event, after)),
+            ("NAV", lambda: api.NAVCalculator().compute(candidate, (), nav_policy)),
+        ),
+    )
+    assert candidate._canonical == before_bytes
+    assert candidate._seal == seal
+    assert before.canonical_bytes() == before_bytes
+    assert ledger.balance().canonical_bytes() == owner_bytes
+    assert tuple(item.canonical_bytes() for item in ledger.events) == history_bytes
+
+
 def test_returned_balance_nested_obligation_mutation_is_isolated() -> None:
     api = _bt03_api()
 
