@@ -1428,6 +1428,7 @@ def test_archived_lease_capacity_reaches_6400_and_rejects_next_without_mutation(
     ).hexdigest()
     completed_files = _filesystem_snapshot(state / "events")
     archives_before = _filesystem_snapshot(archive)
+    assert completed["lease_id"] not in archives_before
 
     started = _acquire(
         lease,
@@ -1442,11 +1443,12 @@ def test_archived_lease_capacity_reaches_6400_and_rejects_next_without_mutation(
     archived_completed = _filesystem_snapshot(archive / completed["lease_id"])
     assert archived_completed == completed_files
     archives_after = _filesystem_snapshot(archive)
+    assert archives_after[completed["lease_id"]] == ("directory", 0o700, None)
     archived_prefix = f"{completed['lease_id']}/"
     assert {
         path: value
         for path, value in archives_after.items()
-        if not path.startswith(archived_prefix)
+        if path != completed["lease_id"] and not path.startswith(archived_prefix)
     } == archives_before
 
     exported_after = lease.export_evidence(
@@ -1534,6 +1536,7 @@ def test_hostile_archive_after_64_remains_rejected_without_reflection_or_mutatio
     archive = state / "archive"
     hostile = archive / lease_ids[-1]
     canary = "SECRET-LATE-ARCHIVE-CANARY"
+    outside: Path | None = None
 
     if mutation == "corrupt":
         marker = hostile / "00000002.commit"
@@ -1562,7 +1565,7 @@ def test_hostile_archive_after_64_remains_rejected_without_reflection_or_mutatio
         event_path.symlink_to(outside)
 
     before = _filesystem_snapshot(state)
-    with pytest.raises(lease.WriterLeaseError):
+    with pytest.raises(lease.WriterLeaseError) as raised:
         _acquire(
             lease,
             primary,
@@ -1572,7 +1575,11 @@ def test_hostile_archive_after_64_remains_rejected_without_reflection_or_mutatio
             session_ref="2" * 64,
         )
     captured = capsys.readouterr()
+    assert canary not in str(raised.value)
+    assert canary not in repr(raised.value)
     assert canary not in f"{captured.out}\n{captured.err}"
+    if outside is not None:
+        assert outside.read_text(encoding="ascii") == canary
     assert _filesystem_snapshot(state) == before
     assert not (state / "active.json").exists()
     assert not (state / "transition.lock").exists()
