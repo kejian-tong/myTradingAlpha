@@ -2697,7 +2697,11 @@ def test_calendar_receipt_order_is_preserved_without_rewriting_economic_time() -
         bt02, case, quantity=D("1"), plan_id="plan-late-receipt"
     )
     second_intent = bt02_fixtures._intent(
-        bt02, case, quantity=D("1"), plan_id="plan-earlier-receipt"
+        bt02,
+        case,
+        bar=earlier_receipt.bar,
+        quantity=D("1"),
+        plan_id="plan-earlier-receipt",
     )
     policy = _policy(bt02, commission_per_share=D("0"), order_minimum=D("0"))
     first_fill = _make_fill(
@@ -2981,3 +2985,333 @@ def test_invariant_checker_rejects_forged_transition_and_has_fixed_diagnostics()
     assert "invariant-good-fill" not in str(error)
     assert "inst-survivor" not in str(error)
     assert _snapshot(ledger)[0] == after
+
+
+def test_genuine_event_retained_charge_cannot_be_understated() -> None:
+    api = _bt03_api()
+    case = _case()
+    ledger = _new_ledger(
+        api,
+        case,
+        opening_cash=D("100"),
+        opening_time=OPENING_TIME,
+        resolution_cutoff=RESOLUTION_CUTOFF,
+    )
+    event = _obligation_event(
+        api,
+        ledger,
+        event_id="retained-charge-create",
+        kind="receivable_create",
+        obligation_id="retained-charge-claim",
+        amount=D("3"),
+        economic_time=EVENT_ECONOMIC_TIME,
+        observed_at=EVENT_OBSERVED_AT,
+        due_at=EVENT_OBSERVED_AT + timedelta(days=1),
+    )
+    valid_retry = _obligation_event(
+        api,
+        ledger,
+        event_id="retained-charge-create",
+        kind="receivable_create",
+        obligation_id="retained-charge-claim",
+        amount=D("3"),
+        economic_time=EVENT_ECONOMIC_TIME,
+        observed_at=EVENT_OBSERVED_AT,
+        due_at=EVENT_OBSERVED_AT + timedelta(days=1),
+    )
+    event_bytes = event.canonical_bytes()
+    retained_charge = event._retained_size
+    assert type(retained_charge) is int
+    assert retained_charge > len(event_bytes)
+    assert valid_retry.canonical_bytes() == event_bytes
+
+    accepted = ledger.append(event)
+    assert accepted.event_count == 1
+    assert accepted.cash == D("100")
+    assert accepted.receivables == D("3")
+    accepted_snapshot = _snapshot(ledger)
+    assert ledger.append(valid_retry) == accepted
+    assert _snapshot(ledger) == accepted_snapshot
+    assert ledger.events[0]._retained_size == retained_charge
+
+    object.__setattr__(event, "_retained_size", len(event_bytes))
+    assert event.canonical_bytes() == event_bytes
+    assert _snapshot(ledger) == accepted_snapshot
+    assert ledger.events[0]._retained_size == retained_charge
+    _expect_rejection(lambda: ledger.append(event))
+    assert _snapshot(ledger) == accepted_snapshot
+    assert ledger.events[0]._retained_size == retained_charge
+
+    append_ledger = _new_ledger(
+        api,
+        case,
+        opening_cash=D("100"),
+        opening_time=OPENING_TIME,
+        resolution_cutoff=RESOLUTION_CUTOFF,
+    )
+    append_before = _snapshot(append_ledger)
+    _expect_rejection(lambda: append_ledger.append(event))
+    assert _snapshot(append_ledger) == append_before
+
+    replay_ledger = _new_ledger(
+        api,
+        case,
+        opening_cash=D("100"),
+        opening_time=OPENING_TIME,
+        resolution_cutoff=RESOLUTION_CUTOFF,
+    )
+    replay_before = _snapshot(replay_ledger)
+    _expect_rejection(lambda: replay_ledger.replay((event,)))
+    assert _snapshot(replay_ledger) == replay_before
+
+
+def test_genuine_balance_rejects_nested_hostiles_before_protocols() -> None:
+    api = _bt03_api()
+    bt02 = bt02_fixtures._bt02_api()
+    case = _case()
+    outcome = bt02_fixtures._outcome(bt02, case)
+    ledger = _new_ledger(api, case, opening_cash=D("2000"))
+    before = ledger.balance()
+    obligation = _obligation_event(
+        api,
+        ledger,
+        event_id="balance-hostile-claim-create",
+        kind="receivable_create",
+        obligation_id="balance-hostile-claim",
+        amount=D("10"),
+        economic_time=EVENT_ECONOMIC_TIME,
+        observed_at=EVENT_OBSERVED_AT,
+        due_at=case.bundle.calendar.session(case.binding.next_session.session_date).close_at,
+    )
+    after_obligation = ledger.append(obligation)
+    assert api.AccountingInvariant.check(before, obligation, after_obligation) is None
+
+    intent = bt02_fixtures._intent(
+        bt02, case, bar=outcome.bar, quantity=D("1"), plan_id="balance-hostile-fill"
+    )
+    policy = _policy(bt02, commission_per_share=ZERO, order_minimum=ZERO)
+    fill = _make_fill(bt02, case, intent=intent, outcome=outcome, policy=policy)
+    fill_event = _fill_event(
+        api,
+        ledger,
+        intent=intent,
+        fill=fill,
+        case=case,
+        outcome=outcome,
+        policy=policy,
+        event_id="balance-hostile-fill-event",
+    )
+    genuine_balance = ledger.append(fill_event)
+    nav_policy = _accounting_policy(
+        api,
+        case,
+        outcome,
+        valuation_cutoff=fill.received_at,
+        archive_cutoff=fill.received_at,
+    )
+    mark = _mark(api, case, outcome)
+    good_nav = api.NAVCalculator().compute(genuine_balance, (mark,), nav_policy)
+    assert _result_status(good_nav) == "available"
+    assert good_nav.value == D("2010")
+
+    owner_snapshot = _snapshot(ledger)
+    canary = "bt03-balance-canary-secret"
+    callbacks: list[str] = []
+
+    def invoke(name: str) -> None:
+        callbacks.append(name)
+        raise RuntimeError(canary)
+
+    class HostileDecimal(D):
+        def as_tuple(self) -> Any:
+            invoke("decimal.as_tuple")
+
+        def __format__(self, format_spec: str) -> str:
+            invoke("decimal.format")
+
+        def __repr__(self) -> str:
+            invoke("decimal.repr")
+
+        def __str__(self) -> str:
+            invoke("decimal.str")
+
+    class HostileIterable:
+        def __iter__(self) -> Any:
+            invoke("iterable.iter")
+
+        def __eq__(self, other: object) -> bool:
+            invoke("iterable.eq")
+
+        def __repr__(self) -> str:
+            invoke("iterable.repr")
+
+        def __str__(self) -> str:
+            invoke("iterable.str")
+
+    class HostileText(str):
+        def __eq__(self, other: object) -> bool:
+            invoke("text.eq")
+
+        def __hash__(self) -> int:
+            invoke("text.hash")
+
+        def __repr__(self) -> str:
+            invoke("text.repr")
+
+        def __str__(self) -> str:
+            invoke("text.str")
+
+    def tamper(balance: Any, field: str, value: object) -> Any:
+        candidate = copy.copy(balance)
+        assert type(candidate) is api.LedgerBalance
+        assert candidate is not balance
+        object.__setattr__(candidate, field, value)
+        return candidate
+
+    def reject_without_protocol(action: Callable[[], object]) -> BaseException:
+        error = _expect_rejection(action)
+        exposed: list[str] = []
+        pending = [error]
+        seen: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            exposed.extend((str(current), repr(current), repr(current.args)))
+            notes = getattr(current, "__notes__", ())
+            if type(notes) in (tuple, list):
+                exposed.extend(str(note) for note in notes)
+            for attribute in ("__cause__", "__context__"):
+                chained = getattr(current, attribute, None)
+                if chained is not None:
+                    pending.append(chained)
+        assert all(canary not in text for text in exposed)
+        assert callbacks == []
+        return error
+
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+
+        hostile_decimal = tamper(genuine_balance, "cash", HostileDecimal("1900"))
+        reject_without_protocol(lambda: hostile_decimal.canonical_bytes())
+
+        hostile_positions = tamper(genuine_balance, "positions", HostileIterable())
+        reject_without_protocol(lambda: hostile_positions == genuine_balance)
+
+        hostile_obligations = tamper(genuine_balance, "obligations", HostileIterable())
+        reject_without_protocol(lambda: hostile_obligations.canonical_bytes())
+
+        hostile_position_id = tamper(
+            genuine_balance,
+            "positions",
+            ((HostileText("inst-survivor"), D("1")),),
+        )
+        reject_without_protocol(
+            lambda: api.NAVCalculator().compute(hostile_position_id, (mark,), nav_policy)
+        )
+
+        hostile_saved_witness = tamper(
+            genuine_balance,
+            "prefix_hashes",
+            (HostileText(genuine_balance.prefix_hashes[-1]),),
+        )
+        reject_without_protocol(lambda: hostile_saved_witness.canonical_bytes())
+        reject_without_protocol(lambda: hostile_saved_witness == genuine_balance)
+        reject_without_protocol(lambda: genuine_balance == hostile_saved_witness)
+
+        pathological_exponent = tamper(
+            after_obligation,
+            "cash",
+            D((0, (1,), 999_999_999)),
+        )
+        reject_without_protocol(
+            lambda: api.AccountingInvariant.check(before, obligation, pathological_exponent)
+        )
+        reject_without_protocol(lambda: pathological_exponent.canonical_bytes())
+
+    assert observed == []
+    assert _snapshot(ledger) == owner_snapshot
+
+
+def test_returned_balance_nested_obligation_mutation_is_isolated() -> None:
+    api = _bt03_api()
+
+    expected_ledger, expected_event = _golden_ledger(api)
+    expected_balance = expected_ledger.append(expected_event)
+    expected_snapshot = _snapshot(expected_ledger)
+    expected_balance_bytes = expected_balance.canonical_bytes()
+    expected_event_bytes = tuple(event.canonical_bytes() for event in expected_ledger.events)
+    assert expected_balance.event_count == 1
+    assert expected_balance.obligations[0].amount_remaining == D("3")
+
+    ledger, event = _golden_ledger(api)
+    accepted_balance = ledger.append(event)
+    assert accepted_balance.canonical_bytes() == expected_balance_bytes
+    assert _snapshot(ledger) == expected_snapshot
+
+    returned_balance = ledger.balance()
+    assert returned_balance.canonical_bytes() == expected_balance_bytes
+    deep_copy = copy.deepcopy(returned_balance)
+    object.__setattr__(deep_copy.obligations[0], "amount_remaining", D("2"))
+    _expect_rejection(lambda: deep_copy.canonical_bytes())
+    assert returned_balance.canonical_bytes() == expected_balance_bytes
+
+    object.__setattr__(returned_balance.obligations[0], "amount_remaining", D("2"))
+    _expect_rejection(lambda: returned_balance.canonical_bytes())
+    _expect_rejection(lambda: returned_balance == expected_balance)
+
+    current = ledger.balance()
+    assert current.canonical_bytes() == expected_balance_bytes
+    assert current == expected_balance
+    assert tuple(item.canonical_bytes() for item in ledger.events) == expected_event_bytes
+    assert _snapshot(ledger) == expected_snapshot
+
+
+def test_balance_rejects_rewritten_earlier_prefix_with_unchanged_tail() -> None:
+    api = _bt03_api()
+    ledger, create_event = _golden_ledger(api)
+    after_create = ledger.append(create_event)
+    due_at = datetime(2024, 7, 2, 0, 0, tzinfo=UTC)
+    settle_event = _obligation_event(
+        api,
+        ledger,
+        event_id="claim-settle-partial-1",
+        kind="receivable_settle",
+        obligation_id="claim-1",
+        amount=D("1"),
+        economic_time=due_at,
+        observed_at=due_at,
+        due_at=due_at,
+    )
+    after_settlement = ledger.append(settle_event)
+    assert api.AccountingInvariant.check(after_create, settle_event, after_settlement) is None
+    assert after_settlement.event_count == 2
+    assert len(after_settlement.prefix_hashes) == 2
+    assert after_settlement.receivables == D("2")
+
+    owner_snapshot = _snapshot(ledger)
+    owner_bytes = after_settlement.canonical_bytes()
+    original_prefixes = after_settlement.prefix_hashes
+    altered_head = "sha256:" + "0" * 64
+    assert altered_head != original_prefixes[0]
+    altered_prefixes = (altered_head, original_prefixes[-1])
+    assert len(altered_prefixes) == len(original_prefixes)
+    assert altered_prefixes[-1] == original_prefixes[-1]
+
+    tampered = copy.copy(after_settlement)
+    object.__setattr__(tampered, "prefix_hashes", altered_prefixes)
+    object.__setattr__(tampered, "_prefix_witness", altered_prefixes)
+    assert tampered.event_count == after_settlement.event_count
+    assert tampered.prefix_hashes[-1] == after_settlement.prefix_hashes[-1]
+
+    _expect_rejection(lambda: tampered.canonical_bytes())
+    _expect_rejection(lambda: tampered == after_settlement)
+    _expect_rejection(
+        lambda: api.AccountingInvariant.check(after_create, settle_event, tampered)
+    )
+
+    current = ledger.balance()
+    assert current.canonical_bytes() == owner_bytes
+    assert current == after_settlement
+    assert _snapshot(ledger) == owner_snapshot
