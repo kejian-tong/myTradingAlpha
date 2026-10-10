@@ -20,7 +20,7 @@ import zoneinfo
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from decimal import ROUND_DOWN, Decimal, Inexact, Rounded, localcontext
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, Inexact, Rounded, localcontext
 from threading import Event, Lock, Thread
 from types import SimpleNamespace
 from typing import Any
@@ -2317,6 +2317,244 @@ def test_fixed_decimal_policy_ignores_ambient_context_and_traps() -> None:
         )
         unusual.append(unusual_event)
         assert _snapshot(unusual) == _snapshot(ordinary)
+
+
+def _prepare_context_sale(
+    case: SimpleNamespace,
+    outcome: Any,
+    buy_quantity: Decimal, sell_quantity: Decimal, lot_size: Decimal
+) -> SimpleNamespace:
+    """Prepare a genuine sale after one public buy, without posting the sale."""
+
+    api = _bt03_api()
+    bt02 = bt02_fixtures._bt02_api()
+    policy = _policy(
+        bt02, half_spread_bps=D("30"), slippage_bps=D("30"), lot_size=lot_size
+    )
+    ledger = _new_ledger(api, case)
+    buy_intent = bt02_fixtures._intent(bt02, case, quantity=buy_quantity)
+    buy_fill = _make_fill(
+        bt02, case, intent=buy_intent, outcome=outcome, policy=policy
+    )
+    buy_event = _fill_event(
+        api, ledger, intent=buy_intent, fill=buy_fill, case=case,
+        outcome=outcome, policy=policy, event_id="context-sale-buy",
+    )
+    before_sale = ledger.append(buy_event)
+    sell_intent = bt02_fixtures._intent(
+        bt02, case, side="sell", quantity=sell_quantity, plan_id="plan-context-sale"
+    )
+    sell_fill = _make_fill(
+        bt02, case, intent=sell_intent, outcome=outcome, policy=policy,
+        cash=before_sale.cash, shares=buy_quantity,
+    )
+    sell_event = _fill_event(
+        api, ledger, intent=sell_intent, fill=sell_fill, case=case,
+        outcome=outcome, policy=policy, event_id="context-sale-sell",
+    )
+    assert buy_fill.quantity == buy_quantity
+    assert sell_fill.quantity == sell_quantity
+    assert buy_fill.price == D("100.6")
+    assert sell_fill.price == D("99.4")
+    return SimpleNamespace(
+        api=api, case=case, outcome=outcome, policy=policy, ledger=ledger,
+        before_sale=before_sale, buy_event=buy_event, sell_event=sell_event,
+        contracts=(buy_intent, buy_fill, sell_intent, sell_fill),
+    )
+
+
+def _context_sale_sources(prepared: SimpleNamespace) -> tuple[object, ...]:
+    """Read canonical and exact native seals from genuine, unmodified sources."""
+
+    from mytradingalpha.contracts.orders import _contract_storage_fingerprint
+
+    return (
+        prepared.case.binding._sealed_source_json,
+        prepared.case.binding._sealed_storage_bytes,
+        prepared.outcome.canonical_bytes(),
+        prepared.outcome._sealed_storage,
+        prepared.policy.canonical_bytes(),
+        tuple(
+            (name, value.as_tuple())
+            for name, value in prepared.policy.model_dump(mode="python").items()
+            if type(value) is Decimal
+        ),
+        tuple(
+            (value.canonical_bytes(), _contract_storage_fingerprint(value, type(value)))
+            for value in prepared.contracts
+        ),
+        prepared.buy_event.canonical_bytes(),
+        prepared.sell_event.canonical_bytes(),
+    )
+
+
+def _context_sale_snapshot(ledger: Any) -> tuple[object, ...]:
+    balance, events = _snapshot(ledger)
+    # canonical_bytes verifies the saved witness against every current native field.
+    return balance, balance.canonical_bytes(), balance._witness, events
+
+
+@pytest.mark.parametrize("path", ("append", "replay", "invariant"))
+@pytest.mark.parametrize("rounding", (ROUND_DOWN, ROUND_UP))
+@pytest.mark.parametrize("traps_enabled", (False, True), ids=("unarmed", "armed"))
+@pytest.mark.parametrize(
+    ("buy_quantity", "sell_quantity", "lot_size", "expected_cash", "expected_shares", "expected_fees"),
+    (
+        (D("10"), D("4"), D("1"), D("1390.20"), D("6"), D("1.40")),
+        (D("10.125"), D("4.125"), D("0.001"), D("1390.0300"), D("6.000"), D("1.42")),
+    ),
+    ids=("integer", "fractional"),
+)
+def test_sell_economics_and_public_checker_ignore_ambient_decimal_context(
+    path: str,
+    rounding: str,
+    traps_enabled: bool,
+    buy_quantity: Decimal,
+    sell_quantity: Decimal,
+    lot_size: Decimal,
+    expected_cash: Decimal,
+    expected_shares: Decimal,
+    expected_fees: Decimal,
+) -> None:
+    bt02 = bt02_fixtures._bt02_api()
+    case = _case()
+    outcome = bt02_fixtures._outcome(bt02, case)
+    ordinary = _prepare_context_sale(case, outcome, buy_quantity, sell_quantity, lot_size)
+    ordinary_before = _context_sale_snapshot(ordinary.ledger)
+    ordinary_after = ordinary.ledger.append(ordinary.sell_event)
+    assert ordinary_after.cash == expected_cash
+    assert ordinary_after.positions == (("inst-survivor", expected_shares),)
+    assert ordinary_after.total_fees == expected_fees
+    assert ordinary.api.AccountingInvariant.check(
+        ordinary.before_sale, ordinary.sell_event, ordinary_after
+    ) is None
+    expected_snapshot = _context_sale_snapshot(ordinary.ledger)
+    expected_sources = _context_sale_sources(ordinary)
+
+    with localcontext() as ambient:
+        ambient.prec = 2
+        ambient.rounding = rounding
+        ambient.traps[Inexact] = traps_enabled
+        ambient.traps[Rounded] = traps_enabled
+        ambient.clear_flags()
+        flags_before = ambient.flags.copy()
+        # Intent construction, simulation, contextual validation and event capture
+        # all run under the same adverse context as the requested public operation.
+        unusual = _prepare_context_sale(case, outcome, buy_quantity, sell_quantity, lot_size)
+        unusual_before = _context_sale_snapshot(unusual.ledger)
+        assert unusual_before == ordinary_before
+        assert _context_sale_sources(unusual) == expected_sources
+        assert ambient.flags == flags_before
+
+        if path == "invariant":
+            assert unusual.api.AccountingInvariant.check(
+                ordinary.before_sale, ordinary.sell_event, ordinary_after
+            ) is None
+            assert _context_sale_snapshot(unusual.ledger) == unusual_before
+        else:
+            owner = unusual.ledger if path == "append" else _new_ledger(unusual.api, unusual.case)
+            after = (
+                owner.append(unusual.sell_event)
+                if path == "append"
+                else owner.replay((unusual.buy_event, unusual.sell_event))
+            )
+            assert after.cash == expected_cash
+            assert after.positions == (("inst-survivor", expected_shares),)
+            assert after.total_fees == expected_fees
+            assert _context_sale_snapshot(owner) == expected_snapshot
+            assert after == ordinary_after
+            assert after.canonical_bytes() == ordinary_after.canonical_bytes()
+            assert after._witness == ordinary_after._witness
+            assert after.prefix_hashes == ordinary_after.prefix_hashes
+            # A retry of either event returns the current exact economics without
+            # rewriting the original canonical event, sequence or prefix.
+            assert owner.append(unusual.buy_event) == ordinary_after
+            assert owner.append(unusual.sell_event) == ordinary_after
+            assert _context_sale_snapshot(owner) == expected_snapshot
+            if path == "replay":
+                assert _context_sale_snapshot(unusual.ledger) == unusual_before
+
+        assert _context_sale_snapshot(ordinary.ledger) == expected_snapshot
+        assert _context_sale_sources(ordinary) == expected_sources
+        assert _context_sale_sources(unusual) == expected_sources
+        assert ambient.flags == flags_before
+
+
+@pytest.mark.parametrize("opening_offset_us", (-1, 0, 1))
+def test_empty_nav_cannot_include_opening_capital_after_target_close(
+    opening_offset_us: int,
+) -> None:
+    api = _bt03_api()
+    bt02 = bt02_fixtures._bt02_api()
+    case = _case()
+    outcome = bt02_fixtures._outcome(bt02, case)
+    target_close = case.binding.next_session.close_at
+    assert target_close == datetime(2024, 7, 3, 17, 0, tzinfo=UTC)
+    ledger = _new_ledger(
+        api, case, opening_time=target_close + timedelta(microseconds=opening_offset_us),
+        resolution_cutoff=target_close + timedelta(hours=1),
+    )
+    before = _snapshot(ledger)
+    balance = ledger.balance()
+    assert balance.event_count == 0
+    assert balance.latest_economic_time is None
+    assert balance.latest_observation_time is None
+    result = api.NAVCalculator().compute(
+        balance, (), _accounting_policy(
+            api, case, outcome, valuation_cutoff=target_close + timedelta(minutes=3),
+            archive_cutoff=target_close + timedelta(minutes=3),
+        ),
+    )
+    if opening_offset_us <= 0:
+        assert _result_status(result) == "available"
+        assert result.value == D("2000")
+        assert result.run_valid is True
+        assert _result_reason(result) is None
+    else:
+        assert _result_status(result) == "unavailable"
+        assert result.value is None
+        assert result.run_valid is False
+        assert _result_reason(result) == "target_before_opening_state"
+    assert _snapshot(ledger) == before
+
+
+@pytest.mark.parametrize("cutoff_name", ("valuation_cutoff", "archive_cutoff"))
+@pytest.mark.parametrize(
+    ("opening_offset_us", "cutoff_offset_us"),
+    ((-1, -2), (-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1)),
+)
+def test_empty_nav_cutoffs_cover_opening_and_target_boundaries_independently(
+    cutoff_name: str, opening_offset_us: int, cutoff_offset_us: int,
+) -> None:
+    api = _bt03_api()
+    bt02 = bt02_fixtures._bt02_api()
+    case = _case()
+    outcome = bt02_fixtures._outcome(bt02, case)
+    target_close = case.binding.next_session.close_at
+    ledger = _new_ledger(
+        api, case, opening_time=target_close + timedelta(microseconds=opening_offset_us),
+        resolution_cutoff=target_close + timedelta(hours=1),
+    )
+    before = _snapshot(ledger)
+    cutoffs = {
+        "valuation_cutoff": target_close + timedelta(minutes=3),
+        "archive_cutoff": target_close + timedelta(minutes=3),
+    }
+    cutoffs[cutoff_name] = target_close + timedelta(microseconds=cutoff_offset_us)
+    result = api.NAVCalculator().compute(
+        ledger.balance(), (), _accounting_policy(api, case, outcome, **cutoffs)
+    )
+    if cutoff_offset_us < 0:
+        assert _result_status(result) == "unavailable"
+        assert result.value is None
+        assert result.run_valid is False
+        assert _result_reason(result) == "target_after_cutoff"
+    else:
+        assert _result_status(result) == "available"
+        assert result.value == D("2000")
+        assert result.run_valid is True
+        assert _result_reason(result) is None
+    assert _snapshot(ledger) == before
 
 
 def test_hostile_inputs_do_not_run_callbacks_or_leak_canary_diagnostics() -> None:
