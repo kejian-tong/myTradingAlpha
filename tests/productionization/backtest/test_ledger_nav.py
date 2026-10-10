@@ -3330,7 +3330,8 @@ def test_genuine_event_saved_native_zero_cannot_alias_false(
     assert saved == changed  # Python equality conceals the native-type difference.
     assert type(changed[3]) is bool
     object.__setattr__(event, "_storage_witness", changed)
-    assert type(event.sequence) is int and event.sequence == 0
+    sequence = object.__getattribute__(event, "_sequence")
+    assert type(sequence) is int and sequence == 0
     assert event._canonical == event_bytes
     assert event._storage_bytes == storage_bytes
     assert event._seal == seal
