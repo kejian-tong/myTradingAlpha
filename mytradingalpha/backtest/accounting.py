@@ -30,7 +30,7 @@ def _expected_positions(
 ) -> tuple[tuple[str, Decimal], ...]:
     positions = dict(before.positions)
     current = positions.get(instrument, Decimal(0))
-    signed = quantity if side == "buy" else -quantity
+    signed = quantity if side == "buy" else quantity.copy_negate()
     result = _decimal_checked(_exact_decimal(lambda: current + signed), "holding", nonnegative=True)
     if result == 0:
         positions.pop(instrument, None)
@@ -197,7 +197,7 @@ class AccountingInvariant:
             price = _decimal_checked(object.__getattribute__(fill, "price"), "execution", positive=True)
             fee = _decimal_checked(object.__getattribute__(fill, "fee"), "money", nonnegative=True)
             notional = _exact_decimal(lambda: quantity * price)
-            signed = notional if side == "buy" else -notional
+            signed = notional if side == "buy" else notional.copy_negate()
             expected_cash = _decimal_checked(_exact_decimal(lambda: before.cash - signed - fee), "money", nonnegative=True)
             expected_positions = _expected_positions(before, instrument, side, quantity)
             expected_fees = _decimal_checked(_exact_decimal(lambda: before.total_fees + fee), "money", nonnegative=True)

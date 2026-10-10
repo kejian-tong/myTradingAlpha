@@ -23,9 +23,9 @@ immutable detail remains in commits, pull requests, and workflow runs.
 
 ## BT-03 current recovery
 
-- PR99 JIT6094290872; current RED `e4cf5d150c544aa08149f5cd606b93e5f4ab4295`/lease6096371759; initial RED/lease6094291082. Base/main: `e0025b3990334d48664a4caf3bef6839421ef586`. GREEN/floor/review/CI/Master gate pending.
+- PR99 JIT6094290872; current RED `6ff2f9c6ae008bb7363f542b8d20a67ab21adc12`/lease6098196615; initial RED/lease6094291082. Base/main: `e0025b3990334d48664a4caf3bef6839421ef586`. H1/M1 review6097264525; final GREEN/review/CI/Master gate pending.
 - Critical initial route `luna_sol_xhigh`: `normal_implementer` / GPT-6 Luna / max; controlling `reviewer_xhigh` / GPT-6.1 Sol / xhigh; Master configured Sol/xhigh; runtime attestation unavailable.
-- Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; two stopped GREEN contexts and 5-second reentry timeout. Latest stopped evidence6095121331.
+- Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; recovery6095121331; prior reentry timeout preserved.
 - Scope: internal ledger/NAV/accounting only. Branch `refs/heads/codex/bt-03-ledger-nav`; separate ordinary RED/GREEN leases; current capacity6400 fails closed, preserve evidence. Aborted original RED remains historical; no bootstrap exception applies here.
 - Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 integrated goldens pass. No PAPER/live operation, Phase04, release, validated-alpha or promotion authorization; explicit human PAPER/live gates remain mandatory and unexercised.
 

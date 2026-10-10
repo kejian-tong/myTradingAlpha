@@ -87,7 +87,7 @@ def test_operational_state_tracks_authorized_bt03_and_completed_bt02_bt01_recove
     assert "Critical initial route `luna_sol_xhigh`: `normal_implementer` / GPT-6 Luna / max" in current_recovery
     assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
     assert "Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
-    assert "e4cf5d150c544aa08149f5cd606b93e5f4ab4295" in current_recovery
+    assert "6ff2f9c6ae008bb7363f542b8d20a67ab21adc12" in current_recovery
 
     bt02_recovery = state.split("## BT-02 completed recovery", maxsplit=1)[-1].split(
         "## BT-01 completed recovery", maxsplit=1

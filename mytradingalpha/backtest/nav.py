@@ -394,9 +394,11 @@ class NAVCalculator:
             return _unavailable("binding_mismatch")
         if balance.currency != currency:
             return _unavailable("currency_mismatch")
+        target_close = object.__getattribute__(target_session, "close_at")
+        if target_close < balance.opening_time:
+            return _unavailable("target_before_opening_state")
         if balance.latest_economic_time is not None and object.__getattribute__(target_session, "close_at") < balance.latest_economic_time:
             return _unavailable("target_before_economic_state")
-        target_close = object.__getattribute__(target_session, "close_at")
         if valuation_cutoff < target_close or archive_cutoff < target_close:
             return _unavailable("target_after_cutoff")
         if balance.latest_observation_time is not None and valuation_cutoff < balance.latest_observation_time:

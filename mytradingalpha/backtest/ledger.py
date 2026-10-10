@@ -1804,11 +1804,11 @@ def _apply_fill(
         _reject("accounting_invalid")
     price = _decimal_checked(object.__getattribute__(checked, "price"), "execution", positive=True)
     notional = _exact_decimal(lambda: quantity * price)
-    signed = notional if object.__getattribute__(checked, "side") == "buy" else -notional
+    signed = notional if object.__getattribute__(checked, "side") == "buy" else notional.copy_negate()
     cash = _exact_decimal(lambda: state.cash - signed - incremental_fee)
     cash = _decimal_checked(cash, "money", nonnegative=True)
     before_position = positions.get(instrument, _ZERO)
-    delta_quantity = quantity if object.__getattribute__(checked, "side") == "buy" else -quantity
+    delta_quantity = quantity if object.__getattribute__(checked, "side") == "buy" else quantity.copy_negate()
     after_position = _decimal_checked(_exact_decimal(lambda: before_position + delta_quantity), "holding", nonnegative=True)
     if after_position == 0:
         positions.pop(instrument, None)
