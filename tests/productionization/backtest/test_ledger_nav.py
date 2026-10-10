@@ -1420,47 +1420,124 @@ def test_nav_requires_complete_marks_and_respects_cutoff_and_latest_receipt() ->
 
 
 def test_nav_uses_sealed_instrument_currency_and_requires_one_mark_per_holding() -> None:
-    api = _bt03_api()
     bt02 = bt02_fixtures._bt02_api()
-    base = pit_fixtures._bundle()
-    instruments = tuple(
-        instrument.model_copy(update={"currency": "EUR"})
-        if instrument.instrument_id == "inst-survivor"
-        else instrument
-        for instrument in base.instruments
-    )
-    euro_bundle = pit_fixtures._bundle(instruments=instruments)
-    case = bt02_fixtures._case_for_bundle(
-        bundle=euro_bundle,
-        run_id="run-bt03-euro-source",
-        variant_id="variant-bt03-euro-source",
-        decision_time="2024-07-02T20:00:00Z",
-        earliest_execution_time="2024-07-03T13:30:00Z",
-    )
-    outcome = bt02_fixtures._outcome(bt02, case)
-    intent = bt02_fixtures._intent(bt02, case, quantity=D("1"))
-    policy = _policy(bt02, commission_per_share=D("0"), order_minimum=D("0"))
-    fill = _make_fill(bt02, case, intent=intent, outcome=outcome, policy=policy)
-    ledger = _new_ledger(api, case, opening_cash=D("1000"))
-    before = _snapshot(ledger)
-    with pytest.raises((ValueError, TypeError)):
-        _fill_event(
-            api,
-            ledger,
-            intent=intent,
-            fill=fill,
-            case=case,
-            outcome=outcome,
-            policy=policy,
-            event_id="sealed-currency-mismatch",
-        )
-    assert _snapshot(ledger) == before
-
     usd_case = _case()
     usd_outcome = bt02_fixtures._outcome(bt02, usd_case)
     usd_intent = bt02_fixtures._intent(bt02, usd_case, quantity=D("1"))
     usd_policy = _policy(bt02, commission_per_share=D("0"), order_minimum=D("0"))
-    usd_fill = _make_fill(bt02, usd_case, intent=usd_intent, outcome=usd_outcome, policy=usd_policy)
+    usd_fill = _make_fill(
+        bt02,
+        usd_case,
+        intent=usd_intent,
+        outcome=usd_outcome,
+        policy=usd_policy,
+    )
+    assert usd_fill.quantity == D("1")
+    assert usd_fill.fee == D("0")
+    bt02_fixtures._validate_fill_context(
+        bt02, usd_case, usd_fill, usd_intent, usd_outcome, usd_policy
+    )
+
+    bt01 = bt02_fixtures.bt01_fixtures
+    base = pit_fixtures._bundle(
+        cutoff=bt01.PRE_CLOSE_CUTOFF,
+        calendar=usd_case.bundle.calendar,
+    )
+    instrument_id = usd_case.envelope.quant.instrument_id
+    assert instrument_id == "inst-survivor"
+    instruments = tuple(
+        instrument.model_copy(update={"currency": "EUR"})
+        if instrument.instrument_id == instrument_id
+        else instrument
+        for instrument in base.instruments
+    )
+    euro_bundle = pit_fixtures._bundle(
+        cutoff=bt01.PRE_CLOSE_CUTOFF,
+        calendar=base.calendar,
+        instruments=instruments,
+    )
+    assert next(
+        instrument.currency
+        for instrument in usd_case.bundle.instruments
+        if instrument.instrument_id == instrument_id
+    ) == "USD"
+    assert next(
+        instrument.currency
+        for instrument in euro_bundle.instruments
+        if instrument.instrument_id == instrument_id
+    ) == "EUR"
+    usd_bundle_data = usd_case.bundle.model_dump(mode="python")
+    euro_bundle_data = euro_bundle.model_dump(mode="python")
+    usd_bundle_hash = usd_bundle_data.pop("bundle_hash", None)
+    euro_bundle_hash = euro_bundle_data.pop("bundle_hash", None)
+    for payload in (usd_bundle_data, euro_bundle_data):
+        for instrument in payload["instruments"]:
+            if instrument["instrument_id"] == instrument_id:
+                instrument["currency"] = "USD"
+    assert usd_bundle_data == euro_bundle_data
+    assert usd_bundle_hash != euro_bundle_hash
+
+    context, bundle, envelope = bt01._quant_only_inputs(
+        bundle=euro_bundle,
+        cutoff=bt01.PRE_CLOSE_CUTOFF,
+        base_currency="EUR",
+        run_id=usd_case.context.run_id,
+        variant_id=usd_case.context.variant_id,
+        decision_time=usd_case.context.decision_time.isoformat().replace("+00:00", "Z"),
+        earliest_execution_time=usd_case.context.earliest_execution_time.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        calendar_id=usd_case.context.calendar_id,
+    )
+    bt01_api = bt01._bt_api()
+    binding = bt01_api.SessionClock.bind(context, bundle, envelope)
+    events = bt01_api.BacktestRunner().run((binding,))
+    euro_case = SimpleNamespace(
+        context=context,
+        bundle=bundle,
+        envelope=envelope,
+        binding=binding,
+        decision=next(event for event in events if type(event).__name__ == "DecisionEvent"),
+        opportunity=next(
+            event for event in events if type(event).__name__ == "OpportunityEvent"
+        ),
+    )
+    euro_outcome = bt02_fixtures._outcome(bt02, euro_case)
+    assert euro_case.context.base_currency == "EUR"
+    assert euro_case.context.run_id == usd_case.context.run_id
+    assert euro_case.context.variant_id == usd_case.context.variant_id
+    assert euro_case.context.calendar_id == usd_case.context.calendar_id
+    assert euro_case.context.decision_time == usd_case.context.decision_time
+    assert euro_case.context.earliest_execution_time == usd_case.context.earliest_execution_time
+    assert euro_case.envelope.quant.instrument_id == usd_intent.instrument_id
+    assert euro_outcome.canonical_bytes() == usd_outcome.canonical_bytes()
+
+    with pytest.raises(bt02.OrderInputError) as rejected_fill:
+        bt02_fixtures._validate_fill_context(
+            bt02, euro_case, usd_fill, usd_intent, euro_outcome, usd_policy
+        )
+    assert getattr(
+        rejected_fill.value.reason_code,
+        "value",
+        rejected_fill.value.reason_code,
+    ) == "binding_mismatch"
+
+    api = _bt03_api()
+    euro_ledger = _new_ledger(api, euro_case, opening_cash=D("1000"))
+    before = _snapshot(euro_ledger)
+    with pytest.raises((ValueError, TypeError)):
+        _fill_event(
+            api,
+            euro_ledger,
+            intent=usd_intent,
+            fill=usd_fill,
+            case=euro_case,
+            outcome=euro_outcome,
+            policy=usd_policy,
+            event_id="sealed-currency-mismatch",
+        )
+    assert _snapshot(euro_ledger) == before
+
     usd_ledger = _new_ledger(api, usd_case, opening_cash=D("1000"))
     usd_event = _fill_event(
         api,
@@ -1473,6 +1550,45 @@ def test_nav_uses_sealed_instrument_currency_and_requires_one_mark_per_holding()
         event_id="one-covered-position",
     )
     balance = usd_ledger.append(usd_event)
+    receipt_cutoff = usd_fill.received_at
+    assert receipt_cutoff == datetime(2024, 7, 3, 17, 3, tzinfo=UTC)
+    usd_mark = _mark(api, usd_case, usd_outcome)
+    usd_nav_policy = _accounting_policy(
+        api,
+        usd_case,
+        usd_outcome,
+        valuation_cutoff=receipt_cutoff,
+        archive_cutoff=receipt_cutoff,
+        session_date=usd_outcome.bar.session_date,
+        currency="USD",
+        mark_source=usd_outcome.bar.manifest.source,
+        mark_revision=usd_outcome.bar.manifest.revision,
+    )
+    usd_nav = api.NAVCalculator().compute(balance, (usd_mark,), usd_nav_policy)
+    assert _result_status(usd_nav) == "available"
+    assert usd_nav.value is not None
+    assert usd_nav.value > ZERO
+    assert usd_nav.run_valid is True
+
+    euro_mark = _mark(api, euro_case, euro_outcome)
+    euro_nav_policy = _accounting_policy(
+        api,
+        euro_case,
+        euro_outcome,
+        valuation_cutoff=receipt_cutoff,
+        archive_cutoff=receipt_cutoff,
+        session_date=euro_outcome.bar.session_date,
+        currency="USD",
+        mark_source=euro_outcome.bar.manifest.source,
+        mark_revision=euro_outcome.bar.manifest.revision,
+    )
+    assert euro_nav_policy.valuation_cutoff >= receipt_cutoff
+    assert euro_nav_policy.archive_cutoff >= receipt_cutoff
+    euro_nav = api.NAVCalculator().compute(balance, (euro_mark,), euro_nav_policy)
+    assert _result_status(euro_nav) == "unavailable"
+    assert euro_nav.value is None
+    assert euro_nav.run_valid is False
+
     marks = (
         _mark(api, usd_case, usd_outcome),
         _mark(api, usd_case, usd_outcome),
