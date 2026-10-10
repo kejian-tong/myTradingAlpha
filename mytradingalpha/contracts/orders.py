@@ -331,15 +331,22 @@ class _StrictContract(BaseModel):
                 except Exception:
                     raise _schema_rejection() from None
 
-        def serialize_checked(value: object, inner: Any) -> object:
-            if type(value) is not cls:
-                raise PydanticSerializationError("BT-02 serialization rejected")
+        def serialize_checked(
+            value: object, inner: Any, info: core_schema.SerializationInfo,
+        ) -> object:
             try:
+                if (
+                    type(value) is not cls
+                    or info.include is not None
+                    or info.exclude is not None
+                    or info.context is not None
+                ):
+                    _reject("input_invalid")
                 payload = _contract_payload(value, cls, "input_invalid")
                 owned = cls.model_validate(payload)
+                return inner(owned)
             except Exception:
                 raise PydanticSerializationError("BT-02 serialization rejected") from None
-            return inner(owned)
 
         python_schema = core_schema.no_info_wrap_validator_function(validate_fixed, schema)
 
@@ -348,6 +355,7 @@ class _StrictContract(BaseModel):
             python_schema=python_schema,
             serialization=core_schema.wrap_serializer_function_ser_schema(
                 serialize_checked,
+                info_arg=True,
                 schema=schema,
             ),
         )
@@ -391,11 +399,41 @@ class _StrictContract(BaseModel):
     def model_validate_strings(cls, *_: object, **__: object) -> Any:
         _reject("input_invalid")
 
+    @staticmethod
+    def _dump_options(options: dict[str, object]) -> dict[str, object]:
+        """Own bounded scalar options; reject caller-controlled serializer hooks."""
+
+        optional_bools = ("by_alias", "polymorphic_serialization")
+        bools = (
+            "exclude_unset", "exclude_defaults", "exclude_none",
+            "exclude_computed_fields", "round_trip", "serialize_as_any",
+        )
+        none_only = ("include", "exclude", "context", "fallback")
+        owned = _owned_mapping(options, ("mode", "warnings", *optional_bools, *bools, *none_only))
+        for name, value in owned.items():
+            if name in none_only:
+                if value is not None:
+                    _reject("input_invalid")
+            elif name == "mode":
+                if type(value) is not str or value not in ("python", "json"):
+                    _reject("input_invalid")
+            elif name == "warnings":
+                if type(value) is not bool and (
+                    type(value) is not str or value not in ("none", "warn", "error")
+                ):
+                    _reject("input_invalid")
+            elif type(value) is not bool and not (name in optional_bools and value is None):
+                _reject("input_invalid")
+        return owned
+
     def model_dump(self, *args: object, **kwargs: object) -> dict[str, object]:
+        if args:
+            _reject("input_invalid")
+        options = _StrictContract._dump_options(kwargs)
         payload = _contract_payload(self, type(self), "input_invalid")
         try:
             checked = type(self).model_validate(payload)
-            return BaseModel.model_dump(checked, *args, **kwargs)  # type: ignore[return-value]
+            return BaseModel.model_dump(checked, **options)  # type: ignore[return-value]
         except OrderInputError:
             raise
         except Exception:
