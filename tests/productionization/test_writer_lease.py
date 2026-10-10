@@ -440,6 +440,128 @@ def _canonical(value: object) -> bytes:
     ).encode("ascii")
 
 
+def _completed_lane_template(
+    lease: ModuleType, primary: Path, base_sha: str
+) -> tuple[dict[str, Any], list[dict[str, Any]], bytes]:
+    acquired = _acquire(lease, primary, base_sha)
+    _verify(lease, primary, base_sha, acquired["lease_id"])
+    _release(lease, primary, base_sha, acquired["lease_id"])
+    common = Path(
+        _git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    )
+    state = _state_dir(common)
+    event_files = sorted((state / "events").glob("*.json"))
+    template = [json.loads(path.read_bytes()) for path in event_files]
+    assert [event["event_type"] for event in template] == ["acquire", "verify", "release"]
+    raw = lease.export_evidence(
+        repo_root=primary,
+        lease_id=acquired["lease_id"],
+        **_identity(base_sha, writer_lane_ref=acquired["writer_lane_ref"]),
+    )
+    assert type(raw) is bytes
+    assert lease.validate_evidence(raw)["lease_id"] == acquired["lease_id"]
+    return acquired, template, raw
+
+
+def _write_completed_archive_lane(
+    lane: Path, template: list[dict[str, Any]], identity: dict[str, str]
+) -> None:
+    lane.mkdir(mode=0o700)
+    os.chmod(lane, 0o700)
+    previous = ZERO_DIGEST
+    for sequence, source in enumerate(template):
+        event = dict(source)
+        event.update(identity)
+        event["sequence"] = sequence
+        event["previous_event_digest"] = previous
+        raw = _canonical(event)
+        event_path = lane / f"{sequence:08d}.json"
+        marker_path = lane / f"{sequence:08d}.commit"
+        event_path.write_bytes(raw)
+        marker = hashlib.sha256(raw).hexdigest().encode("ascii")
+        marker_path.write_bytes(marker)
+        os.chmod(event_path, 0o600)
+        os.chmod(marker_path, 0o600)
+        previous = hashlib.sha256(raw).hexdigest()
+
+
+def _seed_completed_archives(
+    state: Path,
+    template: list[dict[str, Any]],
+    count: int,
+    *,
+    excluded_lease_ids: set[str] | None = None,
+) -> list[str]:
+    assert template[-1]["event_type"] == "release"
+    archive = state / "archive"
+    if not archive.exists():
+        archive.mkdir(mode=0o700)
+        os.chmod(archive, 0o700)
+    excluded = set(excluded_lease_ids or ())
+    lease_ids: list[str] = []
+    candidate = 1
+    while len(lease_ids) < count:
+        lease_id = f"{candidate:064x}"
+        candidate += 1
+        if lease_id not in excluded:
+            lease_ids.append(lease_id)
+    source = template[0]
+    for index, lease_id in enumerate(lease_ids, start=1):
+        identity = {
+            "pr_id": f"HARNESS-CAP-{index:04d}",
+            "base_sha": source["base_sha"],
+            "writer_role": source["writer_role"],
+            "owner_ref": f"{index:064x}",
+            "session_ref": f"{index + count:064x}",
+            "lease_id": lease_id,
+            "branch_ref": source["branch_ref"],
+            "writer_lane_ref": source["writer_lane_ref"],
+        }
+        _write_completed_archive_lane(archive / lease_id, template, identity)
+    return lease_ids
+
+
+def _assert_completed_archives_valid(
+    lease: ModuleType, state: Path, expected_lease_ids: list[str]
+) -> None:
+    archive = state / "archive"
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o700
+    assert sorted(path.name for path in archive.iterdir()) == sorted(expected_lease_ids)
+    for lease_id in expected_lease_ids:
+        lane = archive / lease_id
+        assert stat.S_IMODE(lane.stat().st_mode) == 0o700
+        chain = lease._scan_events(lane)
+        assert chain
+        assert chain[0][0]["lease_id"] == lease_id
+        assert chain[-1][0]["event_type"] == "release"
+        assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in lane.iterdir())
+
+
+def _filesystem_snapshot(root: Path) -> dict[str, tuple[str, int, str | None]]:
+    root_metadata = root.lstat()
+    root_kind = "directory" if stat.S_ISDIR(root_metadata.st_mode) else "other"
+    snapshot: dict[str, tuple[str, int, str | None]] = {
+        ".": (root_kind, stat.S_IMODE(root_metadata.st_mode), None)
+    }
+    for path in sorted(root.rglob("*")):
+        metadata = path.lstat()
+        mode = stat.S_IMODE(metadata.st_mode)
+        if stat.S_ISREG(metadata.st_mode):
+            kind = "file"
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        elif stat.S_ISDIR(metadata.st_mode):
+            kind = "directory"
+            digest = None
+        elif stat.S_ISLNK(metadata.st_mode):
+            kind = "symlink"
+            digest = os.readlink(path)
+        else:
+            kind = "other"
+            digest = None
+        snapshot[path.relative_to(root).as_posix()] = (kind, mode, digest)
+    return snapshot
+
+
 def _race_worker(
     script: str,
     repo: str,
@@ -1283,12 +1405,226 @@ def test_release_requires_writer_start(lease: ModuleType, tmp_path: Path) -> Non
     assert lease.inspect(repo_root=primary)["status"] == "active"
 
 
+def test_archived_lease_capacity_reaches_6400_and_rejects_next_without_mutation(
+    lease: ModuleType, tmp_path: Path
+) -> None:
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    completed, template, exported_before = _completed_lane_template(
+        lease, primary, base_sha
+    )
+    state = _state_dir(common)
+    archive = state / "archive"
+    seeded_ids = _seed_completed_archives(
+        state,
+        template,
+        6_399,
+        excluded_lease_ids={completed["lease_id"]},
+    )
+
+    # Validate every generated canonical chain before exercising the capacity gate.
+    _assert_completed_archives_valid(lease, state, seeded_ids)
+    assert lease.evidence_digest(exported_before) == hashlib.sha256(
+        exported_before
+    ).hexdigest()
+    completed_files = _filesystem_snapshot(state / "events")
+    archives_before = _filesystem_snapshot(archive)
+    assert completed["lease_id"] not in archives_before
+
+    started = _acquire(
+        lease,
+        primary,
+        base_sha,
+        pr_id="HARNESS-LEASE-CAP-6400",
+        owner_ref="9" * 64,
+        session_ref="8" * 64,
+    )
+    assert len(list(archive.iterdir())) == 6_400
+    assert completed["lease_id"] not in seeded_ids
+    archived_completed = _filesystem_snapshot(archive / completed["lease_id"])
+    assert archived_completed == completed_files
+    archives_after = _filesystem_snapshot(archive)
+    assert archives_after[completed["lease_id"]] == ("directory", 0o700, None)
+    archived_prefix = f"{completed['lease_id']}/"
+    assert {
+        path: value
+        for path, value in archives_after.items()
+        if path != completed["lease_id"] and not path.startswith(archived_prefix)
+    } == archives_before
+
+    exported_after = lease.export_evidence(
+        repo_root=primary,
+        lease_id=completed["lease_id"],
+        **_identity(base_sha, writer_lane_ref=completed["writer_lane_ref"]),
+    )
+    assert exported_after == exported_before
+    assert lease.evidence_digest(exported_after) == lease.evidence_digest(exported_before)
+    assert lease.validate_evidence(exported_after)["lease_id"] == completed["lease_id"]
+
+    started_identity = {
+        "pr_id": "HARNESS-LEASE-CAP-6400",
+        "owner_ref": "9" * 64,
+        "session_ref": "8" * 64,
+    }
+    _verify(lease, primary, base_sha, started["lease_id"], **started_identity)
+    _release(lease, primary, base_sha, started["lease_id"], **started_identity)
+    before_rejected_acquire = _filesystem_snapshot(state)
+    with pytest.raises(lease.WriterLeaseError):
+        _acquire(
+            lease,
+            primary,
+            base_sha,
+            pr_id="HARNESS-LEASE-CAP-REJECT",
+            owner_ref="7" * 64,
+            session_ref="6" * 64,
+        )
+    assert _filesystem_snapshot(state) == before_rejected_acquire
+    assert not (state / "active.json").exists()
+    assert not (state / "transition.lock").exists()
+    assert lease.inspect(repo_root=primary)["status"] == "released"
+
+
+def test_archived_lease_enumeration_stops_at_6401_without_mutation(
+    lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    _completed, _template, _evidence = _completed_lane_template(
+        lease, primary, base_sha
+    )
+    state = _state_dir(common)
+    archive = state / "archive"
+    archive.mkdir(mode=0o700)
+    os.chmod(archive, 0o700)
+    for index in range(1, 6_403):
+        lane = archive / f"{index:064x}"
+        lane.mkdir(mode=0o700)
+        os.chmod(lane, 0o700)
+    before = _filesystem_snapshot(state)
+
+    real_scandir = lease.os.scandir
+    archive_entries_seen = 0
+
+    class CountingScandir:
+        def __init__(self, entries: Any) -> None:
+            self.entries = entries
+
+        def __enter__(self) -> CountingScandir:
+            self.entries.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self.entries.__exit__(*args)
+
+        def __iter__(self) -> CountingScandir:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            nonlocal archive_entries_seen
+            entry = next(self.entries)
+            archive_entries_seen += 1
+            return entry
+
+    def count_archive_entries(directory: object) -> Any:
+        entries = real_scandir(directory)
+        if Path(directory) == archive:
+            return CountingScandir(entries)
+        return entries
+
+    monkeypatch.setattr(lease.os, "scandir", count_archive_entries)
+    try:
+        with pytest.raises(lease.WriterLeaseError):
+            _acquire(
+                lease,
+                primary,
+                base_sha,
+                pr_id="HARNESS-LEASE-CAP-OVERFLOW",
+                owner_ref="5" * 64,
+                session_ref="4" * 64,
+            )
+    finally:
+        monkeypatch.setattr(lease.os, "scandir", real_scandir)
+
+    assert archive_entries_seen == 6_401
+    assert _filesystem_snapshot(state) == before
+    assert not (state / "active.json").exists()
+    assert not (state / "transition.lock").exists()
+
+
+@pytest.mark.parametrize(
+    "mutation", ["corrupt", "identity", "secret", "oversize", "symlink"]
+)
+def test_hostile_archive_after_64_remains_rejected_without_reflection_or_mutation(
+    lease: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mutation: str,
+) -> None:
+    primary, _linked, base_sha, common = _repository(tmp_path)
+    _completed, template, _evidence = _completed_lane_template(
+        lease, primary, base_sha
+    )
+    state = _state_dir(common)
+    lease_ids = _seed_completed_archives(
+        state, template, 65, excluded_lease_ids={_completed["lease_id"]}
+    )
+    _assert_completed_archives_valid(lease, state, lease_ids)
+    archive = state / "archive"
+    hostile = archive / lease_ids[-1]
+    canary = "SECRET-LATE-ARCHIVE-CANARY"
+    outside: Path | None = None
+
+    if mutation == "corrupt":
+        marker = hostile / "00000002.commit"
+        marker.write_bytes(marker.read_bytes() + b"x")
+    elif mutation == "identity":
+        renamed = archive / f"{int(lease_ids[-1], 16) + 1:064x}"
+        hostile.rename(renamed)
+    elif mutation == "secret":
+        event_path = hostile / "00000000.json"
+        event = json.loads(event_path.read_bytes())
+        event["pr_id"] = canary
+        raw = _canonical(event)
+        event_path.write_bytes(raw)
+        (hostile / "00000000.commit").write_text(
+            hashlib.sha256(raw).hexdigest(), encoding="ascii"
+        )
+    elif mutation == "oversize":
+        (hostile / "00000000.json").write_bytes(
+            b"{" + (b"x" * (lease.MAX_RECORD_BYTES + 1))
+        )
+    else:
+        outside = tmp_path / "outside-canary.json"
+        outside.write_text(canary, encoding="ascii")
+        event_path = hostile / "00000000.json"
+        event_path.unlink()
+        event_path.symlink_to(outside)
+
+    before = _filesystem_snapshot(state)
+    with pytest.raises(lease.WriterLeaseError) as raised:
+        _acquire(
+            lease,
+            primary,
+            base_sha,
+            pr_id="HARNESS-LEASE-CAP-HOSTILE",
+            owner_ref="3" * 64,
+            session_ref="2" * 64,
+        )
+    captured = capsys.readouterr()
+    assert canary not in str(raised.value)
+    assert canary not in repr(raised.value)
+    assert canary not in f"{captured.out}\n{captured.err}"
+    if outside is not None:
+        assert outside.read_text(encoding="ascii") == canary
+    assert _filesystem_snapshot(state) == before
+    assert not (state / "active.json").exists()
+    assert not (state / "transition.lock").exists()
+
+
 def test_archived_lease_capacity_fails_before_active_or_completed_lane_mutation(
     lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     production_limit = getattr(lease, "MAX_ARCHIVED_LEASES", None)
     assert production_limit is None or (
-        type(production_limit) is int and 47 <= production_limit <= 128
+        type(production_limit) is int and 47 <= production_limit <= 6_400
     )
     monkeypatch.setattr(lease, "MAX_ARCHIVED_LEASES", 1, raising=False)
     primary, _linked, base_sha, common = _repository(tmp_path)
