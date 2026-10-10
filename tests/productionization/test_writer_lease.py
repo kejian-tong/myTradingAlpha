@@ -1484,7 +1484,7 @@ def test_archived_lease_capacity_reaches_6400_and_rejects_next_without_mutation(
 
 
 def test_archived_lease_enumeration_stops_at_6401_without_mutation(
-    lease: ModuleType, tmp_path: Path
+    lease: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     primary, _linked, base_sha, common = _repository(tmp_path)
     _completed, _template, _evidence = _completed_lane_template(
@@ -1494,22 +1494,56 @@ def test_archived_lease_enumeration_stops_at_6401_without_mutation(
     archive = state / "archive"
     archive.mkdir(mode=0o700)
     os.chmod(archive, 0o700)
-    for index in range(1, 6_402):
+    for index in range(1, 6_403):
         lane = archive / f"{index:064x}"
         lane.mkdir(mode=0o700)
         os.chmod(lane, 0o700)
     before = _filesystem_snapshot(state)
 
-    with pytest.raises(lease.WriterLeaseError):
-        _acquire(
-            lease,
-            primary,
-            base_sha,
-            pr_id="HARNESS-LEASE-CAP-OVERFLOW",
-            owner_ref="5" * 64,
-            session_ref="4" * 64,
-        )
+    real_scandir = lease.os.scandir
+    archive_entries_seen = 0
 
+    class CountingScandir:
+        def __init__(self, entries: Any) -> None:
+            self.entries = entries
+
+        def __enter__(self) -> CountingScandir:
+            self.entries.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self.entries.__exit__(*args)
+
+        def __iter__(self) -> CountingScandir:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            nonlocal archive_entries_seen
+            entry = next(self.entries)
+            archive_entries_seen += 1
+            return entry
+
+    def count_archive_entries(directory: object) -> Any:
+        entries = real_scandir(directory)
+        if Path(directory) == archive:
+            return CountingScandir(entries)
+        return entries
+
+    monkeypatch.setattr(lease.os, "scandir", count_archive_entries)
+    try:
+        with pytest.raises(lease.WriterLeaseError):
+            _acquire(
+                lease,
+                primary,
+                base_sha,
+                pr_id="HARNESS-LEASE-CAP-OVERFLOW",
+                owner_ref="5" * 64,
+                session_ref="4" * 64,
+            )
+    finally:
+        monkeypatch.setattr(lease.os, "scandir", real_scandir)
+
+    assert archive_entries_seen == 6_401
     assert _filesystem_snapshot(state) == before
     assert not (state / "active.json").exists()
     assert not (state / "transition.lock").exists()
