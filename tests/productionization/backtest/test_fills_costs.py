@@ -3483,3 +3483,503 @@ def test_repair2_type_adapter_outer_growth_is_bounded_before_model_kwargs(contra
     assert max(widths, default=0) <= 65
     assert results == [] and len(errors) == 1
     _repair2_schema_error(api, errors[0], [], "BT02_REPAIR2_DIAGNOSTIC_CANARY")
+
+
+_REPAIR3_CONTRACTS = ("OrderIntent", "Fill", "CostBreakdown", "CostPolicy")
+_REPAIR3_PATHS = (
+    "model_dump", "model_dump_json", "adapter_python", "adapter_json",
+    "base_python", "base_json",
+)
+
+
+def _repair3_case(contract: str) -> SimpleNamespace:
+    api = _bt02_api()
+    case = _repair2_adapter_case(api, contract)
+    case.api = api
+    case.record = case.model.model_validate(case.payload)
+    return case
+
+
+def _repair3_dump(
+    case: SimpleNamespace, path: str, options: dict[str, object], args: tuple[object, ...] = (),
+) -> object:
+    from pydantic import BaseModel
+
+    if path == "model_dump":
+        return case.record.model_dump(*args, **options)
+    if path == "model_dump_json":
+        return case.record.model_dump_json(*args, **options)
+    if path == "adapter_python":
+        return case.adapter.dump_python(case.record, **options)
+    if path == "adapter_json":
+        return case.adapter.dump_json(case.record, **options)
+    if path == "base_python":
+        return BaseModel.model_dump(case.record, **options)
+    assert path == "base_json"
+    return BaseModel.model_dump_json(case.record, **options)
+
+
+def _repair3_observe(action: Any, calls: list[str], canary: str) -> SimpleNamespace:
+    """Inspect all public diagnostics before checking callback/error invariants."""
+
+    results: list[object] = []
+    errors: list[BaseException] = []
+    diagnostics: list[str] = []
+    inspection_errors: list[BaseException] = []
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        try:
+            results.append(action())
+        except BaseException as error:
+            errors.append(error)
+        for error in errors:
+            try:
+                diagnostics.extend((str(error), repr(error)))
+                if type(error) is _bt02_api().OrderInputError:
+                    diagnostics.append(repr(error.errors()))
+            except BaseException as inspection_error:
+                inspection_errors.append(inspection_error)
+        for warning in emitted:
+            try:
+                diagnostics.extend((str(warning.message), repr(warning.message)))
+            except BaseException as inspection_error:
+                inspection_errors.append(inspection_error)
+    encoded = base64.b64encode(canary.encode()).decode()
+    return SimpleNamespace(
+        results=results, errors=errors, warnings=list(emitted), diagnostics=diagnostics,
+        inspection_errors=inspection_errors, callbacks=tuple(calls),
+        reflected=any(canary in text or encoded in text for text in diagnostics),
+    )
+
+
+def _repair3_assert_denied(case: SimpleNamespace, path: str, seen: SimpleNamespace) -> None:
+    from pydantic_core import PydanticSerializationError
+
+    violations: list[str] = []
+    if seen.callbacks:
+        violations.append(f"caller callbacks: {','.join(seen.callbacks)}")
+    if seen.results:
+        violations.append("unsupported option returned a result")
+    if len(seen.errors) != 1:
+        violations.append(f"expected one rejection, got {len(seen.errors)}")
+    if seen.warnings:
+        violations.append(f"emitted {len(seen.warnings)} warnings")
+    if seen.inspection_errors:
+        violations.append("diagnostic inspection executed a throwing protocol")
+    if seen.reflected:
+        violations.append("diagnostics reflected direct or encoded canary")
+    if any(len(text) > 2048 for text in seen.diagnostics):
+        violations.append("diagnostics exceeded fixed bounds")
+    if len(seen.errors) == 1:
+        error = seen.errors[0]
+        if path in {"model_dump", "model_dump_json"}:
+            if type(error) is not case.api.OrderInputError:
+                violations.append("direct method returned a non-contract error")
+            else:
+                _repair2_fixed_error(case.api, error)
+        elif type(error) is not PydanticSerializationError:
+            violations.append("shared serializer returned a non-serialization error")
+        else:
+            expected_message = "BT-02 serialization rejected"
+            if path in {"adapter_json", "base_json"}:
+                expected_message = (
+                    "Error serializing to JSON: PydanticSerializationError: " + expected_message
+                )
+            if str(error) != expected_message:
+                violations.append("shared serializer returned a non-fixed message")
+    print(
+        f"repair3 {case.model.__name__}/{path}: callbacks={len(seen.callbacks)}; "
+        f"results={len(seen.results)}; errors={len(seen.errors)}; "
+        f"warnings={len(seen.warnings)}; reflected={seen.reflected}"
+    )
+    assert violations == [], "; ".join(violations)
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", _REPAIR3_PATHS)
+@pytest.mark.parametrize("option", ("include", "exclude"))
+@pytest.mark.parametrize("container", ("set", "dict"))
+@pytest.mark.parametrize("key_kind", ("object", "str_subclass"))
+@pytest.mark.parametrize("throwing", (False, True))
+def test_repair3_native_filter_keys_reject_before_all_caller_protocols(
+    contract: str, path: str, option: str, container: str, key_kind: str, throwing: bool,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    key, armed, canary = _repair2_hostile_key(
+        case.key, calls, kind=key_kind, throwing=throwing,
+    )
+    submitted = {key} if container == "set" else {key: True}
+    assert calls == ["hash"]
+    calls.clear()
+    armed[0] = True
+    seen = _repair3_observe(lambda: _repair3_dump(case, path, {option: submitted}), calls, canary)
+    _repair3_assert_denied(case, path, seen)
+    assert calls == [], "dump or subsequent diagnostic inspection invoked caller protocols"
+
+
+def _repair3_opaque(calls: list[str], *, throwing: bool) -> tuple[object, str]:
+    canary = "BT02_REPAIR3_DIAGNOSTIC_CANARY"
+
+    def record(protocol: str) -> None:
+        calls.append(protocol)
+        if throwing:
+            raise RuntimeError(canary)
+
+    class Opaque:
+        def __contains__(self, key: object) -> bool:
+            record("contains")
+            return True
+
+        def __iter__(self) -> Any:
+            record("iter")
+            return iter(())
+
+        def __len__(self) -> int:
+            record("len")
+            return 0
+
+        def __bool__(self) -> bool:
+            record("bool")
+            return False
+
+        def __getitem__(self, key: object) -> object:
+            record("getitem")
+            return self
+
+        def __eq__(self, other: object) -> bool:
+            record("eq")
+            return False
+
+        def __hash__(self) -> int:
+            record("hash")
+            return 0
+
+        def __repr__(self) -> str:
+            record("repr")
+            return canary
+
+        def __str__(self) -> str:
+            record("str")
+            return canary
+
+        def __call__(self, value: object) -> object:
+            record("call")
+            return canary
+
+    return Opaque(), canary
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", _REPAIR3_PATHS)
+@pytest.mark.parametrize("option", ("include", "exclude"))
+@pytest.mark.parametrize("throwing", (False, True))
+def test_repair3_opaque_contains_filters_never_run_caller_code(
+    contract: str, path: str, option: str, throwing: bool,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    submitted, canary = _repair3_opaque(calls, throwing=throwing)
+    seen = _repair3_observe(lambda: _repair3_dump(case, path, {option: submitted}), calls, canary)
+    _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+def _repair3_native_filters(case: SimpleNamespace, calls: list[str]) -> SimpleNamespace:
+    """Native filter bounds are irrelevant: no non-None filter may be traversed."""
+
+    key, armed, canary = _repair2_hostile_key(
+        case.key, calls, kind="str_subclass", throwing=True,
+    )
+    deep: dict[str, object] = {case.key: {key}}
+    for _ in range(64):
+        deep = {case.key: deep}
+    cyclic: dict[str, object] = {"poison": key}
+    cyclic[case.key] = cyclic
+    values = (
+        ("empty_set", set()), ("empty_dict", {}),
+        ("native_set", {case.key}), ("native_dict", {case.key: True}),
+        ("wide_set", {f"unused-{index}" for index in range(4096)} | {key}),
+        ("wide_dict", {f"unused-{index}": None for index in range(4096)} | {key: True}),
+        ("nested_dict", {case.key: {"__all__": {key}}}),
+        ("deep_dict", deep), ("cyclic_dict", cyclic),
+        ("empty_list", []), ("empty_tuple", ()), ("empty_frozenset", frozenset()),
+        ("false", False), ("zero", 0), ("text", canary),
+    )
+    calls.clear()
+    armed[0] = True
+    return SimpleNamespace(values=values, canary=canary)
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", _REPAIR3_PATHS)
+@pytest.mark.parametrize("option", ("include", "exclude", "context"))
+def test_repair3_non_none_options_deny_empty_wide_deep_and_cyclic_native_filters(
+    contract: str, path: str, option: str,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    fixtures = _repair3_native_filters(case, calls)
+    observations: list[tuple[str, SimpleNamespace]] = []
+    for name, submitted in fixtures.values:
+        calls.clear()
+        seen = _repair3_observe(
+            lambda submitted=submitted: _repair3_dump(case, path, {option: submitted}),
+            calls, fixtures.canary,
+        )
+        observations.append((name, seen))
+    print(f"repair3 native {contract}/{path}/{option}: cases={len(observations)}")
+    for name, seen in observations:
+        print(f"repair3 native structure={name}")
+        _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", ("model_dump", "model_dump_json"))
+@pytest.mark.parametrize("option", ("context", "fallback"))
+def test_repair3_direct_context_and_fallback_deny_opaque_and_native_values(
+    contract: str, path: str, option: str,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    fixtures = _repair3_native_filters(case, calls)
+    opaque, canary = _repair3_opaque(calls, throwing=True)
+    observations: list[SimpleNamespace] = []
+    for submitted in (opaque, *(value for _, value in fixtures.values)):
+        calls.clear()
+        observations.append(_repair3_observe(
+            lambda submitted=submitted: _repair3_dump(case, path, {option: submitted}), calls, canary,
+        ))
+    for seen in observations:
+        _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", ("model_dump", "model_dump_json"))
+def test_repair3_direct_scalar_options_require_exact_native_types(
+    contract: str, path: str,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    opaque, canary = _repair3_opaque(calls, throwing=True)
+    text, armed, _ = _repair2_hostile_key("python", calls, kind="str_subclass", throwing=True)
+    armed[0] = True
+    bool_options = (
+        "by_alias", "polymorphic_serialization", "exclude_unset", "exclude_defaults",
+        "exclude_none", "exclude_computed_fields", "round_trip", "serialize_as_any",
+    )
+    denied: list[dict[str, object]] = [
+        {"mode": value} for value in (opaque, text, None, False, "unsupported")
+    ]
+    denied.extend({"warnings": value} for value in (opaque, text, None, 0, "unsupported"))
+    for option in bool_options:
+        values = (opaque, text, 0, 1, "false", D("0"))
+        if option not in {"by_alias", "polymorphic_serialization"}:
+            values += (None,)
+        denied.extend({option: value} for value in values)
+    observations: list[SimpleNamespace] = []
+    for options in denied:
+        calls.clear()
+        observations.append(_repair3_observe(
+            lambda options=options: _repair3_dump(case, path, options), calls, canary,
+        ))
+    for seen in observations:
+        _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", ("model_dump", "model_dump_json"))
+def test_repair3_direct_positional_unknown_and_oversized_kwargs_are_sanitized(
+    contract: str, path: str,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    opaque, canary = _repair3_opaque(calls, throwing=True)
+    encoded = base64.b64encode(canary.encode()).decode()
+    probes = (
+        ({}, (opaque,)), ({}, (canary, encoded)),
+        ({"unknown": {"direct": canary, "encoded": encoded, "opaque": opaque}}, ()),
+        ({canary: opaque, encoded: canary}, ()),
+        ({f"unknown-{index}": opaque for index in range(65)}, ()),
+        ({f"unknown-{index}": opaque for index in range(4096)}, ()),
+    )
+    for options, args in probes:
+        calls.clear()
+        seen = _repair3_observe(
+            lambda options=options, args=args: _repair3_dump(case, path, options, args), calls, canary,
+        )
+        _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize(
+    "options",
+    (
+        {}, {"include": None, "exclude": None, "context": None, "fallback": None},
+        {"mode": "python"}, {"mode": "json"}, {"by_alias": None}, {"by_alias": True},
+        {"by_alias": False}, {"polymorphic_serialization": None},
+        {"polymorphic_serialization": True}, {"polymorphic_serialization": False},
+        {"warnings": True}, {"warnings": False}, {"warnings": "none"},
+        {"warnings": "warn"}, {"warnings": "error"}, {"exclude_unset": True},
+        {"exclude_defaults": True}, {"exclude_computed_fields": True},
+        {"round_trip": True}, {"serialize_as_any": True},
+        {"exclude_unset": False, "exclude_defaults": False, "exclude_none": False,
+         "exclude_computed_fields": False, "round_trip": False, "serialize_as_any": False},
+    ),
+)
+def test_repair3_default_none_and_safe_scalar_controls_preserve_full_records(
+    contract: str, options: dict[str, object],
+) -> None:
+    case = _repair3_case(contract)
+    python = {
+        name: value.model_dump() if type(value) is case.api.CostBreakdown else value
+        for name, value in case.payload.items()
+    }
+    wire = _repair3_expected_wire(contract, canonical=False)
+    json_options = {name: value for name, value in options.items() if name != "mode"}
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        assert case.record.model_dump() == python
+        assert case.record.model_dump(mode="json") == wire
+        expected = wire if options.get("mode") == "json" else python
+        assert _repair3_dump(case, "model_dump", options) == expected
+        assert _repair3_dump(case, "adapter_python", options) == expected
+        assert _repair3_dump(case, "base_python", options) == expected
+        assert json.loads(_repair3_dump(case, "adapter_json", json_options)) == wire
+        assert json.loads(_repair3_dump(case, "base_json", json_options)) == wire
+        assert json.loads(case.record.model_dump_json()) == _repair3_expected_wire(
+            contract, canonical=True,
+        )
+    assert emitted == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+def test_repair3_exclude_none_retains_native_scalar_semantics(contract: str) -> None:
+    case = _repair3_case(contract)
+
+    def omit_none(value: object) -> object:
+        if type(value) is dict:
+            return {key: omit_none(item) for key, item in value.items() if item is not None}
+        return value
+
+    python = omit_none(case.record.model_dump())
+    wire = omit_none(case.record.model_dump(mode="json"))
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        for path in ("model_dump", "adapter_python", "base_python"):
+            assert _repair3_dump(case, path, {"exclude_none": True}) == python
+            assert _repair3_dump(case, path, {"mode": "json", "exclude_none": True}) == wire
+        for path in ("adapter_json", "base_json"):
+            assert json.loads(_repair3_dump(case, path, {"exclude_none": True})) == wire
+    assert emitted == []
+
+
+def test_repair3_canonical_goldens_and_ids_remain_exact() -> None:
+    api = _bt02_api()
+    intent = api.build_order_intent(**_golden_intent_fields())
+    fill = api.build_fill(**_golden_fill_fields(api))
+    assert intent.intent_id == EXPECTED_GOLDEN_INTENT_ID
+    assert intent.canonical_bytes() == EXPECTED_GOLDEN_INTENT_FULL_JSON.encode()
+    assert intent.model_dump_json() == EXPECTED_GOLDEN_INTENT_FULL_JSON
+    assert "sha256:" + hashlib.sha256(intent.canonical_bytes()).hexdigest() == EXPECTED_GOLDEN_INTENT_HASH
+    assert fill.fill_id == EXPECTED_GOLDEN_FILL_ID
+    assert fill.canonical_bytes() == EXPECTED_GOLDEN_FILL_FULL_JSON.encode()
+    assert fill.model_dump_json() == EXPECTED_GOLDEN_FILL_FULL_JSON
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", _REPAIR3_PATHS)
+def test_repair3_forged_record_denies_safe_flags_without_caller_protocols(
+    contract: str, path: str,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    opaque, canary = _repair3_opaque(calls, throwing=True)
+    payload = dict(case.payload)
+    payload[case.key] = opaque
+    case.record = case.model.model_construct(**payload)
+    options = {} if path == "model_dump_json" else {
+        "by_alias": True, "round_trip": True, "serialize_as_any": True, "warnings": "error",
+    }
+    seen = _repair3_observe(lambda: _repair3_dump(case, path, options), calls, canary)
+    _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", _REPAIR3_PATHS)
+def test_repair3_opaque_context_denies_without_inspection(contract: str, path: str) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    opaque, canary = _repair3_opaque(calls, throwing=True)
+    seen = _repair3_observe(lambda: _repair3_dump(case, path, {"context": opaque}), calls, canary)
+    _repair3_assert_denied(case, path, seen)
+    assert calls == []
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("path", ("adapter_python", "adapter_json", "base_python", "base_json"))
+@pytest.mark.parametrize("forged", (False, True))
+def test_repair3_shared_fallback_remains_inert_for_owned_and_forged_values(
+    contract: str, path: str, forged: bool,
+) -> None:
+    case = _repair3_case(contract)
+    calls: list[str] = []
+    opaque, canary = _repair3_opaque(calls, throwing=True)
+    if forged:
+        payload = dict(case.payload)
+        payload[case.key] = opaque
+        case.record = case.model.model_construct(**payload)
+    seen = _repair3_observe(lambda: _repair3_dump(case, path, {"fallback": opaque}), calls, canary)
+    if forged:
+        _repair3_assert_denied(case, path, seen)
+    else:
+        assert len(seen.results) == 1
+        assert seen.errors == seen.warnings == seen.inspection_errors == []
+        expected = case.record.model_dump()
+        if path.endswith("json"):
+            assert json.loads(seen.results[0]) == case.record.model_dump(mode="json")
+        else:
+            assert seen.results[0] == expected
+        assert not seen.reflected
+    assert calls == [], "fallback invoked caller code despite strict owned field validation"
+
+
+def _repair3_expected_wire(contract: str, *, canonical: bool) -> dict[str, object]:
+    """Pin existing goldens while retaining native Pydantic Decimal spelling."""
+
+    if contract == "OrderIntent":
+        wire = json.loads(EXPECTED_GOLDEN_INTENT_FULL_JSON)
+        if not canonical:
+            wire["quantity"] = "10.000000"
+        return wire
+    fill = json.loads(EXPECTED_GOLDEN_FILL_FULL_JSON)
+    if contract == "Fill":
+        return fill
+    if contract == "CostBreakdown":
+        return fill["cost_breakdown"]
+    assert contract == "CostPolicy"
+    return {
+        "schema_version": "v1", "policy_version": "bt02-fixture-policy-v1",
+        "numeric_policy_version": "bt02-decimal-v1", "fee_policy_id": "bt02-usd-cumulative-v1",
+        "currency": "USD", "half_spread_bps": str(RATE_DEFAULT),
+        "slippage_bps": str(RATE_DEFAULT), "commission_per_share": str(COMMISSION_DEFAULT),
+        "order_minimum": str(ONE), "fixed_share_cap": str(CAP_DEFAULT), "lot_size": str(ONE),
+    }
+
+
+@pytest.mark.parametrize("contract", _REPAIR3_CONTRACTS)
+@pytest.mark.parametrize("option", ("include", "exclude", "context", "fallback"))
+def test_repair3_canonical_json_denies_even_explicit_none_options(
+    contract: str, option: str,
+) -> None:
+    case = _repair3_case(contract)
+    seen = _repair3_observe(
+        lambda: _repair3_dump(case, "model_dump_json", {option: None}), [],
+        "BT02_REPAIR3_DIAGNOSTIC_CANARY",
+    )
+    _repair3_assert_denied(case, "model_dump_json", seen)
