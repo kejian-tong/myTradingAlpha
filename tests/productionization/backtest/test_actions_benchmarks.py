@@ -2380,3 +2380,25 @@ def test_bt04_repair_nonentry_session_rejects_resealed_invalid_nested_bundle(kin
         _reject(lambda: api.BenchmarkSessionInput(**middle))
     finally:
         assert _bt04_repair_native_digest(inputs) == before
+
+
+@pytest.mark.parametrize("kind", ("foreign", "str_subclass"))
+def test_bt04_ingress_position_reference_rejects_hostile_instrument_id_before_protocols(kind: str) -> None:
+    api, seed = _api(), _seed()
+    mark = bt03._mark(seed.api03, seed.case, seed.outcome)
+    before = _bt04_repair_native_digest(mark)
+    calls: list[str] = []
+    hostile = _Hostile(calls)
+
+    class HostileIdentifier(str):
+        __str__ = __repr__ = __iter__ = __eq__ = __ne__ = __hash__ = hostile._called
+
+    instrument_id = hostile if kind == "foreign" else HostileIdentifier(INST)
+    assert calls == []  # Fixture construction must not evaluate the hostile input.
+    try:
+        with pytest.raises((TypeError, ValueError)) as caught:
+            api.PositionReference(instrument_id=instrument_id, symbol="KEEP", cost_basis=seed.fill.price, mark=mark)
+    finally:
+        assert _bt04_repair_native_digest(mark) == before
+        assert calls == [], "PositionReference ingress evaluated a hostile identifier protocol"
+    assert len(str(caught.value).encode("utf-8")) <= 256
