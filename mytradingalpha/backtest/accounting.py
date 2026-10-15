@@ -189,6 +189,15 @@ class AccountingInvariant:
         if after.latest_economic_time != economic_time or after.latest_observation_time != expected_latest_observation:
             _reject("accounting_invalid")
 
+        if kind == "action_batch":
+            _check_actions(before, event, after)
+            return None
+        from .corporate_actions import _get, _state
+
+        if _state(before).canonical_bytes() != _state(after).canonical_bytes() or _state(before)._storage != _state(after)._storage:
+            _reject("accounting_invalid")
+        if kind in _OBLIGATION_KINDS and any(_get(c, "obligation_id") == object.__getattribute__(event, "_obligation_id") for c in _get(_state(before), "claims")):
+            _reject("accounting_invalid")
         if kind == "fill":
             intent, fill, _binding, _outcome, policy = _event_fill_parts(event)
             instrument = _safe_identifier(object.__getattribute__(fill, "instrument_id"))
@@ -325,3 +334,164 @@ def _make_obligation(
 
 
 __all__ = ["AccountingInvariant"]
+
+
+def _check_actions(before: LedgerBalance, event: LedgerEvent, after: LedgerBalance) -> None:
+    """Independent rational audit of economics, ownership and unaffected fields.
+
+    Selection and source validation are shared. This audit never calls the
+    publication reducer: it derives shares, principal, income and payments from
+    the source records again using integer ratios.
+    """
+    import hashlib
+    from fractions import Fraction
+
+    from mytradingalpha.data.actions import (
+        DelistingAction,
+        DividendAction,
+        SplitAction,
+        TickerChangeAction,
+    )
+
+    from .corporate_actions import (
+        _ActionState,
+        _Applied,
+        _Cancellation,
+        _Claim,
+        _claim_id,
+        _due,
+        _get,
+        _selection,
+        _SplitReference,
+        _state,
+        _validate_reference,
+    )
+    from .ledger import ObligationBalance
+
+    batch = object.__getattribute__(event, "_action_batch")
+    calendar, session, calendar_bytes, selected, mappings = _selection(batch, before)
+    previous = _state(before)
+    policy = _get(batch, "policy")
+    quantities = {key: Fraction(q) for key, q in before.positions}
+    expected_cash = Fraction(before.cash)
+    expected_income = Fraction(before.recognized_income)
+    obligations = {o.obligation_id: o for o in before.obligations}
+    claims = {_get(c, "obligation_id"): c for c in _get(previous, "claims")}
+    applied = {_get(a, "action_id"): a for a in _get(previous, "applied_actions")}
+    symbols = dict(_get(previous, "symbols"))
+    cancellations = {_get(c, "intent_id"): c for c in _get(previous, "cancelled_intents")}
+    closed = set(_get(previous, "closed_instruments"))
+    split_refs = {_get(r, "instrument_id"): r for r in _get(previous, "split_references")}
+    boundaries = dict(_get(previous, "split_boundaries"))
+    references = {_get(r, "instrument_id"): r for r in _get(batch, "references")}
+    instruments = set(before.instrument_ids)
+    converted_in_batch = set()
+
+    def decimal(value: Fraction) -> Decimal:
+        result = _exact_decimal(lambda: Decimal(value.numerator) / Decimal(value.denominator))
+        return _decimal_checked(result, "money", nonnegative=True)
+
+    def accrue(action_id: str, amount: Fraction, payable: object, kind: str) -> None:
+        nonlocal expected_income
+        due = _due(calendar, payable)
+        if not amount:
+            return
+        key = _claim_id(action_id)
+        if key in obligations:
+            _reject("accounting_invalid")
+        exact = decimal(amount)
+        obligations[key] = ObligationBalance(key, "receivable", exact, exact, due, session.open_at)
+        claims[key] = _Claim(obligation_id=key, action_id=action_id, kind=kind, amount=exact, due_at=due, paid=False)
+        if kind == "dividend":
+            expected_income += amount
+
+    def cancel(instrument: str, reason: str) -> None:
+        ids = {i.intent_id for i in _get(batch, "outstanding_intents") if i.instrument_id == instrument and i.created_at < session.open_at}
+        ids.update(o.intent_id for o in before.intent_ownership if o.instrument_id == instrument and not o.terminal)
+        for intent_id in ids:
+            cancellations.setdefault(intent_id, _Cancellation(intent_id=intent_id, reason=reason))
+
+    for wrapper in selected:
+        action, terms = _get(wrapper, "action"), _get(wrapper, "terms")
+        if type(action) is DividendAction:
+            continue
+        key = action.instrument_id
+        original = quantities.get(key, Fraction(0))
+        if type(action) is SplitAction:
+            ratio = Fraction(action.new_shares_per_old_share)
+            converted = original * ratio
+            if _get(terms, "fractional_shares") == "cash_in_lieu":
+                lot = Fraction(_get(terms, "lot_size"))
+                retained = (converted // lot) * lot
+                accrue(action.action_id, (converted - retained) * Fraction(_get(terms, "cash_in_lieu_price")), _get(terms, "payable_date"), "principal")
+            else:
+                retained = converted
+            quantities[key] = retained
+            if original:
+                prior = split_refs.get(key) if key in converted_in_batch else None
+                source = references[key]
+                _validate_reference(source, before, session, calendar, _get(batch, "replay_policy"), _get(batch, "archive_cutoff"))
+                basis = Fraction(_get(source, "cost_basis")) if prior is None else Fraction(_get(prior, "cost_basis_numerator"), _get(prior, "cost_basis_denominator"))
+                mark = Fraction(_get(source, "bar").close) if prior is None else Fraction(_get(prior, "mark_numerator"), _get(prior, "mark_denominator"))
+                basis, mark = basis / ratio, mark / ratio
+                split_refs[key] = _SplitReference(instrument_id=key, cost_basis_numerator=basis.numerator,
+                    cost_basis_denominator=basis.denominator, mark_numerator=mark.numerator, mark_denominator=mark.denominator)
+                converted_in_batch.add(key)
+            boundaries[key] = session.open_at
+            cancel(key, "split_preexisting_intent")
+        elif type(action) is TickerChangeAction:
+            if symbols.get(key, _get(references[key], "symbol") if key in references else None) != action.old_symbol:
+                _reject("accounting_invalid")
+            symbols[key] = action.new_symbol
+        elif type(action) is DelistingAction:
+            quantities.pop(key, None)
+            closed.add(key)
+            cancel(key, "delisting_preexisting_intent")
+            if _get(terms, "settlement") == "cash":
+                accrue(action.action_id, original * Fraction(_get(terms, "amount_per_share")), _get(terms, "payable_date"), "principal")
+    for mapping in mappings:
+        source, target = _get(mapping, "source_instrument_id"), _get(mapping, "target_instrument_id")
+        original = quantities.pop(source, Fraction(0))
+        quantities[target] = quantities.get(target, Fraction(0)) + original * Fraction(_get(mapping, "new_shares_per_old_share"))
+        closed.add(source)
+        cancel(source, "merger_preexisting_intent")
+        instruments.add(target)
+        key = _get(mapping, "mapping_id")
+        applied[key] = _Applied(action_id=key, revision=_get(mapping, "manifest").revision, source_hash=hashlib.sha256(mapping._canonical + mapping._storage).hexdigest())
+    for wrapper in selected:
+        action, terms = _get(wrapper, "action"), _get(wrapper, "terms")
+        if type(action) is DividendAction:
+            amount = quantities.get(action.instrument_id, Fraction(0)) * Fraction(action.amount_per_share)
+            if _get(terms, "amount_basis") == "pre_split":
+                amount /= Fraction(_get(terms, "conversion_ratio"))
+            accrue(action.action_id, amount, action.payable_date, "dividend")
+        applied[action.action_id] = _Applied(action_id=action.action_id, revision=action.manifest.revision,
+            source_hash=hashlib.sha256(wrapper._canonical + wrapper._storage).hexdigest())
+    if _get(batch, "mode") == "payment":
+        for key, claim in tuple(claims.items()):
+            if not _get(claim, "paid") and _get(claim, "due_at") <= session.open_at:
+                original = obligations[key]
+                amount = _get(claim, "amount")
+                expected_cash += Fraction(amount)
+                obligations[key] = ObligationBalance(key, "receivable", amount, Decimal(0), original.due_at, original.economic_time)
+                claims[key] = _Claim(obligation_id=key, action_id=_get(claim, "action_id"), kind=_get(claim, "kind"), amount=amount, due_at=_get(claim, "due_at"), paid=True)
+    expected_state = _ActionState(applied_actions=tuple(applied[k] for k in sorted(applied)), symbols=tuple(sorted(symbols.items())),
+        cancelled_intents=tuple(cancellations[k] for k in sorted(cancellations)), closed_instruments=tuple(sorted(closed)),
+        split_references=tuple(split_refs[k] for k in sorted(split_refs)), split_boundaries=tuple(sorted(boundaries.items())),
+        claims=tuple(claims[k] for k in sorted(claims)), calendar_bytes=calendar_bytes, policy_bytes=policy.canonical_bytes())
+    if (
+        Fraction(after.cash) != expected_cash
+        or {k: Fraction(q) for k, q in after.positions} != {k: q for k, q in quantities.items() if q}
+        or after.obligations != tuple(obligations[k] for k in sorted(obligations))
+        or Fraction(after.recognized_income) != expected_income
+        or after.receivables != _exact_decimal(lambda: sum((o.amount_remaining for o in obligations.values() if o.kind == "receivable"), Decimal(0)))
+        or after.liabilities != before.liabilities
+        or after.recognized_expense != before.recognized_expense
+        or after.total_fees != before.total_fees
+        or after.intent_ownership != before.intent_ownership
+        or after.session_cap_ownership != before.session_cap_ownership
+        or after.fill_ids != before.fill_ids
+        or after.instrument_ids != tuple(sorted(instruments))
+        or _state(after).canonical_bytes() != expected_state.canonical_bytes()
+    ):
+        _reject("accounting_invalid")
