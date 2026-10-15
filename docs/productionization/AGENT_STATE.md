@@ -1,33 +1,36 @@
 # Productionization Agent State
 
-This is the bounded operational recovery snapshot, not a chronological log. GitHub/current `main` is authoritative;
-immutable detail remains in commits, pull requests, and workflow runs.
+Bounded recovery snapshot, not a chronological log. GitHub/current `main` is authoritative; immutable details remain in Git/PRs.
 
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `e0025b3990334d48664a4caf3bef6839421ef586`
-- `last_reconciled_main_tree`: `d7b159ae4eb6d1caf2632014fc37006b00e4a5de`
-- `roadmap_status`: active BT-03 candidate; BT-02 / PR #97 merged; BT-04 through BT-06 await dependency gates
-- `current_pr_id`: BT-03 / PR #99
+- `last_reconciled_main_sha`: `7a863c0f04522c6b689a713170c47358e06c02f1`
+- `last_reconciled_main_tree`: `667f01077881a863f5639b786869238d05955856`
+- `roadmap_status`: active BT-04 candidate
+- `current_pr_id`: BT-04 / PR #100
 - `current_phase`: 03 — Backtest and Ledger
-- `last_completed_roadmap_pr`: `BT-02` / PR #97 / merge
-  `7b818c3f78916375ef80d1a5c65d24a95b5423d5`
-- `autonomy_mode`: human-authorized BT-01 through BT-06 in six independent dependency-ordered PRs and fresh Master sessions; this session owns BT-03 only
-- `merge`: PR #97 merged at `7b818c3f78916375ef80d1a5c65d24a95b5423d5`; implementation, review,
-  and CI records remain in its GitHub conversation
-- `next_dependency`: BT-04 is authorized but blocked until BT-03 merges, main is verified, and a fresh Master session starts; exhausted lease capacity also fails closed
+- `last_completed_roadmap_pr`: `BT-03` / PR #99 / merge `7a863c0f04522c6b689a713170c47358e06c02f1`
+- `autonomy_mode`: human-authorized BT-01 through BT-06 in six independent dependency-ordered PRs and fresh Master sessions; this session owns BT-04 only
+- `next_dependency`: BT-05 requires BT-04 merge, verified main and a fresh Master
 - SIG-04 validates caller-supplied candidates only; no inference
-- SIG-05 adds only in-memory deterministic shadow envelopes; later roadmap work remains deferred
-- SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior; explicit human PAPER/live gates remain mandatory and unexercised
+- SIG-05 adds only in-memory deterministic shadow envelopes
+- SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior
 
-## BT-03 current recovery
+## BT-04 current recovery
 
-- PR99 JIT6094290872; current RED `6ff2f9c6ae008bb7363f542b8d20a67ab21adc12`/lease6098196615; initial RED/lease6094291082. Base/main: `e0025b3990334d48664a4caf3bef6839421ef586`. H1/M1 review6097264525; final GREEN/review/CI/Master gate pending.
-- Critical initial route `luna_sol_xhigh`: `normal_implementer` / GPT-6 Luna / max; controlling `reviewer_xhigh` / GPT-6.1 Sol / xhigh; Master configured Sol/xhigh; runtime attestation unavailable.
-- Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; recovery6095121331; prior reentry timeout preserved.
-- Scope: internal ledger/NAV/accounting only. Branch `refs/heads/codex/bt-03-ledger-nav`; separate ordinary RED/GREEN leases; current capacity6400 fails closed, preserve evidence. Aborted original RED remains historical; no bootstrap exception applies here.
-- Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 integrated goldens pass. No PAPER/live operation, Phase04, release, validated-alpha or promotion authorization; explicit human PAPER/live gates remain mandatory and unexercised.
+- PR100. Base/main above. JIT 6185548770; RED `82b0821f269ff2aca1df99b06f094f008616b7b9`; boundary 6185549025. GREEN/review/CI/Master gate pending.
+- Difficult route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master/boundary Sol/xhigh; runtime attestation unavailable.
+- Scope: offline actions and independent Cash/B&H; additive ledger/accounting. Separate ordinary RED/GREEN leases.
+- Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 goldens pass. No PAPER/live operation, Phase04, release, validated-alpha or promotion authority; explicit human PAPER/live gates remain mandatory and unexercised.
+
+## BT-03 completed recovery
+
+- PR99 merge/base above; source `7b4df459cd655e8d7d708e28534e5562b6b76c29`, identical tree above. Final RED `6ff2f9c6ae008bb7363f542b8d20a67ab21adc12`.
+- Initial `luna_sol_xhigh` normal_implementer/GPT-6 Luna/max; final difficult `sol_high_sol_xhigh` high_implementer/reviewer_xhigh GPT-6.1 Sol/xhigh. Scope: internal ledger/NAV/accounting only.
+- Durable PR99 comments: JIT6094290872, RED6098196615, GREEN/released lease6098830935, material CLOSED6099033623, APPROVE6099410594, Master MERGE6099435193. Writer/reviewer4801passed/4skipped; nine source contexts+Foundation passed.
+- Main CI38066050888/CodeQL38066050887 passed; scheduled CodeQL38287873542 also succeeded at the same SHA. PIT05 PR22 and BT01/02 ancestry verified at BT04 preflight.
+
 
 ## BT-02 completed recovery
 
