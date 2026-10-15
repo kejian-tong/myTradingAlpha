@@ -10,11 +10,9 @@ Apply these principles when a new requirement changes an existing design or when
 - Ground the design in current source, tests, callers, persisted data, and repository constraints.
 - Ask what shape you would choose if the new requirement had been present from the start. Propagate the answer through the interfaces and their callers.
 - Compare structurally distinct candidates when the choice is not dictated by the contract. A small variation of one candidate is not a separate design.
-- Think through the complete impact across affected interfaces, callers, documentation, and persisted artifacts before choosing a shape. Do not impose a fixed number of candidates when the contract or evidence leaves only one viable option.
 - Prefer clear ownership and a small stable interface over scattered rules and hidden state.
 - Preserve compatibility unless the active scope explicitly permits a change.
 - Treat repeated special cases, routine casts, and growing workarounds as evidence that the design may be wrong. Reconsider the shape before adding another exception.
 - Choose the smallest design that satisfies the observable requirements.
-- Deliver the approved change in incremental, verifiable steps through the repository's existing authorization, TDD, review, CI, and merge gates.
 
 Use `architect` to apply these principles to a material design decision. Use `arena` for sequential comparison in the same context.
