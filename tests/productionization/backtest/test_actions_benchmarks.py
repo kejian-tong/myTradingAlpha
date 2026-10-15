@@ -1103,7 +1103,7 @@ def test_reference_count_accepts_32_genuine_instruments_and_rejects_33_before_wo
 
 def test_eight_benchmark_members_sixteen_sessions_and_128_work_units_are_real() -> None:
     api = _api()
-    sources = _member_sources(9, 16)
+    sources = _compact_member_sources(9, 16)
     case = sources[0].case
     members = tuple(_member(api, seed=seed, quantity="1", weight="0.05") for seed in sources)
     universe = _union_universe(sources)
@@ -1188,17 +1188,17 @@ def test_exact_native_subclasses_callbacks_and_unknown_fields_are_rejected_witho
 
     base = _action()
     subclass = ActionSubclass.model_validate(base.model_dump(mode="python"))
-    _reject(lambda: _available(api, subclass))
-    _reject(lambda: _available(api, hostile))
+    _reject(lambda: _available(api, subclass, terms=None))
+    _reject(lambda: _available(api, hostile, terms=None))
     damaged = copy.deepcopy(base)
     damaged.__dict__["manifest"] = hostile
-    _reject(lambda: _available(api, damaged))
+    _reject(lambda: _available(api, damaged, terms=None))
     damaged = copy.deepcopy(base)
     damaged.__dict__["unexpected"] = hostile
-    _reject(lambda: _available(api, damaged))
+    _reject(lambda: _available(api, damaged, terms=None))
     damaged = copy.deepcopy(base)
     damaged.__dict__["new_shares_per_old_share"] = DecimalSubclass("2")
-    _reject(lambda: _available(api, damaged))
+    _reject(lambda: _available(api, damaged, terms=None))
     ledger = _ledger()
     for actions in (hostile, [hostile], TupleSubclass((_available(api, base),))):
         _reject(lambda actions=actions: _opening(api, ledger, actions))
@@ -1431,7 +1431,7 @@ def test_actions_and_benchmarks_are_pure_under_armed_success_and_negative_paths(
     assert bt03._result_status(api.BenchmarkRunner().run_cash(sessions, policy=cash_policy)) == "available"
     assert bt03._result_status(api.BenchmarkRunner().run_buy_and_hold(sessions, policy=bh_policy)) == "available"
     _assert_unavailable(api.BenchmarkRunner().run_buy_and_hold(missing_mark_sessions, policy=bh_policy))
-    _reject(lambda: _available(api, invalid))
+    _reject(lambda: _available(api, invalid, terms=None))
     _reject(lambda: _policy(api, currency="EUR"))
     assert attempts == []
 
@@ -1481,9 +1481,9 @@ def test_payment_cannot_bridge_an_unwitnessed_calendar_gap() -> None:
     _post(ledger, _opening(api, ledger, (_available(api, dividend),)))
     payload = _case().bundle.calendar.model_dump(mode="python")
     ranges = [item for item in payload["coverage_ranges"] if item["start"] != date(2024, 6, 28)]
-    ranges.extend(({"schema_version": "v1", "start": date(2024, 6, 28), "end": date(2024, 7, 7)},
-                   {"schema_version": "v1", "start": date(2024, 7, 9), "end": date(2024, 7, 10)}))
-    payload.update(coverage_ranges=ranges, replay_evidence=None,
+    ranges.extend(({"start": date(2024, 6, 28), "end": date(2024, 7, 7)},
+                   {"start": date(2024, 7, 9), "end": date(2024, 7, 10)}))
+    payload.update(coverage_ranges=tuple(sorted(ranges, key=lambda item: item["start"])), replay_evidence=None,
                    schedule=[item for item in payload["schedule"] if item["session_date"] != PAY_DATE])
     gap = quant._bundle(calendar=TradingCalendar.model_validate(payload), cutoff=bt01.PRE_CLOSE_CUTOFF).calendar
     before = _snapshot(ledger)
@@ -1645,3 +1645,738 @@ def test_bt04_supplement_generic_obligation_cannot_settle_reserved_action_claim(
     snapshot = _snapshot(ledger)
     assert _payment(api, ledger, EX_DATE, event_id="supplement-reserved-payment-retry") == ()
     assert _snapshot(ledger) == snapshot
+
+
+def _bt04_repair_removal_actions(api: SimpleNamespace, settlement: str, payable: date) -> tuple[Any, ...]:
+    split = _action(action_id="repair-removal-split")
+    dividend = _action("dividend", "repair-removal-dividend", payable_date=payable)
+    delisting = _action("delisting", "repair-removal-delisting")
+    terms = _terms(api, delisting, settlement=settlement,
+                   amount_per_share=D("30") if settlement == "cash" else ZERO,
+                   payable_date=payable if settlement == "cash" else None)
+    # Caller order must not decide split-adjusted carried entitlement.
+    return (_available(api, dividend), _available(api, delisting, terms=terms), _available(api, split))
+
+
+def _bt04_repair_mapping(
+    api: SimpleNamespace, source: str, target: str, mapping_id: str, ratio: str,
+    *, effective: date = EX_DATE,
+) -> Any:
+    return api.MergerMapping(
+        schema_version="v1", mapping_id=mapping_id, policy_version="bt04-merger-v1",
+        source_instrument_id=source, target_instrument_id=target, currency="USD",
+        effective_date=effective, new_shares_per_old_share=D(ratio),
+        manifest=_manifest(mapping_id, effective),
+    )
+
+
+def _bt04_repair_three_holdings() -> tuple[Any, tuple[SimpleNamespace, ...]]:
+    sources = _member_sources(3)
+    ledger = bt03._new_ledger(sources[0].api03, sources[0].case, opening_cash=D("2000"))
+    for index, seed in enumerate(sources):
+        ledger.append(bt03._fill_event(seed.api03, ledger, intent=seed.intent, fill=seed.fill,
+            case=seed.case, outcome=seed.outcome, policy=seed.policy, event_id=f"repair-entry-{index}"))
+    assert ledger.balance().cash == D("1700")
+    assert ledger.balance().positions == tuple(sorted((s.intent.instrument_id, D("1")) for s in sources))
+    return ledger, sources
+
+
+@pytest.mark.parametrize("settlement,principal", (("cash", "600"), ("writeoff", "0")))
+@pytest.mark.parametrize("payable", (EX_DATE, PAY_DATE), ids=("same-open", "later-session"))
+def test_bt04_repair_split_adjusted_dividend_survives_same_open_removal(
+    settlement: str, principal: str, payable: date,
+) -> None:
+    api = _api()
+    ledger = _ledger()
+    actions = _bt04_repair_removal_actions(api, settlement, payable)
+    opening_events = _opening(api, ledger, actions)
+    opening_balance = _post(ledger, opening_events)
+    assert opening_balance.positions == ()
+    assert opening_balance.cash == D("1000")
+    assert INST in ledger.action_state().closed_instruments
+    assert {a.action_id for a in ledger.action_state().applied_actions} == {
+        "repair-removal-split", "repair-removal-delisting", "repair-removal-dividend",
+    }
+    if payable != EX_DATE:
+        assert _payment(api, ledger, EX_DATE, event_id="repair-before-pay-date") == ()
+    _post(ledger, _payment(api, ledger, payable, event_id="repair-removal-payment"))
+    replay = _ledger(held=False)
+    replay.replay(ledger.events)
+    assert _snapshot(replay) == _snapshot(ledger)
+    snapshot = _snapshot(ledger)
+    assert ledger.append(opening_events[0]) == ledger.balance()
+    assert _opening(api, ledger, actions, event_id="repair-removal-retry") == ()
+    assert _payment(api, ledger, payable, event_id="repair-removal-payment-retry") == ()
+    assert _snapshot(ledger) == snapshot
+    assert opening_balance.receivables == D(principal) + D("20"), "20 split-adjusted dividend is owed after removal"
+    assert opening_balance.recognized_income == D("20")
+    assert ledger.balance().receivables == ZERO
+    assert ledger.balance().cash == D("1000") + D(principal) + D("20")
+    assert ledger.balance().recognized_income == D("20")
+
+
+@pytest.mark.parametrize("settlement,principal", (("cash", "600"), ("writeoff", "0")))
+def test_bt04_repair_independent_checker_rejects_sealed_omitted_dividend(settlement: str, principal: str) -> None:
+    api = _api()
+    from mytradingalpha.backtest.corporate_actions import _ActionState
+    from mytradingalpha.backtest.ledger import _seal_balance
+
+    ledger = _ledger()
+    before = ledger.balance()
+    event = _opening(api, ledger, _bt04_repair_removal_actions(api, settlement, PAY_DATE))[0]
+    accepted = ledger.append(event)
+    assert _seed().api03.AccountingInvariant.check(before, event, accepted) is None
+    state = ledger.action_state()
+    dividend_claims = tuple(c for c in state.claims if c.action_id == "repair-removal-dividend")
+    removed_ids = {c.obligation_id for c in dividend_claims}
+    omitted = sum((c.amount for c in dividend_claims), ZERO)
+    fields = {name: getattr(state, name) for name in _ActionState._fields}
+    fields["claims"] = tuple(c for c in state.claims if c.obligation_id not in removed_ids)
+    wrong = copy.deepcopy(accepted)
+    object.__setattr__(wrong, "obligations", tuple(o for o in accepted.obligations if o.obligation_id not in removed_ids))
+    object.__setattr__(wrong, "receivables", accepted.receivables - omitted)
+    object.__setattr__(wrong, "recognized_income", accepted.recognized_income - omitted)
+    object.__setattr__(wrong, "_action_state", _ActionState(**fields))
+    _seal_balance(wrong)  # Adversarial resealing only; goldens use public Ledger publication.
+    canonical = wrong.canonical_bytes()
+    assert wrong.receivables == D(principal)
+    assert wrong.recognized_income == before.recognized_income == ZERO
+    assert wrong.positions == accepted.positions == ()
+    assert wrong.cash == accepted.cash
+    assert wrong.prefix_hashes == accepted.prefix_hashes
+    assert {a.action_id for a in state.applied_actions} == {
+        "repair-removal-split", "repair-removal-delisting", "repair-removal-dividend",
+    }
+    snapshot = _snapshot(ledger)
+    error = _reject(lambda: _seed().api03.AccountingInvariant.check(before, event, wrong))
+    assert getattr(error, "reason_code", None) == "accounting_invalid"
+    assert wrong.canonical_bytes() == canonical
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_repair_source_dividend_overlapping_new_merger_rejects_atomically() -> None:
+    api = _api()
+    ledger, sources = _bt04_repair_three_holdings()
+    source, target = (s.intent.instrument_id for s in sources[:2])
+    mapping = _bt04_repair_mapping(api, source, target, "repair-source-dividend-merger", "2")
+    dividend = _available(api, _action("dividend", "repair-source-dividend", instrument_id=source))
+    snapshot = _snapshot(ledger)
+    _reject(lambda: _post(ledger, _opening(api, ledger, (dividend,), mergers=(mapping,), references=())))
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_repair_target_dividend_uses_existing_plus_converted_holdings_once() -> None:
+    api = _api()
+    ledger, sources = _bt04_repair_three_holdings()
+    source, target, untouched = (s.intent.instrument_id for s in sources)
+    mapping = _bt04_repair_mapping(api, source, target, "repair-target-dividend-merger", "2")
+    dividend = _available(api, _action("dividend", "repair-target-dividend", instrument_id=target))
+    _post(ledger, _opening(api, ledger, (dividend,), mergers=(mapping,), references=()))
+    assert ledger.balance().positions == tuple(sorted(((target, D("3")), (untouched, D("1")))))
+    assert ledger.balance().receivables == ledger.balance().recognized_income == D("3")
+    assert ledger.balance().cash == D("1700")
+    _post(ledger, _payment(api, ledger, PAY_DATE))
+    assert ledger.balance().cash == D("1703")
+    assert ledger.balance().recognized_income == D("3")
+    snapshot = _snapshot(ledger)
+    assert _opening(api, ledger, (dividend,), mergers=(mapping,), references=(), event_id="repair-target-retry") == ()
+    assert _snapshot(ledger) == snapshot
+
+
+@pytest.mark.parametrize("unseen_kind", ("action", "mapping"))
+@pytest.mark.parametrize("include_retry", (False, True), ids=("unseen-only", "retry-plus-unseen"))
+def test_bt04_repair_committed_opening_rejects_unseen_evidence(unseen_kind: str, include_retry: bool) -> None:
+    api = _api()
+    ledger = _ledger()
+    first = _available(api, _action(action_id="repair-committed-split"))
+    _post(ledger, _opening(api, ledger, (first,)))
+    assert ledger.balance().latest_economic_time == _case().bundle.calendar.session(EX_DATE).open_at
+    actions = (first,) if include_retry else ()
+    mappings: tuple[Any, ...] = ()
+    if unseen_kind == "action":
+        actions += (_available(api, _action("dividend", "repair-unseen-dividend")),)
+    else:
+        mappings = (_bt04_repair_mapping(api, INST, "inst-repair-target", "repair-unseen-merger", "0.5"),)
+    snapshot = _snapshot(ledger)
+    _reject(lambda: _post(ledger, _opening(api, ledger, actions, mergers=mappings,
+        references=(), event_id="repair-unseen-opening")))
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_repair_same_open_payment_and_retry_only_remain_valid() -> None:
+    api = _api()
+    ledger = _ledger()
+    dividend = _available(api, _action("dividend", "repair-open-payment", payable_date=EX_DATE))
+    events = _opening(api, ledger, (dividend,), references=())
+    _post(ledger, events)
+    _post(ledger, _payment(api, ledger, EX_DATE))
+    assert ledger.balance().cash == D("1010")
+    assert ledger.balance().receivables == ZERO
+    assert ledger.balance().recognized_income == D("10")
+    snapshot = _snapshot(ledger)
+    assert ledger.append(events[0]) == ledger.balance()
+    assert _opening(api, ledger, (dividend,), references=(), event_id="repair-open-only-retry") == ()
+    assert _payment(api, ledger, EX_DATE, event_id="repair-open-pay-retry") == ()
+    changed = _available(api, _action("dividend", "repair-open-payment", revision=1, payable_date=EX_DATE))
+    _reject(lambda: _opening(api, ledger, (changed,), references=(), event_id="repair-open-conflict"))
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_repair_empty_evaluation_does_not_close_genesis_opening() -> None:
+    api = _api()
+    ledger = _ledger(held=False)
+    assert ledger.balance().latest_economic_time is None
+    assert _opening(api, ledger, (), references=()) == ()
+    assert ledger.balance().event_count == 0
+    dividend = _available(api, _action("dividend", "repair-genesis-dividend"))
+    _post(ledger, _opening(api, ledger, (dividend,), references=()))
+    assert ledger.balance().event_count == 1
+    assert ledger.balance().cash == D("2000")
+    assert ledger.balance().receivables == ledger.balance().recognized_income == ZERO
+
+
+@pytest.mark.parametrize("reverse", (False, True), ids=("a-to-b-first", "b-to-c-first"))
+def test_bt04_repair_same_open_mapping_chain_rejects_both_orders(reverse: bool) -> None:
+    api = _api()
+    ledger, sources = _bt04_repair_three_holdings()
+    a, b, c = (s.intent.instrument_id for s in sources)
+    mappings = (_bt04_repair_mapping(api, a, b, "repair-chain-a-b", "2"),
+                _bt04_repair_mapping(api, b, c, "repair-chain-b-c", "3"))
+    if reverse:
+        mappings = tuple(reversed(mappings))
+    snapshot = _snapshot(ledger)
+    _reject(lambda: _post(ledger, _opening(api, ledger, (), mergers=mappings, references=())))
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_repair_convergent_mappings_are_additive_in_both_orders() -> None:
+    api = _api()
+    economics = []
+    for reverse in (False, True):
+        ledger, sources = _bt04_repair_three_holdings()
+        a, b, target = (s.intent.instrument_id for s in sources)
+        mappings = (_bt04_repair_mapping(api, a, target, "repair-converge-a", "2"),
+                    _bt04_repair_mapping(api, b, target, "repair-converge-b", "3"))
+        if reverse:
+            mappings = tuple(reversed(mappings))
+        _post(ledger, _opening(api, ledger, (), mergers=mappings, references=()))
+        balance = ledger.balance()
+        assert balance.positions == ((target, D("6")),)
+        assert balance.cash == D("1700")
+        assert balance.receivables == balance.recognized_income == ZERO
+        state = ledger.action_state()
+        assert state.closed_instruments == tuple(sorted((a, b)))
+        economics.append((balance.cash, balance.positions, balance.receivables, balance.recognized_income,
+                          balance.total_fees, state.closed_instruments, tuple(a.action_id for a in state.applied_actions)))
+        snapshot = _snapshot(ledger)
+        assert _opening(api, ledger, (), mergers=mappings, references=(), event_id="repair-converge-retry") == ()
+        assert _snapshot(ledger) == snapshot
+    assert economics[0] == economics[1]  # Caller-order hashes are not economic equality.
+
+
+def test_bt04_repair_historical_mapping_retry_does_not_poison_later_mapping_graph() -> None:
+    api = _api()
+    ledger, sources = _bt04_repair_three_holdings()
+    a, b, c = (s.intent.instrument_id for s in sources)
+    first = _bt04_repair_mapping(api, a, b, "repair-historical-a-b", "2")
+    _post(ledger, _opening(api, ledger, (), mergers=(first,), references=()))
+    later = _bt04_repair_mapping(api, b, c, "repair-later-b-c", "3", effective=PAY_DATE)
+    _post(ledger, _opening(api, ledger, (), mergers=(first, later), references=(),
+                           session_date=PAY_DATE, event_id="repair-later-mapping"))
+    assert ledger.balance().positions == ((c, D("10")),)
+    assert ledger.balance().cash == D("1700")
+    assert ledger.balance().receivables == ledger.balance().recognized_income == ZERO
+    snapshot = _snapshot(ledger)
+    assert _opening(api, ledger, (), mergers=(later, first), references=(), session_date=PAY_DATE,
+                    event_id="repair-historical-retry") == ()
+    assert _snapshot(ledger) == snapshot
+
+
+@lru_cache(maxsize=2)
+def _compact_member_sources(count: int, session_count: int = 5) -> tuple[SimpleNamespace, ...]:
+    """Use the genuine common bundle, omitting only bars outside this lookback."""
+    base = _case(session_count)
+    bundle = base.bundle
+    current_bars = tuple(bar for bar in bundle.bars if bar.session_date >= date(2024, 6, 28))
+    instruments = tuple(_renamed(next(x for x in bundle.instruments if x.instrument_id == INST), i) for i in range(count))
+    aliases = tuple(_renamed(next(x for x in bundle.aliases if x.instrument_id == INST), i) for i in range(count))
+    memberships = tuple(_renamed(next(x for x in bundle.memberships if x.instrument_id == INST), i) for i in range(count))
+    bars = tuple(_renamed(bar, i) for i in range(count) for bar in current_bars if bar.instrument_id == INST)
+    extended = build_evidence_bundle(
+        schema_version="v1", bundle_id=f"synthetic-bt04-compact-{count:02d}",
+        created_at=bundle.created_at, knowledge_cutoff=bundle.knowledge_cutoff,
+        replay_policy=bundle.replay_policy, requirements=bundle.requirements,
+        missing_optional=bundle.missing_optional, calendar=bundle.calendar,
+        instrument_candidates=(*bundle.instruments, *instruments),
+        alias_candidates=(*bundle.aliases, *aliases), membership_candidates=(*bundle.memberships, *memberships),
+        action_candidates=bundle.actions, bar_candidates=(*current_bars, *bars), filing_candidates=bundle.filings,
+        event_candidates=bundle.events, social_post_candidates=bundle.social_posts,
+        macro_observation_candidates=bundle.macro_observations,
+    )
+    context = bt01._context(extended, run_id=base.context.run_id, variant_id=base.context.variant_id,
+                            decision_time=bt01.DECISION_TIME, earliest_execution_time="2024-07-03T13:30:00Z")
+    api01, api02, api03, qapi = bt01._bt_api(), bt02._bt02_api(), bt03._bt03_api(), quant._api()
+    results = []
+    for index, instrument in enumerate(instruments):
+        features = quant._features(qapi, bundle=extended, instrument_id=instrument.instrument_id)
+        signal = quant._score(qapi, bundle=extended, run_id=context.run_id, feature_set=features)
+        envelope = combine_quant_overlay(signal, context=context,
+            registry=VariantRegistry().register(context.variant_id, kind="quant_only"))
+        binding = api01.SessionClock.bind(context, extended, envelope)
+        decision, opportunity = api01.BacktestRunner().run((binding,))
+        case = SimpleNamespace(context=context, bundle=extended, envelope=envelope,
+                               binding=binding, decision=decision, opportunity=opportunity)
+        bar = _renamed(bt02._make_bar(base), index)
+        outcome = bt02._outcome(api02, case, bar=bar)
+        intent = bt02._intent(api02, case, bar=bar, quantity=D("1"))
+        policy = _seed().policy
+        fill = bt03._make_fill(api02, case, intent=intent, outcome=outcome, policy=policy)
+        results.append(SimpleNamespace(case=case, api02=api02, api03=api03, intent=intent,
+            outcome=outcome, fill=fill, policy=policy, cash=D("2000"), features=features))
+    return tuple(results)
+
+
+@pytest.mark.parametrize("first_ratio,second_ratio", (("1.5", "2"), ("2", "1.5")))
+def test_bt04_repair_new_same_instrument_splits_have_no_lexical_economic_order(
+    first_ratio: str, second_ratio: str,
+) -> None:
+    api = _api()
+    seed = _seed("1")
+    ledger = _ledger(seed)
+    policy = _policy(api, fractional_shares="cash_in_lieu")
+    actions = []
+    for suffix, ratio in (("a", first_ratio), ("b", second_ratio)):
+        action = _action(action_id=f"repair-multi-split-{suffix}", new_shares_per_old_share=D(ratio))
+        terms = _terms(api, action, fractional_shares="cash_in_lieu", lot_size=D("1"),
+                       cash_in_lieu_price=D("10"), payable_date=PAY_DATE)
+        actions.append(_available(api, action, terms=terms))
+    snapshot = _snapshot(ledger)
+    _reject(lambda: _post(ledger, _opening(api, ledger, tuple(actions), policy=policy,
+                                          references=(_reference(api, seed),))))
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_repair_later_split_filters_old_retry_and_uses_fresh_reference() -> None:
+    api = _api()
+    seed = _seed("1")
+    ledger = _ledger(seed)
+    policy = _policy(api, fractional_shares="cash_in_lieu")
+    first = _action(action_id="repair-earlier-split", new_shares_per_old_share=D("1.5"))
+    first_terms = _terms(api, first, fractional_shares="cash_in_lieu", lot_size=D("1"),
+                         cash_in_lieu_price=D("10"), payable_date=PAY_DATE)
+    first_wrapper = _available(api, first, terms=first_terms)
+    _post(ledger, _opening(api, ledger, (first_wrapper,), policy=policy, references=(_reference(api, seed),)))
+    assert ledger.balance().positions == ((INST, D("1")),)
+    assert ledger.balance().receivables == D("5")
+    second = _action(action_id="repair-later-split", effective=PAY_DATE, new_shares_per_old_share=D("2"))
+    second_terms = _terms(api, second, fractional_shares="cash_in_lieu", lot_size=D("1"),
+                          cash_in_lieu_price=D("10"), payable_date=PAY_DATE)
+    second_wrapper = _available(api, second, terms=second_terms)
+    fresh = bt02._outcome(seed.api02, seed.case, session=EX_DATE, price=D("80"))
+    reference = api.PositionReference(instrument_id=INST, symbol="KEEP", cost_basis=D("90"),
+                                      mark=bt03._mark(seed.api03, seed.case, fresh))
+    _post(ledger, _opening(api, ledger, (first_wrapper, second_wrapper), policy=policy,
+                           references=(reference,), session_date=PAY_DATE, event_id="repair-later-split-opening"))
+    assert ledger.balance().positions == ((INST, D("2")),)
+    converted = ledger.action_state().split_references[0]
+    assert (converted.cost_basis_numerator, converted.cost_basis_denominator) == (45, 1)
+    assert (converted.mark_numerator, converted.mark_denominator) == (40, 1)
+    _post(ledger, _payment(api, ledger, PAY_DATE, policy=policy))
+    assert ledger.balance().cash == D("1905")
+    assert ledger.balance().receivables == ledger.balance().recognized_income == ZERO
+    snapshot = _snapshot(ledger)
+    assert _opening(api, ledger, (second_wrapper, first_wrapper), policy=policy, references=(reference,),
+                    session_date=PAY_DATE, event_id="repair-later-split-retry") == ()
+    assert _snapshot(ledger) == snapshot
+
+
+def _bt04_repair_native_digest(value: Any) -> str:
+    """Stream honest fixture storage, including metadata, without opaque getters."""
+    from enum import Enum
+
+    digest = hashlib.sha256()
+
+    def visit(item: Any) -> None:
+        cls = type(item)
+        digest.update((cls.__module__ + "." + cls.__name__ + "\0").encode())
+        if item is None or cls in (bool, int, str, bytes, Decimal, date, datetime):
+            raw = item if cls is bytes else repr(item).encode()
+            digest.update(str(len(raw)).encode() + b":" + raw)
+        elif isinstance(item, Enum):
+            visit(item.name)
+            visit(item.value)
+        elif cls in (tuple, list, set):
+            values = sorted(item) if cls is set else item
+            for child in values:
+                visit(child)
+        elif cls is dict:
+            for key in sorted(item):
+                visit(key)
+                visit(item[key])
+        elif hasattr(cls, "model_fields"):
+            for name in ("__dict__", "__pydantic_fields_set__", "__pydantic_extra__", "__pydantic_private__"):
+                visit(object.__getattribute__(item, name))
+        elif hasattr(cls, "_fields"):
+            for name in ("_data", "_canonical", "_storage"):
+                visit(object.__getattribute__(item, name))
+        elif hasattr(item, "__dict__"):
+            visit(object.__getattribute__(item, "__dict__"))
+        else:
+            for name in cls.__slots__:
+                visit(object.__getattribute__(item, name))
+        digest.update(b";")
+
+    visit(value)
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _bt04_repair_oversized_request() -> SimpleNamespace:
+    api = _api()
+    sources = _member_sources(9, 16)  # Retain the original genuinely oversized graph.
+    case = sources[0].case
+    members = tuple(_member(api, seed=s, quantity="1", weight="0.05") for s in sources[:8])
+    sessions = []
+    for day in SESSIONS[:16]:
+        marks = tuple(bt03._mark(s.api03, s.case, bt02._outcome(s.api02, s.case,
+            bar=_renamed(bt02._make_bar(case, session=day), i))) for i, s in enumerate(sources[:8]))
+        sessions.append(_session_input(api, day, case=case, marks=marks))
+    return SimpleNamespace(case=case, sources=sources, members=members, sessions=tuple(sessions))
+
+
+@pytest.mark.parametrize("session_count,admissible", ((12, True), (13, False), (16, False)))
+def test_bt04_repair_resource_admission_precedes_ledger_and_economics(
+    session_count: int, admissible: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    from mytradingalpha.backtest import benchmarks
+    from mytradingalpha.backtest.clock import _BINDING_DOMAIN, _capture_root, _CaptureBudget
+
+    request = _bt04_repair_oversized_request()
+    common = _common(api, case=request.case, end=SESSIONS[session_count - 1])
+    policy = _bh_policy(api, common=common, universe=_union_universe(request.sources), members=request.members)
+    sessions = request.sessions[:session_count]
+    occurrences = 8 + 9 * session_count
+    budget = _CaptureBudget()
+    binding = request.sources[0].case.binding
+    for name in ("_context_snapshot", "_bundle_snapshot", "_envelope_snapshot", "_session_snapshot", "_next_session_snapshot"):
+        _capture_root(object.__getattribute__(binding, name), budget)
+    unit = len(_BINDING_DOMAIN) + len(object.__getattribute__(binding, "_sealed_source_json"))
+    if session_count == 13:
+        assert occurrences * budget.run_nodes > 1_000_000  # Nodes alone reject, below the byte ceiling.
+        assert occurrences * unit < 16 * 1024 * 1024
+    elif session_count == 16:
+        assert occurrences * unit > 16 * 1024 * 1024
+    # Complete external producer proof includes all direct evidence and metadata:
+    # N12 upper=13433132 bytes/992142 nodes; N13 lower=1039875 binding nodes.
+    # The 76180-node session quantum straddles 1M; no exact-unit pass is claimed.
+    before = _bt04_repair_native_digest((policy, sessions))
+    attempts: list[str] = []
+
+    class ExecutionStarted(Exception):
+        pass
+
+    def observe_ledger(*_args: Any, **_kwargs: Any) -> Any:
+        attempts.append("Ledger")
+        raise ExecutionStarted("bounded spy stopped before ledger/economic execution")
+
+    monkeypatch.setattr(benchmarks, "Ledger", observe_ledger)
+    rejection = None
+    try:
+        api.BenchmarkRunner().run_buy_and_hold(sessions, policy=policy)
+    except ExecutionStarted:
+        pass
+    except (TypeError, ValueError) as error:
+        rejection = error
+    assert _bt04_repair_native_digest((policy, sessions)) == before
+    if admissible:
+        assert attempts == ["Ledger"], "nearest representable in-budget request must reach execution"
+    else:
+        assert attempts == [], "oversized source graph reached Ledger before aggregate admission"
+        assert rejection is not None
+        assert getattr(rejection, "reason_code", None) == "resource_limit"
+
+
+def _bt04_repair_policy_kwargs(api: SimpleNamespace, *, universe: Any = None) -> dict[str, Any]:
+    return {"common": _common(api), "universe": _case().bundle if universe is None else universe,
+            "members": (_member(api),), "residual_cash": "retain", "rebalance": "none",
+            "dividend_treatment": "cash_no_reinvestment"}
+
+
+def test_bt04_repair_initial_buy_hold_construction_is_pure(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = _api()
+    kwargs = _bt04_repair_policy_kwargs(api)
+    before = _bt04_repair_native_digest(kwargs)
+    calendar_module = importlib.import_module("mytradingalpha.data.calendar")
+    attempts: list[str] = []
+
+    def deny(name: str) -> Callable[..., Any]:
+        def blocked(*_args: Any, **_kwargs: Any) -> Any:
+            attempts.append(name)
+            raise AssertionError("unexpected external access during initial policy construction")
+        return blocked
+
+    error = None
+    policy = None
+    with monkeypatch.context() as armed:
+        for owner, name in ((builtins, "open"), (Path, "open"), (socket, "socket"),
+                            (socket, "create_connection"), (urllib.request, "urlopen"),
+                            (subprocess, "Popen"), (subprocess, "run"), (os, "getenv"),
+                            (os, "system"), (type(os.environ), "__getitem__"),
+                            (zoneinfo, "ZoneInfo"), (calendar_module, "ZoneInfo"),
+                            (calendar_module, "capture_calendar_replay_evidence")):
+            armed.setattr(owner, name, deny(name))
+        try:
+            policy = api.BuyAndHoldPolicy(**kwargs)  # All fixture preparation precedes arming.
+        except (TypeError, ValueError) as caught:
+            error = caught
+    assert _bt04_repair_native_digest(kwargs) == before
+    assert attempts == [], "initial EvidenceBundle proof attempted ambient operations"
+    assert error is None
+    assert policy is not None
+    assert policy.canonical_bytes()
+
+
+@pytest.mark.parametrize("change", ("created_at", "witness_metadata", "missing_witness"))
+def test_bt04_repair_universe_requires_full_native_binding_equality(change: str) -> None:
+    api = _api()
+    universe = copy.deepcopy(_case().bundle)
+    advertised = universe.bundle_hash
+    if change == "created_at":
+        universe.__dict__["created_at"] += timedelta(microseconds=1)
+    elif change == "witness_metadata":
+        day = universe.calendar.replay_evidence.days[0]
+        day.__pydantic_fields_set__.remove("start_utc")
+    else:
+        universe.calendar.__dict__["replay_evidence"] = None
+    assert universe.bundle_hash == advertised
+    kwargs = _bt04_repair_policy_kwargs(api, universe=universe)
+    _reject(lambda: api.BuyAndHoldPolicy(**kwargs))
+
+
+def test_bt04_repair_forged_outer_policy_seal_is_rejected() -> None:
+    api = _api()
+    policy = _bh_policy(api)
+    object.__setattr__(policy, "_canonical", b"{}")
+    _reject(policy.canonical_bytes)
+
+
+def _bt04_repair_coordinated_semantic_forgery(kind: str) -> tuple[Any, dict[str, Any], Any]:
+    """Recompute unkeyed data seals; they deliberately confer no issuer authority."""
+    from mytradingalpha.backtest import clock, corporate_actions
+    from mytradingalpha.backtest.ledger import _binding_capture
+    from mytradingalpha.data.bundle import _semantic_hash
+
+    api, seed = _api(), _seed()
+    universe = copy.deepcopy(seed.case.bundle)
+    if kind == "split":
+        leaf = next(a for a in universe.actions if type(a) is SplitAction)
+        leaf.__dict__["new_shares_per_old_share"] = D("-1")
+    else:
+        leaf = universe.events[0]  # News is unused by this quant-only member.
+        leaf.__dict__["event_id"] = ""
+    names = ("schema_version", "knowledge_cutoff", "replay_policy", "requirements", "missing_optional",
+             "calendar", "instruments", "aliases", "memberships", "actions", "bars", "filings",
+             "events", "social_posts", "macro_observations")
+    source_hash = _semantic_hash(**{name: getattr(universe, name) for name in names})
+    universe.__dict__["bundle_hash"] = source_hash
+    context = type(seed.case.context).model_validate({**seed.case.context.model_dump(mode="python"), "bundle_hash": source_hash})
+    quant_signal = bt01._rehashed_quant_signal(seed.case.envelope.quant, bundle_hash=source_hash)
+    envelope = combine_quant_overlay(quant_signal, context=context,
+        registry=VariantRegistry().register(context.variant_id, kind="quant_only"))
+    binding = object.__new__(clock.SessionBinding)
+    roots = (context, universe, envelope, seed.case.binding.session, seed.case.binding.next_session)
+    for name, value in zip(("_context_snapshot", "_bundle_snapshot", "_envelope_snapshot", "_session_snapshot", "_next_session_snapshot"), roots, strict=True):
+        object.__setattr__(binding, name, value)
+    raw = clock._source_json(context, universe, envelope)
+    object.__setattr__(binding, "_sealed_source_json", raw)
+    object.__setattr__(binding, "_source_fingerprint", "sha256:" + hashlib.sha256(clock._BINDING_DOMAIN + raw).hexdigest())
+    budget = clock._CaptureBudget()
+    object.__setattr__(binding, "_sealed_storage_bytes", clock._storage_bytes(*(clock._capture_root(root, budget) for root in roots)))
+    # Establish that the negative passes inherited structural/native binding checks.
+    clock._refresh_binding(binding, clock._CaptureBudget())
+    decision, opportunity = bt01._bt_api().BacktestRunner().run((binding,))
+    case = SimpleNamespace(context=context, bundle=universe, envelope=envelope, binding=binding,
+                           decision=decision, opportunity=opportunity)
+    intent = bt02._intent(seed.api02, case, quantity=D("10"), time_in_force="gtc", expires_at=seed.intent.expires_at)
+    # Capture only genuine fields through BT04. Build the hostile native parts
+    # from inherited structural capture so future semantic guards cannot reject
+    # fixture preparation before the public boundary under test is reached.
+    genuine_member = _member(api)
+    member_fields = type(genuine_member)._fields
+    member_parts = list(corporate_actions._parts(tuple(corporate_actions._get(genuine_member, n) for n in member_fields)))
+    member_parts[member_fields.index("intent")] = corporate_actions._parts((intent,))[0]
+    owned_binding, seals = _binding_capture(binding)
+    member_parts[member_fields.index("binding")] = (
+        owned_binding, seals[0].decode(), [seals[0].decode(), seals[1], seals[2].hex()],
+    )
+    member = object.__new__(api.BenchmarkMember)
+    object.__setattr__(member, "_data", tuple(p[0] for p in member_parts))
+    object.__setattr__(member, "_canonical", corporate_actions._canonical_json(dict(zip(member_fields, (p[1] for p in member_parts), strict=True))))
+    object.__setattr__(member, "_storage", corporate_actions._DOMAIN + corporate_actions._canonical_json([p[2] for p in member_parts]))
+    kwargs = {"common": _common(api), "universe": universe, "members": (member,), "residual_cash": "retain",
+              "rebalance": "none", "dividend_treatment": "cash_no_reinvestment"}
+    policy = object.__new__(api.BuyAndHoldPolicy)
+    genuine_policy = _bh_policy(api)
+    names_in_policy = type(policy)._fields
+    parts = list(corporate_actions._parts(tuple(corporate_actions._get(genuine_policy, n) for n in names_in_policy)))
+    captured_universe = clock._capture_root(universe, clock._CaptureBudget())
+    parts[names_in_policy.index("universe")] = (
+        universe, universe.model_dump(mode="json"), ["EvidenceBundle", clock._storage_bytes(captured_universe).hex()],
+    )
+    parts[names_in_policy.index("members")] = (
+        (member,), [["BenchmarkMember", member._canonical.decode()]], [["BenchmarkMember", member._storage.hex()]],
+    )
+    object.__setattr__(policy, "_data", tuple(part[0] for part in parts))
+    object.__setattr__(policy, "_canonical", corporate_actions._canonical_json(dict(zip(type(policy)._fields, (part[1] for part in parts), strict=True))))
+    object.__setattr__(policy, "_storage", corporate_actions._DOMAIN + corporate_actions._canonical_json([part[2] for part in parts]))
+    assert universe.bundle_hash == _semantic_hash(**{name: getattr(universe, name) for name in names})
+    return policy, kwargs, leaf
+
+
+@pytest.mark.parametrize("kind", ("split", "unused_event"))
+def test_bt04_repair_semantic_proof_survives_coordinated_unkeyed_resealing(kind: str) -> None:
+    api = _api()
+    policy, kwargs, leaf = _bt04_repair_coordinated_semantic_forgery(kind)
+    with pytest.raises(ValueError):
+        type(leaf).model_validate(leaf.model_dump(mode="python"))
+    before = _bt04_repair_native_digest((policy, kwargs))
+    _reject(lambda: api.BuyAndHoldPolicy(**kwargs))
+    _reject(policy.canonical_bytes)
+    assert _bt04_repair_native_digest((policy, kwargs)) == before
+
+
+@lru_cache(maxsize=2)
+def _bt04_repair_padded_member_sources(text_length: int) -> tuple[SimpleNamespace, ...]:
+    """Increase only existing attribution text; all financial source values survive."""
+    original = _compact_member_sources(9, 16)
+    base, copied = original[0].case, copy.deepcopy(original[0].case.bundle)
+    domains = ("instruments", "aliases", "memberships", "actions", "bars", "filings", "events", "social_posts", "macro_observations")
+    manifests = [record.manifest for domain in domains for record in getattr(copied, domain)]
+    text = "synthetic budget fixture " + "x" * (text_length - len("synthetic budget fixture "))
+    assert len(text.encode()) == text_length <= 2048
+    for manifest in manifests[:20]:
+        manifest.__dict__["terms"] = text
+    bundle = build_evidence_bundle(
+        schema_version="v1", bundle_id=copied.bundle_id, created_at=copied.created_at,
+        knowledge_cutoff=copied.knowledge_cutoff, replay_policy=copied.replay_policy,
+        requirements=copied.requirements, missing_optional=copied.missing_optional, calendar=copied.calendar,
+        instrument_candidates=copied.instruments, alias_candidates=copied.aliases,
+        membership_candidates=copied.memberships, action_candidates=copied.actions, bar_candidates=copied.bars,
+        filing_candidates=copied.filings, event_candidates=copied.events, social_post_candidates=copied.social_posts,
+        macro_observation_candidates=copied.macro_observations,
+    )
+    context = bt01._context(bundle, run_id=base.context.run_id, variant_id=base.context.variant_id,
+                            decision_time=bt01.DECISION_TIME, earliest_execution_time="2024-07-03T13:30:00Z")
+    api01, api02, api03, qapi = bt01._bt_api(), bt02._bt02_api(), bt03._bt03_api(), quant._api()
+    result = []
+    for index, prior in enumerate(original):
+        identifier = prior.intent.instrument_id
+        features = quant._features(qapi, bundle=bundle, instrument_id=identifier)
+        signal = quant._score(qapi, bundle=bundle, run_id=context.run_id, feature_set=features)
+        envelope = combine_quant_overlay(signal, context=context,
+            registry=VariantRegistry().register(context.variant_id, kind="quant_only"))
+        binding = api01.SessionClock.bind(context, bundle, envelope)
+        decision, opportunity = api01.BacktestRunner().run((binding,))
+        case = SimpleNamespace(context=context, bundle=bundle, envelope=envelope, binding=binding,
+                               decision=decision, opportunity=opportunity)
+        bar = _renamed(bt02._make_bar(base), index)
+        outcome = bt02._outcome(api02, case, bar=bar)
+        intent = bt02._intent(api02, case, bar=bar, quantity=D("1"))
+        policy = _seed().policy
+        fill = bt03._make_fill(api02, case, intent=intent, outcome=outcome, policy=policy)
+        result.append(SimpleNamespace(case=case, api02=api02, api03=api03, intent=intent,
+            outcome=outcome, fill=fill, policy=policy, cash=D("2000"), features=features))
+    return tuple(result)
+
+
+@pytest.mark.parametrize("text_length,admissible", ((1539, True), (1653, False)))
+def test_bt04_repair_byte_admission_is_independent_of_native_node_limit(
+    text_length: int, admissible: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    from mytradingalpha.backtest import benchmarks
+    from mytradingalpha.backtest.clock import _BINDING_DOMAIN, _capture_root, _CaptureBudget
+
+    sources = _bt04_repair_padded_member_sources(text_length)
+    case = sources[0].case
+    members = tuple(_member(api, seed=s, quantity="1", weight="0.05") for s in sources[:8])
+    common = _common(api, case=case, end=SESSIONS[15])
+    policy = _bh_policy(api, common=common, universe=_union_universe(sources), members=members)
+    sessions = []
+    for day in SESSIONS[:16]:
+        marks = tuple(bt03._mark(s.api03, s.case, bt02._outcome(s.api02, s.case,
+            bar=_renamed(bt02._make_bar(case, session=day), i))) for i, s in enumerate(sources[:8]))
+        sessions.append(_session_input(api, day, case=case, marks=marks))
+    sessions = tuple(sessions)
+    budget = _CaptureBudget()
+    binding = sources[0].case.binding
+    for name in ("_context_snapshot", "_bundle_snapshot", "_envelope_snapshot", "_session_snapshot", "_next_session_snapshot"):
+        _capture_root(object.__getattribute__(binding, name), budget)
+    unit = len(_BINDING_DOMAIN) + len(object.__getattribute__(binding, "_sealed_source_json"))
+    assert budget.run_nodes == 5759  # Changing existing terms adds bytes, never nodes.
+    # The complete independent receipt includes all 152 bindings, direct universe,
+    # calendars, intents, 128 outcomes and scalars: 905182 native nodes in both cases.
+    # Its 1539-byte text request upper is 16775893 bytes; 1653-byte text bindings
+    # alone contain 16779888 bytes. Only the byte cap rejects the latter.
+    if admissible:
+        assert 152 * unit == 16_433_328 < 16 * 1024 * 1024
+    else:
+        assert 152 * unit == 16_779_888 > 16 * 1024 * 1024
+    before = _bt04_repair_native_digest((policy, sessions))
+    attempts: list[str] = []
+
+    class ExecutionStarted(Exception):
+        pass
+
+    def observe_ledger(*_args: Any, **_kwargs: Any) -> Any:
+        attempts.append("Ledger")
+        raise ExecutionStarted("bounded spy stopped before ledger/economic execution")
+
+    monkeypatch.setattr(benchmarks, "Ledger", observe_ledger)
+    rejection = None
+    try:
+        api.BenchmarkRunner().run_buy_and_hold(sessions, policy=policy)
+    except ExecutionStarted:
+        pass
+    except (TypeError, ValueError) as error:
+        rejection = error
+    assert _bt04_repair_native_digest((policy, sessions)) == before
+    if admissible:
+        assert attempts == ["Ledger"], "in-budget source-text control must reach execution"
+    else:
+        assert attempts == [], "byte-only oversized request reached Ledger before admission"
+        assert rejection is not None
+        assert getattr(rejection, "reason_code", None) == "resource_limit"
+
+
+@pytest.mark.parametrize("kind", ("split", "unused_event"))
+def test_bt04_repair_nonentry_session_rejects_resealed_invalid_nested_bundle(kind: str) -> None:
+    api = _api()
+    from mytradingalpha.backtest.corporate_actions import _get
+
+    genuine_policy = _bh_policy(api)
+    genuine_endpoints = (_session_input(api, ENTRY), _session_input(api, PAY_DATE))
+    forged_policy, forged_kwargs, leaf = _bt04_repair_coordinated_semantic_forgery(kind)
+    binding = _get(forged_kwargs["members"][0], "binding")
+    bad_case = SimpleNamespace(context=binding.context, bundle=binding.bundle,
+                               envelope=binding.envelope, binding=binding)
+    with pytest.raises(ValueError):
+        type(leaf).model_validate(leaf.model_dump(mode="python"))
+    # The mark/outcome and accounting wrappers are genuinely issued by unchanged
+    # BT03. Only their nested unused PIT record is semantically invalid.
+    seed = _seed()
+    outcome = bt02._outcome(seed.api02, bad_case, session=EX_DATE, price=D("100"))
+    middle = {"session": bad_case.bundle.calendar.session(EX_DATE),
+              "marks": (bt03._mark(seed.api03, bad_case, outcome),),
+              "accounting_policy": bt03._accounting_policy(seed.api03, bad_case, outcome),
+              "actions": (), "references": (), "mergers": ()}
+    assert genuine_policy.canonical_bytes()
+    assert _get(genuine_policy, "universe").bundle_hash == _case().bundle.bundle_hash
+    assert bad_case.bundle.bundle_hash != _case().bundle.bundle_hash
+    inputs = (genuine_policy, genuine_endpoints, forged_policy, forged_kwargs, middle)
+    before = _bt04_repair_native_digest(inputs)
+    try:
+        _reject(lambda: api.BenchmarkSessionInput(**middle))
+    finally:
+        assert _bt04_repair_native_digest(inputs) == before
