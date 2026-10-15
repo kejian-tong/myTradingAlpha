@@ -1038,7 +1038,7 @@ def _member_sources(count: int, session_count: int = 5, *, shared: bool = True) 
 def _union_universe(sources: tuple[SimpleNamespace, ...]) -> Any:
     base = sources[0].case.bundle
     assert all(seed.case.context == sources[0].case.context for seed in sources)
-    assert all(seed.case.bundle.content_hash == base.content_hash for seed in sources)
+    assert all(seed.case.bundle.bundle_hash == base.bundle_hash for seed in sources)
     return base
 
 
