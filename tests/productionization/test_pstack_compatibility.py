@@ -18,6 +18,9 @@ SIG05_MERGE_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 BT01_MERGE_SHA = "a713fbb48324ad9da45e254268b9cfe30b0a634b"
 BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
+EXPECTED_CANONICAL_VERSION = "0.15.25"
+EXPECTED_CANONICAL_COMMIT = "99743e9c151c8537cbbf1f98bb38f34ef3368453"
+EXPECTED_CANONICAL_TREE = "0d5fd349cbc77d054eed60f0e8cdfbea86321ff9"
 
 EXPECTED_SKILLS = {
     "architect",
@@ -236,8 +239,8 @@ def test_manifest_pins_canonical_source_and_portable_reference() -> None:
     manifest = _load_manifest()
     canonical = manifest["canonical_source"]
     assert canonical["repository"] == "cursor/plugins/pstack"
-    assert canonical["version"] == "0.15.25"
-    assert canonical["commit"] == "e5136d82418d2db3165ea1050d17577cd618cc05"
+    assert canonical["version"] == EXPECTED_CANONICAL_VERSION
+    assert canonical["commit"] == EXPECTED_CANONICAL_COMMIT
 
     sources = canonical["skill_sources"]
     assert len(sources) == len(EXPECTED_CANONICAL_SOURCES)
@@ -501,6 +504,28 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     compatibility = COMPATIBILITY_DOC.read_text(encoding="utf-8")
     notice = NOTICE.read_text(encoding="utf-8")
     state = AGENT_STATE.read_text(encoding="utf-8")
+
+    compatibility_current = re.match(
+        r"\A# pstack compatibility\n\nThis Harness integration adapts a bounded set of skills from "
+        r"`cursor/plugins/pstack` version `([^`]+)`, commit `([0-9a-f]{40})`, whose "
+        r"`pstack` subtree is `([0-9a-f]{40})`\.",
+        compatibility,
+    )
+    notice_current = re.search(
+        r"(?m)^The adapted skills under `\.agents/skills/` are based on `cursor/plugins/pstack`,\n"
+        r"version `([^`]+)`, commit `([0-9a-f]{40})`, whose\n"
+        r"`pstack` subtree is `([0-9a-f]{40})`\.$",
+        notice,
+    )
+    expected_current_pin = (
+        EXPECTED_CANONICAL_VERSION,
+        EXPECTED_CANONICAL_COMMIT,
+        EXPECTED_CANONICAL_TREE,
+    )
+    assert (
+        compatibility_current.groups() if compatibility_current is not None else None,
+        notice_current.groups() if notice_current is not None else None,
+    ) == (expected_current_pin, expected_current_pin)
 
     assert "PSTACK_MIT_NOTICE.md" in compatibility
     assert "cursor/plugins/pstack" in compatibility
