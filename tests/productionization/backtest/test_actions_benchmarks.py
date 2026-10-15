@@ -1489,3 +1489,159 @@ def test_payment_cannot_bridge_an_unwitnessed_calendar_gap() -> None:
     before = _snapshot(ledger)
     _reject(lambda: _payment(api, ledger, date(2024, 7, 9), calendar=gap))
     assert _snapshot(ledger) == before
+
+
+@pytest.mark.parametrize("boundary", ("availability", "ingestion", "archive"))
+@pytest.mark.parametrize("offset_us", (-1, 0, 1), ids=("before", "equal", "after"))
+def test_bt04_supplement_opening_provenance_boundaries(boundary: str, offset_us: int) -> None:
+    api = _api()
+    ledger = _ledger()
+    opening = _case().bundle.calendar.session(EX_DATE).open_at
+    cutoff = opening - timedelta(microseconds=2) if boundary == "archive" else opening
+    observed = cutoff + timedelta(microseconds=offset_us)
+    action = _action(action_id=f"supplement-boundary-{boundary}",
+                     available=observed if boundary == "availability" else None,
+                     ingested=observed if boundary != "availability" else None)
+    candidate = _available(api, action)
+    replay = BundleReplayPolicy.AVAILABILITY if boundary == "availability" else BundleReplayPolicy.ARCHIVE_REALISTIC
+    before = _snapshot(ledger)
+    if offset_us > 0:
+        _reject(lambda: _post(ledger, _opening(api, ledger, (candidate,),
+                                                archive_cutoff=cutoff, replay_policy=replay)))
+        assert _snapshot(ledger) == before
+    else:
+        _post(ledger, _opening(api, ledger, (candidate,), archive_cutoff=cutoff, replay_policy=replay))
+        assert ledger.balance().positions == ((INST, D("20")),)
+        assert ledger.balance().cash == D("1000")
+        assert ledger.balance().recognized_income == ZERO
+
+
+def test_bt04_supplement_buy_after_zero_entitlement_cannot_create_retroactive_claim() -> None:
+    api = _api()
+    seed = _seed()
+    intent = bt02._intent(seed.api02, seed.case, quantity=D("10"), time_in_force="gtc",
+                          order_type="limit", limit_price=D("95"), expires_at=seed.intent.expires_at,
+                          plan_id="supplement-precommitted-ex-date-buy")
+    assert intent.created_at < seed.case.binding.next_session.open_at
+    first_attempt = bt02._simulate_direct(seed.api02, seed.case, intent, seed.outcome, seed.policy)
+    assert first_attempt.fill is None  # Entry100 is above the precommitted95 limit.
+    outcome = bt02._outcome(seed.api02, seed.case, session=EX_DATE, price=D("90"))
+    fill = bt03._make_fill(seed.api02, seed.case, intent=intent, outcome=outcome, policy=seed.policy)
+    control = _ledger(held=False)
+    control.append(bt03._fill_event(seed.api03, control, intent=intent, fill=fill, case=seed.case,
+                                    outcome=outcome, policy=seed.policy, event_id="supplement-buy-control"))
+    assert control.balance().positions == ((INST, D("10")),)
+    assert control.balance().cash == D("1100")
+
+    ledger = _ledger(held=False)
+    dividend = _available(api, _action("dividend", "supplement-zero-entitlement"))
+    _post(ledger, _opening(api, ledger, (dividend,), references=()))
+    assert ledger.balance().positions == ()
+    assert ledger.balance().receivables == ledger.balance().recognized_income == ZERO
+    ledger.append(bt03._fill_event(seed.api03, ledger, intent=intent, fill=fill, case=seed.case,
+                                   outcome=outcome, policy=seed.policy, event_id="supplement-ex-date-buy"))
+    before = _snapshot(ledger)
+    assert _payment(api, ledger, PAY_DATE) == ()
+    assert _opening(api, ledger, (dividend,), references=(), event_id="supplement-reapply-zero-entitlement") == ()
+    assert _snapshot(ledger) == before
+    assert ledger.balance().positions == ((INST, D("10")),)
+    assert ledger.balance().cash == D("1100")
+    assert ledger.balance().receivables == ledger.balance().recognized_income == ZERO
+
+
+def test_bt04_supplement_independent_accounting_rejects_validly_sealed_wrong_cash() -> None:
+    api = _api()
+    from mytradingalpha.backtest.ledger import _seal_balance
+
+    seed = _seed()
+    ledger = _ledger()
+    before = ledger.balance()
+    event = _opening(api, ledger, (_available(api, _action()),))[0]
+    accepted = ledger.append(event)
+    assert seed.api03.AccountingInvariant.check(before, event, accepted) is None
+    wrong = copy.deepcopy(accepted)
+    object.__setattr__(wrong, "cash", accepted.cash + D("1"))
+    _seal_balance(wrong)  # Trusted adversarial resealing; no production ingress bypass.
+    canonical = wrong.canonical_bytes()  # Must succeed before testing the economic invariant.
+    assert D(json.loads(canonical)["cash"]) == accepted.cash + D("1")
+    assert wrong.positions == accepted.positions
+    snapshot = _snapshot(ledger)
+    error = _reject(lambda: seed.api03.AccountingInvariant.check(before, event, wrong))
+    assert getattr(error, "reason_code", None) == "accounting_invalid"
+    assert wrong.canonical_bytes() == canonical
+    assert _snapshot(ledger) == snapshot
+
+
+@pytest.mark.parametrize("claim_kind,claim_amount,income", (
+    ("dividend", "10", "10"), ("cash_in_lieu", "100", "0"), ("delisting", "300", "0"),
+))
+def test_bt04_supplement_income_distinguishes_dividend_from_disposal_principal(
+    claim_kind: str, claim_amount: str, income: str,
+) -> None:
+    api = _api()
+    seed = _seed("3") if claim_kind == "cash_in_lieu" else _seed()
+    ledger = _ledger(seed)
+    policy = _policy(api, fractional_shares="cash_in_lieu") if claim_kind == "cash_in_lieu" else _policy(api)
+    if claim_kind == "cash_in_lieu":
+        action = _action(new_shares_per_old_share=D("0.5"))
+        terms = _terms(api, action, fractional_shares="cash_in_lieu", lot_size=D("1"),
+                       cash_in_lieu_price=D("200"), payable_date=PAY_DATE)
+        candidate = _available(api, action, terms=terms)
+    else:
+        candidate = _available(api, _action(claim_kind, f"supplement-{claim_kind}-income"))
+    before = ledger.balance()
+    assert before.recognized_income == ZERO
+    opening = _opening(api, ledger, (candidate,), policy=policy, references=(_reference(api, seed),))
+    _post(ledger, opening)
+    assert ledger.balance().cash == before.cash
+    assert ledger.balance().receivables == D(claim_amount)
+    assert ledger.balance().recognized_income == D(income)
+    _post(ledger, _payment(api, ledger, PAY_DATE, policy=policy))
+    assert ledger.balance().cash == before.cash + D(claim_amount)
+    assert ledger.balance().receivables == ZERO
+    assert ledger.balance().recognized_income == D(income)
+    snapshot = _snapshot(ledger)
+    assert ledger.append(opening[0]) == ledger.balance()
+    assert _payment(api, ledger, PAY_DATE, policy=policy, event_id="supplement-repeat-payment") == ()
+    assert ledger.balance().recognized_income == D(income)
+    assert _snapshot(ledger) == snapshot
+
+
+def test_bt04_supplement_generic_obligation_cannot_settle_reserved_action_claim() -> None:
+    api = _api()
+    seed = _seed()
+    ledger = _ledger()
+    dividend = _available(api, _action("dividend", "supplement-reserved-claim", payable_date=EX_DATE))
+    _post(ledger, _opening(api, ledger, (dividend,)))
+    claims = ledger.balance().outstanding_obligations
+    assert len(claims) == 1
+    claim = claims[0]
+    assert claim.kind == "receivable"
+    closed_time = datetime(2024, 7, 6, 14, tzinfo=UTC)
+    assert claim.due_at < closed_time < ledger.balance().resolution_cutoff
+
+    # Unrelated generic claims retain their existing due-time semantics.
+    control = _ledger()
+    created = min(_case().bundle.calendar.session(EX_DATE).open_at, claim.due_at)
+    control.append(bt03._obligation_event(seed.api03, control, event_id="supplement-generic-create",
+        kind="receivable_create", obligation_id="supplement-unrelated-claim", amount=claim.amount_remaining,
+        economic_time=created, observed_at=created, due_at=claim.due_at))
+    control.append(bt03._obligation_event(seed.api03, control, event_id="supplement-generic-settle",
+        kind="receivable_settle", obligation_id="supplement-unrelated-claim", amount=claim.amount_remaining,
+        economic_time=closed_time, observed_at=closed_time, due_at=claim.due_at))
+    assert control.balance().cash == D("1010")
+    assert control.balance().receivables == ZERO
+
+    bypass = bt03._obligation_event(seed.api03, ledger, event_id="supplement-action-claim-bypass",
+        kind="receivable_settle", obligation_id=claim.obligation_id, amount=claim.amount_remaining,
+        economic_time=closed_time, observed_at=closed_time, due_at=claim.due_at)
+    snapshot = _snapshot(ledger)
+    _reject(lambda: ledger.append(bypass))
+    assert _snapshot(ledger) == snapshot
+    _post(ledger, _payment(api, ledger, EX_DATE))
+    assert ledger.balance().cash == D("1010")
+    assert ledger.balance().receivables == ZERO
+    assert ledger.balance().recognized_income == D("10")
+    snapshot = _snapshot(ledger)
+    assert _payment(api, ledger, EX_DATE, event_id="supplement-reserved-payment-retry") == ()
+    assert _snapshot(ledger) == snapshot
