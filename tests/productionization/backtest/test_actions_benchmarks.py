@@ -2402,3 +2402,298 @@ def test_bt04_ingress_position_reference_rejects_hostile_instrument_id_before_pr
         assert _bt04_repair_native_digest(mark) == before
         assert calls == [], "PositionReference ingress evaluated a hostile identifier protocol"
     assert len(str(caught.value).encode("utf-8")) <= 256
+
+
+# H1-H3 repair contracts: original 133-case prefix above remains immutable.
+def _h123_set_data(value: Any, name: str, replacement: Any, changes: list[Any]) -> None:
+    data = object.__getattribute__(value, "_data")
+    changes.append((value, "_data", data))
+    index = type(value)._fields.index(name)
+    object.__setattr__(value, "_data", data[:index] + (replacement,) + data[index + 1:])
+
+
+def _h123_set_slot(value: Any, name: str, replacement: Any, changes: list[Any]) -> None:
+    changes.append((value, name, object.__getattribute__(value, name)))
+    object.__setattr__(value, name, replacement)
+
+
+def _h123_restore(changes: list[Any]) -> None:
+    for value, name, previous in reversed(changes):
+        object.__setattr__(value, name, previous)
+
+
+def _h123_hash_spy(armed: pytest.MonkeyPatch, *payloads: bytes) -> list[int]:
+    original = hashlib.sha256
+    calls: list[int] = []
+
+    def observed(data: Any = b"", *args: Any, **kwargs: Any) -> Any:
+        if any(data is payload for payload in payloads):
+            calls.append(len(data))
+        return original(data, *args, **kwargs)
+
+    armed.setattr(hashlib, "sha256", observed)
+    return calls
+
+
+@pytest.mark.parametrize("kind", ("members", "marks", "scalar", "nested"))
+def test_bt04_h123_fixed_field_guards_precede_repeated_representation_hashing(
+    kind: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    common = _common(api, end=ENTRY)
+    policy = (_bh_policy(api, common=common) if kind in ("members", "scalar") else
+              api.CashBenchmarkPolicy(common=common, interest_policy="zero", annual_rate=ZERO))
+    item = _session_input(api, ENTRY)
+    inputs = (policy, (item,))
+    honest = _bt04_repair_native_digest(inputs)
+    probe = b"h123-unique-shared-representation\0".ljust(64 * 1024, b"x")
+    changes: list[Any] = []
+    if kind == "members":
+        member = _get_native(policy, "members")[0]
+        _h123_set_slot(member, "_canonical", probe, changes)
+        _h123_set_slot(member, "_storage", probe, changes)
+        _h123_set_data(policy, "members", (member,) * 9, changes)
+    elif kind == "marks":
+        mark = _get_native(item, "marks")[0]
+        _h123_set_slot(mark, "_seal", probe, changes)
+        _h123_set_data(item, "marks", (mark,) * 9, changes)
+    else:
+        child = _policy(api)
+        _h123_set_slot(child, "_canonical", probe, changes)
+        _h123_set_slot(child, "_storage", probe, changes)
+        if kind == "scalar":
+            _h123_set_data(_get_native(policy, "members")[0], "weight", (child, child), changes)
+        else:
+            _h123_set_data(policy, "common", child, changes)
+    damaged = _bt04_repair_native_digest(inputs)
+    run = api.BenchmarkRunner().run_buy_and_hold if kind in ("members", "scalar") else api.BenchmarkRunner().run_cash
+    try:
+        with monkeypatch.context() as armed:
+            calls = _h123_hash_spy(armed, probe)
+            _reject(lambda: run(inputs[1], policy=policy))
+        assert calls == [], "fixed field/cardinality rejection must precede full stored-payload hashing"
+    finally:
+        assert _bt04_repair_native_digest(inputs) == damaged
+        _h123_restore(changes)
+        assert _bt04_repair_native_digest(inputs) == honest
+
+
+def _get_native(value: Any, name: str) -> Any:
+    return object.__getattribute__(value, "_data")[type(value)._fields.index(name)]
+
+
+@pytest.mark.parametrize("slot", ("_canonical", "_storage"))
+def test_bt04_h123_legal_shaped_forged_term_performs_zero_payload_hashing(
+    slot: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    wrapper = _available(api, _action())
+    item = _session_input(api, ENTRY, actions=(wrapper,))
+    policy = api.CashBenchmarkPolicy(common=_common(api, end=ENTRY), interest_policy="zero", annual_rate=ZERO)
+    inputs = (policy, (item,))
+    # All fields/types/counts are genuine; only one redundant term seal is forged.
+    terms = _get_native(_get_native(item, "actions")[0], "terms")
+    assert type(terms) is api.SplitTerms
+    honest = _bt04_repair_native_digest(inputs)
+    probe = b"h123-legal-shaped-term\0".ljust(128 * 1024, b"t")
+    changes: list[Any] = []
+    _h123_set_slot(terms, slot, probe, changes)
+    damaged = _bt04_repair_native_digest(inputs)
+    try:
+        with monkeypatch.context() as armed:
+            calls = _h123_hash_spy(armed, probe)
+            _reject(lambda: api.BenchmarkRunner().run_cash(inputs[1], policy=policy))
+        assert calls == [], "shape guards alone must not authorize hashing forged derived representations"
+    finally:
+        assert _bt04_repair_native_digest(inputs) == damaged
+        _h123_restore(changes)
+        assert _bt04_repair_native_digest(inputs) == honest
+
+
+def test_bt04_h123_combined_representation_cap_precedes_payload_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = _api()
+    item = _session_input(api, ENTRY, actions=(_available(api, _action()),))
+    policy = api.CashBenchmarkPolicy(common=_common(api, end=ENTRY), interest_policy="zero", annual_rate=ZERO)
+    inputs = (policy, (item,))
+    terms = _get_native(_get_native(item, "actions")[0], "terms")
+    honest = _bt04_repair_native_digest(inputs)
+    quantum = b"h123-combined-representation\0".ljust(128 * 1024, b"c")
+    # One shared allocation: each side is legal in isolation, their sum is not.
+    representation = quantum * 65
+    assert len(representation) < 16 * 1024 * 1024 < 2 * len(representation)
+    changes: list[Any] = []
+    for slot in ("_canonical", "_storage"):
+        _h123_set_slot(terms, slot, representation, changes)
+    damaged = _bt04_repair_native_digest(inputs)
+    try:
+        with monkeypatch.context() as armed:
+            calls = _h123_hash_spy(armed, representation)
+            _reject(lambda: api.BenchmarkRunner().run_cash(inputs[1], policy=policy))
+        assert calls == [], "the combined canonical/native cap must reject before either representation is hashed"
+    finally:
+        assert _bt04_repair_native_digest(inputs) == damaged
+        _h123_restore(changes)
+        assert _bt04_repair_native_digest(inputs) == honest
+
+
+def _h123_resealed_nine_mark_input(api: SimpleNamespace) -> Any:
+    from mytradingalpha.backtest import corporate_actions
+
+    item = _session_input(api, ENTRY)
+    fields = type(item)._fields
+    data = object.__getattribute__(item, "_data")
+    # Encode only genuine child parts. Never ask an invalid wrapper to validate
+    # itself while preparing the adversarial, correctly resealed nine-mark copy.
+    parts = list(corporate_actions._parts(data))
+    mark_part = corporate_actions._parts((_get_native(item, "marks")[0],))[0]
+    parts[fields.index("marks")] = ((mark_part[0],) * 9, [mark_part[1]] * 9, [mark_part[2]] * 9)
+    forged = object.__new__(type(item))
+    object.__setattr__(forged, "_data", tuple(part[0] for part in parts))
+    object.__setattr__(forged, "_canonical", corporate_actions._canonical_json(
+        dict(zip(fields, (part[1] for part in parts), strict=True))))
+    object.__setattr__(forged, "_storage", corporate_actions._DOMAIN + corporate_actions._canonical_json([part[2] for part in parts]))
+    assert len(_get_native(forged, "marks")) == 9
+    return forged
+
+
+@pytest.mark.parametrize("boundary", ("refresh", "cash"))
+def test_bt04_h123_resealed_nine_marks_reject_on_refresh_and_public_cash(boundary: str) -> None:
+    api = _api()
+    item = _h123_resealed_nine_mark_input(api)
+    policy = api.CashBenchmarkPolicy(common=_common(api, end=ENTRY), interest_policy="zero", annual_rate=ZERO)
+    before = _bt04_repair_native_digest((policy, item))
+    try:
+        _reject(item.canonical_bytes if boundary == "refresh" else
+                lambda: api.BenchmarkRunner().run_cash((item,), policy=policy))
+    finally:
+        assert _bt04_repair_native_digest((policy, item)) == before
+
+
+@pytest.mark.parametrize("slot", ("_canonical", "_storage"))
+@pytest.mark.parametrize("available", (True, False), ids=("available", "unavailable"))
+def test_bt04_h123_completion_rejects_derived_bytes_only_changes(
+    slot: str, available: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mytradingalpha.backtest import benchmarks
+
+    api = _api()
+    policy = api.CashBenchmarkPolicy(common=_common(api, end=ENTRY), interest_policy="zero", annual_rate=ZERO)
+    sessions = (_session_input(api, ENTRY),) if available else ()
+    control = api.BenchmarkRunner().run_cash(sessions, policy=policy)
+    assert bt03._result_status(control) == ("available" if available else "unavailable")
+    honest = _bt04_repair_native_digest((policy, sessions))
+    data = object.__getattribute__(policy, "_data")
+    data_digest = _bt04_repair_native_digest(data)
+    original_ledger = benchmarks.Ledger
+    original_bytes = object.__getattribute__(policy, slot)
+    calls: list[str] = []
+
+    def mutate_during_execution(*args: Any, **kwargs: Any) -> Any:
+        ledger = original_ledger(*args, **kwargs)  # Real construction/validation remains intact.
+        calls.append(slot)
+        object.__setattr__(policy, slot, original_bytes + b" ")
+        return ledger
+
+    try:
+        with monkeypatch.context() as armed:
+            armed.setattr(benchmarks, "Ledger", mutate_during_execution)
+            error = _reject(lambda: api.BenchmarkRunner().run_cash(sessions, policy=policy))
+        assert calls == [slot]
+        assert getattr(error, "reason_code", None) == "source_changed"
+        assert object.__getattribute__(policy, "_data") is data
+        assert _bt04_repair_native_digest(data) == data_digest
+        assert object.__getattribute__(policy, slot) == original_bytes + b" "
+    finally:
+        object.__setattr__(policy, slot, original_bytes)
+        assert _bt04_repair_native_digest((policy, sessions)) == honest
+
+
+@pytest.mark.parametrize("order", ("corporate_only", "benchmark_first"))
+def test_bt04_h123_fresh_action_policy_construction_is_pure_without_hidden_import(
+    order: str, tmp_path: Path,
+) -> None:
+    import sys
+
+    script = r'''
+import _io
+import builtins
+import hashlib
+import importlib
+import json
+import os
+import socket
+import subprocess
+import sys
+import urllib.request
+import zoneinfo
+from contextlib import ExitStack
+from pathlib import Path
+from unittest.mock import patch
+
+name = "mytradingalpha.backtest.benchmarks"
+if sys.argv[1] == "benchmark_first":
+    importlib.import_module(name)
+corporate = importlib.import_module("mytradingalpha.backtest.corporate_actions")
+calendar = importlib.import_module("mytradingalpha.data.calendar")
+before = name in sys.modules
+attempts = []
+def deny(label):
+    def blocked(*args, **kwargs):
+        attempts.append(label)
+        raise AssertionError("armed external operation: " + label)
+    return blocked
+error = None
+canonical = None
+with ExitStack() as stack:
+    for owner, attribute in (
+        (_io, "open_code"), (builtins, "open"), (Path, "open"),
+        (os, "open"), (os, "stat"), (os, "lstat"), (os, "getenv"), (os, "system"),
+        (type(os.environ), "__getitem__"), (socket, "socket"),
+        (socket, "create_connection"), (urllib.request, "urlopen"),
+        (subprocess, "Popen"), (subprocess, "run"), (zoneinfo, "ZoneInfo"),
+        (calendar, "ZoneInfo"), (calendar, "capture_calendar_replay_evidence"),
+    ):
+        stack.enter_context(patch.object(owner, attribute, deny(attribute)))
+    try:
+        policy = corporate.ActionPolicy(schema_version="v1", policy_version="bt04-synthetic-v1",
+            currency="USD", price_basis=corporate.AdjustmentBasis.UNADJUSTED,
+            fractional_shares="retain_exact", payment_rule="next_witnessed_session",
+            dividend_treatment="cash_no_reinvestment")
+        canonical = policy.canonical_bytes()
+    except Exception as caught:
+        error = type(caught).__name__ + ":" + str(caught)
+after = name in sys.modules
+print(json.dumps({"before": before, "after": after, "attempts": attempts, "error": error,
+    "origin": corporate.__file__, "canonical": None if canonical is None else hashlib.sha256(canonical).hexdigest()}))
+'''
+    result = subprocess.run((sys.executable, "-B", "-c", script, order), cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(ROOT), "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    observed = json.loads(result.stdout)
+    assert Path(observed["origin"]).resolve() == ROOT / "mytradingalpha/backtest/corporate_actions.py"
+    assert observed["before"] is (order == "benchmark_first")
+    assert observed["attempts"] == [], observed
+    assert observed["error"] is None, observed
+    assert observed["after"] is (order == "benchmark_first"), observed
+    assert observed["canonical"] == hashlib.sha256(EXPECTED_POLICY_BYTES).hexdigest()
+
+
+@pytest.mark.parametrize("kind,size,digest", (
+    ("cash", 10606, "6692cc19ac636b8d5c1199943458ffe952a1fcd4e8910116327f39a98c1bd8cd"),
+    ("buy_hold", 132323, "f655fff5860d95deb4154b717847c132bea0fdd1a7a7d772292aaef9b80b8a86"),
+))
+def test_bt04_h123_whole_small_series_canonical_baseline(kind: str, size: int, digest: str) -> None:
+    api = _api()
+    common = _common(api, end=ENTRY)
+    policy = (_bh_policy(api, common=common) if kind == "buy_hold" else
+              api.CashBenchmarkPolicy(common=common, interest_policy="zero", annual_rate=ZERO))
+    sessions = (_session_input(api, ENTRY),)
+    before = _bt04_repair_native_digest((policy, sessions))
+    run = api.BenchmarkRunner().run_buy_and_hold if kind == "buy_hold" else api.BenchmarkRunner().run_cash
+    result = run(sessions, policy=policy)
+    assert bt03._result_status(result) == "available"
+    canonical = result.canonical_bytes()
+    assert len(canonical) == size
+    assert hashlib.sha256(canonical).hexdigest() == digest
+    assert _bt04_repair_native_digest((policy, sessions)) == before
