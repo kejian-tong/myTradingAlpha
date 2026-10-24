@@ -1340,3 +1340,237 @@ def test_bt05_p1_existing_manifest_cannot_be_reinitialized_in_place() -> None:
         manifest.semantic_input_hash()
 
     _p1_expect_prohibited_mutation(reinitialize_existing)
+
+
+# P2 repair RED: a published pathname cannot replace the originally written bytes.
+@pytest.fixture(scope="module")
+def _bt05_p2_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    api = _api()
+    manifest, _, _ = _manifest(api, days=1, prices=("100",))
+    base = tmp_path_factory.mktemp("bt05-p2-controls")
+    controls = {}
+    for stage, maximum in (("manifest", 0), ("partial", 1), ("completed", None)):
+        root = base / stage
+        result = _run(api, root, manifest, max_operations=maximum)
+        assert result.run_valid and result.status == "available"
+        assert result.completed == (stage == "completed")
+        target = ("manifest.json" if stage == "manifest" else
+                  "result.json" if stage == "completed" else "checkpoint-000001.json")
+        assert (root / "manifest.json").read_bytes() == manifest.canonical_bytes()
+        assert (root / target).is_file()
+        controls[stage] = SimpleNamespace(
+            root=root, result=result, target=target, maximum=maximum,
+            files=_snapshot(root), raw=(root / target).read_bytes(),
+        )
+    return SimpleNamespace(api=api, manifest=manifest, controls=controls)
+
+
+def _bt05_p2_tree(root: Path) -> tuple[Any, ...]:
+    """Snapshot retained evidence without following symlinks or opening FIFOs."""
+    import stat
+
+    rows = []
+    for path in sorted(root.iterdir()):
+        info = path.lstat()
+        raw = (path.read_bytes() if stat.S_ISREG(info.st_mode) else
+               os.readlink(path) if stat.S_ISLNK(info.st_mode) else None)
+        rows.append((path.name, info.st_dev, info.st_ino, info.st_mode, info.st_size, raw))
+    return tuple(rows)
+
+
+def _bt05_p2_damage(path: Path, damage: str, outside: Path) -> None:
+    raw = path.read_bytes()
+    corrupted = b"!" + raw[1:]
+    assert corrupted != raw and len(corrupted) == len(raw)
+    before = path.stat()
+    if damage == "same_inode":
+        path.chmod(0o600)
+        path.write_bytes(corrupted)
+        path.chmod(0o400)
+        after = path.stat()
+        assert (before.st_dev, before.st_ino, before.st_size) == (
+            after.st_dev, after.st_ino, after.st_size)
+        assert path.read_bytes() == corrupted
+        return
+    if damage == "regular":
+        replacement = path.with_name(".p2-counterfeit")
+        replacement.write_bytes(corrupted)
+        replacement.chmod(0o400)
+        replacement.replace(path)
+        assert path.stat().st_ino != before.st_ino
+    elif damage == "symlink":
+        path.unlink()
+        path.symlink_to(outside)
+    elif damage == "fifo":
+        path.unlink()
+        os.mkfifo(path, 0o400)
+    else:
+        raise AssertionError("unknown P2 fault")
+
+
+def _bt05_p2_copy(control: Any, root: Path) -> None:
+    root.mkdir()
+    for name, raw in control.files:
+        path = root / name
+        path.write_bytes(raw)
+        path.chmod(0o600 if name == ".bt05.lock" else 0o400)
+
+
+def _bt05_p2_retained(case: Any, root: Path, prefix: dict[str, bytes]) -> None:
+    for name, raw in prefix.items():
+        assert (root / name).read_bytes() == raw
+    before = _bt05_p2_tree(root)
+    _reject(lambda: _resume(case.api, root, case.manifest))
+    assert _bt05_p2_tree(root) == before
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed"))
+def test_bt05_p2_genuine_publication_and_cold_resume_control(
+    _bt05_p2_case: Any, tmp_path: Path, stage: str,
+) -> None:
+    case = _bt05_p2_case
+    control = case.controls[stage]
+    root = tmp_path / "genuine"
+    _bt05_p2_copy(control, root)
+    recovered = _resume(case.api, root, case.manifest)
+    assert recovered.run_valid and recovered.completed
+    assert _economic(recovered) == _economic(case.controls["completed"].result)
+    assert all((root / name).read_bytes() == raw for name, raw in control.files)
+    assert (root / control.target).read_bytes() == control.raw
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed"))
+@pytest.mark.parametrize("damage", ("regular", "symlink", "same_inode", "fifo"))
+def test_bt05_p2_postlink_substitution_rejects_before_public_success(
+    _bt05_p2_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stage: str, damage: str,
+) -> None:
+    import stat
+
+    case = _bt05_p2_case
+    control = case.controls[stage]
+    root = tmp_path / "attacked"
+    outside = tmp_path / "outside-sentinel"
+    outside.write_bytes(b"outside-sensitive-sentinel-unchanged")
+    outside_inode = (outside.stat().st_dev, outside.stat().st_ino)
+    real_link, real_read, real_open = os.link, os.read, os.open
+    armed, forbidden_reads, prefix = [], [], {}
+
+    def substitute(source: Any, destination: Any, **kwargs: Any) -> Any:
+        answer = real_link(source, destination, **kwargs)
+        if destination == control.target and not armed:
+            prefix.update((name, raw) for name, raw in _snapshot(root)
+                          if name != control.target and not name.startswith(".tmp-"))
+            assert (root / control.target).read_bytes() == control.raw
+            _bt05_p2_damage(root / control.target, damage, outside)
+            armed.append(destination)
+        return answer
+
+    def guarded_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if armed and path == control.target and damage in ("symlink", "fifo"):
+            assert flags & os.O_NOFOLLOW, "published leaf must never follow a replacement"
+            assert flags & os.O_NONBLOCK, "nonregular replacement must not block open"
+        return real_open(path, flags, *args, **kwargs)
+
+    def guarded_read(descriptor: int, size: int) -> bytes:
+        info = os.fstat(descriptor)
+        if armed and (not stat.S_ISREG(info.st_mode) or
+                      (info.st_dev, info.st_ino) == outside_inode):
+            forbidden_reads.append(descriptor)
+            pytest.fail("publication read a FIFO or followed the outside symlink")
+        return real_read(descriptor, size)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "link", substitute)
+            patch.setattr(os, "open", guarded_open)
+            patch.setattr(os, "read", guarded_read)
+            _reject(lambda: _run(case.api, root, case.manifest, max_operations=control.maximum))
+    finally:
+        assert armed == [control.target], "the public publication fault must execute"
+        assert not forbidden_reads
+        assert outside.read_bytes() == b"outside-sensitive-sentinel-unchanged"
+        assert (root / control.target).exists() or (root / control.target).is_symlink()
+        _bt05_p2_retained(case, root, prefix)
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed"))
+@pytest.mark.parametrize("damage", ("regular", "same_inode"))
+def test_bt05_p2_mutation_during_verified_public_resume_read_rejects(
+    _bt05_p2_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stage: str, damage: str,
+) -> None:
+    case = _bt05_p2_case
+    control = case.controls[stage]
+    root = tmp_path / "read-race"
+    _bt05_p2_copy(control, root)
+    target = root / control.target
+    original = target.stat()
+    real_read = os.read
+    armed = []
+    prefix = {name: raw for name, raw in control.files if name != control.target}
+
+    def mutate_during_read(descriptor: int, size: int) -> bytes:
+        info = os.fstat(descriptor)
+        block = real_read(descriptor, size)
+        if block and not armed and (info.st_dev, info.st_ino) == (
+            original.st_dev, original.st_ino,
+        ):
+            _bt05_p2_damage(target, damage, tmp_path / "unused-outside")
+            armed.append(control.target)
+        return block
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "read", mutate_during_read)
+            _reject(lambda: _resume(case.api, root, case.manifest))
+    finally:
+        assert armed == [control.target], "the verified-read fault must execute"
+        _bt05_p2_retained(case, root, prefix)
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed", "completed_retry"))
+@pytest.mark.parametrize("damage", ("regular", "same_inode"))
+def test_bt05_p2_accepted_leaf_mutation_before_public_completion_rejects(
+    _bt05_p2_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stage: str, damage: str,
+) -> None:
+    case = _bt05_p2_case
+    retry = stage == "completed_retry"
+    control = case.controls["completed" if retry else stage]
+    root = tmp_path / "completion-race"
+    if retry:
+        _bt05_p2_copy(control, root)
+    real_close = os.close
+    armed, closes, prefix = [], [], {}
+
+    def mutate_after_acceptance(descriptor: int) -> None:
+        info = os.fstat(descriptor)
+        target = root / control.target
+        linked = target.stat() if target.exists() else None
+        matches = linked is not None and (info.st_dev, info.st_ino) == (
+            linked.st_dev, linked.st_ino)
+        real_close(descriptor)
+        if matches and not armed:
+            closes.append(descriptor)
+            # Completed resume first reconciles the old result, then accepts
+            # that identical artifact again through create-only publication.
+            if not retry or len(closes) == 2:
+                assert target.read_bytes() == control.raw
+                prefix.update((name, raw) for name, raw in _snapshot(root)
+                              if name != control.target and not name.startswith(".tmp-"))
+                _bt05_p2_damage(target, damage, tmp_path / "unused-outside")
+                armed.append(control.target)
+
+    def attempt() -> Any:
+        if retry:
+            return _resume(case.api, root, case.manifest)
+        return _run(case.api, root, case.manifest, max_operations=control.maximum)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "close", mutate_after_acceptance)
+            _reject(attempt)
+    finally:
+        assert armed == [control.target], "the post-acceptance fault must execute"
+        _bt05_p2_retained(case, root, prefix)
