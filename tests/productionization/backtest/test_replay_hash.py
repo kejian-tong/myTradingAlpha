@@ -1256,3 +1256,87 @@ def test_exact_source_bytes_and_native_witnesses_survive_resume(tmp_path: Path) 
     assert sources == (case.bundle.model_dump_json(), case.envelope.model_dump_json(),
                        fields["intents"][0].canonical_bytes(), fields["outcomes"][0].bar.model_dump_json())
     assert manifest.artifact_integrity_hash() != result.artifact_integrity_hash
+
+
+# P1 repair RED: caller-recomputed seals are not ownership or issuer authority.
+def _p1_expect_prohibited_mutation(action: Any) -> None:
+    # A repaired implementation may remove the old fields/helpers or reject the
+    # installation itself. It need not retain an unsafe private mutation API.
+    with pytest.raises((AttributeError, TypeError, ValueError, RuntimeError, OverflowError)) as caught:
+        action()
+    assert len(str(caught.value)) <= 256
+    assert caught.value.__cause__ is None
+
+
+def test_bt05_p1_resealed_benchmark_cache_cannot_authorize_counterfeit_cash_nav() -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    runner = bt04._api().BenchmarkRunner()
+    correct_cash = runner.run_cash(fields["sessions"], policy=fields["cash_benchmark_policy"])
+    correct_bh = runner.run_buy_and_hold(fields["sessions"], policy=fields["buy_and_hold_policy"])
+    assert correct_cash.run_valid and correct_bh.run_valid
+    assert all(point.value == D("2000") for point in correct_cash.nav_points)
+    genuine_hash = manifest.economic_output_hash((), (correct_cash,))
+    assert genuine_hash.startswith("sha256:") and len(genuine_hash) == 71
+
+    forged_points = tuple(type(point)(
+        status="available", value=D("2001"), reason_code=None, run_valid=True,
+        formula_version=point.formula_version, numeric_policy_version=point.numeric_policy_version,
+    ) for point in correct_cash.nav_points)
+    forged_cash = type(correct_cash)(
+        status=correct_cash.status, run_valid=correct_cash.run_valid,
+        reason_code=correct_cash.reason_code, events=correct_cash.events,
+        balances=correct_cash.balances, nav_points=forged_points, policy=correct_cash.policy,
+    )
+    assert all(point.value == D("2001") for point in forged_cash.nav_points)
+    _p1_expect_prohibited_mutation(lambda: manifest.economic_output_hash((), (forged_cash,)))
+    print("P1 Cash controls PASS: real NAV 2000 accepted; ordinary counterfeit NAV 2001 rejected")
+
+    def replace_and_reseal() -> None:
+        module = importlib.import_module("mytradingalpha.backtest.manifest")
+        replacement = (forged_cash, correct_bh)
+        object.__setattr__(manifest, "_benchmark_cache", replacement)
+        object.__setattr__(manifest, "_benchmark_seal", module._encode_native(module._native(replacement)))
+        manifest.economic_output_hash((), (forged_cash,))
+
+    _p1_expect_prohibited_mutation(replace_and_reseal)
+
+
+def test_bt05_p1_resealed_owned_sources_cannot_authorize_changed_seed() -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    original_hash = manifest.semantic_input_hash()
+    changed_seed = fields["seed"] + 1
+    fresh = api.ReplayManifest(**{**fields, "seed": changed_seed})
+    assert fresh.semantic_input_hash() != original_hash
+    assert manifest.semantic_input_hash() == original_hash
+    print("P1 owned-source controls PASS: a fresh changed-seed manifest is valid and has a distinct input identity")
+
+    def change_owned_and_reseal() -> None:
+        module = importlib.import_module("mytradingalpha.backtest.manifest")
+        owned = object.__getattribute__(manifest, "_owned")
+        owned["seed"] = changed_seed
+        object.__setattr__(manifest, "_owned_native", module._source_capture(owned))
+        object.__setattr__(manifest, "_integrity", hashlib.sha256(
+            object.__getattribute__(manifest, "_cache_bytes")()
+        ).digest())
+        manifest.semantic_input_hash()
+
+    _p1_expect_prohibited_mutation(change_owned_and_reseal)
+
+
+def test_bt05_p1_existing_manifest_cannot_be_reinitialized_in_place() -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    original_hash = manifest.semantic_input_hash()
+    changed = {**fields, "seed": fields["seed"] + 1}
+    fresh = api.ReplayManifest(**changed)
+    assert fresh.semantic_input_hash() != original_hash
+    assert manifest.semantic_input_hash() == original_hash
+    print("P1 constructor controls PASS: fresh construction works without changing the existing manifest")
+
+    def reinitialize_existing() -> None:
+        api.ReplayManifest.__init__(manifest, **changed)
+        manifest.semantic_input_hash()
+
+    _p1_expect_prohibited_mutation(reinitialize_existing)
