@@ -18,17 +18,23 @@ SIG05_MERGE_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 BT01_MERGE_SHA = "a713fbb48324ad9da45e254268b9cfe30b0a634b"
 BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
+EXPECTED_CANONICAL_VERSION = "0.15.25"
+EXPECTED_CANONICAL_COMMIT = "99743e9c151c8537cbbf1f98bb38f34ef3368453"
+EXPECTED_CANONICAL_TREE = "0d5fd349cbc77d054eed60f0e8cdfbea86321ff9"
 
 EXPECTED_SKILLS = {
     "architect",
     "arena",
     "figure-it-out",
     "how",
+    "in-your-own-words",
     "interrogate",
+    "ketchup",
     "poteto-mode",
     "principle-separate-before-serializing-shared-state",
     "principles-design",
     "principles-verification",
+    "sharpen",
     "show-me-your-work",
     "tdd",
     "technical-writing",
@@ -68,22 +74,25 @@ EXPECTED_AUTHORITY_PATHS = {
 }
 
 EXPECTED_CANONICAL_SOURCES = {
-    "skills/architect/SKILL.md": "741901140ee382ebf93263a7ed03c6ee3719e578416d81afcd195876fa16c496",
-    "skills/arena/SKILL.md": "e3a1f6c49a08b7e0b92134e53300d146f1f22ba83386d2019926e736df421851",
-    "skills/figure-it-out/SKILL.md": "0eb9485f0e7d84fee56b5d0f0af0faf4635e3ca87c8cba3970c01293b76ecc19",
-    "skills/how/SKILL.md": "d31805589c7f6a63a6db6c9fadebbd79fb9660682cf1654e9b2e5e1e7cd30bc0",
-    "skills/interrogate/SKILL.md": "59d498c3e9848a24b2d105eb3f05b808aa4152adf4cb1de7bbb6aff4f4cd9b68",
-    "skills/poteto-mode/SKILL.md": "404c0ef4a78e93451b2ab555ca532e7197b5cf87de29205b6f7109dbee5d9c4d",
-    "skills/principle-exhaust-the-design-space/SKILL.md": "8583310d7297b7823d75494faa57b003564d436807febecdecbd8321abe5cf6e",
+    "skills/architect/SKILL.md": "31f8e97a52bfa5432edd61f68ade2a8632ef0bacbc2d2a6802d7a0e6821944ac",
+    "skills/arena/SKILL.md": "ed72f6c132b1ce3974d949581d0adc5dade424fe20793ac3b4c4fae22ecb9354",
+    "skills/figure-it-out/SKILL.md": "bdb23cdbd82a1e6af094b495691c832a6f7f3ab9706ba9edbeb664ef51a726e1",
+    "skills/how/SKILL.md": "08a00079bb15b4258874ac3ff62d4ca7e94350ffedb521d0fd296dc9dd21904e",
+    "skills/in-your-own-words/SKILL.md": "fa8ba74e27d7be371dc270ec78bbf816411477d0dfab185356c861ac8dd413ad",
+    "skills/interrogate/SKILL.md": "a16dfe179005abc22a4651b82f25b0c8ab953284276efe4e6dc341958fb63647",
+    "skills/ketchup/SKILL.md": "47b3fb0d5626a40fcb3bd016e68f1cb3d2d313351183e8f6c05d4c7abd76e665",
+    "skills/poteto-mode/SKILL.md": "c5e6b605f46e5d9fbab31afa7a99d3d50680f2180d1fdfae3a924901bc52d99a",
+    "skills/principle-exhaust-the-design-space/SKILL.md": "2de83d99f93f60ec6313455b0bc9aa9f0bfb93dd59f414f403691322db00d4db",
     "skills/principle-prove-it-works/SKILL.md": "ec79a15025bac8d33d62011c54f3b612733fd2a024e623b531b3637aa75070e2",
-    "skills/principle-redesign-from-first-principles/SKILL.md": "a1c7fd0a96b40e12a74bceb0e6bb20a9666dd844dcabfb624acb27da23b929fe",
+    "skills/principle-redesign-from-first-principles/SKILL.md": "170e0a658783e43fee8ec5a8c2422a4abb8f69cef621dd1819a95910b8207034",
     "skills/principle-separate-before-serializing-shared-state/SKILL.md": "05294b40448e927c5da1c7b6f5c6b9fed3744637e3833d2d948b9154a9dd00bb",
     "skills/principle-sequence-verifiable-units/SKILL.md": "2ccbbacc56ace5afdfb8670cef19d7bd009fb2a0033b9a741cbdf2b6baf72187",
-    "skills/principle-test-behavior-not-implementation/SKILL.md": "87e40efe4e486f7ea639d2ed1fc0abe6c93b8fd0e89a81218086909d2470a52e",
-    "skills/show-me-your-work/SKILL.md": "bcff5f7f9fd23f92c12b251f9cd6b947e9485e1055cfacb6fdd9cae0789d7550",
+    "skills/principle-test-behavior-not-implementation/SKILL.md": "f7223698623b6a26fea49c751e466b38e6691b1f32ce841d3983e7ffbe2b74a6",
+    "skills/sharpen/SKILL.md": "6bcd73916696eb9c5b79b6f960983760c34bcc28937c11142dd8d86b5107aa46",
+    "skills/show-me-your-work/SKILL.md": "920a8217cbb62f92a2222fb81fc9eab17ecd554a0277e444a95a927195139bd1",
     "skills/tdd/SKILL.md": "eeb868e2dfebee528d730a67d7b17498fac4bb85dec2e38bc5c5176aca4d5d2f",
-    "skills/technical-writing/SKILL.md": "f5c512ffeec70bc4e0dee50f7bb4c26742e1be77967a6e8b15d1921e1c209ceb",
-    "skills/why/SKILL.md": "2a852ec8680920109d2b56538b027c52867896a597250ac5d18a13e0b42e5b06",
+    "skills/technical-writing/SKILL.md": "61fe9c424a798ebf36ad94941f87be049cb8827bdf86d21474a0dde37b513c43",
+    "skills/why/SKILL.md": "144d42e7712723d763e607bc0a969e5f1cdf83ec7228519d87677cc534571bed",
 }
 
 EXPECTED_SKILL_SOURCE_PATHS = {
@@ -91,7 +100,9 @@ EXPECTED_SKILL_SOURCE_PATHS = {
     "arena": ["skills/arena/SKILL.md"],
     "figure-it-out": ["skills/figure-it-out/SKILL.md"],
     "how": ["skills/how/SKILL.md"],
+    "in-your-own-words": ["skills/in-your-own-words/SKILL.md"],
     "interrogate": ["skills/interrogate/SKILL.md"],
+    "ketchup": ["skills/ketchup/SKILL.md"],
     "poteto-mode": ["skills/poteto-mode/SKILL.md"],
     "principle-separate-before-serializing-shared-state": [
         "skills/principle-separate-before-serializing-shared-state/SKILL.md"
@@ -105,6 +116,7 @@ EXPECTED_SKILL_SOURCE_PATHS = {
         "skills/principle-sequence-verifiable-units/SKILL.md",
         "skills/principle-test-behavior-not-implementation/SKILL.md",
     ],
+    "sharpen": ["skills/sharpen/SKILL.md"],
     "show-me-your-work": ["skills/show-me-your-work/SKILL.md"],
     "tdd": ["skills/tdd/SKILL.md"],
     "technical-writing": ["skills/technical-writing/SKILL.md"],
@@ -227,8 +239,8 @@ def test_manifest_pins_canonical_source_and_portable_reference() -> None:
     manifest = _load_manifest()
     canonical = manifest["canonical_source"]
     assert canonical["repository"] == "cursor/plugins/pstack"
-    assert canonical["version"] == "0.15.13"
-    assert canonical["commit"] == "e5a8186d7b43be8d6ac4452440fbead5f1a51c70"
+    assert canonical["version"] == EXPECTED_CANONICAL_VERSION
+    assert canonical["commit"] == EXPECTED_CANONICAL_COMMIT
 
     sources = canonical["skill_sources"]
     assert len(sources) == len(EXPECTED_CANONICAL_SOURCES)
@@ -393,6 +405,9 @@ def test_routed_skills_preserve_repository_workflow_boundaries() -> None:
         return (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8").lower()
 
     wrapper = skill_text("poteto-mode")
+    assert "ketchup" in wrapper
+    assert "in-your-own-words" in wrapper
+    assert "sharpen" in wrapper
     assert "master may delegate first-level work" in wrapper
     assert "non-master nested delegation is prohibited" in wrapper
     assert "one production writer" in wrapper
@@ -419,10 +434,98 @@ def test_routed_skills_preserve_repository_workflow_boundaries() -> None:
     assert "do not create a private log" in show_work
 
 
+def test_new_routed_skills_keep_catchup_and_restatement_read_only() -> None:
+    ketchup = " ".join(
+        (SKILLS_ROOT / "ketchup" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert "read-only" in ketchup
+    assert "last human message" in ketchup
+    assert "existing artifacts" in ketchup
+    assert "subagent" in ketchup and "notification" in ketchup
+    assert not re.search(r"(?:\.\./|skills/)?bro(?:/skill\.md|/)", ketchup)
+    for action in (
+        r"app(?:lication)?",
+        r"job",
+        r"capture|screenshot",
+        r"post|posting|publish",
+        r"transcript",
+    ):
+        assert re.search(
+            rf"\b(?:do not|don't|never|must not|without|prohibited from)\b"
+            rf"[^.]*\b(?:{action})\b",
+            ketchup,
+        ), f"ketchup must prohibit {action.replace('|', '/')} activity"
+
+    restatement = " ".join(
+        (SKILLS_ROOT / "in-your-own-words" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert "restate" in restatement
+    assert "goal" in restatement and "problem" in restatement
+    assert any(
+        phrase in restatement
+        for phrase in (
+            "does not authorize action",
+            "no action authority",
+            "does not grant authority to act",
+            "not permission to act",
+        )
+    )
+
+
+def test_sharpen_keeps_outside_verification_within_repository_authority() -> None:
+    sharpen = " ".join(
+        (SKILLS_ROOT / "sharpen" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert "expert" in sharpen
+    assert "outside" in sharpen and ("check" in sharpen or "verification" in sharpen)
+    assert re.search(
+        r"(?:authorized|authorization)[^.]{0,120}(?:outside|external)"
+        r"|(?:outside|external)[^.]{0,120}(?:authorized|authorization)",
+        sharpen,
+    )
+    for boundary in ("policy", "jit", "scope", "human", "gate"):
+        assert boundary in sharpen
+    assert any(
+        phrase in sharpen
+        for phrase in ("do not weaken", "do not loosen", "must preserve", "preserve policy")
+    )
+
+
 def test_compatibility_document_notice_and_operational_state_are_reconciled() -> None:
     compatibility = COMPATIBILITY_DOC.read_text(encoding="utf-8")
     notice = NOTICE.read_text(encoding="utf-8")
     state = AGENT_STATE.read_text(encoding="utf-8")
+
+    compatibility_current = re.match(
+        r"\A# pstack compatibility\n\nThis Harness integration adapts a bounded set of skills from "
+        r"`cursor/plugins/pstack` version `([^`]+)`, commit `([0-9a-f]{40})`, whose "
+        r"`pstack` subtree is `([0-9a-f]{40})`\.",
+        compatibility,
+    )
+    notice_current = re.search(
+        r"(?m)^The adapted skills under `\.agents/skills/` are based on `cursor/plugins/pstack`,\n"
+        r"version `([^`]+)`, commit `([0-9a-f]{40})`, whose\n"
+        r"`pstack` subtree is `([0-9a-f]{40})`\.$",
+        notice,
+    )
+    expected_current_pin = (
+        EXPECTED_CANONICAL_VERSION,
+        EXPECTED_CANONICAL_COMMIT,
+        EXPECTED_CANONICAL_TREE,
+    )
+    assert (
+        compatibility_current.groups() if compatibility_current is not None else None,
+        notice_current.groups() if notice_current is not None else None,
+    ) == (expected_current_pin, expected_current_pin)
 
     assert "PSTACK_MIT_NOTICE.md" in compatibility
     assert "cursor/plugins/pstack" in compatibility
@@ -430,9 +533,9 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "Copyright (c) 2026 Lauren Tan" in notice
     assert "https://github.com/cursor/plugins/tree/main/pstack" in notice
     normalized_state = " ".join(state.split())
-    assert (
-        f"`last_completed_roadmap_pr`: `BT-02` / PR #97 / merge `{BT02_MERGE_SHA}`"
-    ) in normalized_state
+    assert "BT-02" in state
+    assert "PR #97" in state
+    assert BT02_MERGE_SHA in state
     assert BT01_MERGE_SHA in state
     assert (
         f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "

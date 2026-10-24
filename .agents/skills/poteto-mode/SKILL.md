@@ -26,6 +26,7 @@ Use this skill as a local routing guide. It adds no authority to the active user
 - Use `interrogate` for an extra adversarial pass. It is supplemental and cannot replace the fresh exact-head reviewer.
 - Use `tdd` for test-first implementation. The repository's `tdd-red-green-evidence` skill controls RED and GREEN evidence.
 - Use `figure-it-out` when no narrower skill covers a multi-step task. The active JIT or other repository plan controls scope and gates.
+- Use `ketchup` for a read-only catch-up based on the last human message and existing artifacts. Use `in-your-own-words` to restate a goal without taking action or adding authority. Use `sharpen` to improve task framing while preserving the original authorization, JIT scope, and human gates.
 - Use `show-me-your-work` to summarize existing PR, JIT, Git, CI, and review evidence. Do not create a separate private log.
 - Use `technical-writing` for repository docs and engineering prose.
 - Use `principles-design`, `principles-verification`, and `principle-separate-before-serializing-shared-state` when their design, verification, or ownership conditions apply.
