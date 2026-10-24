@@ -699,6 +699,9 @@ class ReplayRunner:
         if name in inventory:
             if self._read(name) != raw:
                 _fail()
+            manifest._refresh()
+            self._verify()
+            self._verify_accepted()
             return
         if len(inventory) >= 16383 or sum(item.st_size for item in inventory.values()) + len(raw) * 2 > 256 * 1024 * 1024:
             _fail()
@@ -706,7 +709,7 @@ class ReplayRunner:
         if next_temp >= 16384:
             _fail()
         temporary = f".tmp-{next_temp:06d}"
-        descriptor = None
+        descriptor = reader = None
         try:
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self._root)
             offset = 0
@@ -728,13 +731,43 @@ class ReplayRunner:
             os.fsync(self._root)
             self._verify()
             self._verify_accepted()
-            self._accepted[name] = self._identity(os.stat(name, dir_fd=self._root, follow_symlinks=False))
-            manifest._refresh()
+            # Link/unlink changes ctime, so take fresh authority from the
+            # original descriptor rather than adopting the final pathname.
+            pinned = os.fstat(descriptor)
+            identity = self._identity(pinned)
+            if (not stat.S_ISREG(pinned.st_mode) or pinned.st_uid != os.getuid()
+                    or stat.S_IMODE(pinned.st_mode) != 0o400 or pinned.st_nlink != 1
+                    or pinned.st_size != len(raw)):
+                _fail()
+            leaf = os.stat(name, dir_fd=self._root, follow_symlinks=False)
+            if self._identity(leaf) != identity:
+                _fail()
+            reader = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self._root)
+            if self._identity(os.fstat(reader)) != identity:
+                _fail()
+            offset = 0
+            while offset < len(raw):
+                block = os.read(reader, min(1024 * 1024, len(raw) - offset))
+                if not block or block != raw[offset:offset + len(block)]:
+                    _fail()
+                offset += len(block)
+            if os.read(reader, 1):
+                _fail()
+            if (self._identity(os.fstat(descriptor)) != identity
+                    or self._identity(os.fstat(reader)) != identity
+                    or self._identity(os.stat(name, dir_fd=self._root, follow_symlinks=False)) != identity):
+                _fail()
+            self._accepted[name] = identity
         except OSError:
             _fail()
         finally:
+            if reader is not None:
+                os.close(reader)
             if descriptor is not None:
                 os.close(descriptor)
+        manifest._refresh()
+        self._verify()
+        self._verify_accepted()
 
     def run(self, manifest: ReplayManifest, *, max_operations: int | None = None) -> ReplayResult:
         return self._execute(manifest, None, None, max_operations, new=True)
@@ -804,10 +837,11 @@ class ReplayRunner:
             actual = tuple(engine.events)
             if len(events) != len(actual) or any(_exact_event(left) != _exact_event(right) for left, right in zip(events, actual, strict=True)):
                 _fail()
+        validated_result = None
         if "result.json" in published:
             if not (engine.index == len(engine.operations) or engine.status != "available"):
                 _fail()
-            engine.result()
+            validated_result = engine.result()
             if self._read("result.json") != engine._wire_cache:
                 _fail()
         self._verify_accepted()
@@ -822,11 +856,12 @@ class ReplayRunner:
             self._publish(f"operation-{engine.index - 1:06d}.json", raw, manifest)
             self._publish(f"checkpoint-{engine.index:06d}.json", engine.checkpoint().canonical_bytes(), manifest)
             added += 1
-        result = engine.result()
+        result = validated_result if validated_result is not None else engine.result()
         if result.completed:
             self._publish("result.json", engine._wire_cache, manifest)
-        self._verify()
         manifest._refresh()
+        self._verify()
+        self._verify_accepted()
         return result
 
 
