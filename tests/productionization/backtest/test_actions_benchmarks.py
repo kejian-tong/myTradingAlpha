@@ -2838,3 +2838,66 @@ def test_bt04_r2_event_original_stored_bytes_change_during_real_proof_rejects_re
         assert _bt04_repair_native_digest(tuple(object.__getattribute__(event, name) for name in data_slots)) == data_before
         object.__setattr__(event, slot, original_bytes)
         assert _bt04_repair_native_digest(series) == before
+
+
+@pytest.mark.parametrize("slot", ("_canonical", "_storage"))
+@pytest.mark.parametrize("available", (True, False), ids=("available", "unavailable"))
+def test_bt04_f1_late_result_proof_must_precede_final_original_policy_check(
+    slot: str, available: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mytradingalpha.backtest import benchmarks, corporate_actions
+
+    api = _api()
+    policy = _bh_policy(api, common=_common(api, end=ENTRY))
+    sessions = (_session_input(api, ENTRY),) if available else ()
+    control = api.BenchmarkRunner().run_buy_and_hold(sessions, policy=policy)
+    expected_status = "available" if available else "unavailable"
+    assert bt03._result_status(control) == expected_status
+    before = _bt04_repair_native_digest((policy, sessions))
+    data = object.__getattribute__(policy, "_data")
+    data_before = _bt04_repair_native_digest(data)
+    original_bytes = object.__getattribute__(policy, slot)
+    original_result = benchmarks._result
+    original_proof = corporate_actions._pure_bundle
+    inside_result = False
+    result_calls: list[bool] = []
+    returned: list[Any] = []
+    phase_proofs: list[bool] = []
+    changed: list[bool] = []
+
+    def observe_real_result(*args: Any, **kwargs: Any) -> Any:
+        nonlocal inside_result
+        result_calls.append(True)
+        inside_result = True
+        try:
+            result = original_result(*args, **kwargs)
+            returned.append(result)
+            return result
+        finally:
+            inside_result = False
+
+    def prove_then_change_original(captured: Any) -> Any:
+        result = original_proof(captured)
+        if inside_result:
+            phase_proofs.append(True)
+            if not changed:
+                object.__setattr__(policy, slot, original_bytes + b" ")
+                changed.append(True)
+        return result
+
+    try:
+        with monkeypatch.context() as armed:
+            armed.setattr(benchmarks, "_result", observe_real_result)
+            armed.setattr(corporate_actions, "_pure_bundle", prove_then_change_original)
+            error = _reject(lambda: api.BenchmarkRunner().run_buy_and_hold(sessions, policy=policy))
+        assert getattr(error, "reason_code", None) == "source_changed"
+    finally:
+        assert phase_proofs, "the real pure proof must execute inside final result sealing"
+        assert result_calls == [True] and len(returned) == 1
+        assert _get_native(returned[0], "status") == expected_status
+        assert inside_result is False and changed == [True]
+        assert object.__getattribute__(policy, "_data") is data
+        assert _bt04_repair_native_digest(data) == data_before
+        assert object.__getattribute__(policy, slot) == original_bytes + b" "
+        object.__setattr__(policy, slot, original_bytes)
+        assert _bt04_repair_native_digest((policy, sessions)) == before
