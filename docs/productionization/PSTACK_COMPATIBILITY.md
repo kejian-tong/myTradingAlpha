@@ -2,7 +2,7 @@
 
 This Harness integration adapts a bounded set of skills from `cursor/plugins/pstack` version `0.15.32`, commit `e73df471cd4bd918367e99f3dd9c51bd53ddf5f0`, whose `pstack` subtree is `880564357e051d7c7802da1cb5d8df1d0b008299`. The previous integrated pin was version `0.15.25`, commit `99743e9c151c8537cbbf1f98bb38f34ef3368453`, with subtree `0d5fd349cbc77d054eed60f0e8cdfbea86321ff9`. The machine-readable source and adaptation contract is `.agents/skills/poteto-mode/compatibility.json`.
 
-The selected source inventory remains 19 files: 16 previously selected sources and the three root skill sources—`ketchup`, `in-your-own-words`, and `sharpen`—introduced in PR #101. Exactly three selected source hashes change at the current pin (`ketchup`, `poteto-mode`, and `sharpen`); the other 16 selected source hashes are unchanged. The 16-skill local adaptation inventory and six authoritative Harness skills remain. The local `ketchup` and `sharpen` adaptations receive compatible updates; the `poteto-mode` wrapper and the other 14 adaptations remain byte-identical. Skill frontmatter contains only the Codex `name` and `description`. The manifest remains schema version 1, preserves its authority and portable-reference records, retains all prior exclusions, and adds four exclusions for `statechart`, `create-formal-verification-skill`, `maintain-formal-verification-skill`, and `ketchup-video`.
+The selected source inventory remains 19 files: 16 previously selected sources and the three root skill sources—`ketchup`, `in-your-own-words`, and `sharpen`—introduced in PR #101. Exactly three selected source hashes change at the current pin (`ketchup`, `poteto-mode`, and `sharpen`); the other 16 selected source hashes are unchanged. The 16-skill local adaptation inventory and six authoritative Harness skills remain. The local `ketchup` and `sharpen` adaptations receive compatible updates; the other 14 adaptations, including `poteto-mode`, remain byte-identical. Skill frontmatter contains only the Codex `name` and `description`. The manifest remains schema version 1, preserves its authority and portable-reference records, retains all prior exclusions, and adds four exclusions for `statechart`, `create-formal-verification-skill`, `maintain-formal-verification-skill`, and `ketchup-video`.
 
 ## Skill purposes
 
@@ -42,6 +42,7 @@ The dispositions distinguish provenance-only metadata, excluded source documenta
 | Upstream path | Disposition |
 | --- | --- |
 | `.cursor-plugin/plugin.json` | `version_provenance_only` |
+| `README.md` | `excluded_source_documentation` |
 | `docs/guide/01-setup.md` | `excluded_source_documentation` |
 | `docs/guide/02-poteto-mode.md` | `excluded_source_documentation` |
 | `docs/guide/03-understand.md` | `excluded_source_documentation` |
@@ -55,14 +56,14 @@ The dispositions distinguish provenance-only metadata, excluded source documenta
 | `docs/guide/README.md` | `excluded_source_documentation` |
 | `docs/harness/claude-code.md` | `excluded_source_documentation` |
 | `plugin.json` | `version_provenance_only` |
-| `README.md` | `excluded_source_documentation` |
 | `skills/create-formal-verification-skill/SKILL.md` | `excluded_pending_separate_scope` |
 | `skills/ketchup-video/SKILL.md` | `excluded_pending_separate_scope` |
 | `skills/ketchup/SKILL.md` | `selected_source_requires_compatible_review` |
 | `skills/maintain-formal-verification-skill/SKILL.md` | `excluded_pending_separate_scope` |
 | `skills/make-bot-ui/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/poteto-help/references/recipes.md` | `excluded_existing_allowlist` |
 | `skills/poteto-help/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/poteto-help/references/recipes.md` | `excluded_existing_allowlist` |
+| `skills/poteto-mode/SKILL.md` | `selected_source_requires_compatible_review` |
 | `skills/poteto-mode/scripts/check-plan.mjs` | `excluded` |
 | `skills/poteto-mode/scripts/check-plan.test.ts` | `excluded` |
 | `skills/poteto-mode/scripts/orch/orch.test.ts` | `excluded` |
@@ -73,10 +74,10 @@ The dispositions distinguish provenance-only metadata, excluded source documenta
 | `skills/poteto-mode/scripts/watch-pr/policy.ts` | `excluded` |
 | `skills/poteto-mode/scripts/watch-pr/types.ts` | `excluded` |
 | `skills/poteto-mode/scripts/worktree-audit.sh` | `excluded` |
-| `skills/poteto-mode/SKILL.md` | `selected_source_requires_compatible_review` |
 | `skills/reflect/SKILL.md` | `excluded_existing_allowlist` |
 | `skills/setup-pstack/SKILL.md` | `excluded_existing_allowlist` |
 | `skills/sharpen/SKILL.md` | `selected_source_requires_compatible_review` |
+| `skills/statechart/SKILL.md` | `excluded_pending_separate_scope` |
 | `skills/statechart/scripts/bug-states.mjs` | `excluded` |
 | `skills/statechart/scripts/chart-edges.mjs` | `excluded` |
 | `skills/statechart/scripts/chart-parts.mjs` | `excluded` |
@@ -103,12 +104,11 @@ The dispositions distinguish provenance-only metadata, excluded source documenta
 | `skills/statechart/scripts/tlc-to-chart.mjs` | `excluded` |
 | `skills/statechart/scripts/tlc-tools.mjs` | `excluded` |
 | `skills/statechart/scripts/ways-in.mjs` | `excluded` |
-| `skills/statechart/SKILL.md` | `excluded_pending_separate_scope` |
 | `skills/swarm/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/typescript-best-practices/references/patterns.md` | `excluded_existing_allowlist` |
 | `skills/typescript-best-practices/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/typescript-best-practices/references/patterns.md` | `excluded_existing_allowlist` |
 
-These source files were inspected as data only. None of their text or authority was imported; no prompts, routing, weakened review language, external dependencies, or API-breaking authority were added.
+All 66 changed paths were classified from frozen Git tree metadata. The selected source text and newly introduced skill texts were inspected as untrusted data. Excluded documentation, content, scripts, and upstream authority were not imported or executed. The selected existing skills receive only compatible prose adaptations under repository policy.
 
 The adapted `ketchup` skill remains a read-only, evidence-backed recap. It treats the last human message as the cutoff for new activity and keeps assistant replies, notifications, and subagent results outside that boundary. For every affected item that needs a user decision, it provides a self-contained record with an available link when one exists, recommendation, evidence, risks, prerequisites, and unknowns. Older unresolved calls carry forward only when already evidenced by available artifacts; they are context, not new requests. Agent-owned work is not presented as a user action item. Existing app/job/capture/post/transcript, fabricated evidence, absent-skill, and visual controls remain. `in-your-own-words` restates the goal and problem without executing work or adding authority. `sharpen` explicitly rewrites prompts from available raw-source material and expert methods, leaves user choices open, and uses an authorized independent outside check only when it is already available. It continues the original authorized task unless the user asks only for prompt refinement; it creates no external check and changes no authority, policy, JIT scope, compatibility, or human gate.
 
