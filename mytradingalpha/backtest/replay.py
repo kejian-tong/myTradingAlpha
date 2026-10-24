@@ -495,6 +495,73 @@ def _result_bytes(result: ReplayResult) -> bytes:
         "events": [_exact_event(event) for event in result.events], "results": [_exact_result(value) for value in result.results]})
 
 
+def _root_path(root: object) -> str:
+    if type(root) is str:
+        return root
+    if type(root) is not PosixPath:
+        _fail()
+    # Inspect only declared native slots, never a property that could render
+    # the caller's mutable Path before its stored values have been admitted.
+    declared = {name for owner in PosixPath.__mro__
+                for name in owner.__dict__.get("__slots__", ())}
+    if "_raw_paths" in declared:
+        authority = "_raw_paths"
+    elif "_parts" in declared:
+        authority = "_parts"
+    else:
+        _fail()
+    captured, byte_count, component_count = {}, 0, 0
+
+    def admit_text(value: object) -> str:
+        nonlocal byte_count
+        if type(value) is not str or len(value) > 65536:
+            _fail()
+        try:
+            size = len(value.encode("utf-8"))
+        except UnicodeError:
+            _fail()
+        if size > 65536 or byte_count + size > 65536:
+            _fail()
+        byte_count += size
+        return value
+
+    component_fields = ("_raw_paths", "_parts", "_tail_cached")
+    for name in ("_str", "_drv", "_root", *component_fields):
+        if name not in declared:
+            continue
+        try:
+            value = object.__getattribute__(root, name)
+        except AttributeError:
+            if name == authority:
+                _fail()
+            continue
+        if name in component_fields:
+            if (type(value) is not list and type(value) is not tuple) or len(value) > 4096:
+                _fail()
+            parts = []
+            for item in value:
+                component_count += 1
+                if component_count > 4096:
+                    _fail()
+                parts.append(admit_text(item))
+            captured[name] = tuple(parts)
+        else:
+            captured[name] = admit_text(value)
+    # No caller-owned object or container is consulted beyond this snapshot.
+    owned = PosixPath(*captured[authority])
+    path = str(owned)
+    for name, expected in captured.items():
+        try:
+            actual = path if name == "_str" else object.__getattribute__(owned, name)
+        except AttributeError:
+            _fail()
+        if name in component_fields:
+            actual = tuple(actual)
+        if expected != actual:
+            _fail()
+    return path
+
+
 class ReplayRunner:
     """One descriptor-anchored OS append owner beneath an existing absolute root."""
 
@@ -506,13 +573,14 @@ class ReplayRunner:
         self._fds, self._chain, self._root, self._lock, self._closed = [], [], None, None, False
         self._accepted = {}
         try:
-            if type(root) is PosixPath:
-                path = str(root)
-            elif type(root) is str:
-                path = root
-            else:
+            path = _root_path(root)
+            if type(path) is not str or len(path) > 4096 or not path.startswith("/") or "\0" in path:
                 _fail()
-            if not path.startswith("/") or len(path.encode("utf-8")) > 4096 or "\0" in path:
+            try:
+                path_size = len(path.encode("utf-8"))
+            except UnicodeError:
+                _fail()
+            if path_size > 4096:
                 _fail()
             parts = path.split("/")[1:]
             if not parts or len(parts) > 64 or any(not part or part in (".", "..") for part in parts):
@@ -530,7 +598,9 @@ class ReplayRunner:
             root_stat = os.fstat(parent)
             if root_stat.st_uid != os.getuid() or root_stat.st_mode & 0o022:
                 _fail()
-            self._inventory()
+            inventory = self._inventory()
+            if _LOCK not in inventory and len(inventory) >= 16384:
+                _fail()
             created = False
             try:
                 lock = os.open(_LOCK, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
@@ -544,6 +614,7 @@ class ReplayRunner:
                 _fail()
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._verify()
+            self._inventory()
             if created:
                 os.fsync(lock)
                 os.fsync(parent)
