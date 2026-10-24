@@ -32,6 +32,8 @@ BT03_BASE_SHA = "e0025b3990334d48664a4caf3bef6839421ef586"
 BT03_BASE_TREE_SHA = "d7b159ae4eb6d1caf2632014fc37006b00e4a5de"
 BT04_BASE_SHA = "7a863c0f04522c6b689a713170c47358e06c02f1"
 BT04_BASE_TREE_SHA = "667f01077881a863f5639b786869238d05955856"
+BT04_RECONCILED_MAIN_SHA = "28dcae6ceea84b04df405ea25e77e408d2d88b27"
+BT04_RECONCILED_MAIN_TREE_SHA = "3e92b58ef6508ea6d6b0c00e35caacb1e7b544f3"
 BT03_SOURCE_SHA = "7b4df459cd655e8d7d708e28534e5562b6b76c29"
 BT03_REVIEW_COMMENT = "6099410594"
 BT03_GATE_COMMENT = "6099435193"
@@ -59,6 +61,8 @@ HARNESS_MERGES = {
     90: HARNESS_PR90_MERGE_SHA,
     94: "afa7c35b9f8a71170d6a9d14b051d2e83f54fc0f",
     98: BT03_BASE_SHA,
+    101: "7a98e9eb689ed4a44c23e9ccf1c1c04e0a9c0911",
+    102: "28dcae6ceea84b04df405ea25e77e408d2d88b27",
 }
 
 
@@ -77,8 +81,10 @@ def test_operational_state_tracks_authorized_bt04_and_completed_bt03_bt02_bt01_r
     )
     assert reconciled_sha is not None
     assert reconciled_tree is not None
-    assert reconciled_sha.group(1) == BT04_BASE_SHA
-    assert reconciled_tree.group(1) == BT04_BASE_TREE_SHA
+    assert reconciled_sha.group(1) == BT04_RECONCILED_MAIN_SHA
+    assert reconciled_tree.group(1) == BT04_RECONCILED_MAIN_TREE_SHA
+    assert f"`bt04_roadmap_base_sha`: `{BT04_BASE_SHA}`" in state
+    assert f"`bt04_roadmap_base_tree`: `{BT04_BASE_TREE_SHA}`" in state
     docs_recovery = state.split("## Phase 03 documentation recovery", maxsplit=1)[-1]
     assert PH03_DOCS_MERGE_SHA in docs_recovery
     assert PH03_DOCS_TREE_SHA in docs_recovery
