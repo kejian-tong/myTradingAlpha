@@ -645,7 +645,7 @@ def _value_parts(cls, data, *, validate=False, depth=0, budget=None, active=None
         _reject("source_changed")
     # The policy has already been fully cloned and independently revalidated.
     # Exact round-trip rejects duplicate keys, whitespace and noncanonical JSON.
-    payload = _capture_call(lambda: json.loads(storage[len(_DOMAIN):], parse_constant=lambda _: _reject("source_changed")))
+    payload = _capture_call(lambda: json.loads(storage[len(_DOMAIN):].decode("utf-8", "strict"), parse_constant=lambda _: _reject("source_changed")))
     if _DOMAIN + _canonical_json(payload) != storage:
         _reject("source_changed")
     part = (policy, [type(policy).__name__, canonical.decode("utf-8")],
@@ -748,7 +748,19 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         return _clone_balance(value), wire.decode(), [wire.decode(), _jsonable(witness)]
     if native is LedgerEvent:
         from .ledger import _capture_event
-        clone, wire, witness, _ = _capture_event(value)
+        clone, wire, witness, retained = _capture_event(value)
+        if object.__getattribute__(clone, "_kind") == "fill":
+            native_bytes = object.__getattribute__(clone, "_storage_bytes")
+            binding = object.__getattribute__(clone, "_binding")
+            _guard_binding(binding)
+            _prove_binding_bundle(binding)
+            current, current_wire, _current_witness, current_retained = _capture_event(value)
+            if (
+                current_wire != wire
+                or object.__getattribute__(current, "_storage_bytes") != native_bytes
+                or current_retained != retained
+            ):
+                _reject("source_changed")
         return clone, wire.decode(), [wire.decode(), _jsonable(witness)]
     from .nav import NAVResult
     if native is NAVResult:
