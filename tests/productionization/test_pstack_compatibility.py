@@ -18,9 +18,12 @@ SIG05_MERGE_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 BT01_MERGE_SHA = "a713fbb48324ad9da45e254268b9cfe30b0a634b"
 BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
-EXPECTED_CANONICAL_VERSION = "0.15.25"
-EXPECTED_CANONICAL_COMMIT = "99743e9c151c8537cbbf1f98bb38f34ef3368453"
-EXPECTED_CANONICAL_TREE = "0d5fd349cbc77d054eed60f0e8cdfbea86321ff9"
+EXPECTED_CANONICAL_VERSION = "0.15.32"
+EXPECTED_CANONICAL_COMMIT = "e73df471cd4bd918367e99f3dd9c51bd53ddf5f0"
+EXPECTED_CANONICAL_TREE = "880564357e051d7c7802da1cb5d8df1d0b008299"
+PREVIOUS_CANONICAL_VERSION = "0.15.25"
+PREVIOUS_CANONICAL_COMMIT = "99743e9c151c8537cbbf1f98bb38f34ef3368453"
+PREVIOUS_CANONICAL_TREE = "0d5fd349cbc77d054eed60f0e8cdfbea86321ff9"
 
 EXPECTED_SKILLS = {
     "architect",
@@ -60,6 +63,11 @@ EXPECTED_EXISTING_SKILL_HASHES = {
 }
 
 EXPECTED_ALL_SKILLS = EXPECTED_SKILLS | EXISTING_REPOSITORY_SKILLS
+EXPECTED_SKILL_DIRECTORIES = EXPECTED_ALL_SKILLS
+EXPECTED_SKILLS_ROOT_FILES = {
+    *(f"{name}/SKILL.md" for name in EXPECTED_ALL_SKILLS),
+    "poteto-mode/compatibility.json",
+}
 
 EXPECTED_AUTHORITY_PATHS = {
     "root_instructions": "AGENTS.md",
@@ -80,15 +88,15 @@ EXPECTED_CANONICAL_SOURCES = {
     "skills/how/SKILL.md": "08a00079bb15b4258874ac3ff62d4ca7e94350ffedb521d0fd296dc9dd21904e",
     "skills/in-your-own-words/SKILL.md": "fa8ba74e27d7be371dc270ec78bbf816411477d0dfab185356c861ac8dd413ad",
     "skills/interrogate/SKILL.md": "a16dfe179005abc22a4651b82f25b0c8ab953284276efe4e6dc341958fb63647",
-    "skills/ketchup/SKILL.md": "47b3fb0d5626a40fcb3bd016e68f1cb3d2d313351183e8f6c05d4c7abd76e665",
-    "skills/poteto-mode/SKILL.md": "c5e6b605f46e5d9fbab31afa7a99d3d50680f2180d1fdfae3a924901bc52d99a",
+    "skills/ketchup/SKILL.md": "f2923ffd14f6fc778f75a47aaed1f317fb5fd00b5701ca769d6446c74106dead",
+    "skills/poteto-mode/SKILL.md": "2755f102e7a6d0496b429d1031a22fb353e1f3d523543367caeaae5c4ed6f544",
     "skills/principle-exhaust-the-design-space/SKILL.md": "2de83d99f93f60ec6313455b0bc9aa9f0bfb93dd59f414f403691322db00d4db",
     "skills/principle-prove-it-works/SKILL.md": "ec79a15025bac8d33d62011c54f3b612733fd2a024e623b531b3637aa75070e2",
     "skills/principle-redesign-from-first-principles/SKILL.md": "170e0a658783e43fee8ec5a8c2422a4abb8f69cef621dd1819a95910b8207034",
     "skills/principle-separate-before-serializing-shared-state/SKILL.md": "05294b40448e927c5da1c7b6f5c6b9fed3744637e3833d2d948b9154a9dd00bb",
     "skills/principle-sequence-verifiable-units/SKILL.md": "2ccbbacc56ace5afdfb8670cef19d7bd009fb2a0033b9a741cbdf2b6baf72187",
     "skills/principle-test-behavior-not-implementation/SKILL.md": "f7223698623b6a26fea49c751e466b38e6691b1f32ce841d3983e7ffbe2b74a6",
-    "skills/sharpen/SKILL.md": "6bcd73916696eb9c5b79b6f960983760c34bcc28937c11142dd8d86b5107aa46",
+    "skills/sharpen/SKILL.md": "563dfc460c605d311e650726288e2f1cbd61eab817db178d6e7e29643e07e7a2",
     "skills/show-me-your-work/SKILL.md": "920a8217cbb62f92a2222fb81fc9eab17ecd554a0277e444a95a927195139bd1",
     "skills/tdd/SKILL.md": "eeb868e2dfebee528d730a67d7b17498fac4bb85dec2e38bc5c5176aca4d5d2f",
     "skills/technical-writing/SKILL.md": "61fe9c424a798ebf36ad94941f87be049cb8827bdf86d21474a0dde37b513c43",
@@ -171,6 +179,97 @@ EXPECTED_EXCLUDED_CAPABILITIES = {
     "shipping",
     "autonomous landing",
     "external-model fallback",
+    "statechart",
+    "create-formal-verification-skill",
+    "maintain-formal-verification-skill",
+    "ketchup-video",
+}
+
+# Complete 0.15.25 -> 0.15.32 source delta, grouped by its frozen disposition.
+EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION = {
+    "version_provenance_only": [
+        ".cursor-plugin/plugin.json",
+        "plugin.json",
+    ],
+    "excluded_source_documentation": [
+        "README.md",
+        "docs/guide/01-setup.md",
+        "docs/guide/02-poteto-mode.md",
+        "docs/guide/03-understand.md",
+        "docs/guide/04-design.md",
+        "docs/guide/05-build-and-clean.md",
+        "docs/guide/06-verify-and-ship.md",
+        "docs/guide/07-overnight.md",
+        "docs/guide/08-principles.md",
+        "docs/guide/09-make-it-yours.md",
+        "docs/guide/10-recipes-and-pitfalls.md",
+        "docs/guide/README.md",
+        "docs/harness/claude-code.md",
+    ],
+    "excluded_pending_separate_scope": [
+        "skills/create-formal-verification-skill/SKILL.md",
+        "skills/ketchup-video/SKILL.md",
+        "skills/maintain-formal-verification-skill/SKILL.md",
+        "skills/statechart/SKILL.md",
+    ],
+    "selected_source_requires_compatible_review": [
+        "skills/ketchup/SKILL.md",
+        "skills/poteto-mode/SKILL.md",
+        "skills/sharpen/SKILL.md",
+    ],
+    "excluded_existing_allowlist": [
+        "skills/make-bot-ui/SKILL.md",
+        "skills/poteto-help/SKILL.md",
+        "skills/poteto-help/references/recipes.md",
+        "skills/reflect/SKILL.md",
+        "skills/setup-pstack/SKILL.md",
+        "skills/swarm/SKILL.md",
+        "skills/typescript-best-practices/SKILL.md",
+        "skills/typescript-best-practices/references/patterns.md",
+    ],
+    "excluded": [
+        "skills/poteto-mode/scripts/check-plan.mjs",
+        "skills/poteto-mode/scripts/check-plan.test.ts",
+        "skills/poteto-mode/scripts/orch/orch.test.ts",
+        "skills/poteto-mode/scripts/orch/store.ts",
+        "skills/poteto-mode/scripts/watch-pr/github.test.ts",
+        "skills/poteto-mode/scripts/watch-pr/github.ts",
+        "skills/poteto-mode/scripts/watch-pr/policy.test.ts",
+        "skills/poteto-mode/scripts/watch-pr/policy.ts",
+        "skills/poteto-mode/scripts/watch-pr/types.ts",
+        "skills/poteto-mode/scripts/worktree-audit.sh",
+        "skills/statechart/scripts/bug-states.mjs",
+        "skills/statechart/scripts/chart-edges.mjs",
+        "skills/statechart/scripts/chart-parts.mjs",
+        "skills/statechart/scripts/chart-to-tla.mjs",
+        "skills/statechart/scripts/compare-charts.mjs",
+        "skills/statechart/scripts/lib.mjs",
+        "skills/statechart/scripts/map-view.mjs",
+        "skills/statechart/scripts/property-loop.mjs",
+        "skills/statechart/scripts/read-check.mjs",
+        "skills/statechart/scripts/regions-chart.mjs",
+        "skills/statechart/scripts/render.mjs",
+        "skills/statechart/scripts/rule-book.mjs",
+        "skills/statechart/scripts/second-replay.mjs",
+        "skills/statechart/scripts/snapshot.mjs",
+        "skills/statechart/scripts/spec-text.mjs",
+        "skills/statechart/scripts/statechart-help.mjs",
+        "skills/statechart/scripts/statechart.mjs",
+        "skills/statechart/scripts/test/band.mmd",
+        "skills/statechart/scripts/test/regions.mmd",
+        "skills/statechart/scripts/test/statechart.test.mjs",
+        "skills/statechart/scripts/test/sync.mmd",
+        "skills/statechart/scripts/test/upload.mmd",
+        "skills/statechart/scripts/tlc-to-chart-args.mjs",
+        "skills/statechart/scripts/tlc-to-chart.mjs",
+        "skills/statechart/scripts/tlc-tools.mjs",
+        "skills/statechart/scripts/ways-in.mjs",
+    ],
+}
+EXPECTED_CURRENT_PATH_DISPOSITIONS = {
+    path: disposition
+    for disposition, paths in EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION.items()
+    for path in paths
 }
 
 
@@ -233,6 +332,76 @@ def _documented_skill_purposes() -> dict[str, str]:
         assert name not in purposes, f"duplicate skill purpose row: {name}"
         purposes[name] = cells[1]
     return purposes
+
+
+def _markdown_sections(document: str) -> list[tuple[str, str]]:
+    headings = list(re.finditer(r"(?m)^(#{2,6})\s+(.+?)\s*$", document))
+    sections: list[tuple[str, str]] = []
+    for index, heading in enumerate(headings):
+        level = len(heading.group(1))
+        end = len(document)
+        for later in headings[index + 1 :]:
+            if len(later.group(1)) <= level:
+                end = later.start()
+                break
+        sections.append((heading.group(2).strip(), document[heading.end() : end]))
+    return sections
+
+
+def _section_text(document: str, heading_pattern: str) -> str:
+    pattern = re.compile(heading_pattern, re.IGNORECASE)
+    matching = [
+        f"{heading}\n{body}"
+        for heading, body in _markdown_sections(document)
+        if pattern.search(heading)
+    ]
+    assert matching, f"missing Markdown section matching {heading_pattern!r}"
+    return "\n".join(matching)
+
+
+def _compatibility_current_pin(document: str) -> re.Match[str] | None:
+    return re.match(
+        r"\A# pstack compatibility\n\nThis Harness integration adapts a bounded set of skills from "
+        r"`cursor/plugins/pstack` version `([^`]+)`, commit `([0-9a-f]{40})`, whose "
+        r"`pstack` subtree is `([0-9a-f]{40})`\.",
+        document,
+    )
+
+
+def _represented_current_path_dispositions(section: str) -> tuple[dict[str, str], dict[str, int]]:
+    disposition_names = set(EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION)
+    current_heading_disposition: str | None = None
+    represented: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for line in section.splitlines():
+        heading = re.match(r"^\s*#{3,6}\s+(.+?)\s*$", line)
+        if heading:
+            heading_labels = [
+                label for label in disposition_names if label in heading.group(1)
+            ]
+            current_heading_disposition = (
+                heading_labels[0] if len(heading_labels) == 1 else None
+            )
+
+        path_mentions = [
+            path
+            for path in EXPECTED_CURRENT_PATH_DISPOSITIONS
+            if f"`{path}`" in line
+        ]
+        if not path_mentions:
+            continue
+        inline_labels = [
+            label
+            for label in disposition_names
+            if re.search(rf"(?<![a-z0-9_]){re.escape(label)}(?![a-z0-9_])", line)
+        ]
+        assert len(inline_labels) <= 1, f"ambiguous disposition row: {line!r}"
+        disposition = inline_labels[0] if inline_labels else current_heading_disposition
+        assert disposition is not None, f"changed path lacks a disposition: {line!r}"
+        for path in path_mentions:
+            counts[path] = counts.get(path, 0) + 1
+            represented[path] = disposition
+    return represented, counts
 
 
 def test_manifest_pins_canonical_source_and_portable_reference() -> None:
@@ -322,13 +491,38 @@ def test_skill_inventory_preserves_repository_skills_and_documents_adaptations()
     } == documented_purposes
 
 
+def test_skills_root_recursive_inventory_is_exact_and_has_no_symlinks_or_executables() -> None:
+    assert not SKILLS_ROOT.is_symlink()
+    files: set[str] = set()
+    directories: set[str] = set()
+
+    def visit(directory: Path) -> None:
+        for path in sorted(directory.iterdir()):
+            relative = path.relative_to(SKILLS_ROOT).as_posix()
+            assert not path.is_symlink(), f"skill inventory cannot contain symlinks: {relative}"
+            if path.is_dir():
+                directories.add(relative)
+                visit(path)
+                continue
+            assert path.is_file(), f"skill inventory contains a non-file: {relative}"
+            assert path.stat().st_mode & 0o111 == 0, f"skill inventory cannot contain executable files: {relative}"
+            files.add(relative)
+
+    visit(SKILLS_ROOT)
+    assert directories == EXPECTED_SKILL_DIRECTORIES
+    assert files == EXPECTED_SKILLS_ROOT_FILES
+
+
 def test_manifest_encodes_repository_authority_and_excluded_capabilities() -> None:
     manifest = _load_manifest()
     assert manifest["schema_version"] == 1
     assert manifest["authority"] == EXPECTED_POLICY
     excluded = manifest["excluded_capabilities"]
     assert len(excluded) == len(set(excluded))
+    assert excluded == sorted(EXPECTED_EXCLUDED_CAPABILITIES)
     assert set(excluded) == EXPECTED_EXCLUDED_CAPABILITIES
+    adapted_names = {entry["name"] for entry in manifest["adapted_skills"]}
+    assert set(excluded).isdisjoint(adapted_names)
 
 
 def test_repository_authority_files_and_harness_boundaries_are_explicit() -> None:
@@ -478,6 +672,96 @@ def test_new_routed_skills_keep_catchup_and_restatement_read_only() -> None:
     )
 
 
+def test_ketchup_user_decisions_are_self_contained_per_item_and_exclude_agent_work() -> None:
+    ketchup = (SKILLS_ROOT / "ketchup" / "SKILL.md").read_text(encoding="utf-8")
+    decision_section = _section_text(
+        ketchup,
+        r"(?:user[- ]owned|user.*(?:decision|action)|(?:decision|action).*user|calls? to surface)",
+    )
+    normalized = " ".join(decision_section.lower().split())
+    assert re.search(r"\b(?:for each|for every|each|every) affected (?:item|call)\b", normalized)
+    assert "self-contained" in normalized
+    assert re.search(
+        r"\bavailable links?\b|\blinks?\b[^.]{0,40}\bavailable\b", normalized
+    )
+    for field in ("recommendation", "evidence", "risk", "prerequisite", "unknown"):
+        assert re.search(rf"\b{field}s?\b", normalized), field
+
+    assert re.search(
+        r"(?=[^.]*\b(?:older|earlier)\b)(?=[^.]*\b(?:unresolved|open)\b)"
+        r"(?=[^.]*\b(?:already[- ]evidenced|previously evidenced)\b)"
+        r"(?=[^.]*\bcalls?\b)[^.]*",
+        normalized,
+    )
+    assert re.search(
+        r"\b(?:even if|even when|including when)\b.{0,100}"
+        r"\b(?:pre-date|predate|precede|before)\b.{0,80}\b(?:cutoff|last human message)\b",
+        normalized,
+    )
+    assert re.search(
+        r"\bagent-owned\b[^.]{0,100}\b(?:not|exclude|do not|must not)\b"
+        r"[^.]{0,100}\b(?:user-owned|user action|action item)",
+        normalized,
+    )
+
+
+def test_sharpen_rewrites_prompts_and_continues_original_authorized_work() -> None:
+    sharpen = (SKILLS_ROOT / "sharpen" / "SKILL.md").read_text(encoding="utf-8")
+    framing = " ".join(
+        _section_text(sharpen, r"(?:prompt|rewrite|task framing|original task|user choice)")
+        .lower()
+        .split()
+    )
+    assert re.search(
+        r"\b(?:rewrite|rewriting)\b[^.]{0,100}\bprompt\b|"
+        r"\bprompt\b[^.]{0,100}\b(?:rewrite|rewriting)\b",
+        framing,
+    )
+    assert re.search(
+        r"\bavailable\b[^.]{0,80}\braw[- ]source\b|"
+        r"\braw[- ]source\b[^.]{0,80}\bavailable\b",
+        framing,
+    )
+    assert re.search(r"\bexpert\b[^.]{0,100}\bmethods?\b", framing)
+    assert re.search(
+        r"\bauthorized\b[^.]{0,60}\bindependent check\b|"
+        r"\bindependent check\b[^.]{0,60}\bauthorized\b",
+        framing,
+    )
+    assert re.search(
+        r"\b(?:leave|keep|preserve)\b[^.]{0,100}"
+        r"\b(?:user(?:'s)? choices?|choices? that belong to (?:the )?user)\b"
+        r"[^.]{0,60}\bopen\b",
+        framing,
+    )
+    assert re.search(r"\bcontinue\b[^.]{0,80}\boriginal task\b", framing)
+    assert re.search(
+        r"\b(?:unless|except when)\b[^.]{0,120}\buser\b[^.]{0,100}"
+        r"\b(?:only|just)\b[^.]{0,50}\b(?:prompt )?rewrite\b",
+        framing,
+    )
+
+    authority = " ".join(
+        _section_text(sharpen, r"(?:scope|authority|policy|gate|boundary)")
+        .lower()
+        .split()
+    )
+    for boundary in ("policy", "jit", "scope", "compatibility", "authorization", "human"):
+        assert boundary in authority
+    assert re.search(r"\badds no authority\b|\bdoes not add authority\b", authority)
+    assert re.search(
+        r"\b(?:do not|don't|never|must not|cannot|does not)\b[^.]{0,180}"
+        r"\b(?:change|expand|widen|weaken|loosen|waive)\b[^.]{0,180}"
+        r"\b(?:policy|jit|scope|compatibility|authorization|human gates?)\b",
+        authority,
+    )
+    assert re.search(
+        r"\b(?:do not|don't|never|must not)\b[^.]{0,180}"
+        r"\b(?:create|expand)\b[^.]{0,120}\bcheck\b",
+        authority,
+    )
+
+
 def test_sharpen_keeps_outside_verification_within_repository_authority() -> None:
     sharpen = " ".join(
         (SKILLS_ROOT / "sharpen" / "SKILL.md")
@@ -500,17 +784,82 @@ def test_sharpen_keeps_outside_verification_within_repository_authority() -> Non
     )
 
 
+def test_current_pin_parser_has_a_historical_negative_and_current_positive_control() -> None:
+    positive = (
+        "# pstack compatibility\n\n"
+        "This Harness integration adapts a bounded set of skills from `cursor/plugins/pstack` "
+        f"version `{EXPECTED_CANONICAL_VERSION}`, commit `{EXPECTED_CANONICAL_COMMIT}`, "
+        f"whose `pstack` subtree is `{EXPECTED_CANONICAL_TREE}`. The prior pin is historical."
+    )
+    match = _compatibility_current_pin(positive)
+    assert match is not None
+    assert match.groups() == (
+        EXPECTED_CANONICAL_VERSION,
+        EXPECTED_CANONICAL_COMMIT,
+        EXPECTED_CANONICAL_TREE,
+    )
+
+    historical_only = (
+        "# pstack compatibility\n\n"
+        f"Historical pin: version `{EXPECTED_CANONICAL_VERSION}`, "
+        f"commit `{EXPECTED_CANONICAL_COMMIT}`, subtree `{EXPECTED_CANONICAL_TREE}`."
+    )
+    assert _compatibility_current_pin(historical_only) is None
+    assert _compatibility_current_pin(
+        "# pstack compatibility\n\nThe historical integration is retained below.\n\n"
+        + positive.split("\n\n", 1)[1]
+    ) is None
+
+
+def test_current_change_disposition_is_pinned_and_covers_all_66_paths() -> None:
+    compatibility = COMPATIBILITY_DOC.read_text(encoding="utf-8")
+    path_count = sum(
+        len(paths) for paths in EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION.values()
+    )
+    assert path_count == 66
+    assert len(EXPECTED_CURRENT_PATH_DISPOSITIONS) == 66
+
+    sections = [
+        body
+        for heading, body in _markdown_sections(compatibility)
+        if heading == "Current upstream change disposition"
+    ]
+    assert len(sections) == 1, "current upstream disposition must be its own section"
+    current_section = sections[0]
+    first_paragraph = current_section.strip().split("\n\n", 1)[0]
+    for pin in (
+        PREVIOUS_CANONICAL_VERSION,
+        PREVIOUS_CANONICAL_COMMIT,
+        PREVIOUS_CANONICAL_TREE,
+        EXPECTED_CANONICAL_VERSION,
+        EXPECTED_CANONICAL_COMMIT,
+        EXPECTED_CANONICAL_TREE,
+    ):
+        assert pin in first_paragraph, f"current disposition lacks anchored pin {pin}"
+    assert re.search(r"\b66\b[^.\n]{0,60}\bchanged paths?\b", first_paragraph, re.IGNORECASE)
+
+    represented, counts = _represented_current_path_dispositions(current_section)
+    assert represented == EXPECTED_CURRENT_PATH_DISPOSITIONS
+    assert counts == dict.fromkeys(EXPECTED_CURRENT_PATH_DISPOSITIONS, 1)
+
+
+def test_compatibility_schedule_is_weekly_saturday_at_nine_chicago() -> None:
+    compatibility = COMPATIBILITY_DOC.read_text(encoding="utf-8")
+    schedule = _section_text(compatibility, r"^Weekly source synchronization$")
+    assert re.search(
+        r"\bweekly\b.*\bSaturday\b.*\b09:00\b.*\bAmerica/Chicago\b",
+        schedule,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert not re.search(r"\bhourly\b", schedule, re.IGNORECASE)
+
+
 def test_compatibility_document_notice_and_operational_state_are_reconciled() -> None:
     compatibility = COMPATIBILITY_DOC.read_text(encoding="utf-8")
     notice = NOTICE.read_text(encoding="utf-8")
     state = AGENT_STATE.read_text(encoding="utf-8")
 
-    compatibility_current = re.match(
-        r"\A# pstack compatibility\n\nThis Harness integration adapts a bounded set of skills from "
-        r"`cursor/plugins/pstack` version `([^`]+)`, commit `([0-9a-f]{40})`, whose "
-        r"`pstack` subtree is `([0-9a-f]{40})`\.",
-        compatibility,
-    )
+    compatibility_current = _compatibility_current_pin(compatibility)
     notice_current = re.search(
         r"(?m)^The adapted skills under `\.agents/skills/` are based on `cursor/plugins/pstack`,\n"
         r"version `([^`]+)`, commit `([0-9a-f]{40})`, whose\n"
