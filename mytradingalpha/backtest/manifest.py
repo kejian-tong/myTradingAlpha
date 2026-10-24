@@ -7,8 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import weakref
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from threading import Condition, RLock
+from typing import NamedTuple
 
 from mytradingalpha.contracts import orders as _contracts
 from mytradingalpha.contracts.orders import CostBreakdown, Fill, OrderIntent
@@ -55,6 +60,207 @@ _VALUE_FIELDS = {model: model._fields for model in _VALUES}
 _NAV_FIELDS = ("status", "value", "reason_code", "run_valid", "formula_version", "numeric_policy_version")
 _ORDER_FIELDS = ("intent_id", "remaining_quantity", "cumulative_quantity", "cumulative_fee", "status", "reason_code")
 _BLOB_KEYS = frozenset(("canonical_utf8", "native_witness", "native_inputs", "ledger_native_witness", "event_native_witness"))
+_HEAVY_LIMIT = 64 * 1024 * 1024
+_HEAVY_ENTRIES = 8
+
+
+class _IssuerRecord(NamedTuple):
+    reference: weakref.ReferenceType
+    facts: tuple[bytes, ...]
+    benchmark_digest: bytes | None = None
+    corrupt: bool = False
+
+
+@dataclass(slots=True)
+class _BenchmarkEntry:
+    reference: weakref.ReferenceType
+    values: tuple
+    native: bytes
+    canonical: tuple[bytes, bytes]
+    charge: int
+    nodes: int
+    pins: int = 0
+
+
+# None of these authority records is reachable through a manifest/cache token.
+# Weak references, rather than object IDs alone, bind every lookup to its lifetime.
+_ISSUER_LOCK = Condition(RLock())
+_ISSUERS: dict[int, _IssuerRecord] = {}
+_CONSTRUCTING: dict[int, tuple[weakref.ReferenceType, bool]] = {}
+_BENCHMARKS: OrderedDict[int, _BenchmarkEntry] = OrderedDict()
+_RETAINED_BYTES = 0
+_WORK_BYTES = 0
+_WORK_COUNT = 0
+
+
+def _remove_entry(entry: _BenchmarkEntry) -> None:
+    global _RETAINED_BYTES
+    key = id(entry.reference)
+    if _BENCHMARKS.get(key) is entry:
+        del _BENCHMARKS[key]
+        _RETAINED_BYTES -= entry.charge
+
+
+def _weak_cleanup(owner_id: int, reference: weakref.ReferenceType) -> None:
+    if type(owner_id) is not int or type(reference) is not weakref.ReferenceType or reference() is not None:
+        return
+    with _ISSUER_LOCK:
+        record = _ISSUERS.get(owner_id)
+        if record is not None and record.reference is reference:
+            del _ISSUERS[owner_id]
+        pending = _CONSTRUCTING.get(owner_id)
+        if pending is not None and pending[0] is reference:
+            del _CONSTRUCTING[owner_id]
+        entry = _BENCHMARKS.get(id(reference))
+        if entry is not None and entry.reference is reference and entry.pins == 0:
+            _remove_entry(entry)
+        _ISSUER_LOCK.notify_all()
+
+
+def _issuer(owner: ReplayManifest) -> _IssuerRecord:
+    if type(owner) is not ReplayManifest:
+        _fail()
+    with _ISSUER_LOCK:
+        record = _ISSUERS.get(id(owner))
+        if type(record) is not _IssuerRecord or type(record.reference) is not weakref.ReferenceType or record.reference() is not owner or record.corrupt:
+            _fail()
+        return record
+
+
+def _pool_check() -> None:
+    if len(_BENCHMARKS) + _WORK_COUNT > _HEAVY_ENTRIES or _RETAINED_BYTES + _WORK_BYTES > _HEAVY_LIMIT:
+        _fail()
+    if min(_RETAINED_BYTES, _WORK_BYTES, _WORK_COUNT) < 0:
+        _fail()
+
+
+def _poison(entry: _BenchmarkEntry) -> None:
+    owner = entry.reference()
+    if owner is not None:
+        record = _ISSUERS.get(id(owner))
+        if record is not None and record.reference is entry.reference:
+            _ISSUERS[id(owner)] = record._replace(corrupt=True)
+
+
+def _check_entry(entry: _BenchmarkEntry) -> None:
+    if type(entry) is not _BenchmarkEntry or type(entry.reference) is not weakref.ReferenceType:
+        _fail()
+    owner = entry.reference()
+    if owner is None:
+        _fail()
+    record = _issuer(owner)
+    if type(entry.native) is not bytes or len(entry.native) > _HEAVY_LIMIT or type(entry.canonical) is not tuple or len(entry.canonical) != 2:
+        _fail()
+    if any(type(raw) is not bytes or len(raw) > _HEAVY_LIMIT for raw in entry.canonical):
+        _fail()
+    if type(entry.charge) is not int or not 0 < entry.charge <= _HEAVY_LIMIT or type(entry.nodes) is not int or not 0 < entry.nodes <= 1_000_000:
+        _fail()
+    if record.benchmark_digest != hashlib.sha256(entry.native).digest():
+        _poison(entry)
+        _fail()
+    try:
+        current = _encode_native(_native(entry.values))
+        canonical = tuple(object.__getattribute__(value, "_canonical") for value in entry.values)
+        if current != entry.native or canonical != entry.canonical:
+            _fail()
+    except Exception:
+        _poison(entry)
+        _fail()
+
+
+def _evict_one(excluded: int | None = None) -> bool:
+    global _WORK_BYTES, _WORK_COUNT
+    for key, entry in tuple(_BENCHMARKS.items()):
+        if key == excluded or entry.pins:
+            continue
+        if entry.reference() is None:
+            _remove_entry(entry)
+            return True
+        # Verify before eviction: corrupted evidence is never an ordinary miss.
+        work = 2 * entry.charge
+        if _RETAINED_BYTES + _WORK_BYTES + work > _HEAVY_LIMIT or len(_BENCHMARKS) + _WORK_COUNT + 1 > _HEAVY_ENTRIES:
+            continue
+        _WORK_BYTES += work
+        _WORK_COUNT += 1
+        try:
+            _pool_check()
+            _check_entry(entry)
+            _remove_entry(entry)
+            return True
+        finally:
+            _WORK_BYTES -= work
+            _WORK_COUNT -= 1
+            _ISSUER_LOCK.notify_all()
+    return False
+
+
+def _pin_benchmarks(owner: ReplayManifest) -> _BenchmarkEntry | None:
+    global _WORK_BYTES, _WORK_COUNT
+    with _ISSUER_LOCK:
+        while True:
+            record = _issuer(owner)
+            key = id(record.reference)
+            entry = _BENCHMARKS.get(key)
+            if entry is None:
+                return None
+            if entry.reference is not record.reference or entry.reference() is not owner:
+                _fail()
+            work = 2 * entry.charge
+            if _RETAINED_BYTES + _WORK_BYTES + work <= _HEAVY_LIMIT and len(_BENCHMARKS) + _WORK_COUNT + 1 <= _HEAVY_ENTRIES:
+                entry.pins += 1
+                _WORK_BYTES += work
+                _WORK_COUNT += 1
+                _BENCHMARKS.move_to_end(key)
+                _pool_check()
+                return entry
+            if not _evict_one(key):
+                entry = None  # Do not retain an unaccounted graph while waiting.
+                _ISSUER_LOCK.wait()
+
+
+def _unpin_benchmarks(entry: _BenchmarkEntry) -> None:
+    global _WORK_BYTES, _WORK_COUNT
+    with _ISSUER_LOCK:
+        if entry.pins <= 0 or _BENCHMARKS.get(id(entry.reference)) is not entry:
+            _fail()
+        entry.pins -= 1
+        _WORK_BYTES -= 2 * entry.charge
+        _WORK_COUNT -= 1
+        if entry.pins == 0 and entry.reference() is None:
+            _remove_entry(entry)
+        _pool_check()
+        _ISSUER_LOCK.notify_all()
+
+
+def _reserve_benchmark_build(owner: ReplayManifest) -> bool:
+    global _WORK_BYTES, _WORK_COUNT
+    with _ISSUER_LOCK:
+        while True:
+            record = _issuer(owner)
+            if id(record.reference) in _BENCHMARKS:
+                return False
+            # A cold builder reserves the complete worst-case evidence budget.
+            # This deliberately favours boundedness over concurrent cold builds.
+            if _RETAINED_BYTES + _WORK_BYTES == 0 and _WORK_COUNT == 0:
+                _WORK_BYTES = _HEAVY_LIMIT
+                _WORK_COUNT = 1
+                _pool_check()
+                return True
+            if not _evict_one():
+                _ISSUER_LOCK.wait()
+
+
+def _release_benchmark_build() -> None:
+    global _WORK_BYTES, _WORK_COUNT
+    with _ISSUER_LOCK:
+        _WORK_BYTES -= _HEAVY_LIMIT
+        _WORK_COUNT -= 1
+        _pool_check()
+        _ISSUER_LOCK.notify_all()
+
+
+class _CacheCapacity(Exception):
+    pass
 
 
 class ReplayInputError(ValueError):
@@ -125,7 +331,7 @@ def _json(value: object, maximum: int = MAX_RECORD) -> bytes:
     return raw
 
 
-def _json_admission(value: object, maximum: int) -> None:
+def _json_admission(value: object, maximum: int) -> int:
     stack, active, nodes, size = [(value, 0, False)], set(), 0, 0
     while stack:
         item, depth, leaving = stack.pop()
@@ -168,6 +374,7 @@ def _json_admission(value: object, maximum: int) -> None:
             _fail()
         if size > maximum:
             _fail()
+    return size
 
 
 def _unique(pairs: list) -> dict:
@@ -336,6 +543,73 @@ class _Budget:
         self.bytes += size
         if self.bytes > MAX_RECORD:
             _fail()
+
+
+class _CacheBudget(_Budget):
+    __slots__ = ()
+
+    def charge(self, size: int) -> None:
+        self.bytes += size
+        if self.bytes > _HEAVY_LIMIT:
+            raise _CacheCapacity()
+
+
+def _benchmark_measurement(values: tuple) -> tuple[bytes, tuple, int, int]:
+    if type(values) is not tuple or len(values) != 2 or any(type(value) is not _bench.BenchmarkSeries for value in values):
+        _fail()
+    budget = _CacheBudget()
+    tree = _native(values, budget)
+    canonical = tuple(object.__getattribute__(value, "_canonical") for value in values)
+    if any(type(raw) is not bytes or len(raw) > MAX_RECORD for raw in canonical):
+        _fail()
+    budget.charge(sum(len(raw) for raw in canonical) + 128)
+    # Charge the complete additional native encoding before allocating it.
+    budget.charge(_json_admission(tree, MAX_RECORD))
+    return _encode_native(tree), canonical, budget.bytes, budget.nodes
+
+
+def _verify_origin(owner: ReplayManifest, facts: tuple) -> None:
+    if type(owner) is not ReplayManifest or type(facts) is not tuple or len(facts) != 6:
+        _fail()
+    if any(type(fact) is not bytes or len(fact) != 32 for fact in facts):
+        _fail()
+    raw = tuple(object.__getattribute__(owner, name) for name in ("_native", "_owned_native", "_semantic", "_canonical"))
+    if any(type(value) is not bytes or len(value) > MAX_RECORD for value in raw):
+        _fail()
+    integrity = object.__getattribute__(owner, "_integrity")
+    if type(integrity) is not bytes or len(integrity) != 32:
+        _fail()
+    original = _source_capture(object.__getattribute__(owner, "_original"))
+    owned = _source_capture(object.__getattribute__(owner, "_owned"))
+    if original != raw[0] or owned != raw[1]:
+        _fail()
+    measured = (*tuple(hashlib.sha256(value).digest() for value in raw),
+                hashlib.sha256(_json(object.__getattribute__(owner, "_operations"))).digest(),
+                hashlib.sha256(owner._cache_bytes()).digest())
+    if measured != facts or integrity != facts[5]:
+        _fail()
+
+
+def _copy_benchmark_entry(owner: ReplayManifest, entry: _BenchmarkEntry) -> tuple:
+    try:
+        owner._refresh()
+        with _ISSUER_LOCK:
+            if entry.reference() is not owner:
+                _fail()
+            _check_entry(entry)
+        values = tuple(_actions._clone_value(value) for value in entry.values)
+        if _encode_native(_native(values)) != entry.native:
+            _fail()
+        with _ISSUER_LOCK:
+            _check_entry(entry)
+        owner._refresh()
+        return values
+    except Exception:
+        with _ISSUER_LOCK:
+            _poison(entry)
+        _fail()
+    finally:
+        _unpin_benchmarks(entry)
 
 
 def _native(value: object, budget: _Budget | None = None, depth: int = 0) -> object:
@@ -664,9 +938,52 @@ class _Projection:
 class ReplayManifest:
     """Immutable exact-type manifest; all economic policies are explicit."""
 
-    __slots__ = ("_original", "_owned", "_native", "_owned_native", "_semantic", "_canonical", "_operations", "_integrity", "_benchmark_cache", "_benchmark_seal")
+    __slots__ = ("_original", "_owned", "_native", "_owned_native", "_semantic", "_canonical", "_operations", "_integrity", "__weakref__")
+
+    def __new__(cls, **_: object) -> ReplayManifest:
+        if cls is not ReplayManifest:
+            _fail()
+        owner = object.__new__(cls)
+        owner_id = id(owner)
+        reference = weakref.ref(owner, lambda reference, owner_id=owner_id: _weak_cleanup(owner_id, reference))
+        with _ISSUER_LOCK:
+            old = _ISSUERS.get(owner_id)
+            if old is not None:
+                if old.reference() is not None:
+                    _fail()
+                _weak_cleanup(owner_id, old.reference)
+            _CONSTRUCTING[owner_id] = (reference, False)
+        return owner
 
     def __init__(self, **fields: object) -> None:
+        with _ISSUER_LOCK:
+            pending = _CONSTRUCTING.get(id(self))
+            if type(self) is not ReplayManifest or id(self) in _ISSUERS or pending is None or pending[0]() is not self or pending[1]:
+                _fail()
+            reference = pending[0]
+            _CONSTRUCTING[id(self)] = (reference, True)
+        try:
+            facts = self._initialize(fields)
+            _verify_origin(self, facts)
+            with _ISSUER_LOCK:
+                current = _CONSTRUCTING.get(id(self))
+                if current is None or current[0] is not reference or not current[1] or id(self) in _ISSUERS:
+                    _fail()
+                # Only this completed constructor path issues origin authority.
+                _ISSUERS[id(self)] = _IssuerRecord(reference, facts)
+                del _CONSTRUCTING[id(self)]
+        except BaseException:
+            with _ISSUER_LOCK:
+                current = _CONSTRUCTING.get(id(self))
+                if current is not None and current[0] is reference:
+                    del _CONSTRUCTING[id(self)]
+            raise
+
+    def _initialize(self, fields: dict) -> tuple[bytes, ...]:
+        with _ISSUER_LOCK:
+            pending = _CONSTRUCTING.get(id(self))
+            if id(self) in _ISSUERS or pending is None or pending[0]() is not self or not pending[1]:
+                _fail()
         if type(self) is not ReplayManifest or len(fields) != len(_FIELDS) or any(type(name) is not str for name in fields):
             _fail()
         if any(name not in _FIELDS for name in fields):
@@ -706,9 +1023,8 @@ class ReplayManifest:
         object.__setattr__(self, "_original", dict(fields))
         object.__setattr__(self, "_owned", owned)
         object.__setattr__(self, "_native", native)
-        object.__setattr__(self, "_owned_native", _source_capture(owned))
-        object.__setattr__(self, "_benchmark_cache", None)
-        object.__setattr__(self, "_benchmark_seal", None)
+        owned_native = _source_capture(owned)
+        object.__setattr__(self, "_owned_native", owned_native)
         self._validate()
         projection = _Projection(self)
         operations = self._plan(projection)
@@ -719,7 +1035,8 @@ class ReplayManifest:
         semantic["intents"] = sorted((projection.intents[value.intent_id] for value in owned["intents"]), key=lambda value: value["intent_id"])
         semantic["outcomes"] = sorted((projection.outcomes[object.__getattribute__(value, "_outcome_hash")] for value in owned["outcomes"]), key=lambda value: _ref("OutcomeEvidence", value))
         semantic.update(serialization_version=SERIALIZATION, numeric_policy_version="bt02-decimal-v1", operations=operations)
-        object.__setattr__(self, "_semantic", _json(semantic))
+        semantic_raw = _json(semantic)
+        object.__setattr__(self, "_semantic", semantic_raw)
         exact_sources, total = [], 0
         for name in _ROOTS:
             roots = owned[name] if name in ("bindings", "intents", "outcomes", "sessions") else (owned[name],)
@@ -743,29 +1060,19 @@ class ReplayManifest:
         canonical = {"schema_version": "v1", "serialization_version": SERIALIZATION, "priority_policy": PRIORITY,
                      "semantic_input": semantic, "operational": {name: projection.value(owned[name]) for name in ("run_id", "correlation_id", "created_at")},
                      "exact_sources": exact_sources, "native_inputs": native.hex()}
-        object.__setattr__(self, "_canonical", _json(canonical))
-        object.__setattr__(self, "_integrity", hashlib.sha256(self._cache_bytes()).digest())
-        self._refresh()
+        canonical_raw = _json(canonical)
+        object.__setattr__(self, "_canonical", canonical_raw)
+        integrity = hashlib.sha256(self._cache_bytes()).digest()
+        object.__setattr__(self, "_integrity", integrity)
+        return (*tuple(hashlib.sha256(value).digest() for value in (native, owned_native, semantic_raw, canonical_raw)),
+                hashlib.sha256(_json(operations)).digest(), integrity)
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError("ReplayManifest is immutable")
 
     def _refresh(self) -> None:
-        if type(self) is not ReplayManifest:
-            _fail()
-        for name in ("_native", "_owned_native", "_semantic", "_canonical"):
-            value = object.__getattribute__(self, name)
-            if type(value) is not bytes or len(value) > MAX_RECORD:
-                _fail()
-        integrity = object.__getattribute__(self, "_integrity")
-        if type(integrity) is not bytes or len(integrity) != 32:
-            _fail()
-        if _source_capture(object.__getattribute__(self, "_original")) != object.__getattribute__(self, "_native"):
-            _fail()
-        if _source_capture(object.__getattribute__(self, "_owned")) != object.__getattribute__(self, "_owned_native"):
-            _fail()
-        if hashlib.sha256(self._cache_bytes()).digest() != integrity:
-            _fail()
+        record = _issuer(self)
+        _verify_origin(self, record.facts)
 
     def _cache_bytes(self) -> bytes:
         operations = _tuple(object.__getattribute__(self, "_operations"), MAX_OPERATIONS)
@@ -863,22 +1170,56 @@ class ReplayManifest:
         return _hash(SEMANTIC_DOMAIN, self.semantic_bytes())
 
     def _benchmarks(self) -> tuple:
+        global _RETAINED_BYTES, _WORK_BYTES, _WORK_COUNT
         self._refresh()
-        cached = object.__getattribute__(self, "_benchmark_cache")
-        if cached is None:
-            runner = _bench.BenchmarkRunner()
-            cached = (runner.run_cash(_mget(self, "sessions"), policy=_mget(self, "cash_benchmark_policy")),
-                      runner.run_buy_and_hold(_mget(self, "sessions"), policy=_mget(self, "buy_and_hold_policy")))
-            seal = _encode_native(_native(cached))
-            object.__setattr__(self, "_benchmark_cache", cached)
-            object.__setattr__(self, "_benchmark_seal", seal)
+        while True:
+            entry = _pin_benchmarks(self)
+            if entry is not None:
+                return _copy_benchmark_entry(self, entry)
+            if _reserve_benchmark_build(self):
+                break
+        reserved = True
+        try:
             self._refresh()
-        seal = object.__getattribute__(self, "_benchmark_seal")
-        if type(cached) is not tuple or len(cached) != 2 or any(type(value) is not _bench.BenchmarkSeries for value in cached) or type(seal) is not bytes or len(seal) > MAX_RECORD:
+            runner = _bench.BenchmarkRunner()
+            values = (runner.run_cash(_mget(self, "sessions"), policy=_mget(self, "cash_benchmark_policy")),
+                      runner.run_buy_and_hold(_mget(self, "sessions"), policy=_mget(self, "buy_and_hold_policy")))
+            self._refresh()
+            try:
+                native, canonical, charge, nodes = _benchmark_measurement(values)
+            except _CacheCapacity:
+                # Genuine bounded cold validation conveys no retained proof graph.
+                self._refresh()
+                return values
+            digest = hashlib.sha256(native).digest()
+            with _ISSUER_LOCK:
+                record = _issuer(self)
+                if record.benchmark_digest is not None and record.benchmark_digest != digest:
+                    _ISSUERS[id(self)] = record._replace(corrupt=True)
+                    _fail()
+                # Caller-supplied proof facts cannot reach this issuance point.
+                # Both trusted runners and all fresh/completion guards finished.
+                _ISSUERS[id(self)] = record._replace(benchmark_digest=digest)
+                if 3 * charge <= _HEAVY_LIMIT:
+                    entry = _BenchmarkEntry(record.reference, values, native, canonical, charge, nodes, pins=1)
+                    _BENCHMARKS[id(record.reference)] = entry
+                    _RETAINED_BYTES += charge
+                    _WORK_BYTES += 2 * charge - _HEAVY_LIMIT
+                    reserved = False
+                    _pool_check()
+                    _ISSUER_LOCK.notify_all()
+                else:
+                    entry = None
+            if entry is not None:
+                return _copy_benchmark_entry(self, entry)
+            # No module-owned graph is retained on the genuine cold path.
+            self._refresh()
+            return values
+        except Exception:
             _fail()
-        if _encode_native(_native(cached)) != seal:
-            _fail()
-        return cached
+        finally:
+            if reserved:
+                _release_benchmark_build()
 
     def economic_bytes(self, events: tuple, results: tuple) -> bytes:
         self._refresh()
@@ -1247,4 +1588,3 @@ def _economic_projection(manifest: ReplayManifest, events: tuple, results: tuple
                          "nav_points": [_nav_projection(nav) for nav in _actions._get(value, "nav_points")]}
             result_values.append({"type": "BenchmarkSeries", "value": projected})
     return {"events": projected_events, "results": result_values}
-

@@ -17,6 +17,7 @@ from . import (
     corporate_actions as _actions,
     fills as _fills,
     ledger as _ledger,
+    nav as _nav,
 )
 from .manifest import (
     MAX_OPERATIONS,
@@ -248,7 +249,7 @@ class _Engine:
         self.ledger = _new_ledger(manifest)
         self.balance = self.ledger.balance()
         self.events, self.event_records = [], []
-        self._result_cache, self._wire_cache = None, None
+        self._wire_cache = None
         self._balance_record()
         self.index, self.closed = 0, 0
         self.balances, self.nav_points, self.cap, self.attempts = [], [], {}, {}
@@ -322,7 +323,7 @@ class _Engine:
         if self.index >= len(self.operations) or self.status != "available":
             _fail()
         self.manifest._refresh()
-        self._result_cache, self._wire_cache = None, None
+        self._wire_cache = None
         row = self.operations[self.index]
         item = _mget(self.manifest, "sessions")[row[0]]
         session, stage = _actions._get(item, "session"), row[2]
@@ -465,17 +466,19 @@ class _Engine:
 
     def result(self) -> ReplayResult:
         self.manifest._refresh()
-        if self._result_cache is not None:
-            return self._result_cache
-        events, balances, points, orders = tuple(self.events), tuple(self.balances), tuple(self.nav_points), self.orders_result()
-        cash, bh = self.benchmarks
+        # No caller receives an Engine-owned graph, including on repeated reads.
+        events = tuple(_ledger._clone_event(event) for event in self.events)
+        balances = tuple(_ledger._clone_balance(balance) for balance in self.balances)
+        points = tuple(_nav.NAVResult(point.status, point.value, point.reason_code, point.run_valid,
+                                     point.formula_version, point.numeric_policy_version) for point in self.nav_points)
+        orders = self.orders_result()
+        cash, bh = tuple(_actions._clone_value(value) for value in self.benchmarks)
         results = (*balances, *points, *orders, cash, bh)
         checkpoint = self.checkpoint()
         economic, integrity, event_records, result_records = _output_material(self.manifest, events, results)
         result = ReplayResult(events, balances, points, orders, cash, bh, checkpoint, self.status,
             self.status == "available", self.reason, self.index == len(self.operations) or self.status != "available",
             self.manifest.semantic_input_hash(), economic, integrity)
-        self._result_cache = result
         self._wire_cache = _json({"schema_version": "v1", "semantic_input_hash": result.semantic_input_hash,
             "economic_output_hash": economic, "artifact_integrity_hash": integrity,
             "status": result.status, "reason_code": result.reason_code, "run_valid": result.run_valid,

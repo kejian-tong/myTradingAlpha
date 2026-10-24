@@ -5,8 +5,8 @@ Bounded snapshot, not a chronological log; GitHub/current `main` is authoritativ
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `9f80cbdf7af9029bbe431acde66ef67b1b60a0ad`
-- `last_reconciled_main_tree`: `24fab1884ba9ffb03817292640514258d220eacc`
+- `last_reconciled_main_sha`: `3d9e049b2fa2c54b55ac66d1c3000480cd3254bd`
+- `last_reconciled_main_tree`: `72b42554e30deb8f715a3cbaef3bc175537222b3`
 - `bt04_roadmap_base_sha`: `7a863c0f04522c6b689a713170c47358e06c02f1`
 - `bt04_roadmap_base_tree`: `667f01077881a863f5639b786869238d05955856`
 - `roadmap_status`: active BT-05 candidate
@@ -21,11 +21,11 @@ Bounded snapshot, not a chronological log; GitHub/current `main` is authoritativ
 
 ## BT-05 current recovery
 
-- PR104; exact base/main and tree above. JIT: PR body; pre-GREEN6381289594.
+- PR104; exact base/main and tree above. JIT: PR body; pre-GREEN6381289594. Integration6386046726; P1JIT6382054926.
 - Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master configured Sol/xhigh; native Sol/max is distinct. Isolation unauthenticated.
-- Scope: BT05 replay/hashes/native seals/operation recovery only; BT01-04 preserved, BT06/Phase04+ deferred.
+- Scope: BT05 replay/hashes/seals/recovery; BT01-04 preserved; BT06/Phase04+ deferred.
 - RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`:188expected failures/4fixture passes; log `00c87380bd908427c0e4b1c7c83f3ce116ac7a841b9f6b7454cccaa268ab1e53`; released RED lease6/digest `89827d9959f6f6a45be425d6740870689c85a37098ccc7f9c7b8fdaf1c6fed70`.
-- GREEN lease active; final head, complete validation, independent exact-head review/CI and Master gate pending.
+- P1 repair active; P2 HIGH open; final validation/review/CI/Master gate pending.
 - Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 goldens pending. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
 
 ## BT-04 completed recovery
@@ -90,8 +90,9 @@ PAPER/live, or promotion behavior was introduced.
 
 ## Current harness policy
 
-- `harness_reconciled_through`: PR #102 / merge `28dcae6ceea84b04df405ea25e77e408d2d88b27`
-- `active_harness_pr`: PR #103 / head `c2d5e38c793430f27a136f78cb3d8bdcacf0e22a`; six files excluded
+- `harness_reconciled_through`: PR #103 / merge `3d9e049b2fa2c54b55ac66d1c3000480cd3254bd`
+- `active_harness_pr`: none
+- PR #103 source `c2d5e38c793430f27a136f78cb3d8bdcacf0e22a`; six disjoint pstack files.
 - PR #101 merged bounded pstack 0.15.25 at `7a98e9eb689ed4a44c23e9ccf1c1c04e0a9c0911`; PR #102 refreshed provenance at `28dcae6ceea84b04df405ea25e77e408d2d88b27`. Current skills are authoritative prospectively; prior route/RED/review evidence remains immutable.
 - [PR #98](https://github.com/kejian-tong/myTradingAlpha/pull/98) raised lease archive64 to6400, preserving all evidence. Source `2f1a0644f328a8a0bfb89c95bb5f91776b977be2`, merge tree `d7b159ae4eb6d1caf2632014fc37006b00e4a5de`. Durable TDD/CI/APPROVE/Master gate/postmerge facts remain in PR98. Human-authorized unleased test-only RED applied solely to this prerequisite; GREEN used a genuine old-helper lease. Merge `e0025b3990334d48664a4caf3bef6839421ef586`.
 - PR #90 merge `8f76f341bedf086dd4eb69e4229be33127f5028f` completed bounded pstack compatibility replay and preserves PR #88 model routing, PR #86
