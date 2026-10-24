@@ -192,12 +192,16 @@ class AccountingInvariant:
         if kind == "action_batch":
             _check_actions(before, event, after)
             return None
-        from .corporate_actions import _get, _state
+        if (
+            object.__getattribute__(before, "_action_state") is not None
+            or object.__getattribute__(after, "_action_state") is not None
+        ):
+            from .corporate_actions import _get, _state
 
-        if _state(before).canonical_bytes() != _state(after).canonical_bytes() or _state(before)._storage != _state(after)._storage:
-            _reject("accounting_invalid")
-        if kind in _OBLIGATION_KINDS and any(_get(c, "obligation_id") == object.__getattribute__(event, "_obligation_id") for c in _get(_state(before), "claims")):
-            _reject("accounting_invalid")
+            if _state(before).canonical_bytes() != _state(after).canonical_bytes() or _state(before)._storage != _state(after)._storage:
+                _reject("accounting_invalid")
+            if kind in _OBLIGATION_KINDS and any(_get(c, "obligation_id") == object.__getattribute__(event, "_obligation_id") for c in _get(_state(before), "claims")):
+                _reject("accounting_invalid")
         if kind == "fill":
             intent, fill, _binding, _outcome, policy = _event_fill_parts(event)
             instrument = _safe_identifier(object.__getattribute__(fill, "instrument_id"))
@@ -373,6 +377,7 @@ def _check_actions(before: LedgerBalance, event: LedgerEvent, after: LedgerBalan
     previous = _state(before)
     policy = _get(batch, "policy")
     quantities = {key: Fraction(q) for key, q in before.positions}
+    entitlement_shares = {key: Fraction(q) for key, q in before.positions}
     expected_cash = Fraction(before.cash)
     expected_income = Fraction(before.recognized_income)
     obligations = {o.obligation_id: o for o in before.obligations}
@@ -427,6 +432,7 @@ def _check_actions(before: LedgerBalance, event: LedgerEvent, after: LedgerBalan
             else:
                 retained = converted
             quantities[key] = retained
+            entitlement_shares[key] = retained
             if original:
                 prior = split_refs.get(key) if key in converted_in_batch else None
                 source = references[key]
@@ -453,6 +459,8 @@ def _check_actions(before: LedgerBalance, event: LedgerEvent, after: LedgerBalan
         source, target = _get(mapping, "source_instrument_id"), _get(mapping, "target_instrument_id")
         original = quantities.pop(source, Fraction(0))
         quantities[target] = quantities.get(target, Fraction(0)) + original * Fraction(_get(mapping, "new_shares_per_old_share"))
+        entitlement_shares.pop(source, None)
+        entitlement_shares[target] = quantities[target]
         closed.add(source)
         cancel(source, "merger_preexisting_intent")
         instruments.add(target)
@@ -461,7 +469,7 @@ def _check_actions(before: LedgerBalance, event: LedgerEvent, after: LedgerBalan
     for wrapper in selected:
         action, terms = _get(wrapper, "action"), _get(wrapper, "terms")
         if type(action) is DividendAction:
-            amount = quantities.get(action.instrument_id, Fraction(0)) * Fraction(action.amount_per_share)
+            amount = entitlement_shares.get(action.instrument_id, Fraction(0)) * Fraction(action.amount_per_share)
             if _get(terms, "amount_basis") == "pre_split":
                 amount /= Fraction(_get(terms, "conversion_ratio"))
             accrue(action.action_id, amount, action.payable_date, "dividend")

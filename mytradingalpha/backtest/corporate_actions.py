@@ -9,6 +9,9 @@ import hashlib
 from datetime import date, datetime
 from decimal import Decimal
 from fractions import Fraction
+from typing import Literal
+
+from pydantic import TypeAdapter
 
 from mytradingalpha.backtest.clock import (
     _capture_root,
@@ -20,18 +23,40 @@ from mytradingalpha.backtest.clock import (
     _storage_bytes,
 )
 from mytradingalpha.backtest.costs import CostPolicy
+from mytradingalpha.contracts.common import (
+    CanonicalChecksum,
+    StableId,
+    UtcDateTime,
+    _serialize_utc_datetime,
+)
 from mytradingalpha.contracts.orders import OrderIntent, _decimal_wire
+from mytradingalpha.data import bundle as _pit_bundle
 from mytradingalpha.data.actions import (
+    CorporateActionRepository,
     DelistingAction,
     DividendAction,
     SplitAction,
     TickerChangeAction,
 )
-from mytradingalpha.data.bars import AdjustmentBasis, BarFinality, DailyBar
-from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
+from mytradingalpha.data.bars import AdjustmentBasis, BarFinality, BarRepository, DailyBar
+from mytradingalpha.data.bundle import (
+    BundleReplayPolicy,
+    EvidenceBundle,
+    EvidenceRequirement,
+    MissingEvidence,
+)
 from mytradingalpha.data.calendar import TradingCalendar, TradingSession
+from mytradingalpha.data.events import EventRepository, NewsEvent
+from mytradingalpha.data.fundamentals import FilingRepository, FinancialFiling
+from mytradingalpha.data.macro import MacroObservation, MacroRepository
 from mytradingalpha.data.provenance import SourceManifest
-from mytradingalpha.data.universe import Instrument
+from mytradingalpha.data.social import SocialPost, SocialRepository
+from mytradingalpha.data.universe import (
+    Instrument,
+    SymbolAlias,
+    UniverseManifest,
+    UniverseMembership,
+)
 
 from .ledger import (
     LedgerBalance,
@@ -63,6 +88,287 @@ _ACTION_TYPES = (SplitAction, DividendAction, TickerChangeAction, DelistingActio
 _DOMAIN = b"mytradingalpha:bt04:native:v1\0"
 _MAX_SOURCE = 2 * 1024 * 1024
 _MAX_RUN = 16 * 1024 * 1024
+_BUNDLE_METADATA = TypeAdapter(tuple[Literal["v1"], StableId, CanonicalChecksum, UtcDateTime, UtcDateTime, BundleReplayPolicy])
+
+
+def _bundle_leaf(captured, permitted):
+    if type(captured) is not _CapturedModel or not any(captured.model_type is cls for cls in permitted):
+        _reject()
+    return captured.model_type.model_validate(_captured_payload(captured, construct=False))
+
+
+def _pure_bundle(captured):
+    """Fixed PIT-v1 semantic proof, with no repository before-validators.
+
+    Native capture has already guarded the complete graph. Leaf class schemas
+    are compiled at import; fixed aggregates reuse their existing after-checks.
+    No caller-supplied seal or hash carries semantic authority.
+    """
+    _require_captured_witness(captured)
+    owned = _captured_payload(captured, construct=True)
+    _BUNDLE_METADATA.validate_python((owned.schema_version, owned.bundle_id, owned.bundle_hash,
+        owned.created_at, owned.knowledge_cutoff, owned.replay_policy))
+    calendar = TradingCalendar.model_validate(_captured_payload(captured.fields["calendar"], construct=False))
+    requirements = tuple(_bundle_leaf(v, (EvidenceRequirement,)) for v in captured.fields["requirements"])
+    missing = tuple(_bundle_leaf(v, (MissingEvidence,)) for v in captured.fields["missing_optional"])
+    fields = {}
+    # This is the fixed v1 schema, not an extension or reducer registry.
+    for name, types, key in (
+        ("instruments", (Instrument,), _pit_bundle._instrument_sort_key),
+        ("aliases", (SymbolAlias,), _pit_bundle._alias_sort_key),
+        ("memberships", (UniverseMembership,), _pit_bundle._membership_sort_key),
+        ("actions", _ACTION_TYPES, _pit_bundle._action_sort_key),
+        ("bars", (DailyBar,), _pit_bundle._bar_sort_key),
+        ("filings", (FinancialFiling,), _pit_bundle._filing_sort_key),
+        ("events", (NewsEvent,), _pit_bundle._event_sort_key),
+        ("social_posts", (SocialPost,), _pit_bundle._social_sort_key),
+        ("macro_observations", (MacroObservation,), _pit_bundle._macro_sort_key),
+    ):
+        records = tuple(_bundle_leaf(v, types) for v in captured.fields[name])
+        if records != tuple(sorted(records, key=key)):
+            _reject()
+        fields[name] = records
+    if requirements != tuple(sorted(requirements, key=lambda r: r.domain.value)) or missing != tuple(sorted(missing, key=lambda r: r.domain.value)):
+        _reject()
+    universe = UniverseManifest.model_construct(schema_version="v1", instruments=fields["instruments"], aliases=fields["aliases"], memberships=fields["memberships"])
+    UniverseManifest.validate_manifest(universe)
+    BarRepository.validate_repository(BarRepository.model_construct(schema_version="v1", calendar=calendar, bars=fields["bars"]))
+    CorporateActionRepository.validate_repository(CorporateActionRepository.model_construct(schema_version="v1", actions=fields["actions"]))
+    FilingRepository.validate_repository(FilingRepository.model_construct(schema_version="v1", filings=fields["filings"]))
+    EventRepository.validate_repository(EventRepository.model_construct(schema_version="v1", events=fields["events"]))
+    SocialRepository.validate_repository(SocialRepository.model_construct(schema_version="v1", posts=fields["social_posts"]))
+    MacroRepository.validate_repository(MacroRepository.model_construct(schema_version="v1", observations=fields["macro_observations"]))
+    identifiers = {r.instrument_id for r in fields["instruments"]}
+    for name in ("actions", "bars", "filings", "events", "social_posts"):
+        if any(r.instrument_id is not None and r.instrument_id not in identifiers for r in fields[name]):
+            _reject()
+    for name, identity in (
+        ("instruments", _pit_bundle._instrument_identity), ("aliases", _pit_bundle._alias_identity),
+        ("memberships", _pit_bundle._membership_identity), ("actions", _pit_bundle._action_identity),
+        ("bars", _pit_bundle._bar_identity), ("filings", _pit_bundle._filing_identity),
+        ("events", _pit_bundle._event_identity), ("social_posts", _pit_bundle._social_identity),
+        ("macro_observations", _pit_bundle._macro_identity),
+    ):
+        _pit_bundle._ensure_unique_selected(fields[name], identity=identity, domain=name)
+        _pit_bundle._reject_non_historical_candidates(fields[name], domain=name)
+        if any(not _pit_bundle._eligible(r, owned.knowledge_cutoff, owned.replay_policy) for r in fields[name]):
+            _reject()
+    present = _pit_bundle._presence(calendar=calendar, **fields)
+    _pit_bundle._validate_missingness(requirements, missing, present, typed_missing_required=False)
+    # Exactly the existing PIT semantic payload, including a present witness.
+    payload = {"schema_version": owned.schema_version,
+        "knowledge_cutoff": _serialize_utc_datetime(owned.knowledge_cutoff),
+        "replay_policy": owned.replay_policy.value,
+        "requirements": [r.model_dump(mode="json") for r in requirements],
+        "missing_optional": [r.model_dump(mode="json") for r in missing],
+        "calendar": calendar.model_dump(mode="json"),
+        **{name: [r.model_dump(mode="json") for r in records] for name, records in fields.items()}}
+    import json
+
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if owned.bundle_hash != "sha256:" + hashlib.sha256(raw).hexdigest():
+        _reject()
+    return owned
+
+
+def _prove_binding_bundle(binding):
+    from .clock import SessionBinding
+
+    if type(binding) is not SessionBinding:
+        _reject()
+    bundle = object.__getattribute__(binding, "_bundle_snapshot")
+    _model(bundle, validate=True)
+
+
+class _RequestAdmission:
+    """One operation's actual-source admission; occurrences are never deduplicated."""
+
+    __slots__ = ("budget", "source_bytes", "components", "active")
+
+    def __init__(self):
+        self.budget = _CaptureBudget()
+        self.source_bytes = 0
+        self.components = []
+        self.active = set()
+
+    def charge(self, size):
+        self.source_bytes += size
+        if self.source_bytes > _MAX_RUN or self.budget.run_nodes > 1_000_000:
+            _reject("resource_limit")
+
+    def note(self, tag, raw):
+        self.components.append((tag, hashlib.sha256(raw).digest()))
+
+    def root(self, value, depth):
+        captured = _capture_call(lambda: _capture_at(value, self.budget, depth))
+        _capture_text(captured)
+        raw = _storage_bytes(captured)
+        if len(raw) > _MAX_SOURCE:
+            _reject("resource_limit")
+        self.note("native", raw)
+        return captured
+
+    def binding(self, value, depth):
+        from .clock import _BINDING_DOMAIN, SessionBinding, _source_json
+
+        if type(value) is not SessionBinding:
+            _reject()
+        roots = tuple(self.root(object.__getattribute__(value, name), depth + 1) for name in (
+            "_context_snapshot", "_bundle_snapshot", "_envelope_snapshot", "_session_snapshot", "_next_session_snapshot"))
+        _capture_call(lambda: _require_captured_witness(roots[1]))
+        owned = tuple(_captured_payload(r, construct=True) for r in roots)
+        raw = _capture_call(lambda: _source_json(*owned[:3]))
+        native = _storage_bytes(*roots)
+        saved = object.__getattribute__(value, "_sealed_source_json")
+        storage = object.__getattribute__(value, "_sealed_storage_bytes")
+        fingerprint = object.__getattribute__(value, "_source_fingerprint")
+        if type(saved) is not bytes or type(storage) is not bytes or len(raw) + len(native) > _MAX_SOURCE:
+            _reject("resource_limit")
+        if saved != raw or storage != native or type(fingerprint) is not str or fingerprint != "sha256:" + hashlib.sha256(_BINDING_DOMAIN + raw).hexdigest():
+            _reject("source_changed")
+        self.budget.run_nodes += 4
+        self.charge(len(_BINDING_DOMAIN) + len(raw))
+        self.note("binding", raw)
+
+    def outcome(self, value, depth):
+        from .fills import OutcomeEvidence, _outcome_wire
+
+        if type(value) is not OutcomeEvidence:
+            _reject()
+        captures = tuple(self.root(object.__getattribute__(value, name), depth + 1) for name in (
+            "_bar_snapshot", "_outcome_cutoff", "_archive_cutoff", "_replay_policy"))
+        owned = tuple(_captured_payload(c, construct=True) for c in captures)
+        raw = _capture_call(lambda: _canonical_json(_outcome_wire(*owned)))
+        saved = object.__getattribute__(value, "_sealed_bytes")
+        if type(saved) is not bytes or saved != raw:
+            _reject("source_changed")
+        self.budget.run_nodes += 4
+        self.charge(len(raw))
+        for name in ("_sealed_storage", "_outcome_hash"):
+            seal = object.__getattribute__(value, name)
+            if type(seal) is not bytes and type(seal) is not str:
+                _reject()
+            if type(seal) is bytes and len(seal) > _MAX_SOURCE:
+                _reject("resource_limit")
+            if type(seal) is str:
+                from .ledger import _safe_hash
+
+                _safe_hash(seal)
+            self.note(name, seal.encode() if type(seal) is str else seal)
+
+    def visit(self, value, depth=0):
+        from mytradingalpha.contracts.orders import _contract_storage_fingerprint
+
+        from .clock import SessionBinding
+        from .fills import OutcomeEvidence
+
+        if depth > 64:
+            _reject("resource_limit")
+        cls = type(value)
+        if cls is SessionBinding:
+            self.binding(value, depth)
+        elif cls is OutcomeEvidence:
+            self.outcome(value, depth)
+        elif cls is EligibleMark or cls is AccountingPolicy:
+            self.budget.run_nodes += 1
+            self.charge(2)
+            self.visit(object.__getattribute__(value, "_binding"), depth + 1)
+            if cls is EligibleMark:
+                self.visit(object.__getattribute__(value, "_outcome"), depth + 1)
+                names = ("_binding_seals", "_outcome_seals", "_seal")
+            else:
+                for name in ("_session_date", "_valuation_cutoff", "_archive_cutoff", "_currency", "_mark_source", "_mark_revision"):
+                    self.visit(object.__getattribute__(value, name), depth + 1)
+                names = ("_binding_seals", "_canonical", "_seal")
+            for name in names:
+                raw = object.__getattribute__(value, name)
+                if type(raw) is bytes:
+                    if len(raw) > _MAX_RUN:
+                        _reject("resource_limit")
+                    self.note(name, raw)
+                elif type(raw) is tuple:
+                    from .ledger import _safe_hash
+
+                    _tuple(raw, 3)
+                    if len(raw) != 3:
+                        _reject()
+                    for index, seal in enumerate(raw):
+                        if type(seal) is str:
+                            _safe_hash(seal)
+                            self.note(name + str(index), seal.encode())
+                        elif type(seal) is bytes:
+                            if len(seal) > _MAX_SOURCE:
+                                _reject("resource_limit")
+                            self.note(name + str(index), seal)
+                        else:
+                            _reject()
+                else:
+                    _reject()
+        elif cls is OrderIntent or cls is CostPolicy:
+            _capture_call(lambda: _contract_storage_fingerprint(value, cls, reason="source_changed"))
+            payload = object.__getattribute__(value, "__dict__")
+            fields_set = tuple(sorted(object.__getattribute__(value, "__pydantic_fields_set__")))
+            captured = self.root(payload, depth + 1)
+            self.root(fields_set, depth + 1)
+            self.budget.run_nodes += 5 * len(cls.model_fields) + 4
+            owned = cls.model_construct(_fields_set=set(fields_set), **_captured_payload(captured, construct=True))
+            self.charge(len(_capture_call(lambda: _canonical_json(owned.model_dump(mode="json")))))
+        elif any(cls is model for model in _MODEL_TYPES):
+            captured = self.root(value, depth)
+            if cls is EvidenceBundle:
+                _capture_call(lambda: _require_captured_witness(captured))
+            elif cls is TradingCalendar and captured.fields["replay_evidence"] is None:
+                _reject()
+            owned = _captured_payload(captured, construct=True)
+            raw = _capture_call(lambda: _canonical_json(owned.model_dump(mode="json")))
+            if len(raw) > _MAX_SOURCE:
+                _reject("resource_limit")
+            self.charge(len(raw))
+        elif any(cls is model for model in _known_values()):
+            identity = id(value)
+            if identity in self.active:
+                _reject()
+            self.active.add(identity)
+            try:
+                fields = cls._fields
+                data = _tuple(object.__getattribute__(value, "_data"), len(fields))
+                if len(data) != len(fields):
+                    _reject()
+                self.budget.run_nodes += 1 + len(fields)
+                self.charge(len(_canonical_json(fields)))
+                for name in ("_canonical", "_storage"):
+                    raw = object.__getattribute__(value, name)
+                    if type(raw) is not bytes or len(raw) > _MAX_RUN:
+                        _reject("resource_limit")
+                    self.note(name, raw)
+                for item in data:
+                    self.visit(item, depth + 1)
+            finally:
+                self.active.remove(identity)
+        elif cls is tuple:
+            _tuple(value, 4096)
+            self.budget.run_nodes += 1
+            self.charge(2 + max(0, len(value) - 1))
+            for item in value:
+                self.visit(item, depth + 1)
+        elif cls is bytes:
+            self.budget.run_nodes += 1
+            self.charge(len(value))
+            self.note("bytes", value)
+        else:
+            captured = self.root(value, depth)
+            owned = _captured_payload(captured, construct=True)
+            # Primitive source encoding is bounded independently from native seals.
+            raw = _canonical_json(_part(owned)[1])
+            self.charge(len(raw))
+        self.charge(0)
+
+
+def _admit_request(policy, sessions):
+    admission = _RequestAdmission()
+    admission.visit(policy)
+    admission.visit(sessions)
+    return tuple(admission.components), admission.source_bytes, admission.budget.run_nodes
 
 
 def _tuple(value: object, maximum: int) -> tuple:
@@ -118,7 +424,7 @@ def _model(value: object, *, validate: bool, budget: _CaptureBudget | None = Non
         _reject("resource_limit")
     if validate:
         payload = _captured_payload(captured, construct=False)
-        owned = _capture_call(lambda: type(value).model_validate(payload))
+        owned = _capture_call(lambda: _pure_bundle(captured) if type(value) is EvidenceBundle else type(value).model_validate(payload))
         after = _capture_call(lambda: _capture_root(value, _CaptureBudget()))
         checked = _capture_call(lambda: _capture_root(owned, _CaptureBudget()))
         if _storage_bytes(after) != native:
@@ -194,6 +500,7 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         owned, wire, storage = _contract_record(value, native, "source_changed")
         return owned, wire.decode(), [native.__name__, _jsonable(storage)]
     if native is EligibleMark:
+        _prove_binding_bundle(object.__getattribute__(value, "_binding"))
         (binding, outcome), witness = _capture_mark(value)
         for root in (*binding[:3], outcome[0]):
             _capture_call(lambda root=root: _capture_at(root, budget, depth + 1))
@@ -206,6 +513,7 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         wire = [binding[5].decode(), outcome[4].decode()]
         return clone, wire, [wire, binding[7].hex(), outcome[6].hex(), witness.hex()]
     if native is AccountingPolicy:
+        _prove_binding_bundle(object.__getattribute__(value, "_binding"))
         parts = []
         wire = _refresh_policy(value, parts)
         clone = object.__new__(AccountingPolicy)
@@ -218,6 +526,7 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         return clone, wire.decode(), [wire.decode(), object.__getattribute__(binding, "_sealed_storage_bytes").hex()]
     from .clock import SessionBinding
     if native is SessionBinding:
+        _prove_binding_bundle(value)
         clone, seals = _binding_capture(value)
         for name in ("_context_snapshot", "_bundle_snapshot", "_envelope_snapshot"):
             _capture_call(lambda name=name: _capture_at(object.__getattribute__(clone, name), budget, depth + 1))
@@ -447,6 +756,8 @@ class PositionReference(_Value):
     def __init__(self, *, instrument_id: object, symbol: object, cost_basis: object, mark: object, **unknown: object) -> None:
         if unknown or type(mark) is not EligibleMark:
             _reject()
+        _safe_identifier(instrument_id)
+        _prove_binding_bundle(object.__getattribute__(mark, "_binding"))
         (binding, outcome), witness = _capture_mark(mark)
         bar = outcome[0]
         matches = tuple(item for item in binding[1].instruments if item.instrument_id == instrument_id)
@@ -729,6 +1040,18 @@ def _selection(batch: _ActionBatch, before: LedgerBalance) -> tuple:
         mappings.append(mapping)
     priority = {SplitAction: 0, TickerChangeAction: 1, DelistingAction: 2, DividendAction: 3}
     selected.sort(key=lambda w: (priority[type(_get(w, "action"))], _get(w, "action").instrument_id, _get(w, "action").action_id))
+    if (selected or mappings) and before.latest_economic_time is not None and before.latest_economic_time >= session.open_at:
+        _reject("chronology_invalid")
+    split_ids = [a.instrument_id for w in selected if type(a := _get(w, "action")) is SplitAction]
+    if len(split_ids) != len(set(split_ids)):
+        _reject("event_conflict")
+    mapping_sources = {_get(m, "source_instrument_id") for m in mappings}
+    mapping_targets = {_get(m, "target_instrument_id") for m in mappings}
+    if mapping_sources & mapping_targets:
+        _reject("binding_mismatch")
+    if any(type(a := _get(w, "action")) is DividendAction and a.instrument_id in mapping_sources for w in selected):
+        _reject("binding_mismatch")
+    mappings.sort(key=lambda m: _get(m, "mapping_id"))
     affected = {_get(w, "action").instrument_id for w in selected if type(_get(w, "action")) is SplitAction or type(_get(w, "action")) is DelistingAction}
     affected.update(_get(m, "source_instrument_id") for m in mappings)
     candidates = {i.intent_id for i in intents if i.instrument_id in affected and i.created_at < session.open_at}
@@ -788,6 +1111,7 @@ def _reduce_batch(before: LedgerBalance, batch: _ActionBatch) -> tuple:
     calendar, session, cal_bytes, selected, mappings = _selection(batch, before)
     old = _state(before)
     positions = dict(before.positions)
+    carried_entitlement = dict(before.positions)
     obligations = {o.obligation_id: o for o in before.obligations}
     cash, income = before.cash, before.recognized_income
     applied = {_get(a, "action_id"): a for a in _get(old, "applied_actions")}
@@ -854,6 +1178,7 @@ def _reduce_batch(before: LedgerBalance, batch: _ActionBatch) -> tuple:
                 refs[instrument] = _rational_reference(instrument, basis / Fraction(ratio), mark / Fraction(ratio))
                 converted_in_batch.add(instrument)
             positions[instrument] = kept
+            carried_entitlement[instrument] = kept
             boundaries[instrument] = session.open_at
             cancel(instrument, "split_preexisting_intent")
             if _get(terms, "fractional_shares") == "cash_in_lieu":
@@ -881,6 +1206,8 @@ def _reduce_batch(before: LedgerBalance, batch: _ActionBatch) -> tuple:
         quantity = positions.pop(source, _ZERO)
         converted = _exact_decimal(lambda target=target, quantity=quantity, mapping=mapping: positions.get(target, _ZERO) + quantity * _get(mapping, "new_shares_per_old_share"))
         positions[target] = _decimal_checked(_exact_decimal(lambda converted=converted: converted.normalize()), "holding", nonnegative=True)
+        carried_entitlement.pop(source, None)
+        carried_entitlement[target] = positions[target]
         closed.add(source)
         cancel(source, "merger_preexisting_intent")
         instruments.add(target)
@@ -889,7 +1216,7 @@ def _reduce_batch(before: LedgerBalance, batch: _ActionBatch) -> tuple:
     for wrapper in selected:
         action, terms = _get(wrapper, "action"), _get(wrapper, "terms")
         if type(action) is DividendAction:
-            quantity = positions.get(action.instrument_id, _ZERO)
+            quantity = carried_entitlement.get(action.instrument_id, _ZERO)
             entitlement = Fraction(quantity) * Fraction(action.amount_per_share)
             if _get(terms, "amount_basis") == "pre_split":
                 conversions = tuple(_get(w, "action") for w in selected if type(_get(w, "action")) is SplitAction and _get(w, "action").action_id == _get(terms, "conversion_action_id") and _get(w, "action").instrument_id == action.instrument_id)

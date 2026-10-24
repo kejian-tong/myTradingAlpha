@@ -18,12 +18,13 @@ from .corporate_actions import (
     CorporateActionReducer,
     MergerMapping,
     PositionReference,
+    _admit_request,
     _calendar,
     _clone_value,
     _decimal_checked,
     _exact_decimal,
     _get,
-    _part,
+    _model,
     _reject,
     _required,
     _safe_date,
@@ -116,6 +117,10 @@ class BuyAndHoldPolicy(_Value):
             # Historical membership is evaluated on the frozen entry universe.
             if not any(m.instrument_id == identifier and m.valid_from <= entry and (m.valid_to is None or entry < m.valid_to) for m in universe.memberships):
                 _reject("binding_mismatch")
+            binding = _get(member, "binding")
+            bound_universe = object.__getattribute__(binding, "_bundle_snapshot")
+            if _model(universe, validate=True)[2] != _model(bound_universe, validate=True)[2]:
+                _reject("binding_mismatch")
         _required(self, "residual_cash", "retain")
         _required(self, "rebalance", "none")
         _required(self, "dividend_treatment", "cash_no_reinvestment")
@@ -185,6 +190,7 @@ class BenchmarkRunner:
         _tuple(sessions, 16)
         if any(type(s) is not BenchmarkSessionInput for s in sessions):
             _reject()
+        ingress = _admit_request(policy, sessions)
         frozen_policy = _clone_value(policy)
         frozen_sessions = tuple(_clone_value(s) for s in sessions)
         common = _get(frozen_policy, "common")
@@ -236,7 +242,7 @@ class BenchmarkRunner:
         if failed:
             reason = "benchmark_input_unavailable"
         # Completion checks run for success and unavailable outcomes alike.
-        if _part(policy)[2] != _part(frozen_policy)[2] or _part(sessions)[2] != _part(frozen_sessions)[2]:
+        if _admit_request(policy, sessions) != ingress or _admit_request(frozen_policy, frozen_sessions) != ingress:
             _reject("source_changed")
         return _result(frozen_policy, ledger, balances, points, reason)
 
