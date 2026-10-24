@@ -243,10 +243,11 @@ class BenchmarkRunner:
             failed = True
         if failed:
             reason = "benchmark_input_unavailable"
+        result = _result(frozen_policy, ledger, balances, points, reason)
         # Completion checks run for success and unavailable outcomes alike.
         if _admit_request(policy, sessions) != ingress or _admit_request(frozen_policy, frozen_sessions) != ingress:
             _reject("source_changed")
-        return _result(frozen_policy, ledger, balances, points, reason)
+        return result
 
     @staticmethod
     def _enter(ledger, members, marks, session, common, universe):

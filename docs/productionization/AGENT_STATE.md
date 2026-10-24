@@ -28,6 +28,7 @@ Bounded recovery snapshot, not a chronological log. GitHub/current `main` is aut
 
 - WITNESS `980883b33cd17ad649770b1950f628bd78ce3ced` and all RED history preserved. Rejected head `2dbcd18e164fd103eaea820b6a1d10a5f7f5c516`; review6377635203. H1-H3 WITNESS `addb3487b284ab9a535bb0b573c306cb59c0faba` remains unaccepted; prior leases validate/released, fresh leases mandatory.
 - E1-E5/ingress/cold Ledger focused checks passed. H1-H3 JIT6377689712/RED `3b4642c2dbc697185fe263603c3a4f6eda0e4b83`:60targeted and genuine8x16 passed at12818353bytes; no cap change. R2 event-proof JIT6378597278; dedicated RED `45ddd41b7519ede7dad4bca3d81ae95f8ffade60`. Full floor, fresh independent closure, exact-head CI and Master gate remain mandatory. Main integration preserves approved Harness bytes.
+- Candidate `0e271f81ad3378ac744ce71767cbe93c867e0282` rejected for F1 late-result completion; repair JIT6379111848, dedicated RED `e92eb2c09ef60cc163eb36dc309d8f78bb542243`. Prior focused/material proof preserved; interrupted suites are not passes.
 
 ## BT-03 completed recovery
 
