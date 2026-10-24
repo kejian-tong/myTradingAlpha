@@ -1574,3 +1574,255 @@ def test_bt05_p2_accepted_leaf_mutation_before_public_completion_rejects(
     finally:
         assert armed == [control.target], "the post-acceptance fault must execute"
         _bt05_p2_retained(case, root, prefix)
+
+
+# Root-admission repair RED: native Path storage is untrusted caller input.
+def _bt05_root_tree(root: Path) -> tuple[Any, ...]:
+    return tuple(sorted((path.name, path.stat().st_ino, path.stat().st_mode,
+                         path.read_bytes()) for path in root.iterdir()))
+
+
+def _bt05_root_open(api: Any, candidate: Any) -> None:
+    with api.ReplayRunner(root=candidate):
+        pass
+
+
+def _bt05_root_hostile(base: type, raw: Any, calls: list[str], *, raising: bool = False) -> Any:
+    """Observe callbacks without using a hostile value in fixture assertions."""
+    def intercept(name: str) -> Any:
+        native = getattr(base, name)
+
+        def callback(instance: Any, *args: Any, **kwargs: Any) -> Any:
+            calls.append(name)
+            if raising:
+                raise ValueError("root storage callback executed")
+            return native(instance, *args, **kwargs)
+        return callback
+
+    names = ("__str__", "__len__", "__iter__", "__getitem__", "__contains__",
+             "__eq__", "__hash__", "startswith", "encode", "split", "replace", "rfind")
+    callbacks = {name: intercept(name) for name in names if callable(getattr(base, name, None))}
+    return type(f"RootHostile{base.__name__}", (base,), callbacks)(raw)
+
+
+def _bt05_root_storage(candidate: Path) -> tuple[str, Any]:
+    for name in ("_raw_paths", "_parts"):
+        try:
+            return name, object.__getattribute__(candidate, name)
+        except AttributeError:
+            continue
+    raise AssertionError("supported native Path must expose its declared rendering storage")
+
+
+def _bt05_root_reject(api: Any, candidate: Any, roots: tuple[Path, ...], calls: list[str]) -> None:
+    outside = roots[0].parent / "outside-sentinel"
+    outside.write_bytes(b"root-sensitive-sentinel-unchanged")
+    before = tuple(_bt05_root_tree(root) for root in roots)
+    try:
+        _reject(lambda: _bt05_root_open(api, candidate))
+    finally:
+        assert outside.read_bytes() == b"root-sensitive-sentinel-unchanged"
+        assert calls == [], "root admission invoked an untrusted storage callback"
+        assert tuple(_bt05_root_tree(root) for root in roots) == before, (
+            "rejected root admission created a lock or changed retained evidence"
+        )
+
+
+@pytest.mark.parametrize("form", ("string", "uncached", "cached", "joined", "unused_info"))
+def test_bt05_root_genuine_string_and_native_path_controls(tmp_path: Path, form: str) -> None:
+    api = _api()
+    trusted = tmp_path / "existing" / "root"
+    trusted.mkdir(parents=True)
+    raw = str(trusted)
+    candidate: Any = raw if form == "string" else Path(raw)
+    if form == "cached":
+        assert str(candidate) == raw
+    elif form == "joined":
+        candidate = Path(str(tmp_path)) / "existing" / "root"
+    elif form == "unused_info":
+        # PathInfo exists on newer interpreters; older versions have only
+        # unrelated hash/comparison metadata, which must remain compatible too.
+        if hasattr(type(candidate), "info"):
+            assert candidate.info is not None
+        hash(candidate)
+    _bt05_root_open(api, candidate)
+    before = _bt05_root_tree(trusted)
+    assert tuple(row[0] for row in before) == (".bt05.lock",)
+    _bt05_root_open(api, raw)
+    assert _bt05_root_tree(trusted) == before
+
+
+@pytest.mark.parametrize("raising", (False, True))
+def test_bt05_root_cached_text_subclass_rejects_without_callbacks_or_lock(
+    tmp_path: Path, raising: bool,
+) -> None:
+    trusted = tmp_path / "root"
+    trusted.mkdir()
+    candidate = Path(str(trusted))
+    calls: list[str] = []
+    object.__setattr__(candidate, "_str", _bt05_root_hostile(
+        str, str(trusted), calls, raising=raising,
+    ))
+    _bt05_root_reject(_api(), candidate, (trusted,), calls)
+
+
+@pytest.mark.parametrize("storage", (
+    "raw_list", "raw_tuple", "raw_scalar", "drive_scalar", "root_scalar", "parsed_list",
+))
+def test_bt05_root_native_storage_subclasses_reject_before_protocols(
+    tmp_path: Path, storage: str,
+) -> None:
+    trusted = tmp_path / "root"
+    trusted.mkdir()
+    candidate = Path(str(trusted))
+    calls: list[str] = []
+    authority, values = _bt05_root_storage(candidate)
+    if storage.startswith("raw_"):
+        if storage == "raw_scalar":
+            changed = list(values)
+            changed[0] = _bt05_root_hostile(str, changed[0], calls)
+        else:
+            changed = _bt05_root_hostile(list if storage == "raw_list" else tuple,
+                                        values, calls)
+        object.__setattr__(candidate, authority, changed)
+    else:
+        str(candidate)  # Populate only ordinary native parsed fields first.
+        object.__delattr__(candidate, "_str")
+        if storage == "parsed_list":
+            name = "_tail_cached" if authority == "_raw_paths" else "_parts"
+            changed = _bt05_root_hostile(list, object.__getattribute__(candidate, name), calls)
+        else:
+            name = "_drv" if storage == "drive_scalar" else "_root"
+            changed = _bt05_root_hostile(str, object.__getattribute__(candidate, name), calls)
+        object.__setattr__(candidate, name, changed)
+    _bt05_root_reject(_api(), candidate, (trusted,), calls)
+
+
+@pytest.mark.parametrize("damage", (
+    "missing_raw", "none_raw", "mapping_raw", "object_item", "none_cache",
+    "conflicting_cache", "conflicting_drive", "conflicting_root", "conflicting_parts",
+))
+def test_bt05_root_missing_malformed_or_conflicting_native_storage_rejects(
+    tmp_path: Path, damage: str,
+) -> None:
+    trusted, alternate = tmp_path / "root", tmp_path / "alternate"
+    trusted.mkdir()
+    alternate.mkdir()
+    candidate = Path(str(trusted))
+    str(candidate)
+    authority, _ = _bt05_root_storage(candidate)
+    if damage == "missing_raw":
+        object.__delattr__(candidate, authority)
+    elif damage in ("none_raw", "mapping_raw", "object_item"):
+        object.__setattr__(candidate, authority, {
+            "none_raw": None, "mapping_raw": {}, "object_item": [object()],
+        }[damage])
+    elif damage in ("none_cache", "conflicting_cache"):
+        object.__setattr__(candidate, "_str", None if damage == "none_cache" else str(alternate))
+    elif damage == "conflicting_drive":
+        object.__setattr__(candidate, "_drv", "X:")
+    elif damage == "conflicting_root":
+        object.__setattr__(candidate, "_root", "")
+    else:
+        name = "_tail_cached" if authority == "_raw_paths" else "_parts"
+        object.__setattr__(candidate, name,
+                           [*object.__getattribute__(candidate, name), "unexpected"])
+    _bt05_root_reject(_api(), candidate, (trusted, alternate), [])
+
+
+@pytest.mark.parametrize("budget", ("component_count", "aggregate_bytes", "text_bytes"))
+def test_bt05_root_native_storage_resource_bounds_precede_rendering(
+    tmp_path: Path, budget: str,
+) -> None:
+    trusted = tmp_path / "root"
+    trusted.mkdir()
+    raw = str(trusted)
+    candidate = Path(raw)
+    str(candidate)
+    authority, _ = _bt05_root_storage(candidate)
+    if budget == "component_count":
+        values = [raw, *([""] * 4096)]
+        assert len(values) == 4097
+    elif budget == "aggregate_bytes":
+        values = [*( ["/" + "a" * 4095] * 16), raw]
+        assert all(len(value.encode("utf-8")) <= 64 * 1024 for value in values)
+        assert sum(len(value.encode("utf-8")) for value in values) > 64 * 1024
+    else:
+        values = ["/" + "a" * (64 * 1024), raw]
+        assert len(values[0]) == 64 * 1024 + 1
+    object.__setattr__(candidate, authority, values)
+    _bt05_root_reject(_api(), candidate, (trusted,), [])
+
+
+def test_bt05_root_oversize_ascii_rejects_without_large_encoding_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tracemalloc
+
+    api = _api()
+    oversized = "/" + "a" * (16 * 1024 * 1024)  # Allocate before measuring admission.
+    opened = []
+    real_open = os.open
+
+    def observe_open(*args: Any, **kwargs: Any) -> int:
+        opened.append(1)
+        return real_open(*args, **kwargs)
+
+    already_tracing = tracemalloc.is_tracing()
+    if not already_tracing:
+        tracemalloc.start()
+    try:
+        baseline, _ = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "open", observe_open)
+            _reject(lambda: _bt05_root_open(api, oversized))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not already_tracing:
+            tracemalloc.stop()
+    assert opened == []
+    assert peak - baseline < 1024 * 1024, "root admission allocated an oversized UTF-8 copy"
+
+
+def test_bt05_root_unicode_byte_overflow_rejects_before_filesystem_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "/" + "\u00e9" * 2048
+    assert len(root) <= 4096 and len(root.encode("utf-8")) == 4097
+    opened = []
+    real_open = os.open
+
+    def observe_open(*args: Any, **kwargs: Any) -> int:
+        opened.append(1)
+        return real_open(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", observe_open)
+        _reject(lambda: _bt05_root_open(_api(), root))
+    assert opened == []
+
+
+@pytest.mark.parametrize("capacity", ("full_without_lock", "room_for_lock", "full_with_lock"))
+def test_bt05_root_directory_capacity_reserves_new_lock_slot(tmp_path: Path, capacity: str) -> None:
+    api = _api()
+    root = tmp_path / "root"
+    root.mkdir()
+    count = 16384 if capacity == "full_without_lock" else 16383
+    for index in range(count):
+        (root / f".tmp-{index:06d}").touch(mode=0o400)
+    if capacity == "full_with_lock":
+        (root / ".bt05.lock").touch(mode=0o600)
+    before = _bt05_root_tree(root)
+    if capacity == "full_without_lock":
+        try:
+            _reject(lambda: _bt05_root_open(api, root))
+        finally:
+            assert _bt05_root_tree(root) == before, "full root gained an unreserved lock entry"
+    else:
+        _bt05_root_open(api, root)
+        after = _bt05_root_tree(root)
+        by_name = {row[0]: row for row in after}
+        assert len(after) == 16384
+        assert all(by_name.get(row[0]) == row for row in before)
+        assert tuple(row[0] for row in after).count(".bt05.lock") == 1
