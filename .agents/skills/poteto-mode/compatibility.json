@@ -2,8 +2,8 @@
   "schema_version": 1,
   "canonical_source": {
     "repository": "cursor/plugins/pstack",
-    "version": "0.15.25",
-    "commit": "99743e9c151c8537cbbf1f98bb38f34ef3368453",
+    "version": "0.15.32",
+    "commit": "e73df471cd4bd918367e99f3dd9c51bd53ddf5f0",
     "skill_sources": [
       {
         "path": "skills/architect/SKILL.md",
@@ -31,11 +31,11 @@
       },
       {
         "path": "skills/ketchup/SKILL.md",
-        "sha256": "47b3fb0d5626a40fcb3bd016e68f1cb3d2d313351183e8f6c05d4c7abd76e665"
+        "sha256": "f2923ffd14f6fc778f75a47aaed1f317fb5fd00b5701ca769d6446c74106dead"
       },
       {
         "path": "skills/poteto-mode/SKILL.md",
-        "sha256": "c5e6b605f46e5d9fbab31afa7a99d3d50680f2180d1fdfae3a924901bc52d99a"
+        "sha256": "2755f102e7a6d0496b429d1031a22fb353e1f3d523543367caeaae5c4ed6f544"
       },
       {
         "path": "skills/principle-exhaust-the-design-space/SKILL.md",
@@ -63,7 +63,7 @@
       },
       {
         "path": "skills/sharpen/SKILL.md",
-        "sha256": "6bcd73916696eb9c5b79b6f960983760c34bcc28937c11142dd8d86b5107aa46"
+        "sha256": "563dfc460c605d311e650726288e2f1cbd61eab817db178d6e7e29643e07e7a2"
       },
       {
         "path": "skills/show-me-your-work/SKILL.md",
@@ -154,7 +154,7 @@
       "name": "ketchup",
       "adaptation_purpose": "Catch the user up from existing evidence since the last human message.",
       "path": ".agents/skills/ketchup/SKILL.md",
-      "sha256": "5797fa1e2394548167969a714e12e0c1dc52ed6cbdcc6557f0a4b9dc50018b34",
+      "sha256": "ead9cde2bf7a41e8ad9c2b7fcd03b7ef3df4c110ca84a30c309e73d212db8bca",
       "source_paths": [
         "skills/ketchup/SKILL.md"
       ]
@@ -202,7 +202,7 @@
       "name": "sharpen",
       "adaptation_purpose": "Improve task framing while retaining authorized scope and approval gates.",
       "path": ".agents/skills/sharpen/SKILL.md",
-      "sha256": "6e5cf5a516d3fdd666e81d1f12fe99a99f816daa9f01efc2e448f4d364b62625",
+      "sha256": "aef216ed9d9354ffc9739574e8905cef12eac324110b4e07998a8d6519cd999b",
       "source_paths": [
         "skills/sharpen/SKILL.md"
       ]
@@ -283,12 +283,16 @@
     "autonomous-run",
     "autopilot-full",
     "autopilot-stack",
+    "create-formal-verification-skill",
     "external-model fallback",
+    "ketchup-video",
+    "maintain-formal-verification-skill",
     "orchestrate",
     "pstack agents",
     "pstack scripts",
     "setup-pstack",
     "shipping",
+    "statechart",
     "swarm"
   ]
 }
