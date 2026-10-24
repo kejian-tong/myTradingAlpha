@@ -12,6 +12,7 @@ from mytradingalpha.data.bars import AdjustmentBasis, BarFinality
 from mytradingalpha.data.bundle import BundleReplayPolicy, EvidenceBundle
 from mytradingalpha.data.calendar import TradingCalendar, TradingSession
 
+from . import corporate_actions as _corporate_actions
 from .corporate_actions import (
     ActionPolicy,
     AvailableCorporateAction,
@@ -150,6 +151,7 @@ class BenchmarkSeries(_Value):
 
 
 _BENCH_VALUES = (BenchmarkCommonPolicy, CashBenchmarkPolicy, BenchmarkMember, BuyAndHoldPolicy, BenchmarkSessionInput, BenchmarkSeries)
+_corporate_actions._BENCH_VALUES = _BENCH_VALUES
 
 
 def _result(policy, ledger, balances, points, reason=None):

@@ -6,6 +6,7 @@ are explicit simulation evidence; no provider, calendar capture or IO is used.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from fractions import Fraction
@@ -14,6 +15,7 @@ from typing import Literal
 from pydantic import TypeAdapter
 
 from mytradingalpha.backtest.clock import (
+    SessionBinding,
     _capture_root,
     _capture_value,
     _CaptureBudget,
@@ -30,6 +32,8 @@ from mytradingalpha.contracts.common import (
     _serialize_utc_datetime,
 )
 from mytradingalpha.contracts.orders import OrderIntent, _decimal_wire
+from mytradingalpha.contracts.schemas import RunContext
+from mytradingalpha.contracts.signals import SignalEnvelope
 from mytradingalpha.data import bundle as _pit_bundle
 from mytradingalpha.data.actions import (
     CorporateActionRepository,
@@ -58,7 +62,9 @@ from mytradingalpha.data.universe import (
     UniverseMembership,
 )
 
+from .fills import OutcomeEvidence
 from .ledger import (
+    _MAX_EVENT_BYTES,
     LedgerBalance,
     LedgerEvent,
     ObligationBalance,
@@ -74,12 +80,13 @@ from .ledger import (
     _jsonable,
     _reject,
     _safe_date,
+    _safe_hash,
     _safe_identifier,
     _safe_utc,
     _seal_event,
     _verify_balance,
 )
-from .nav import AccountingPolicy, EligibleMark, _capture_mark, _refresh_policy
+from .nav import AccountingPolicy, EligibleMark, NAVResult, _capture_mark, _refresh_policy
 
 _ZERO = Decimal(0)
 _MODEL_TYPES = (SplitAction, DividendAction, TickerChangeAction, DelistingAction,
@@ -88,6 +95,7 @@ _ACTION_TYPES = (SplitAction, DividendAction, TickerChangeAction, DelistingActio
 _DOMAIN = b"mytradingalpha:bt04:native:v1\0"
 _MAX_SOURCE = 2 * 1024 * 1024
 _MAX_RUN = 16 * 1024 * 1024
+_BENCH_VALUES: tuple[type, ...] = ()
 _BUNDLE_METADATA = TypeAdapter(tuple[Literal["v1"], StableId, CanonicalChecksum, UtcDateTime, UtcDateTime, BundleReplayPolicy])
 
 
@@ -209,6 +217,7 @@ class _RequestAdmission:
         return captured
 
     def binding(self, value, depth):
+        _guard_binding(value)
         from .clock import _BINDING_DOMAIN, SessionBinding, _source_json
 
         if type(value) is not SessionBinding:
@@ -231,6 +240,7 @@ class _RequestAdmission:
         self.note("binding", raw)
 
     def outcome(self, value, depth):
+        _guard_outcome(value)
         from .fills import OutcomeEvidence, _outcome_wire
 
         if type(value) is not OutcomeEvidence:
@@ -254,7 +264,10 @@ class _RequestAdmission:
                 from .ledger import _safe_hash
 
                 _safe_hash(seal)
-            self.note(name, seal.encode() if type(seal) is str else seal)
+            self.derived(name, seal.encode() if type(seal) is str else seal)
+
+    def derived(self, tag, raw):
+        self.components.append(("derived:" + tag, raw))
 
     def visit(self, value, depth=0):
         from mytradingalpha.contracts.orders import _contract_storage_fingerprint
@@ -270,6 +283,7 @@ class _RequestAdmission:
         elif cls is OutcomeEvidence:
             self.outcome(value, depth)
         elif cls is EligibleMark or cls is AccountingPolicy:
+            _guard_opaque(value)
             self.budget.run_nodes += 1
             self.charge(2)
             self.visit(object.__getattribute__(value, "_binding"), depth + 1)
@@ -285,7 +299,7 @@ class _RequestAdmission:
                 if type(raw) is bytes:
                     if len(raw) > _MAX_RUN:
                         _reject("resource_limit")
-                    self.note(name, raw)
+                    self.derived(name, raw)
                 elif type(raw) is tuple:
                     from .ledger import _safe_hash
 
@@ -295,11 +309,11 @@ class _RequestAdmission:
                     for index, seal in enumerate(raw):
                         if type(seal) is str:
                             _safe_hash(seal)
-                            self.note(name + str(index), seal.encode())
+                            self.derived(name + str(index), seal.encode())
                         elif type(seal) is bytes:
                             if len(seal) > _MAX_SOURCE:
                                 _reject("resource_limit")
-                            self.note(name + str(index), seal)
+                            self.derived(name + str(index), seal)
                         else:
                             _reject()
                 else:
@@ -334,13 +348,12 @@ class _RequestAdmission:
                 data = _tuple(object.__getattribute__(value, "_data"), len(fields))
                 if len(data) != len(fields):
                     _reject()
+                _guard_fields(cls, data)
+                canonical, storage = _guard_representations(value)
                 self.budget.run_nodes += 1 + len(fields)
                 self.charge(len(_canonical_json(fields)))
-                for name in ("_canonical", "_storage"):
-                    raw = object.__getattribute__(value, name)
-                    if type(raw) is not bytes or len(raw) > _MAX_RUN:
-                        _reject("resource_limit")
-                    self.note(name, raw)
+                self.derived("_canonical", canonical)
+                self.derived("_storage", storage)
                 for item in data:
                     self.visit(item, depth + 1)
             finally:
@@ -441,9 +454,205 @@ def _model(value: object, *, validate: bool, budget: _CaptureBudget | None = Non
 
 
 def _known_values() -> tuple[type, ...]:
-    # Fixed native allowlists, never a caller-extensible reducer/validator registry.
-    from .benchmarks import _BENCH_VALUES
+    # Benchmarks installs its exact six classes once, during module initialization.
     return _ACTION_VALUES + _BENCH_VALUES
+
+
+def _typed(value, *classes):
+    if not any(type(value) is cls for cls in classes):
+        _reject()
+    if type(value) is str:
+        _text(value)
+    elif type(value) is int and value.bit_length() > 256:
+        _reject("resource_limit")
+    elif type(value) is Decimal:
+        _decimal_checked(value, "money")
+
+
+def _bytes_bound(value, maximum, *, exact=None):
+    _typed(value, bytes)
+    if len(value) > maximum:
+        _reject("resource_limit")
+    if exact is not None and len(value) != exact:
+        _reject("source_changed")
+    return value
+
+
+def _typed_tuple(value, maximum, *classes, minimum=0):
+    values = _tuple(value, maximum)
+    if len(values) < minimum or any(not any(type(item) is cls for cls in classes) for item in values):
+        _reject()
+    return values
+
+
+def _guard_fields(cls, data):
+    """Check fixed native field shapes before recursive capture or seal work."""
+    _tuple(data, len(cls._fields))
+    if len(data) != len(cls._fields):
+        _reject("source_changed")
+    optional = type(None)
+    term_types = (str, str, str, str, str, date, str, int, SourceManifest)
+    if cls is ActionPolicy:
+        kinds = (str, str, str, AdjustmentBasis, str, str, str)
+    elif cls is SplitTerms:
+        kinds = term_types + (str, Decimal, (Decimal, optional), (date, optional))
+    elif cls is DividendTerms:
+        kinds = term_types + (str, (str, optional), (Decimal, optional))
+    elif cls is DelistingTerms:
+        kinds = term_types + (str, Decimal, (date, optional))
+    elif cls is AvailableCorporateAction:
+        kinds = (_ACTION_TYPES, (SplitTerms, DividendTerms, DelistingTerms, optional))
+    elif cls is PositionReference:
+        kinds = (str, str, Decimal, DailyBar, Instrument, TradingCalendar, str, str)
+    elif cls is MergerMapping:
+        kinds = (str, str, str, str, str, str, date, Decimal, SourceManifest)
+    elif cls is _Applied:
+        kinds = (str, int, str)
+    elif cls is _Cancellation:
+        kinds = (str, str)
+    elif cls is _SplitReference:
+        kinds = (str, int, int, int, int)
+    elif cls is _Claim:
+        kinds = (str, str, str, Decimal, datetime, bool)
+    elif cls is _ActionState:
+        kinds = (tuple, tuple, tuple, tuple, tuple, tuple, tuple, bytes, bytes)
+    elif cls is _ActionBatch:
+        kinds = (str, bytes, TradingSession, TradingCalendar, ActionPolicy, tuple, tuple, tuple, tuple, BundleReplayPolicy, datetime)
+    elif _BENCH_VALUES:
+        common, cash, member, buy_hold, session, series = _BENCH_VALUES
+        if cls is common:
+            kinds = (str, str, str, Decimal, datetime, datetime, TradingCalendar, str, CostPolicy, ActionPolicy, date, date, str, int, BundleReplayPolicy)
+        elif cls is cash:
+            kinds = (common, str, Decimal)
+        elif cls is member:
+            kinds = (str, Decimal, Decimal, Decimal, OrderIntent, SessionBinding)
+        elif cls is buy_hold:
+            kinds = (common, EvidenceBundle, tuple, str, str, str)
+        elif cls is session:
+            kinds = (TradingSession, tuple, AccountingPolicy, tuple, tuple, tuple)
+        elif cls is series:
+            kinds = (str, bool, (str, optional), tuple, tuple, tuple, (cash, buy_hold))
+        else:
+            _reject()
+    else:
+        _reject()
+    for value, allowed in zip(data, kinds, strict=True):
+        _typed(value, *(allowed if type(allowed) is tuple else (allowed,)))
+    if cls is AvailableCorporateAction:
+        expected = {SplitAction: SplitTerms, DividendAction: DividendTerms, DelistingAction: DelistingTerms}.get(type(data[0]))
+        if data[1] is not None and type(data[1]) is not expected:
+            _reject()
+    elif cls is _ActionState:
+        for index, child in ((0, _Applied), (2, _Cancellation), (4, _SplitReference), (6, _Claim)):
+            _typed_tuple(data[index], 4096, child)
+        _typed_tuple(data[3], 256, str)
+        for index, right in ((1, str), (5, datetime)):
+            for pair in _typed_tuple(data[index], 256, tuple):
+                _tuple(pair, 2)
+                if len(pair) != 2:
+                    _reject()
+                _typed(pair[0], str)
+                _typed(pair[1], right)
+        for value in data[7:]:
+            _bytes_bound(value, _MAX_SOURCE)
+    elif cls is _ActionBatch:
+        _bytes_bound(data[1], 32, exact=32)
+        for index, maximum, child in ((5, 64, AvailableCorporateAction), (6, 64, OrderIntent), (7, 32, PositionReference), (8, 32, MergerMapping)):
+            _typed_tuple(data[index], maximum, child)
+    elif _BENCH_VALUES:
+        if cls is _BENCH_VALUES[3]:
+            _typed_tuple(data[2], 8, _BENCH_VALUES[2], minimum=1)
+        elif cls is _BENCH_VALUES[4]:
+            for index, maximum, child in ((1, 8, EligibleMark), (3, 64, AvailableCorporateAction), (4, 32, PositionReference), (5, 32, MergerMapping)):
+                _typed_tuple(data[index], maximum, child)
+        elif cls is _BENCH_VALUES[5]:
+            _typed_tuple(data[3], 4096, LedgerEvent)
+            _typed_tuple(data[4], 16, LedgerBalance)
+            _typed_tuple(data[5], 16, NAVResult)
+
+
+def _guard_representations(value):
+    canonical = _bytes_bound(object.__getattribute__(value, "_canonical"), _MAX_RUN)
+    storage = _bytes_bound(object.__getattribute__(value, "_storage"), _MAX_RUN)
+    if len(canonical) + len(storage) > _MAX_RUN:
+        _reject("resource_limit")
+    return canonical, storage
+
+
+def _guard_binding(value):
+    _typed(value, SessionBinding)
+    for name, cls in (("_context_snapshot", RunContext), ("_bundle_snapshot", EvidenceBundle),
+                      ("_envelope_snapshot", SignalEnvelope), ("_session_snapshot", TradingSession),
+                      ("_next_session_snapshot", TradingSession)):
+        _typed(object.__getattribute__(value, name), cls)
+    for name in ("_sealed_source_json", "_sealed_storage_bytes"):
+        _bytes_bound(object.__getattribute__(value, name), _MAX_SOURCE)
+    _safe_hash(object.__getattribute__(value, "_source_fingerprint"))
+
+
+def _guard_outcome(value):
+    _typed(value, OutcomeEvidence)
+    for name, cls in (("_bar_snapshot", DailyBar), ("_outcome_cutoff", datetime),
+                      ("_archive_cutoff", datetime), ("_replay_policy", BundleReplayPolicy)):
+        _typed(object.__getattribute__(value, name), cls)
+    for name in ("_sealed_bytes", "_sealed_storage"):
+        _bytes_bound(object.__getattribute__(value, name), _MAX_SOURCE)
+    _safe_hash(object.__getattribute__(value, "_outcome_hash"))
+
+
+def _guard_seal_tuple(value, *, outcome=False):
+    _tuple(value, 3)
+    if len(value) != 3:
+        _reject("source_changed")
+    _bytes_bound(value[0], _MAX_SOURCE)
+    if outcome:
+        _bytes_bound(value[1], _MAX_SOURCE)
+        _safe_hash(value[2])
+    else:
+        _safe_hash(value[1])
+        _bytes_bound(value[2], _MAX_SOURCE)
+
+
+def _guard_opaque(value):
+    _guard_binding(object.__getattribute__(value, "_binding"))
+    _guard_seal_tuple(object.__getattribute__(value, "_binding_seals"))
+    _bytes_bound(object.__getattribute__(value, "_seal"), 32, exact=32)
+    if type(value) is EligibleMark:
+        _guard_outcome(object.__getattribute__(value, "_outcome"))
+        _guard_seal_tuple(object.__getattribute__(value, "_outcome_seals"), outcome=True)
+    elif type(value) is AccountingPolicy:
+        _bytes_bound(object.__getattribute__(value, "_canonical"), _MAX_EVENT_BYTES)
+        for name, cls in (("_session_date", date), ("_valuation_cutoff", datetime), ("_archive_cutoff", datetime),
+                          ("_currency", str), ("_mark_source", str), ("_mark_revision", int)):
+            _typed(object.__getattribute__(value, name), cls)
+    else:
+        _reject()
+
+
+def _value_parts(cls, data, *, validate=False, depth=0, budget=None, active=None):
+    if not _BENCH_VALUES or cls is not _BENCH_VALUES[5]:
+        return _parts(data, validate=validate, depth=depth, budget=budget, active=active)
+    # Only Series.policy embeds the full validated native payload without hex.
+    budget = _CaptureBudget() if budget is None else budget
+    active = set() if active is None else active
+    parts = _parts(data[:6], validate=validate, depth=depth, budget=budget, active=active)
+    budget.run_nodes += 1
+    if budget.run_nodes > 1_000_000 or depth > 64:
+        _reject("resource_limit")
+    policy = _clone_value(data[6], budget=budget, depth=depth + 1, active=active)
+    canonical, storage = _guard_representations(policy)
+    if not storage.startswith(_DOMAIN):
+        _reject("source_changed")
+    # The policy has already been fully cloned and independently revalidated.
+    # Exact round-trip rejects duplicate keys, whitespace and noncanonical JSON.
+    payload = _capture_call(lambda: json.loads(storage[len(_DOMAIN):], parse_constant=lambda _: _reject("source_changed")))
+    if _DOMAIN + _canonical_json(payload) != storage:
+        _reject("source_changed")
+    part = (policy, [type(policy).__name__, canonical.decode("utf-8")],
+            ["series-policy-native-v1", _DOMAIN.decode("utf-8"), type(policy).__name__, payload])
+    if sum(len(_canonical_json(p[1])) + len(_canonical_json(p[2])) for p in (*parts, part)) > _MAX_RUN:
+        _reject("resource_limit")
+    return (*parts, part)
 
 
 def _parts(values: tuple, *, validate: bool = False, depth: int = 0, budget: _CaptureBudget | None = None, active: set[int] | None = None) -> tuple:
@@ -500,6 +709,7 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         owned, wire, storage = _contract_record(value, native, "source_changed")
         return owned, wire.decode(), [native.__name__, _jsonable(storage)]
     if native is EligibleMark:
+        _guard_opaque(value)
         _prove_binding_bundle(object.__getattribute__(value, "_binding"))
         (binding, outcome), witness = _capture_mark(value)
         for root in (*binding[:3], outcome[0]):
@@ -513,6 +723,7 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         wire = [binding[5].decode(), outcome[4].decode()]
         return clone, wire, [wire, binding[7].hex(), outcome[6].hex(), witness.hex()]
     if native is AccountingPolicy:
+        _guard_opaque(value)
         _prove_binding_bundle(object.__getattribute__(value, "_binding"))
         parts = []
         wire = _refresh_policy(value, parts)
@@ -526,6 +737,7 @@ def _part(value: object, *, validate: bool = False, depth: int = 0, budget: _Cap
         return clone, wire.decode(), [wire.decode(), object.__getattribute__(binding, "_sealed_storage_bytes").hex()]
     from .clock import SessionBinding
     if native is SessionBinding:
+        _guard_binding(value)
         _prove_binding_bundle(value)
         clone, seals = _binding_capture(value)
         for name in ("_context_snapshot", "_bundle_snapshot", "_envelope_snapshot"):
@@ -564,7 +776,8 @@ class _Value:
         if not any(type(self) is cls for cls in _known_values()) or set(fields) != set(self._fields):
             _reject("input_invalid", TypeError)
         raw = tuple(fields[name] for name in self._fields)
-        parts = _parts(raw, validate=True)
+        _guard_fields(type(self), raw)
+        parts = _value_parts(type(self), raw, validate=True)
         data = tuple(p[0] for p in parts)
         object.__setattr__(self, "_data", data)
         _capture_call(self._validate)
@@ -575,7 +788,7 @@ class _Value:
         object.__setattr__(self, "_canonical", canonical)
         object.__setattr__(self, "_storage", storage)
         # Recheck ingress after all trusted model/contract validation.
-        current = _parts(raw)
+        current = _value_parts(type(self), raw)
         if canonical != _canonical_json(dict(zip(self._fields, (p[1] for p in current), strict=True))) or storage != _DOMAIN + _canonical_json([p[2] for p in current]):
             _reject("source_changed")
 
@@ -622,11 +835,9 @@ def _clone_value_native(value, *, budget, depth, active):
     data = _tuple(object.__getattribute__(value, "_data"), len(type(value)._fields))
     if len(data) != len(type(value)._fields):
         _reject("source_changed")
-    canonical = object.__getattribute__(value, "_canonical")
-    storage = object.__getattribute__(value, "_storage")
-    if type(canonical) is not bytes or type(storage) is not bytes or len(canonical) + len(storage) > _MAX_RUN:
-        _reject("source_changed")
-    parts = _parts(data, validate=True, depth=depth + 1, budget=budget, active=active)
+    _guard_fields(type(value), data)
+    canonical, storage = _guard_representations(value)
+    parts = _value_parts(type(value), data, validate=True, depth=depth + 1, budget=budget, active=active)
     if canonical != _canonical_json(dict(zip(type(value)._fields, (p[1] for p in parts), strict=True))) or storage != _DOMAIN + _canonical_json([p[2] for p in parts]):
         _reject("source_changed")
     clone = object.__new__(type(value))
@@ -757,6 +968,7 @@ class PositionReference(_Value):
         if unknown or type(mark) is not EligibleMark:
             _reject()
         _safe_identifier(instrument_id)
+        _guard_opaque(mark)
         _prove_binding_bundle(object.__getattribute__(mark, "_binding"))
         (binding, outcome), witness = _capture_mark(mark)
         bar = outcome[0]

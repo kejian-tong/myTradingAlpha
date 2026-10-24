@@ -26,8 +26,8 @@ Bounded recovery snapshot, not a chronological log. GitHub/current `main` is aut
 - Scope: offline actions and independent Cash/B&H; additive ledger/accounting. Separate ordinary RED/GREEN leases.
 - Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 goldens pass. No PAPER/live operation, Phase04, release, validated-alpha or promotion authority; explicit human PAPER/live gates remain mandatory and unexercised.
 
-- WITNESS `980883b33cd17ad649770b1950f628bd78ce3ced` and surviving unaccepted GREEN preserved. All nine prior BT04 leases validate and end released. Fresh leases remain mandatory. E1-E5/R1/R2, hostile identifier ingress and cold action-free compatibility require complete validation and independent closure.
-- Refreshed main includes only approved Harness/pstack #101/#102 drift since the original base; integrate by normal merge preserving RED/WITNESS ancestry. Final exact-head review, CI and Master gate remain mandatory.
+- WITNESS `980883b33cd17ad649770b1950f628bd78ce3ced` and all RED history preserved. Unaccepted head `2dbcd18e164fd103eaea820b6a1d10a5f7f5c516`; controlling REQUEST CHANGES6377635203. Prior BT04 leases validate and end released; fresh leases remain mandatory.
+- E1-E5, ingress and cold Ledger focused checks passed at that head. H1-H3 resource/purity repair JIT6377689712; dedicated RED `3b4642c2dbc697185fe263603c3a4f6eda0e4b83`. Full validation, fresh independent closure, exact-head CI and Master gate remain mandatory. Main integration preserves approved Harness bytes.
 
 ## BT-03 completed recovery
 
@@ -49,7 +49,7 @@ Bounded recovery snapshot, not a chronological log. GitHub/current `main` is aut
 - PR: [#96](https://github.com/kejian-tong/myTradingAlpha/pull/96); merge/main `a713fbb48324ad9da45e254268b9cfe30b0a634b`, reviewed source `0b3eee8a98f365c3c3b55c35cd584db617c4d3ff`, identical tree `9fc6e587ca34a297d3183288763f91a933ae054c`. Original Base/main: `2cfc175fe5d07190c740821da5bb20e13877d252`; original RED `5881288a839915e92edb8eca6aefbcdffc995949`; final H3 RED `02805808a8e530f189f557f2bf27e710b4e6b41e`.
 - Scope: witnessed immutable session binding, deterministic decision/opportunity events and pure runner only. No quantity, intent, fill, cost, ledger, action, persistence or metric behavior.
 - Final high implementation escalation route `sol_high_sol_high`: `high_implementer` / GPT-6.1 Sol / xhigh; controlling `reviewer_high` / GPT-6.1 Sol / xhigh. Initial route `luna_sol_high`: `normal_implementer` / GPT-6 Luna / max remains historical. Independent runtime telemetry is unavailable; observed host unrestricted, no authenticated isolation claimed.
-- Durable [controlling APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/96#issuecomment-6077723821), [material closure](https://github.com/kejian-tong/myTradingAlpha/pull/96#issuecomment-6077677736), [Master MERGE gate](https://github.com/kejian-tong/myTradingAlpha/pull/96#issuecomment-6077744423), [sixteen closed writer lifecycles](https://github.com/kejian-tong/myTradingAlpha/pull/96#issuecomment-6077509103), and [postmerge verification](https://github.com/kejian-tong/myTradingAlpha/pull/96#issuecomment-6077864574). All eight HIGH groups and M0 closed. Exact repair/JIT/RED history remains immutable in Git/PR #96.
+- Durable PR96 comments: APPROVE6077723821, material6077677736, Master6077744423, leases6077509103, postmerge6077864574. All eight HIGH groups and M0 closed; exact repair/JIT/RED history remains immutable in Git/PR #96.
 
 - PR96 validation detail remains in its durable artifacts; main CI `37908220659` and CodeQL `37908220735` passed.
 
