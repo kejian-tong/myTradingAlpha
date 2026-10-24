@@ -1451,7 +1451,7 @@ def test_bt04_dependencies_are_offline_and_later_slices_remain_absent() -> None:
         assert not any(name.startswith(("mytradingalpha.execution", "mytradingalpha.portfolio", "mytradingalpha.risk", "mytradingalpha.research"))
                        for name in imports)
     assert not any((ROOT / f"mytradingalpha/backtest/{name}.py").exists()
-                   for name in ("manifest", "replay", "metrics", "reports"))
+                   for name in ("metrics", "reports"))
 
 
 def test_adjusted_reference_with_explicit_actions_is_rejected() -> None:

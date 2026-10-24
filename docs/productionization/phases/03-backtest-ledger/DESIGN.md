@@ -1,6 +1,6 @@
 # Phase 03 — Backtest and Ledger Design
 
-Status: planned. The current repository has no Phase 03 runner, simulator, financial ledger, replay store, or metric engine. This design specifies six separately authorized implementation slices; this documentation reconciliation implements none of them and makes no return, alpha, data-coverage, or readiness claim.
+Status: in progress. BT-01 through BT-04 implement the offline runner, simulator, ledger, actions and benchmarks. BT-05 replay and local recovery are candidates in PR104, pending final validation, independent review, required CI and the Master gate. The BT-06 metric/report engine remains deferred. Phase 03 is incomplete and makes no return, alpha, data-coverage, or readiness claim.
 
 ## Purpose and boundary
 

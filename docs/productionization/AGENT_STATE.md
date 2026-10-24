@@ -1,34 +1,44 @@
 # Productionization Agent State
 
-Bounded recovery snapshot, not a chronological log. GitHub/current `main` is authoritative; immutable details remain in Git/PRs.
+Bounded snapshot, not a chronological log; GitHub/current `main` is authoritative. Immutable details: Git/PRs.
 
 ## Current control state
 
 - `schema_version`: 2
-- `last_reconciled_main_sha`: `28dcae6ceea84b04df405ea25e77e408d2d88b27`
-- `last_reconciled_main_tree`: `3e92b58ef6508ea6d6b0c00e35caacb1e7b544f3`
+- `last_reconciled_main_sha`: `9f80cbdf7af9029bbe431acde66ef67b1b60a0ad`
+- `last_reconciled_main_tree`: `24fab1884ba9ffb03817292640514258d220eacc`
 - `bt04_roadmap_base_sha`: `7a863c0f04522c6b689a713170c47358e06c02f1`
 - `bt04_roadmap_base_tree`: `667f01077881a863f5639b786869238d05955856`
-- `roadmap_status`: active BT-04 candidate
-- `current_pr_id`: BT-04 / PR #100
+- `roadmap_status`: active BT-05 candidate
+- `current_pr_id`: BT-05 / PR #104
 - `current_phase`: 03 — Backtest and Ledger
-- `last_completed_roadmap_pr`: `BT-03` / PR #99 / merge `7a863c0f04522c6b689a713170c47358e06c02f1`
-- `autonomy_mode`: human-authorized BT-01 through BT-06 in six independent dependency-ordered PRs and fresh Master sessions; this session owns BT-04 only
-- `next_dependency`: BT-05 requires BT-04 merge, verified main and a fresh Master
+- `last_completed_roadmap_pr`: `BT-04` / PR #100 / merge `9f80cbdf7af9029bbe431acde66ef67b1b60a0ad`
+- `autonomy_mode`: human-authorized BT-05 only; later slices require separate authorization
+- `next_dependency`: BT-06 requires BT-05 merge, refreshed main, fresh Master and separate authorization
 - SIG-04 validates caller-supplied candidates only; no inference
 - SIG-05 adds only in-memory deterministic shadow envelopes
 - SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior
 
-## BT-04 current recovery
+## BT-05 current recovery
 
-- PR100. Base/main above; original roadmap base/tree retained separately. JIT6185548770, resume6377217718; financial RED `63af09fc10a5053fe282fcee0fc921363355f532`; ingress RED `d860c482ec753a60092195db9f96cc5c88cc50ff`; boundary6185549025. recovery RED `7c11cce2a4b914c8a98fe0f28552259eb793cdf1`; GREEN/review/CI/Master gate pending.
-- Difficult route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master/boundary Sol/xhigh; runtime attestation unavailable.
-- Scope: offline actions and independent Cash/B&H; additive ledger/accounting. Separate ordinary RED/GREEN leases.
-- Phase 03 gate: insufficient_evidence until all six separately merged slices and BT-06 goldens pass. No PAPER/live operation, Phase04, release, validated-alpha or promotion authority; explicit human PAPER/live gates remain mandatory and unexercised.
+- PR104; exact base/main and tree above. JIT: PR body; pre-GREEN6381289594.
+- Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master configured Sol/xhigh; native Sol/max is distinct. Isolation unauthenticated.
+- Scope: BT05 replay/hashes/native seals/operation recovery only; BT01-04 preserved, BT06/Phase04+ deferred.
+- RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`:188expected failures/4fixture passes; log `00c87380bd908427c0e4b1c7c83f3ce116ac7a841b9f6b7454cccaa268ab1e53`; released RED lease6/digest `89827d9959f6f6a45be425d6740870689c85a37098ccc7f9c7b8fdaf1c6fed70`.
+- GREEN lease active; final head, complete validation, independent exact-head review/CI and Master gate pending.
+- Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 goldens pending. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
 
-- WITNESS `980883b33cd17ad649770b1950f628bd78ce3ced` and all RED history preserved. Rejected head `2dbcd18e164fd103eaea820b6a1d10a5f7f5c516`; review6377635203. H1-H3 WITNESS `addb3487b284ab9a535bb0b573c306cb59c0faba` remains unaccepted; prior leases validate/released, fresh leases mandatory.
-- E1-E5/ingress/cold Ledger focused checks passed. H1-H3 JIT6377689712/RED `3b4642c2dbc697185fe263603c3a4f6eda0e4b83`:60targeted and genuine8x16 passed at12818353bytes; no cap change. R2 event-proof JIT6378597278; dedicated RED `45ddd41b7519ede7dad4bca3d81ae95f8ffade60`. Full floor, fresh independent closure, exact-head CI and Master gate remain mandatory. Main integration preserves approved Harness bytes.
-- Candidate `0e271f81ad3378ac744ce71767cbe93c867e0282` rejected for F1 late-result completion; repair JIT6379111848, dedicated RED `e92eb2c09ef60cc163eb36dc309d8f78bb542243`. Prior focused/material proof preserved; interrupted suites are not passes.
+## BT-04 completed recovery
+
+- PR100 source `e774641c1a4a4052bc8fdf40261c7ed37654335a`, merge `9f80cbdf7af9029bbe431acde66ef67b1b60a0ad`; APPROVE6380274387, Master gate6380292548, completion6380324398. Prior RED/WITNESS/rejections below are historical.
+
+- Original roadmap base/tree retained above. JIT6185548770/resume6377217718/boundary6185549025; financial RED `63af09fc10a5053fe282fcee0fc921363355f532`, ingress RED `d860c482ec753a60092195db9f96cc5c88cc50ff`, recovery RED `7c11cce2a4b914c8a98fe0f28552259eb793cdf1`.
+- Difficult route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master/boundary Sol/xhigh; attestation unavailable.
+- Scope: offline actions and independent Cash/B&H; additive ledger/accounting.
+
+- WITNESS `980883b33cd17ad649770b1950f628bd78ce3ced`; rejected `2dbcd18e164fd103eaea820b6a1d10a5f7f5c516`/review6377635203; H1-H3 WITNESS `addb3487b284ab9a535bb0b573c306cb59c0faba` unaccepted. Prior leases released; fresh leases required.
+- E1-E5/ingress/cold Ledger passed. H1-H3 JIT6377689712/RED `3b4642c2dbc697185fe263603c3a4f6eda0e4b83`:60targeted and genuine8x16 passed at12818353bytes, unchanged cap. R2 JIT6378597278/RED `45ddd41b7519ede7dad4bca3d81ae95f8ffade60`.
+- F1 rejected `0e271f81ad3378ac744ce71767cbe93c867e0282`; repair JIT6379111848/RED `e92eb2c09ef60cc163eb36dc309d8f78bb542243`. Interrupted suites are not passes.
 
 ## BT-03 completed recovery
 
@@ -81,7 +91,7 @@ PAPER/live, or promotion behavior was introduced.
 ## Current harness policy
 
 - `harness_reconciled_through`: PR #102 / merge `28dcae6ceea84b04df405ea25e77e408d2d88b27`
-- `active_harness_pr`: none
+- `active_harness_pr`: PR #103 / head `c2d5e38c793430f27a136f78cb3d8bdcacf0e22a`; six files excluded
 - PR #101 merged bounded pstack 0.15.25 at `7a98e9eb689ed4a44c23e9ccf1c1c04e0a9c0911`; PR #102 refreshed provenance at `28dcae6ceea84b04df405ea25e77e408d2d88b27`. Current skills are authoritative prospectively; prior route/RED/review evidence remains immutable.
 - [PR #98](https://github.com/kejian-tong/myTradingAlpha/pull/98) raised lease archive64 to6400, preserving all evidence. Source `2f1a0644f328a8a0bfb89c95bb5f91776b977be2`, merge tree `d7b159ae4eb6d1caf2632014fc37006b00e4a5de`. Durable TDD/CI/APPROVE/Master gate/postmerge facts remain in PR98. Human-authorized unleased test-only RED applied solely to this prerequisite; GREEN used a genuine old-helper lease. Merge `e0025b3990334d48664a4caf3bef6839421ef586`.
 - PR #90 merge `8f76f341bedf086dd4eb69e4229be33127f5028f` completed bounded pstack compatibility replay and preserves PR #88 model routing, PR #86
@@ -123,18 +133,11 @@ closeout.
 
 ## Runtime limitations and watch-only features
 
-- The host permission profile is disabled/unrestricted. Under the PR #86 policy, missing
-  host-origin sandbox/approval/tool-inventory facts are supplemental disclosure and do not themselves block
-  review.
-- A separate controlling review context remains mandatory and uses a detached exact-head worktree with
-  before/after SHA and cleanliness evidence; observed mutation, stale/dirty isolation, missing required
-  roles, BLOCKER/HIGH findings, and required-CI failures remain blocking.
-- Hook load/trust state is unknown and ineffective absent a host report.
-- Runtime receipt, offline verifier, and checked-in config do not authenticate host/model/isolation.
-- The writer lease is cooperative structural evidence and does not defend against same-user processes.
-- Apps and Memories remain disabled by intent. Rules, Permission Profiles, OTel, and repo Plugins remain
-  watch-only.
-- External-spec official Docs MCP remains configuration intent unless observed at runtime.
+- Permission profile disabled/unrestricted. Missing host-origin sandbox/approval/tool-inventory facts are supplemental disclosure, not a review block (PR86).
+- Separate controlling review: detached exact-head worktree, before/after SHA/cleanliness. Mutation, stale/dirty isolation, missing roles, BLOCKER/HIGH or required-CI failure blocks.
+- Hook load/trust unknown, ineffective without a host report. Runtime receipt, offline verifier and config do not authenticate host/model/isolation.
+- Cooperative writer leases do not defend against same-user processes.
+- Apps and Memories disabled; Rules/Permission Profiles/OTel/repo Plugins watch-only.
+- External-spec Docs MCP: configuration intent until observed.
 
-The root instructions own the permanent external-agent prohibition. This state records operational facts only
-and does not replace the root policy, audit protocol, required CI, exact-head review, or Master merge gate.
+Root policy owns external-agent prohibitions, safety, review/CI and merges. This state is operational memory.

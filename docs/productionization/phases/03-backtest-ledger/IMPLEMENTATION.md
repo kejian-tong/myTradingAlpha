@@ -1,6 +1,6 @@
 # Phase 03 — Backtest and Ledger Implementation
 
-Status: planned. This document is an implementation plan; its commands and test names are not claims that code or tests exist or have run. The PH03-DOCS reconciliation is prose-only, so its RED phase is not applicable and it creates no synthetic failing test. Each future executable BT PR must have its own exact-base JIT, dedicated tests-only RED commit pushed before implementation, focused expected failure, minimum GREEN, in-scope refactor, exact validation and rollback evidence. Implement one BT ID per fresh Master session after its prerequisite is merged and main is refreshed.
+Status: in progress. BT-01 through BT-04 are implemented; BT-05 is the PR104 candidate pending final validation, independent review, required CI and the Master gate. BT-06 remains deferred. Commands below remain plans unless execution evidence is recorded separately. The original PH03-DOCS reconciliation was prose-only with RED not applicable. Every executable BT PR requires its own exact-base JIT, dedicated tests-only RED pushed before implementation, focused expected failure, minimum GREEN, in-scope refactor, exact validation and rollback evidence. Implement one BT ID per fresh Master session after its prerequisite is merged and main is refreshed.
 
 ## Current integration facts and compatibility
 
@@ -25,7 +25,7 @@ At replay, map `decision_time` through exactly one sealed `CalendarReplayDay` wi
 
 ### Proposed interfaces
 
-These signatures describe intended ownership only; no Phase 03 code currently defines them. The BT-01 JIT fixes exact field bounds, reason codes and serialization before RED.
+These signatures describe BT-01 ownership. The implemented interfaces and exact field bounds, reason codes and serialization are governed by the current code and BT-01 JIT evidence.
 
 ```python
 SessionClock.bind(
