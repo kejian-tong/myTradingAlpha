@@ -30,6 +30,13 @@ BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
 BT02_SOURCE_SHA = "60878adab64c138ccad5cf571a648e6cd909b3d9"
 BT03_BASE_SHA = "e0025b3990334d48664a4caf3bef6839421ef586"
 BT03_BASE_TREE_SHA = "d7b159ae4eb6d1caf2632014fc37006b00e4a5de"
+BT04_BASE_SHA = "7a863c0f04522c6b689a713170c47358e06c02f1"
+BT04_BASE_TREE_SHA = "667f01077881a863f5639b786869238d05955856"
+BT04_RECONCILED_MAIN_SHA = "28dcae6ceea84b04df405ea25e77e408d2d88b27"
+BT04_RECONCILED_MAIN_TREE_SHA = "3e92b58ef6508ea6d6b0c00e35caacb1e7b544f3"
+BT03_SOURCE_SHA = "7b4df459cd655e8d7d708e28534e5562b6b76c29"
+BT03_REVIEW_COMMENT = "6099410594"
+BT03_GATE_COMMENT = "6099435193"
 RULESET_ID = "23141241"
 RULESET_OBSERVED_ON = "2026-09-19"
 
@@ -54,6 +61,8 @@ HARNESS_MERGES = {
     90: HARNESS_PR90_MERGE_SHA,
     94: "afa7c35b9f8a71170d6a9d14b051d2e83f54fc0f",
     98: BT03_BASE_SHA,
+    101: "7a98e9eb689ed4a44c23e9ccf1c1c04e0a9c0911",
+    102: "28dcae6ceea84b04df405ea25e77e408d2d88b27",
 }
 
 
@@ -61,7 +70,7 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_tracks_authorized_bt03_and_completed_bt02_bt01_recovery() -> None:
+def test_operational_state_tracks_authorized_bt04_and_completed_bt03_bt02_bt01_recovery() -> None:
     state = _state_text()
     normalized_state = " ".join(state.split())
     reconciled_sha = re.search(
@@ -72,22 +81,36 @@ def test_operational_state_tracks_authorized_bt03_and_completed_bt02_bt01_recove
     )
     assert reconciled_sha is not None
     assert reconciled_tree is not None
-    assert reconciled_sha.group(1) == BT03_BASE_SHA
-    assert reconciled_tree.group(1) == BT03_BASE_TREE_SHA
+    assert reconciled_sha.group(1) == BT04_RECONCILED_MAIN_SHA
+    assert reconciled_tree.group(1) == BT04_RECONCILED_MAIN_TREE_SHA
+    assert f"`bt04_roadmap_base_sha`: `{BT04_BASE_SHA}`" in state
+    assert f"`bt04_roadmap_base_tree`: `{BT04_BASE_TREE_SHA}`" in state
     docs_recovery = state.split("## Phase 03 documentation recovery", maxsplit=1)[-1]
     assert PH03_DOCS_MERGE_SHA in docs_recovery
     assert PH03_DOCS_TREE_SHA in docs_recovery
 
-    current_recovery = state.split("## BT-03 current recovery", maxsplit=1)[-1].split(
+    current_recovery = state.split("## BT-04 current recovery", maxsplit=1)[-1].split(
+        "## BT-03 completed recovery", maxsplit=1
+    )[0]
+    assert "Base/main above" in current_recovery
+    assert "Difficult route `sol_high_sol_xhigh`" in current_recovery
+    assert "high_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
+    assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
+    assert "Scope: offline actions and independent Cash/B&H; additive ledger/accounting" in current_recovery
+
+    bt03_recovery = state.split("## BT-03 completed recovery", maxsplit=1)[-1].split(
         "## BT-02 completed recovery", maxsplit=1
     )[0]
-    recovery_base = re.search(r"Base/main: `([0-9a-f]{40})`", current_recovery)
-    assert recovery_base is not None
-    assert recovery_base.group(1) == BT03_BASE_SHA
-    assert "Critical initial route `luna_sol_xhigh`: `normal_implementer` / GPT-6 Luna / max" in current_recovery
-    assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
-    assert "Prospective escalation `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
-    assert "6ff2f9c6ae008bb7363f542b8d20a67ab21adc12" in current_recovery
+    assert "PR99 merge/base above" in bt03_recovery
+    assert BT03_SOURCE_SHA in bt03_recovery
+    assert "identical tree above" in bt03_recovery
+    assert "Scope: internal ledger/NAV/accounting only" in bt03_recovery
+    for reference in (
+        "6ff2f9c6ae008bb7363f542b8d20a67ab21adc12",
+        "6094290872", "6098196615", "6098830935", "6099033623",
+        BT03_REVIEW_COMMENT, BT03_GATE_COMMENT,
+    ):
+        assert reference in bt03_recovery
 
     bt02_recovery = state.split("## BT-02 completed recovery", maxsplit=1)[-1].split(
         "## BT-01 completed recovery", maxsplit=1
@@ -108,21 +131,16 @@ def test_operational_state_tracks_authorized_bt03_and_completed_bt02_bt01_recove
         "No quantity, intent, fill, cost, ledger, action, persistence or metric behavior."
     ) in bt01_recovery
 
-    assert "`roadmap_status`: active BT-03 candidate" in state
-    assert re.search(r"`current_pr_id`: BT-03 / PR #99", state)
+    assert "`roadmap_status`: active BT-04 candidate" in state
+    assert re.search(r"`current_pr_id`: BT-04 / PR #[1-9][0-9]*\b", state)
     assert "`current_phase`: 03 — Backtest and Ledger" in state
-    assert f"`last_completed_roadmap_pr`: `BT-02` / PR #97 / merge `{BT02_MERGE_SHA}`" in normalized_state
+    assert f"`last_completed_roadmap_pr`: `BT-03` / PR #99 / merge `{BT04_BASE_SHA}`" in normalized_state
     assert (
         "`autonomy_mode`: human-authorized BT-01 through BT-06 in six independent "
-        "dependency-ordered PRs and fresh Master sessions; this session owns BT-03 only"
+        "dependency-ordered PRs and fresh Master sessions; this session owns BT-04 only"
     ) in state
     assert (
-        f"`merge`: PR #97 merged at `{BT02_MERGE_SHA}`; implementation, review, and CI records "
-        "remain in its GitHub conversation"
-    ) in normalized_state
-    assert (
-        "`next_dependency`: BT-04 is authorized but blocked until BT-03 merges, main is verified, "
-        "and a fresh Master session starts"
+        "`next_dependency`: BT-05 requires BT-04 merge, verified main and a fresh Master"
     ) in state
     assert (
         f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "
@@ -153,7 +171,7 @@ def test_operational_state_tracks_authorized_bt03_and_completed_bt02_bt01_recove
     ):
         assert reference in state
     assert "Phase 03 gate: insufficient_evidence until all six separately merged slices" in state
-    assert "Scope: internal ledger/NAV/accounting only" in current_recovery
+    assert "Scope: internal ledger/NAV/accounting only" in bt03_recovery
     assert "No PAPER/live operation" in state
     assert "explicit human PAPER/live gates remain mandatory and unexercised" in state
 

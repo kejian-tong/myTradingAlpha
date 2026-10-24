@@ -562,7 +562,7 @@ class LedgerEvent:
         "_amount", "_economic_time", "_observed_at", "_due_at", "_intent", "_fill",
         "_binding", "_outcome", "_policy", "_intent_bytes", "_fill_bytes", "_policy_bytes",
         "_binding_seals", "_outcome_seals", "_intent_storage", "_fill_storage", "_policy_storage",
-        "_canonical", "_storage_witness", "_storage_bytes", "_seal", "_retained_size",
+        "_canonical", "_storage_witness", "_storage_bytes", "_seal", "_retained_size", "_action_batch",
     )
 
     def __init__(self, *_: object, **__: object) -> None:
@@ -871,6 +871,31 @@ def _event_values(event: object, captured: list[object] | None = None) -> dict[s
         "kind": kind,
         "schema_version": _SCHEMA_VERSION,
     }
+    if kind == "action_batch":
+        from .corporate_actions import _ActionBatch, _clone_value, _get
+
+        batch = object.__getattribute__(event, "_action_batch")
+        if type(batch) is not _ActionBatch:
+            _reject("source_changed")
+        owned = _clone_value(batch)
+        session = _get(owned, "session")
+        economic = _safe_utc(object.__getattribute__(event, "_economic_time"))
+        observed = _safe_utc(object.__getattribute__(event, "_observed_at"))
+        if economic != session.open_at or observed != economic:
+            _reject("chronology_invalid")
+        if any(object.__getattribute__(event, name) is not None for name in (
+            "_instrument_id", "_intent_id", "_fill_id", "_obligation_id", "_amount", "_due_at",
+            "_intent", "_fill", "_binding", "_outcome", "_policy", "_intent_bytes", "_fill_bytes",
+            "_policy_bytes", "_binding_seals", "_outcome_seals", "_intent_storage", "_fill_storage", "_policy_storage",
+        )):
+            _reject("source_changed")
+        if captured is not None:
+            captured.append(owned)
+        result.update(action_source=owned._canonical.decode(), action_storage_seal=hashlib.sha256(owned._storage).hexdigest(),
+                      economic_time=_time_wire(economic), observed_at=_time_wire(observed))
+        return result
+    if object.__getattribute__(event, "_action_batch") is not None:
+        _reject("source_changed")
     if kind in _OBLIGATION_KINDS:
         obligation_id = _safe_identifier(object.__getattribute__(event, "_obligation_id"))
         amount = _decimal_checked(object.__getattribute__(event, "_amount"), "money", positive=True)
@@ -986,6 +1011,9 @@ def _event_witness(event: object, values: dict[str, object]) -> tuple[object, ..
         _time_native(_safe_utc(object.__getattribute__(event, "_economic_time"))),
         _time_native(_safe_utc(object.__getattribute__(event, "_observed_at"))),
     )
+    if kind == "action_batch":
+        batch = object.__getattribute__(event, "_action_batch")
+        return common + (batch._storage,)
     if kind in _OBLIGATION_KINDS:
         amount = _decimal_checked(object.__getattribute__(event, "_amount"), "money", positive=True)
         return common + (
@@ -1024,6 +1052,9 @@ def _event_retained_size(event: LedgerEvent, canonical: bytes, witness_bytes: by
             len(_contract_storage_bytes(object.__getattribute__(event, name)))
             for name in ("_intent_storage", "_fill_storage", "_policy_storage")
         )
+    if object.__getattribute__(event, "_kind") == "action_batch":
+        batch = object.__getattribute__(event, "_action_batch")
+        retained += len(batch._canonical) + len(batch._storage)
     return retained
 
 
@@ -1077,7 +1108,9 @@ def _capture_event_native(event: object) -> tuple[LedgerEvent, bytes, tuple[obje
     clone = _empty_event(LedgerEvent)
     for name in LedgerEvent.__slots__:
         object.__setattr__(clone, name, object.__getattribute__(event, name))
-    if captured:
+    if captured and object.__getattribute__(event, "_kind") == "action_batch":
+        object.__setattr__(clone, "_action_batch", captured[0])
+    elif captured:
         intent, fill, policy, binding_prepared, outcome_state = captured
         for name, value in (("_intent", intent), ("_fill", fill), ("_policy", policy),
                             ("_binding", _binding_from_prepared(binding_prepared)),
@@ -1191,7 +1224,7 @@ class LedgerBalance:
         "recognized_expense", "total_fees", "intent_ownership", "session_cap_ownership",
         "fill_ids", "instrument_ids", "event_count", "next_sequence", "genesis_hash",
         "prefix_hashes", "latest_economic_time", "latest_observation_time", "_canonical",
-        "_witness", "_seal", "_prefix_witness",
+        "_witness", "_seal", "_prefix_witness", "_action_state",
     )
 
     def __init__(self, *_: object, **__: object) -> None:
@@ -1225,7 +1258,7 @@ class LedgerBalance:
 
 
 def _balance_wire(balance: LedgerBalance) -> dict[str, object]:
-    return {
+    result = {
         "calendar_id": balance.calendar_id,
         "cash": _decimal_wire(balance.cash),
         "currency": balance.currency,
@@ -1294,9 +1327,14 @@ def _balance_wire(balance: LedgerBalance) -> dict[str, object]:
         "next_sequence": balance.next_sequence,
     }
 
+    action_state = object.__getattribute__(balance, "_action_state")
+    if action_state is not None:
+        result["action_state"] = action_state.canonical_bytes().decode()
+    return result
+
 
 def _balance_witness(balance: LedgerBalance) -> tuple[object, ...]:
-    return (
+    result = (
         _decimal_storage(balance.opening_cash),
         _time_native(balance.opening_time),
         _time_native(balance.resolution_cutoff),
@@ -1331,6 +1369,9 @@ def _balance_witness(balance: LedgerBalance) -> tuple[object, ...]:
         hashlib.sha256(_canonical_json(list(balance.prefix_hashes))).digest(),
     )
 
+    action_state = object.__getattribute__(balance, "_action_state")
+    return result if action_state is None else result + (action_state._storage,)
+
 
 def _seal_balance(balance: LedgerBalance) -> None:
     object.__setattr__(balance, "_prefix_witness", balance.prefix_hashes)
@@ -1354,6 +1395,13 @@ def _native_tuple(value: object, maximum: int) -> tuple[object, ...]:
 def _native_balance(balance: LedgerBalance) -> None:
     """Guard every native field before traversal, comparison or wire formatting."""
 
+    action_state = object.__getattribute__(balance, "_action_state")
+    if action_state is not None:
+        from .corporate_actions import _ActionState, _clone_value
+
+        if type(action_state) is not _ActionState:
+            _reject("source_changed")
+        _clone_value(action_state)
     for name, expected in (("schema_version", _SCHEMA_VERSION),
                            ("numeric_policy_version", _NUMERIC_POLICY_VERSION),
                            ("currency", "USD")):
@@ -1458,6 +1506,7 @@ def _verify_balance_native(balance: LedgerBalance) -> tuple[bytes, tuple[object,
 
 def _make_balance(**values: object) -> LedgerBalance:
     balance = object.__new__(LedgerBalance)
+    object.__setattr__(balance, "_action_state", values.get("_action_state"))
     for name in (
         "schema_version", "numeric_policy_version", "run_id", "calendar_id", "currency", "opening_cash",
         "opening_time", "resolution_cutoff", "start_sequence", "cash", "positions", "receivables",
@@ -1534,6 +1583,7 @@ class _LedgerState:
     latest_observation_time: datetime | None
     retained_size: int
     balance: LedgerBalance
+    action_state: object = None
 
 
 def _genesis_hash(
@@ -1619,6 +1669,7 @@ def _balance_from_state(state: _LedgerState, *, event_count: int, next_sequence:
     _decimal_checked(receivables, "money", nonnegative=True)
     _decimal_checked(liabilities, "money", nonnegative=True)
     return _make_balance(
+        _action_state=state.action_state,
         schema_version=_SCHEMA_VERSION,
         numeric_policy_version=_NUMERIC_POLICY_VERSION,
         run_id=state.run_id,
@@ -1656,6 +1707,11 @@ def _clone_balance(balance: LedgerBalance) -> LedgerBalance:
         for name in LedgerBalance.__slots__
         if not name.startswith("_")
     }
+    action_state = object.__getattribute__(balance, "_action_state")
+    if action_state is not None:
+        from .corporate_actions import _clone_value
+
+        values["_action_state"] = _clone_value(action_state)
     for name, record_type in (("obligations", ObligationBalance),
                               ("intent_ownership", IntentOwnership),
                               ("session_cap_ownership", SessionCapOwnership)):
@@ -1717,6 +1773,18 @@ def _event_fill_parts(event: LedgerEvent) -> tuple[OrderIntent, Fill, SessionBin
 
 def _validate_fill_for_state(event: LedgerEvent, state: _LedgerState, owner: _IntentState | None) -> Fill:
     intent, fill, binding, outcome, policy = _event_fill_parts(event)
+    if state.action_state is not None:
+        from .corporate_actions import _get
+
+        action_state = state.action_state
+        instrument = object.__getattribute__(intent, "instrument_id")
+        intent_id = object.__getattribute__(intent, "intent_id")
+        if instrument in _get(action_state, "closed_instruments") or any(_get(c, "intent_id") == intent_id for c in _get(action_state, "cancelled_intents")):
+            _reject("accounting_invalid")
+        boundary = dict(_get(action_state, "split_boundaries")).get(instrument)
+        context = object.__getattribute__(binding, "_context_snapshot")
+        if boundary is not None and object.__getattribute__(context, "decision_time") < boundary:
+            _reject("accounting_invalid")
     quantity = _decimal_checked(object.__getattribute__(intent, "quantity"), "quantity", positive=True)
     cumulative = _ZERO if owner is None else owner.cumulative_quantity
     before = _decimal_checked(object.__getattribute__(fill, "cumulative_quantity_before"), "quantity", nonnegative=True)
@@ -1860,6 +1928,11 @@ def _apply_obligation(
     amount = _decimal_checked(object.__getattribute__(event, "_amount"), "money", positive=True)
     economic_time = _safe_utc(object.__getattribute__(event, "_economic_time"))
     due_at = _safe_utc(object.__getattribute__(event, "_due_at"))
+    if state.action_state is not None:
+        from .corporate_actions import _get
+
+        if any(_get(c, "obligation_id") == obligation_id for c in _get(state.action_state, "claims")):
+            _reject("obligation_invalid")
     prior = obligations.get(obligation_id)
     if kind.endswith("_create"):
         if prior is not None:
@@ -1918,7 +1991,19 @@ def _proposed_state(state: _LedgerState, event: LedgerEvent, canonical: bytes, w
     fees = state.total_fees
     income = state.recognized_income
     expense = state.recognized_expense
-    if kind == "fill":
+    action_state = state.action_state
+    if kind == "action_batch":
+        from .corporate_actions import _reduce_batch
+
+        cash, positions, public_obligations, income, action_state, owned_instruments = _reduce_batch(state.balance, object.__getattribute__(event, "_action_batch"))
+        obligations = {o.obligation_id: _ObligationState(o.obligation_id, o.kind, o.amount_created, o.amount_remaining, o.due_at, o.economic_time) for o in public_obligations}
+        instrument_ids = set(owned_instruments)
+        retained += len(action_state._canonical) + len(action_state._storage)
+        if state.action_state is not None:
+            retained -= len(state.action_state._canonical) + len(state.action_state._storage)
+        if len(positions) > _MAX_INSTRUMENTS or len(instrument_ids) > _MAX_INSTRUMENTS:
+            _reject("resource_limit")
+    elif kind == "fill":
         cash, fees = _apply_fill(
             state, event, positions=positions, intents=intents, cap_slots=cap_slots,
             fill_ids=fill_ids, instrument_ids=instrument_ids,
@@ -1948,7 +2033,7 @@ def _proposed_state(state: _LedgerState, event: LedgerEvent, canonical: bytes, w
         state.run_id, state.calendar_id, state.currency, state.opening_cash, state.opening_time,
         state.resolution_cutoff, state.start_sequence, cash, positions, obligations, income, expense,
         fees, intents, cap_slots, frozenset(fill_ids), frozenset(instrument_ids), event_ids,
-        events, prefixes, state.genesis_hash, economic_time, latest_observation, retained, state.balance,
+        events, prefixes, state.genesis_hash, economic_time, latest_observation, retained, state.balance, action_state,
     )
     balance = _balance_from_state(
         provisional, event_count=events_count, next_sequence=state.start_sequence + events_count,
@@ -1961,7 +2046,7 @@ def _proposed_state(state: _LedgerState, event: LedgerEvent, canonical: bytes, w
         state.run_id, state.calendar_id, state.currency, state.opening_cash, state.opening_time,
         state.resolution_cutoff, state.start_sequence, cash, positions, obligations, income, expense,
         fees, intents, cap_slots, frozenset(fill_ids), frozenset(instrument_ids), event_ids,
-        events, prefixes, state.genesis_hash, economic_time, latest_observation, retained, balance,
+        events, prefixes, state.genesis_hash, economic_time, latest_observation, retained, balance, action_state,
     )
     return next_state
 
@@ -2026,6 +2111,13 @@ class Ledger:
         lock = object.__getattribute__(self, "_lock")
         with lock:
             return _clone_state_snapshot(object.__getattribute__(self, "_state"))
+
+    def action_state(self) -> object:
+        from .corporate_actions import _state
+
+        lock = object.__getattribute__(self, "_lock")
+        with lock:
+            return _state(object.__getattribute__(self, "_state").balance)
 
     def append(self, event: object) -> LedgerBalance:
         lock = object.__getattribute__(self, "_lock")
