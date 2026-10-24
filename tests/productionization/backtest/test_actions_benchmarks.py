@@ -2697,3 +2697,144 @@ def test_bt04_h123_whole_small_series_canonical_baseline(kind: str, size: int, d
     assert len(canonical) == size
     assert hashlib.sha256(canonical).hexdigest() == digest
     assert _bt04_repair_native_digest((policy, sessions)) == before
+
+
+# R2 event boundary: independent event evidence must receive full BT04 proof.
+def _r2_event_evidence_fields(kind: str | None = None) -> tuple[dict[str, Any], Any]:
+    from mytradingalpha.backtest import ledger as ledger_module
+
+    api, seed = _api(), _seed()
+    common = _common(api, end=ENTRY)
+    ordinary_policy = _bh_policy(api, common=common)
+    assert ordinary_policy.canonical_bytes()  # The policy's separate bundle is genuine.
+    if kind is None:
+        case, intent = seed.case, seed.intent
+    else:
+        _forged_policy, kwargs, _leaf = _bt04_repair_coordinated_semantic_forgery(kind)
+        member = kwargs["members"][0]
+        binding = _get_native(member, "binding")
+        intent = _get_native(member, "intent")
+        case = SimpleNamespace(binding=binding,
+            context=object.__getattribute__(binding, "_context_snapshot"),
+            bundle=object.__getattribute__(binding, "_bundle_snapshot"),
+            envelope=object.__getattribute__(binding, "_envelope_snapshot"))
+    outcome = bt02._outcome(seed.api02, case, price=D("100"), session=ENTRY)
+    fill = bt03._make_fill(seed.api02, case, intent=intent, outcome=outcome,
+                          policy=seed.policy, cash=D("2000"), cap=D("1E9"))
+    ledger = bt03._new_ledger(seed.api03, case, opening_cash=D("2000"),
+        resolution_cutoff=_get_native(common, "resolution_cutoff"))
+    event = bt03._fill_event(seed.api03, ledger, intent=intent, fill=fill, case=case,
+        outcome=outcome, policy=seed.policy, event_id="r2-independent-event-evidence")
+    # Real simulation, inherited native capture, and Ledger validation establish
+    # complete linkage before any new BT04 rejection assertion is reached.
+    captured, canonical, witness, retained = ledger_module._capture_event(event)
+    assert captured.canonical_bytes() == canonical == event.canonical_bytes()
+    assert witness and retained > 0
+    balance = ledger.append(event)
+    assert balance.cash == D("1000") and balance.positions == ((INST, D("10")),)
+    assert balance.total_fees == ZERO
+    nav = bt03._nav(seed.api03, balance, case, outcome)
+    assert bt03._result_status(nav) == "available" and nav.value == D("2000")
+    if kind is not None:
+        native_binding = object.__getattribute__(event, "_binding")
+        bundle = object.__getattribute__(native_binding, "_bundle_snapshot")
+        leaf = next(action for action in bundle.actions if type(action) is SplitAction) if kind == "split" else bundle.events[0]
+        with pytest.raises(ValueError):
+            type(leaf).model_validate(leaf.model_dump(mode="python"))
+        assert bundle.bundle_hash != _get_native(ordinary_policy, "universe").bundle_hash
+    return {"status": "available", "run_valid": True, "reason_code": None,
+        "events": (event,), "balances": (balance,), "nav_points": (nav,), "policy": ordinary_policy}, event
+
+
+def _r2_event_resealed_series(fields: dict[str, Any]) -> Any:
+    from mytradingalpha.backtest import benchmarks, corporate_actions
+    from mytradingalpha.backtest.ledger import _capture_event, _jsonable
+
+    genuine_fields, _genuine_event = _r2_event_evidence_fields()
+    # All children used by _value_parts are genuine. The final balance/NAV were
+    # produced by the real Ledger for the independent event, not fabricated.
+    safe_fields = {**fields, "events": genuine_fields["events"]}
+    parts = list(corporate_actions._value_parts(benchmarks.BenchmarkSeries,
+        tuple(safe_fields[name] for name in benchmarks.BenchmarkSeries._fields)))
+    event, canonical, witness, _retained = _capture_event(fields["events"][0])
+    parts[benchmarks.BenchmarkSeries._fields.index("events")] = (
+        (event,), [canonical.decode("utf-8")], [[canonical.decode("utf-8"), _jsonable(witness)]])
+    series = object.__new__(benchmarks.BenchmarkSeries)
+    object.__setattr__(series, "_data", tuple(part[0] for part in parts))
+    object.__setattr__(series, "_canonical", corporate_actions._canonical_json(dict(zip(
+        benchmarks.BenchmarkSeries._fields, (part[1] for part in parts), strict=True))))
+    object.__setattr__(series, "_storage", corporate_actions._DOMAIN + corporate_actions._canonical_json([part[2] for part in parts]))
+    return series
+
+
+@pytest.mark.parametrize("kind", ("split", "unused_event"), ids=("unused-action", "unused-news"))
+@pytest.mark.parametrize("boundary", ("construction", "refresh"))
+def test_bt04_r2_event_unused_evidence_requires_independent_full_proof(kind: str, boundary: str) -> None:
+    from mytradingalpha.backtest import benchmarks
+
+    fields, event = _r2_event_evidence_fields(kind)
+    before = _bt04_repair_native_digest(fields)
+    try:
+        if boundary == "construction":
+            _reject(lambda: benchmarks.BenchmarkSeries(**fields))
+        else:
+            series = _r2_event_resealed_series(fields)
+            series_before = _bt04_repair_native_digest(series)
+            try:
+                _reject(series.canonical_bytes)
+            finally:
+                assert _bt04_repair_native_digest(series) == series_before
+    finally:
+        assert _bt04_repair_native_digest(fields) == before
+        assert event is fields["events"][0]
+
+
+def test_bt04_r2_event_genuine_fill_series_construction_and_refresh_control() -> None:
+    from mytradingalpha.backtest import benchmarks
+
+    fields, event = _r2_event_evidence_fields()
+    before = _bt04_repair_native_digest(fields)
+    series = benchmarks.BenchmarkSeries(**fields)
+    assert series.canonical_bytes() == object.__getattribute__(series, "_canonical")
+    assert _get_native(series, "status") == "available"
+    assert _get_native(series, "balances")[-1].cash == D("1000")
+    assert _get_native(series, "nav_points")[0].value == D("2000")
+    assert _get_native(series, "events")[0].canonical_bytes() == event.canonical_bytes()
+    assert _bt04_repair_native_digest(fields) == before
+
+
+@pytest.mark.parametrize("slot", ("_canonical", "_storage_bytes"))
+def test_bt04_r2_event_original_stored_bytes_change_during_real_proof_rejects_refresh(
+    slot: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mytradingalpha.backtest import benchmarks, corporate_actions
+
+    fields, _event = _r2_event_evidence_fields()
+    series = benchmarks.BenchmarkSeries(**fields)
+    assert series.canonical_bytes()  # Genuine positive control precedes arming.
+    event = _get_native(series, "events")[0]
+    before = _bt04_repair_native_digest(series)
+    original_bytes = object.__getattribute__(event, slot)
+    data_slots = tuple(name for name in type(event).__slots__ if name not in ("_canonical", "_storage_bytes"))
+    data_before = _bt04_repair_native_digest(tuple(object.__getattribute__(event, name) for name in data_slots))
+    original_proof = corporate_actions._pure_bundle
+    calls: list[bool] = []
+
+    def prove_then_change(captured: Any) -> Any:
+        result = original_proof(captured)  # Always execute the real semantic proof.
+        if not calls:
+            object.__setattr__(event, slot, original_bytes + b" ")
+        calls.append(True)
+        return result
+
+    try:
+        with monkeypatch.context() as armed:
+            armed.setattr(corporate_actions, "_pure_bundle", prove_then_change)
+            error = _reject(series.canonical_bytes)
+        assert getattr(error, "reason_code", None) == "source_changed"
+    finally:
+        assert calls, "the real pure bundle validation must run during refresh"
+        assert object.__getattribute__(event, slot) == original_bytes + b" "
+        assert _bt04_repair_native_digest(tuple(object.__getattribute__(event, name) for name in data_slots)) == data_before
+        object.__setattr__(event, slot, original_bytes)
+        assert _bt04_repair_native_digest(series) == before
