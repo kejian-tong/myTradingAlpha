@@ -187,84 +187,12 @@ EXPECTED_EXCLUDED_CAPABILITIES = {
 
 # Complete 0.15.25 -> 0.15.32 source delta, grouped by its frozen disposition.
 EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION = {
-    "version_provenance_only": """
-        .cursor-plugin/plugin.json
-        plugin.json
-    """.split(),
-    "excluded_source_documentation": """
-        README.md
-        docs/guide/01-setup.md
-        docs/guide/02-poteto-mode.md
-        docs/guide/03-understand.md
-        docs/guide/04-design.md
-        docs/guide/05-build-and-clean.md
-        docs/guide/06-verify-and-ship.md
-        docs/guide/07-overnight.md
-        docs/guide/08-principles.md
-        docs/guide/09-make-it-yours.md
-        docs/guide/10-recipes-and-pitfalls.md
-        docs/guide/README.md
-        docs/harness/claude-code.md
-    """.split(),
-    "excluded_pending_separate_scope": """
-        skills/create-formal-verification-skill/SKILL.md
-        skills/ketchup-video/SKILL.md
-        skills/maintain-formal-verification-skill/SKILL.md
-        skills/statechart/SKILL.md
-    """.split(),
-    "selected_source_requires_compatible_review": """
-        skills/ketchup/SKILL.md
-        skills/poteto-mode/SKILL.md
-        skills/sharpen/SKILL.md
-    """.split(),
-    "excluded_existing_allowlist": """
-        skills/make-bot-ui/SKILL.md
-        skills/poteto-help/SKILL.md
-        skills/poteto-help/references/recipes.md
-        skills/reflect/SKILL.md
-        skills/setup-pstack/SKILL.md
-        skills/swarm/SKILL.md
-        skills/typescript-best-practices/SKILL.md
-        skills/typescript-best-practices/references/patterns.md
-    """.split(),
-    "excluded": """
-        skills/poteto-mode/scripts/check-plan.mjs
-        skills/poteto-mode/scripts/check-plan.test.ts
-        skills/poteto-mode/scripts/orch/orch.test.ts
-        skills/poteto-mode/scripts/orch/store.ts
-        skills/poteto-mode/scripts/watch-pr/github.test.ts
-        skills/poteto-mode/scripts/watch-pr/github.ts
-        skills/poteto-mode/scripts/watch-pr/policy.test.ts
-        skills/poteto-mode/scripts/watch-pr/policy.ts
-        skills/poteto-mode/scripts/watch-pr/types.ts
-        skills/poteto-mode/scripts/worktree-audit.sh
-        skills/statechart/scripts/bug-states.mjs
-        skills/statechart/scripts/chart-edges.mjs
-        skills/statechart/scripts/chart-parts.mjs
-        skills/statechart/scripts/chart-to-tla.mjs
-        skills/statechart/scripts/compare-charts.mjs
-        skills/statechart/scripts/lib.mjs
-        skills/statechart/scripts/map-view.mjs
-        skills/statechart/scripts/property-loop.mjs
-        skills/statechart/scripts/read-check.mjs
-        skills/statechart/scripts/regions-chart.mjs
-        skills/statechart/scripts/render.mjs
-        skills/statechart/scripts/rule-book.mjs
-        skills/statechart/scripts/second-replay.mjs
-        skills/statechart/scripts/snapshot.mjs
-        skills/statechart/scripts/spec-text.mjs
-        skills/statechart/scripts/statechart-help.mjs
-        skills/statechart/scripts/statechart.mjs
-        skills/statechart/scripts/test/band.mmd
-        skills/statechart/scripts/test/regions.mmd
-        skills/statechart/scripts/test/statechart.test.mjs
-        skills/statechart/scripts/test/sync.mmd
-        skills/statechart/scripts/test/upload.mmd
-        skills/statechart/scripts/tlc-to-chart-args.mjs
-        skills/statechart/scripts/tlc-to-chart.mjs
-        skills/statechart/scripts/tlc-tools.mjs
-        skills/statechart/scripts/ways-in.mjs
-    """.split(),
+    "version_provenance_only": [".cursor-plugin/plugin.json", "plugin.json"],
+    "excluded_source_documentation": ["README.md", "docs/guide/01-setup.md", "docs/guide/02-poteto-mode.md", "docs/guide/03-understand.md", "docs/guide/04-design.md", "docs/guide/05-build-and-clean.md", "docs/guide/06-verify-and-ship.md", "docs/guide/07-overnight.md", "docs/guide/08-principles.md", "docs/guide/09-make-it-yours.md", "docs/guide/10-recipes-and-pitfalls.md", "docs/guide/README.md", "docs/harness/claude-code.md"],
+    "excluded_pending_separate_scope": ["skills/create-formal-verification-skill/SKILL.md", "skills/ketchup-video/SKILL.md", "skills/maintain-formal-verification-skill/SKILL.md", "skills/statechart/SKILL.md"],
+    "selected_source_requires_compatible_review": ["skills/ketchup/SKILL.md", "skills/poteto-mode/SKILL.md", "skills/sharpen/SKILL.md"],
+    "excluded_existing_allowlist": ["skills/make-bot-ui/SKILL.md", "skills/poteto-help/SKILL.md", "skills/poteto-help/references/recipes.md", "skills/reflect/SKILL.md", "skills/setup-pstack/SKILL.md", "skills/swarm/SKILL.md", "skills/typescript-best-practices/SKILL.md", "skills/typescript-best-practices/references/patterns.md"],
+    "excluded": ["skills/poteto-mode/scripts/check-plan.mjs", "skills/poteto-mode/scripts/check-plan.test.ts", "skills/poteto-mode/scripts/orch/orch.test.ts", "skills/poteto-mode/scripts/orch/store.ts", "skills/poteto-mode/scripts/watch-pr/github.test.ts", "skills/poteto-mode/scripts/watch-pr/github.ts", "skills/poteto-mode/scripts/watch-pr/policy.test.ts", "skills/poteto-mode/scripts/watch-pr/policy.ts", "skills/poteto-mode/scripts/watch-pr/types.ts", "skills/poteto-mode/scripts/worktree-audit.sh", "skills/statechart/scripts/bug-states.mjs", "skills/statechart/scripts/chart-edges.mjs", "skills/statechart/scripts/chart-parts.mjs", "skills/statechart/scripts/chart-to-tla.mjs", "skills/statechart/scripts/compare-charts.mjs", "skills/statechart/scripts/lib.mjs", "skills/statechart/scripts/map-view.mjs", "skills/statechart/scripts/property-loop.mjs", "skills/statechart/scripts/read-check.mjs", "skills/statechart/scripts/regions-chart.mjs", "skills/statechart/scripts/render.mjs", "skills/statechart/scripts/rule-book.mjs", "skills/statechart/scripts/second-replay.mjs", "skills/statechart/scripts/snapshot.mjs", "skills/statechart/scripts/spec-text.mjs", "skills/statechart/scripts/statechart-help.mjs", "skills/statechart/scripts/statechart.mjs", "skills/statechart/scripts/test/band.mmd", "skills/statechart/scripts/test/regions.mmd", "skills/statechart/scripts/test/statechart.test.mjs", "skills/statechart/scripts/test/sync.mmd", "skills/statechart/scripts/test/upload.mmd", "skills/statechart/scripts/tlc-to-chart-args.mjs", "skills/statechart/scripts/tlc-to-chart.mjs", "skills/statechart/scripts/tlc-tools.mjs", "skills/statechart/scripts/ways-in.mjs"],
 }
 EXPECTED_CURRENT_PATH_DISPOSITIONS = {
     path: disposition
@@ -840,7 +768,7 @@ def test_current_change_disposition_is_pinned_and_covers_all_66_paths() -> None:
 
     represented, counts = _represented_current_path_dispositions(current_section)
     assert represented == EXPECTED_CURRENT_PATH_DISPOSITIONS
-    assert counts == {path: 1 for path in EXPECTED_CURRENT_PATH_DISPOSITIONS}
+    assert counts == dict.fromkeys(EXPECTED_CURRENT_PATH_DISPOSITIONS, 1)
 
 
 def test_compatibility_schedule_is_weekly_saturday_at_nine_chicago() -> None:
