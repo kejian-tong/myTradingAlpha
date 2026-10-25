@@ -45,6 +45,10 @@ MAX_RECORD = 64 * 1024 * 1024
 MAX_SOURCE = 2 * 1024 * 1024
 MAX_SOURCES = 16 * 1024 * 1024
 MAX_OPERATIONS = 4096
+_DECIMAL_QUANTA = tuple(
+    Decimal((0, (1,), exponent))
+    for exponent in (0, -2, *(n for n in range(-64, 65) if n not in (0, -2)))
+)
 _FIELDS = (
     "schema_version", "run_id", "correlation_id", "created_at", "bindings", "intents",
     "outcomes", "sessions", "cost_policy", "action_policy", "cash_benchmark_policy",
@@ -430,6 +434,8 @@ def _text(value: object, maximum: int = 65536) -> str:
 
 def _decimal(value: object) -> str:
     if type(value) is not Decimal or not value.is_finite():
+        _fail()
+    if not -64 <= value.adjusted() <= 64 or not any(value.same_quantum(quantum) for quantum in _DECIMAL_QUANTA):
         _fail()
     sign, digits, exponent = value.as_tuple()
     if type(exponent) is not int or len(digits) > 128 or not -64 <= exponent <= 64:
