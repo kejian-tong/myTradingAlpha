@@ -21,24 +21,23 @@ Bounded snapshot, not a chronological log; GitHub/current `main` is authoritativ
 
 ## BT-05 current recovery
 
-- exact base/main and tree above. JIT6381289594/6382054926/6386576083/6387965520/6388312641; int6386046726; REDs3f3dec8/490690e/e35d3c5/a258190
-- Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master configured Sol/xhigh; native Sol/max is distinct. Isolation unauthenticated.
-- Scope: BT05 replay/hashes/seals/recovery; BT01-04 preserved; BT06/Phase04+ deferred.
-- RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`:188expected failures/4fixture passes; log `00c87380bd908427c0e4b1c7c83f3ce116ac7a841b9f6b7454cccaa268ab1e53`; released RED lease6/digest `89827d9959f6f6a45be425d6740870689c85a37098ccc7f9c7b8fdaf1c6fed70`.
-- P1/P2/root/M1 target GREEN; final validation/review/CI/Master gate pending.
-- Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 goldens pending. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
+- exact base/main and tree above; repair base `81b7babd5a9efb057e4e28a0024e29ab286b97c9`; PR104 only.
+- Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh plus fresh boundary review. Configuration does not authenticate isolation.
+- BT05 only; signatures/hash domains/artifacts and BT01-04 preserved; BT06/Phase04+ deferred.
+- Original RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463` and P1/P2/root/M1 history: PR104. JIT6400719037, boundary6400718742, reservation6400933890.
+- Performance RED `46cc19a0ca0732aa8fa34fb852269a5ac5b3619c`/6400900347:9 expected failures/8 controls. All260 old cases unchanged. Append-only PID cleanup preserves277 bodies/assertions; detached RED3 expected failures/0 errors.
+- Performance GREEN:17 passed/260 deselected in463.71s. Exact frozen-head validation, reviews and CI remain pending. Guard regressions:23 passed; interrupted/timed-out suites are not passes.
+- Three-day diagnostic:12 operations/3 events; cold Ledger22/Fill4, warm0/0; identical hashes/files. Charge11012755+work35109746 fits48MiB; diagnostic only.
+- Optional pools total64MiB/8: benchmark16MiB/4 plus trace48MiB/4 with copy/codec work. Explicit limits stay cold; no reducer restoration or omitted guards/link/fsync.
+- CI40122805672 exceeded6h; canceled jobs are not passes. Every unchanged crash cut, full validation, installed-origin smoke, five-version CI and exact-head independent reviews remain mandatory.
+- Master owns lease release and merge; GREEN lease f677a79b remains active; no merge approval.
+- Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 pending. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
 
 ## BT-04 completed recovery
 
-- PR100 source `e774641c1a4a4052bc8fdf40261c7ed37654335a`, merge `9f80cbdf7af9029bbe431acde66ef67b1b60a0ad`; APPROVE6380274387, Master gate6380292548, completion6380324398. Prior RED/WITNESS/rejections below are historical.
-
-- Original roadmap base/tree retained above. JIT6185548770/resume6377217718/boundary6185549025; financial RED `63af09fc10a5053fe282fcee0fc921363355f532`, ingress RED `d860c482ec753a60092195db9f96cc5c88cc50ff`, recovery RED `7c11cce2a4b914c8a98fe0f28552259eb793cdf1`.
-- Difficult route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master/boundary Sol/xhigh; attestation unavailable.
+- PR100 source `e774641c1a4a4052bc8fdf40261c7ed37654335a`, merge `9f80cbdf7af9029bbe431acde66ef67b1b60a0ad`; APPROVE6380274387, Master gate6380292548, completion6380324398. Closed RED, rejected-candidate, repair, lease and validation history remains durable in PR100.
+- Original roadmap base/tree retained above. Difficult route `sol_high_sol_xhigh`: `high_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master/boundary Sol/xhigh; attestation unavailable.
 - Scope: offline actions and independent Cash/B&H; additive ledger/accounting.
-
-- WITNESS `980883b33cd17ad649770b1950f628bd78ce3ced`; rejected `2dbcd18e164fd103eaea820b6a1d10a5f7f5c516`/review6377635203; H1-H3 WITNESS `addb3487b284ab9a535bb0b573c306cb59c0faba` unaccepted. Prior leases released; fresh leases required.
-- E1-E5/ingress/cold Ledger passed. H1-H3 JIT6377689712/RED `3b4642c2dbc697185fe263603c3a4f6eda0e4b83`:60targeted and genuine8x16 passed at12818353bytes, unchanged cap. R2 JIT6378597278/RED `45ddd41b7519ede7dad4bca3d81ae95f8ffade60`.
-- F1 rejected `0e271f81ad3378ac744ce71767cbe93c867e0282`; repair JIT6379111848/RED `e92eb2c09ef60cc163eb36dc309d8f78bb542243`. Interrupted suites are not passes.
 
 ## BT-03 completed recovery
 

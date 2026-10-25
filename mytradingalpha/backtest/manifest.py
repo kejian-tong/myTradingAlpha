@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -62,6 +63,10 @@ _ORDER_FIELDS = ("intent_id", "remaining_quantity", "cumulative_quantity", "cumu
 _BLOB_KEYS = frozenset(("canonical_utf8", "native_witness", "native_inputs", "ledger_native_witness", "event_native_witness"))
 _HEAVY_LIMIT = 64 * 1024 * 1024
 _HEAVY_ENTRIES = 8
+_BENCHMARK_LIMIT = 16 * 1024 * 1024
+_BENCHMARK_ENTRIES = 4
+_TRACE_LIMIT = 48 * 1024 * 1024
+_TRACE_ENTRIES = 4
 
 
 class _IssuerRecord(NamedTuple):
@@ -69,6 +74,7 @@ class _IssuerRecord(NamedTuple):
     facts: tuple[bytes, ...]
     benchmark_digest: bytes | None = None
     corrupt: bool = False
+    trace_digest: bytes | None = None
 
 
 @dataclass(slots=True)
@@ -79,6 +85,34 @@ class _BenchmarkEntry:
     canonical: tuple[bytes, bytes]
     charge: int
     nodes: int
+    process_id: int
+    pins: int = 0
+
+
+class _BenchmarkUse(NamedTuple):
+    entry: _BenchmarkEntry
+    process_id: int
+    work: int
+    reference: weakref.ReferenceType
+
+
+@dataclass(slots=True)
+class _TraceEntry:
+    reference: weakref.ReferenceType
+    facts: tuple
+    process_id: int
+    schema: str
+    semantic: str
+    exact: str
+    operations: tuple
+    checkpoints: tuple
+    wire: object
+    result: object
+    native: bytes
+    graph_charge: int
+    nodes: int
+    charge: int
+    work: int
     pins: int = 0
 
 
@@ -91,19 +125,56 @@ _BENCHMARKS: OrderedDict[int, _BenchmarkEntry] = OrderedDict()
 _RETAINED_BYTES = 0
 _WORK_BYTES = 0
 _WORK_COUNT = 0
+_PROCESS_ID = os.getpid()
+_TRACES: OrderedDict[int, _TraceEntry] = OrderedDict()
+_TRACE_BYTES = 0
+_TRACE_WORK_BYTES = 0
+_TRACE_WORK_COUNT = 0
+
+
+def _process() -> int:
+    """A child replaces process-local locks before acquiring any inherited lock."""
+    global _PROCESS_ID, _ISSUER_LOCK, _ISSUERS, _CONSTRUCTING, _BENCHMARKS, _TRACES
+    global _RETAINED_BYTES, _WORK_BYTES, _WORK_COUNT
+    global _TRACE_BYTES, _TRACE_WORK_BYTES, _TRACE_WORK_COUNT
+    current = os.getpid()
+    if type(current) is not int or current <= 0 or type(_PROCESS_ID) is not int:
+        _fail()
+    if current != _PROCESS_ID:
+        retained = {}
+        for key, record in tuple(_ISSUERS.items()):
+            if type(record) is not _IssuerRecord or type(record.reference) is not weakref.ReferenceType or type(record.corrupt) is not bool:
+                _fail()
+            if type(record.facts) is not tuple or len(record.facts) != 6 or any(type(fact) is not bytes or len(fact) != 32 for fact in record.facts):
+                _fail()
+            owner = record.reference()
+            if owner is not None:
+                if type(owner) is not ReplayManifest or key != id(owner):
+                    _fail()
+                retained[key] = record._replace(benchmark_digest=None, trace_digest=None)
+        _ISSUER_LOCK = Condition(RLock())
+        _PROCESS_ID = current
+        _ISSUERS, _CONSTRUCTING = retained, {}
+        _BENCHMARKS, _TRACES = OrderedDict(), OrderedDict()
+        _RETAINED_BYTES = _WORK_BYTES = _WORK_COUNT = 0
+        _TRACE_BYTES = _TRACE_WORK_BYTES = _TRACE_WORK_COUNT = 0
+    return current
 
 
 def _remove_entry(entry: _BenchmarkEntry) -> None:
     global _RETAINED_BYTES
     key = id(entry.reference)
-    if _BENCHMARKS.get(key) is entry:
-        del _BENCHMARKS[key]
-        _RETAINED_BYTES -= entry.charge
+    if _BENCHMARKS.get(key) is not entry:
+        _fail()
+    del _BENCHMARKS[key]
+    _RETAINED_BYTES -= entry.charge
 
 
 def _weak_cleanup(owner_id: int, reference: weakref.ReferenceType) -> None:
+    _process()
     if type(owner_id) is not int or type(reference) is not weakref.ReferenceType or reference() is not None:
         return
+    _process()
     with _ISSUER_LOCK:
         record = _ISSUERS.get(owner_id)
         if record is not None and record.reference is reference:
@@ -112,26 +183,60 @@ def _weak_cleanup(owner_id: int, reference: weakref.ReferenceType) -> None:
         if pending is not None and pending[0] is reference:
             del _CONSTRUCTING[owner_id]
         entry = _BENCHMARKS.get(id(reference))
-        if entry is not None and entry.reference is reference and entry.pins == 0:
-            _remove_entry(entry)
+        if entry is not None:
+            _admit_benchmark(entry)
+            if entry.reference is reference and entry.pins == 0:
+                _remove_entry(entry)
+        trace = _TRACES.get(id(reference))
+        if trace is not None:
+            if type(trace) is not _TraceEntry:
+                _fail()
+            if type(trace.pins) is not int or type(trace.charge) is not int or trace.pins < 0 or not 0 < trace.charge <= _TRACE_LIMIT:
+                _fail()
+            if trace.reference is reference and trace.pins == 0:
+                _remove_trace(trace)
         _ISSUER_LOCK.notify_all()
 
 
 def _issuer(owner: ReplayManifest) -> _IssuerRecord:
+    _process()
     if type(owner) is not ReplayManifest:
         _fail()
+    _process()
     with _ISSUER_LOCK:
         record = _ISSUERS.get(id(owner))
-        if type(record) is not _IssuerRecord or type(record.reference) is not weakref.ReferenceType or record.reference() is not owner or record.corrupt:
+        if type(record) is not _IssuerRecord or type(record.reference) is not weakref.ReferenceType or type(record.corrupt) is not bool:
+            _fail()
+        if type(record.facts) is not tuple or len(record.facts) != 6 or any(type(fact) is not bytes or len(fact) != 32 for fact in record.facts):
+            _fail()
+        if any(value is not None and (type(value) is not bytes or len(value) != 32) for value in (record.benchmark_digest, record.trace_digest)):
+            _fail()
+        if record.reference() is not owner or record.corrupt:
             _fail()
         return record
 
 
 def _pool_check() -> None:
-    if len(_BENCHMARKS) + _WORK_COUNT > _HEAVY_ENTRIES or _RETAINED_BYTES + _WORK_BYTES > _HEAVY_LIMIT:
+    if any(type(value) is not int for value in (_RETAINED_BYTES, _WORK_BYTES, _WORK_COUNT, _TRACE_BYTES, _TRACE_WORK_BYTES, _TRACE_WORK_COUNT)):
+        _fail()
+    if type(_BENCHMARKS) is not OrderedDict or type(_TRACES) is not OrderedDict:
+        _fail()
+    if len(_BENCHMARKS) + _WORK_COUNT > _BENCHMARK_ENTRIES or _RETAINED_BYTES + _WORK_BYTES > _BENCHMARK_LIMIT:
+        _fail()
+    if len(_TRACES) + _TRACE_WORK_COUNT > _TRACE_ENTRIES or _TRACE_BYTES + _TRACE_WORK_BYTES > _TRACE_LIMIT:
+        _fail()
+    if min(_TRACE_BYTES, _TRACE_WORK_BYTES, _TRACE_WORK_COUNT) < 0:
         _fail()
     if min(_RETAINED_BYTES, _WORK_BYTES, _WORK_COUNT) < 0:
         _fail()
+
+
+def _remove_trace(entry: _TraceEntry) -> None:
+    global _TRACE_BYTES
+    if _TRACES.get(id(entry.reference)) is not entry:
+        _fail()
+    del _TRACES[id(entry.reference)]
+    _TRACE_BYTES -= entry.charge
 
 
 def _poison(entry: _BenchmarkEntry) -> None:
@@ -142,26 +247,37 @@ def _poison(entry: _BenchmarkEntry) -> None:
             _ISSUERS[id(owner)] = record._replace(corrupt=True)
 
 
-def _check_entry(entry: _BenchmarkEntry) -> None:
+def _admit_benchmark(entry: _BenchmarkEntry) -> None:
     if type(entry) is not _BenchmarkEntry or type(entry.reference) is not weakref.ReferenceType:
         _fail()
+    if any(type(value) is not int for value in (entry.charge, entry.nodes, entry.pins, entry.process_id)):
+        _fail()
+    if not 0 < entry.charge <= _BENCHMARK_LIMIT or not 0 < entry.nodes <= 1_000_000 or not 0 <= entry.pins <= _BENCHMARK_ENTRIES or entry.process_id <= 0:
+        _fail()
+    if type(entry.native) is not bytes or len(entry.native) != 32 or type(entry.canonical) is not tuple or len(entry.canonical) != 2:
+        _fail()
+    if any(type(raw) is not bytes or len(raw) > _BENCHMARK_LIMIT for raw in entry.canonical) or type(entry.values) is not tuple or len(entry.values) != 2 or any(type(value) is not _bench.BenchmarkSeries for value in entry.values):
+        _fail()
+
+
+def _check_entry(entry: _BenchmarkEntry) -> None:
+    _admit_benchmark(entry)
     owner = entry.reference()
     if owner is None:
         _fail()
     record = _issuer(owner)
-    if type(entry.native) is not bytes or len(entry.native) > _HEAVY_LIMIT or type(entry.canonical) is not tuple or len(entry.canonical) != 2:
+    if type(entry.native) is not bytes or len(entry.native) > _BENCHMARK_LIMIT or type(entry.canonical) is not tuple or len(entry.canonical) != 2:
         _fail()
-    if any(type(raw) is not bytes or len(raw) > _HEAVY_LIMIT for raw in entry.canonical):
+    if any(type(raw) is not bytes or len(raw) > _BENCHMARK_LIMIT for raw in entry.canonical):
         _fail()
-    if type(entry.charge) is not int or not 0 < entry.charge <= _HEAVY_LIMIT or type(entry.nodes) is not int or not 0 < entry.nodes <= 1_000_000:
+    if type(entry.charge) is not int or not 0 < entry.charge <= _BENCHMARK_LIMIT or type(entry.nodes) is not int or not 0 < entry.nodes <= 1_000_000 or entry.process_id != _process():
         _fail()
-    if record.benchmark_digest != hashlib.sha256(entry.native).digest():
+    if record.benchmark_digest != _benchmark_digest(entry.native, entry.canonical, entry.charge, entry.nodes):
         _poison(entry)
         _fail()
     try:
-        current = _encode_native(_native(entry.values))
-        canonical = tuple(object.__getattribute__(value, "_canonical") for value in entry.values)
-        if current != entry.native or canonical != entry.canonical:
+        current, canonical, charge, nodes = _benchmark_measurement(entry.values)
+        if (current, canonical, charge, nodes) != (entry.native, entry.canonical, entry.charge, entry.nodes):
             _fail()
     except Exception:
         _poison(entry)
@@ -170,7 +286,11 @@ def _check_entry(entry: _BenchmarkEntry) -> None:
 
 def _evict_one(excluded: int | None = None) -> bool:
     global _WORK_BYTES, _WORK_COUNT
+    process_id = _process()
     for key, entry in tuple(_BENCHMARKS.items()):
+        _admit_benchmark(entry)
+        if type(key) is not int or key != id(entry.reference):
+            _fail()
         if key == excluded or entry.pins:
             continue
         if entry.reference() is None:
@@ -178,7 +298,7 @@ def _evict_one(excluded: int | None = None) -> bool:
             return True
         # Verify before eviction: corrupted evidence is never an ordinary miss.
         work = 2 * entry.charge
-        if _RETAINED_BYTES + _WORK_BYTES + work > _HEAVY_LIMIT or len(_BENCHMARKS) + _WORK_COUNT + 1 > _HEAVY_ENTRIES:
+        if _RETAINED_BYTES + _WORK_BYTES + work > _BENCHMARK_LIMIT or len(_BENCHMARKS) + _WORK_COUNT + 1 > _BENCHMARK_ENTRIES:
             continue
         _WORK_BYTES += work
         _WORK_COUNT += 1
@@ -188,14 +308,16 @@ def _evict_one(excluded: int | None = None) -> bool:
             _remove_entry(entry)
             return True
         finally:
-            _WORK_BYTES -= work
-            _WORK_COUNT -= 1
-            _ISSUER_LOCK.notify_all()
+            if _process() == process_id:
+                _WORK_BYTES -= work
+                _WORK_COUNT -= 1
+                _ISSUER_LOCK.notify_all()
     return False
 
 
-def _pin_benchmarks(owner: ReplayManifest) -> _BenchmarkEntry | None:
+def _pin_benchmarks(owner: ReplayManifest) -> _BenchmarkUse | None:
     global _WORK_BYTES, _WORK_COUNT
+    _process()
     with _ISSUER_LOCK:
         while True:
             record = _issuer(owner)
@@ -203,30 +325,41 @@ def _pin_benchmarks(owner: ReplayManifest) -> _BenchmarkEntry | None:
             entry = _BENCHMARKS.get(key)
             if entry is None:
                 return None
+            _admit_benchmark(entry)
+            if entry.pins > _WORK_COUNT:
+                _fail()
             if entry.reference is not record.reference or entry.reference() is not owner:
                 _fail()
             work = 2 * entry.charge
-            if _RETAINED_BYTES + _WORK_BYTES + work <= _HEAVY_LIMIT and len(_BENCHMARKS) + _WORK_COUNT + 1 <= _HEAVY_ENTRIES:
+            if _RETAINED_BYTES + _WORK_BYTES + work <= _BENCHMARK_LIMIT and len(_BENCHMARKS) + _WORK_COUNT + 1 <= _BENCHMARK_ENTRIES:
                 entry.pins += 1
                 _WORK_BYTES += work
                 _WORK_COUNT += 1
                 _BENCHMARKS.move_to_end(key)
                 _pool_check()
-                return entry
+                return _BenchmarkUse(entry, _PROCESS_ID, work, record.reference)
             if not _evict_one(key):
-                entry = None  # Do not retain an unaccounted graph while waiting.
-                _ISSUER_LOCK.wait()
+                if not _WORK_COUNT:
+                    _fail()  # Every retained entry was admitted with usable workspace.
+                return None  # No retained proof is consumed without workspace.
 
 
-def _unpin_benchmarks(entry: _BenchmarkEntry) -> None:
+def _unpin_benchmarks(use: _BenchmarkUse) -> None:
     global _WORK_BYTES, _WORK_COUNT
+    entry = use.entry
+    if _process() != use.process_id:
+        return  # An inherited in-flight reader owns no child reservation.
+    _process()
     with _ISSUER_LOCK:
-        if entry.pins <= 0 or _BENCHMARKS.get(id(entry.reference)) is not entry:
+        _pool_check()
+        if _BENCHMARKS.get(id(use.reference)) is not entry:
             _fail()
-        entry.pins -= 1
-        _WORK_BYTES -= 2 * entry.charge
+        # Cleanup uses the immutable reservation, even if verification detected
+        # corrupt mutable entry metadata. No corrupted arithmetic runs here.
+        entry.pins = max(0, entry.pins - 1) if type(entry.pins) is int else 0
+        _WORK_BYTES -= use.work
         _WORK_COUNT -= 1
-        if entry.pins == 0 and entry.reference() is None:
+        if entry.pins == 0 and use.reference() is None:
             _remove_entry(entry)
         _pool_check()
         _ISSUER_LOCK.notify_all()
@@ -234,6 +367,7 @@ def _unpin_benchmarks(entry: _BenchmarkEntry) -> None:
 
 def _reserve_benchmark_build(owner: ReplayManifest) -> bool:
     global _WORK_BYTES, _WORK_COUNT
+    _process()
     with _ISSUER_LOCK:
         while True:
             record = _issuer(owner)
@@ -242,18 +376,21 @@ def _reserve_benchmark_build(owner: ReplayManifest) -> bool:
             # A cold builder reserves the complete worst-case evidence budget.
             # This deliberately favours boundedness over concurrent cold builds.
             if _RETAINED_BYTES + _WORK_BYTES == 0 and _WORK_COUNT == 0:
-                _WORK_BYTES = _HEAVY_LIMIT
+                _WORK_BYTES = _BENCHMARK_LIMIT
                 _WORK_COUNT = 1
                 _pool_check()
                 return True
             if not _evict_one():
-                _ISSUER_LOCK.wait()
+                return False  # Optional collection never waits on an active reader.
 
 
-def _release_benchmark_build() -> None:
+def _release_benchmark_build(process_id: int) -> None:
     global _WORK_BYTES, _WORK_COUNT
+    if _process() != process_id:
+        return
+    _process()
     with _ISSUER_LOCK:
-        _WORK_BYTES -= _HEAVY_LIMIT
+        _WORK_BYTES -= _BENCHMARK_LIMIT
         _WORK_COUNT -= 1
         _pool_check()
         _ISSUER_LOCK.notify_all()
@@ -544,14 +681,52 @@ class _Budget:
         if self.bytes > MAX_RECORD:
             _fail()
 
+    def string(self, value: str) -> None:
+        self.charge(len(value.encode("utf-8")))
+
 
 class _CacheBudget(_Budget):
     __slots__ = ()
 
     def charge(self, size: int) -> None:
         self.bytes += size
-        if self.bytes > _HEAVY_LIMIT:
+        if self.bytes > _BENCHMARK_LIMIT:
             raise _CacheCapacity()
+
+    def string(self, value: str) -> None:
+        # Private cache copies admit the widest built-in Unicode storage and
+        # its temporary UTF-8 encoding. Public native admission is unchanged.
+        self.charge(8 * len(value))
+
+
+def _cache_native_digest(tree: object, budget: _Budget) -> bytes:
+    _json_admission(tree, MAX_RECORD)
+    stack, longest = [tree], 0
+    while stack:
+        value = stack.pop()
+        if type(value) is str:
+            longest = max(longest, len(value))
+        elif type(value) is dict:
+            stack.extend(value.keys())
+            stack.extend(value.values())
+        elif type(value) is list or type(value) is tuple:
+            stack.extend(value)
+    # An encoded string chunk has at most six characters per input character;
+    # charge its widest str storage, UTF-8 copy and bounded encoder frames.
+    budget.charge(32 * longest + 4096)
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    for chunk in encoder.iterencode(tree):
+        digest.update(chunk.encode("utf-8"))
+    return digest.digest()
+
+
+def _benchmark_digest(native: bytes, canonical: tuple, charge: int, nodes: int) -> bytes:
+    digest = hashlib.sha256(b"bt05-private-benchmark-v2\0")
+    digest.update(_json((charge, nodes)))
+    for raw in (native, *canonical):
+        digest.update(hashlib.sha256(raw).digest())
+    return digest.digest()
 
 
 def _benchmark_measurement(values: tuple) -> tuple[bytes, tuple, int, int]:
@@ -563,9 +738,8 @@ def _benchmark_measurement(values: tuple) -> tuple[bytes, tuple, int, int]:
     if any(type(raw) is not bytes or len(raw) > MAX_RECORD for raw in canonical):
         _fail()
     budget.charge(sum(len(raw) for raw in canonical) + 128)
-    # Charge the complete additional native encoding before allocating it.
-    budget.charge(_json_admission(tree, MAX_RECORD))
-    return _encode_native(tree), canonical, budget.bytes, budget.nodes
+    native = _cache_native_digest(tree, budget)
+    return native, canonical, budget.bytes, budget.nodes
 
 
 def _verify_origin(owner: ReplayManifest, facts: tuple) -> None:
@@ -590,26 +764,30 @@ def _verify_origin(owner: ReplayManifest, facts: tuple) -> None:
         _fail()
 
 
-def _copy_benchmark_entry(owner: ReplayManifest, entry: _BenchmarkEntry) -> tuple:
+def _copy_benchmark_entry(owner: ReplayManifest, use: _BenchmarkUse) -> tuple:
+    entry = use.entry
     try:
         owner._refresh()
+        _process()
         with _ISSUER_LOCK:
             if entry.reference() is not owner:
                 _fail()
             _check_entry(entry)
         values = tuple(_actions._clone_value(value) for value in entry.values)
-        if _encode_native(_native(values)) != entry.native:
+        if _benchmark_measurement(values) != (entry.native, entry.canonical, entry.charge, entry.nodes):
             _fail()
+        _process()
         with _ISSUER_LOCK:
             _check_entry(entry)
         owner._refresh()
         return values
     except Exception:
+        _process()
         with _ISSUER_LOCK:
             _poison(entry)
         _fail()
     finally:
-        _unpin_benchmarks(entry)
+        _unpin_benchmarks(use)
 
 
 def _native(value: object, budget: _Budget | None = None, depth: int = 0) -> object:
@@ -624,7 +802,7 @@ def _native(value: object, budget: _Budget | None = None, depth: int = 0) -> obj
         return value
     if kind is str:
         text = _text(value)
-        budget.charge(len(text.encode("utf-8")))
+        budget.string(text)
         return text
     if kind is int:
         if value.bit_length() > 256:
@@ -946,6 +1124,7 @@ class ReplayManifest:
         owner = object.__new__(cls)
         owner_id = id(owner)
         reference = weakref.ref(owner, lambda reference, owner_id=owner_id: _weak_cleanup(owner_id, reference))
+        _process()
         with _ISSUER_LOCK:
             old = _ISSUERS.get(owner_id)
             if old is not None:
@@ -956,6 +1135,7 @@ class ReplayManifest:
         return owner
 
     def __init__(self, **fields: object) -> None:
+        _process()
         with _ISSUER_LOCK:
             pending = _CONSTRUCTING.get(id(self))
             if type(self) is not ReplayManifest or id(self) in _ISSUERS or pending is None or pending[0]() is not self or pending[1]:
@@ -965,6 +1145,7 @@ class ReplayManifest:
         try:
             facts = self._initialize(fields)
             _verify_origin(self, facts)
+            _process()
             with _ISSUER_LOCK:
                 current = _CONSTRUCTING.get(id(self))
                 if current is None or current[0] is not reference or not current[1] or id(self) in _ISSUERS:
@@ -973,6 +1154,7 @@ class ReplayManifest:
                 _ISSUERS[id(self)] = _IssuerRecord(reference, facts)
                 del _CONSTRUCTING[id(self)]
         except BaseException:
+            _process()
             with _ISSUER_LOCK:
                 current = _CONSTRUCTING.get(id(self))
                 if current is not None and current[0] is reference:
@@ -980,6 +1162,7 @@ class ReplayManifest:
             raise
 
     def _initialize(self, fields: dict) -> tuple[bytes, ...]:
+        _process()
         with _ISSUER_LOCK:
             pending = _CONSTRUCTING.get(id(self))
             if id(self) in _ISSUERS or pending is None or pending[0]() is not self or not pending[1]:
@@ -1172,26 +1355,28 @@ class ReplayManifest:
     def _benchmarks(self) -> tuple:
         global _RETAINED_BYTES, _WORK_BYTES, _WORK_COUNT
         self._refresh()
-        while True:
-            entry = _pin_benchmarks(self)
-            if entry is not None:
-                return _copy_benchmark_entry(self, entry)
-            if _reserve_benchmark_build(self):
-                break
-        reserved = True
+        process_id = _process()
+        entry = _pin_benchmarks(self)
+        if entry is not None:
+            return _copy_benchmark_entry(self, entry)
+        reserved = _reserve_benchmark_build(self)
         try:
             self._refresh()
             runner = _bench.BenchmarkRunner()
             values = (runner.run_cash(_mget(self, "sessions"), policy=_mget(self, "cash_benchmark_policy")),
                       runner.run_buy_and_hold(_mget(self, "sessions"), policy=_mget(self, "buy_and_hold_policy")))
             self._refresh()
+            if not reserved:
+                return values
             try:
                 native, canonical, charge, nodes = _benchmark_measurement(values)
             except _CacheCapacity:
                 # Genuine bounded cold validation conveys no retained proof graph.
                 self._refresh()
                 return values
-            digest = hashlib.sha256(native).digest()
+            digest = _benchmark_digest(native, canonical, charge, nodes)
+            if _process() != process_id:
+                _fail()
             with _ISSUER_LOCK:
                 record = _issuer(self)
                 if record.benchmark_digest is not None and record.benchmark_digest != digest:
@@ -1200,18 +1385,18 @@ class ReplayManifest:
                 # Caller-supplied proof facts cannot reach this issuance point.
                 # Both trusted runners and all fresh/completion guards finished.
                 _ISSUERS[id(self)] = record._replace(benchmark_digest=digest)
-                if 3 * charge <= _HEAVY_LIMIT:
-                    entry = _BenchmarkEntry(record.reference, values, native, canonical, charge, nodes, pins=1)
+                if 3 * charge <= _BENCHMARK_LIMIT:
+                    entry = _BenchmarkEntry(record.reference, values, native, canonical, charge, nodes, process_id, pins=1)
                     _BENCHMARKS[id(record.reference)] = entry
                     _RETAINED_BYTES += charge
-                    _WORK_BYTES += 2 * charge - _HEAVY_LIMIT
+                    _WORK_BYTES += 2 * charge - _BENCHMARK_LIMIT
                     reserved = False
                     _pool_check()
                     _ISSUER_LOCK.notify_all()
                 else:
                     entry = None
             if entry is not None:
-                return _copy_benchmark_entry(self, entry)
+                return _copy_benchmark_entry(self, _BenchmarkUse(entry, process_id, 2 * charge, record.reference))
             # No module-owned graph is retained on the genuine cold path.
             self._refresh()
             return values
@@ -1219,7 +1404,7 @@ class ReplayManifest:
             _fail()
         finally:
             if reserved:
-                _release_benchmark_build()
+                _release_benchmark_build(process_id)
 
     def economic_bytes(self, events: tuple, results: tuple) -> bytes:
         self._refresh()

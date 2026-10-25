@@ -99,7 +99,7 @@ def test_operational_state_tracks_authorized_bt05_and_completed_bt04_bt03_bt02_b
     assert "critical_implementer` / GPT-6.1 Sol / xhigh" in current_recovery
     assert "reviewer_xhigh` / GPT-6.1 Sol / xhigh" in current_recovery
     assert "41d6801bd3854b9ee54d3bf8bb996e2e3b195463" in current_recovery
-    assert "P1/P2/root/M1 target GREEN; final validation/review/CI/Master gate pending" in current_recovery
+    assert "Exact frozen-head validation, reviews and CI remain pending" in current_recovery
 
     bt04_recovery = state.split("## BT-04 completed recovery", maxsplit=1)[-1].split(
         "## BT-03 completed recovery", maxsplit=1

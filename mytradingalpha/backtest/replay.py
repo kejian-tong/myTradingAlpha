@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import stat
+import zlib
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from pathlib import PosixPath
@@ -17,6 +18,7 @@ from . import (
     corporate_actions as _actions,
     fills as _fills,
     ledger as _ledger,
+    manifest as _authority,
     nav as _nav,
 )
 from .manifest import (
@@ -237,6 +239,423 @@ class ReplayResult:
     @property
     def results(self) -> tuple:
         return (*self.balances, *self.nav_points, *self.orders, self.cash_benchmark, self.buy_and_hold_benchmark)
+
+
+_TRACE_SCHEMA = "bt05-private-completed-trace-v1"
+_CODEC_WORK = 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _Packed:
+    size: int
+    compressed: bytes
+    digest: bytes
+    work: int
+
+
+def _packed_admit(row: object) -> None:
+    if type(row) is not _Packed:
+        _fail()
+    if type(row.size) is not int or not 0 < row.size <= MAX_RECORD or type(row.work) is not int or not 0 < row.work <= _authority._TRACE_LIMIT:
+        _fail()
+    if type(row.compressed) is not bytes or not 0 < len(row.compressed) <= _authority._TRACE_LIMIT or type(row.digest) is not bytes or len(row.digest) != 32:
+        _fail()
+
+
+def _unpack(row: _Packed, maximum: int = MAX_RECORD) -> tuple[bytes, object]:
+    _packed_admit(row)
+    if row.size > maximum:
+        _fail()
+    try:
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(row.compressed, row.size + 1)
+        if len(raw) != row.size or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+            _fail()
+    except zlib.error:
+        _fail()
+    if hashlib.sha256(raw).digest() != row.digest:
+        _fail()
+    return raw, _decode(raw, maximum)
+
+
+def _wire_work(raw: bytes) -> int:
+    # Cover raw/decoded/canonical strings and their encoded copies. Count every
+    # non-string punctuation/value byte as a node: this overcounts decoded
+    # containers, keys and scalar nodes without allocating a decoded graph.
+    quoted = escaped = False
+    tokens = wide = start = 0
+    width = global_width = 1
+    for offset, byte in enumerate(raw):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                quoted = False
+                wide += (width - 1) * (offset - start)
+            elif byte >= 0xC4:
+                width = max(width, 4 if byte >= 0xF0 else 2)
+                global_width = max(global_width, width)
+        else:
+            if byte not in (9, 10, 13, 32):
+                tokens += 1
+            if byte == 34:
+                quoted = True
+                width, start = 1, offset
+    return (6 + 2 * (global_width - 1)) * len(raw) + wide + 128 * tokens
+
+
+class _TraceBudget(_authority._Budget):
+    __slots__ = ("limit",)
+
+    def __init__(self, limit: int) -> None:
+        super().__init__()
+        self.limit = limit
+
+    def charge(self, size: int) -> None:
+        self.bytes += size
+        if self.bytes > self.limit:
+            raise _authority._CacheCapacity()
+
+    def string(self, value: str) -> None:
+        self.charge(8 * len(value))
+
+
+def _trace_measure(result: ReplayResult, limit: int) -> tuple[bytes, int, int]:
+    if type(result) is not ReplayResult or type(result.checkpoint) is not ReplayCheckpoint:
+        _fail()
+    if any(type(value) is not bool for value in (result.run_valid, result.completed)):
+        _fail()
+    if type(result.status) is not str or result.status not in ("available", "unavailable") or result.reason_code is not None and type(result.reason_code) is not str:
+        _fail()
+    raw = result.checkpoint.canonical_bytes()
+    seal = object.__getattribute__(result.checkpoint, "_seal")
+    if len(raw) > _authority.MAX_SOURCES:
+        raise _authority._CacheCapacity()
+    budget = _TraceBudget(limit)
+    # This private witness includes every ReplayResult field and both checkpoint
+    # slots. ReplayResult is deliberately absent from the public projection types.
+    tree = _native((result.events, result.balances, result.nav_points, result.orders,
+                    result.cash_benchmark, result.buy_and_hold_benchmark, raw, seal,
+                    result.status, result.run_valid, result.reason_code, result.completed,
+                    result.semantic_input_hash, result.economic_output_hash,
+                    result.artifact_integrity_hash), budget)
+    native = _authority._cache_native_digest(tree, budget)
+    budget.charge(512)
+    return native, budget.bytes, budget.nodes
+
+
+def _trace_copy(result: ReplayResult) -> ReplayResult:
+    return ReplayResult(
+        tuple(_ledger._clone_event(value) for value in result.events),
+        tuple(_ledger._clone_balance(value) for value in result.balances),
+        tuple(_nav.NAVResult(*(object.__getattribute__(value, name) for name in _authority._NAV_FIELDS)) for value in result.nav_points),
+        tuple(SimOrder(*(object.__getattribute__(value, name) for name in _authority._ORDER_FIELDS)) for value in result.orders),
+        _actions._clone_value(result.cash_benchmark), _actions._clone_value(result.buy_and_hold_benchmark),
+        ReplayCheckpoint.from_bytes(result.checkpoint.canonical_bytes()), result.status,
+        result.run_valid, result.reason_code, result.completed, result.semantic_input_hash,
+        result.economic_output_hash, result.artifact_integrity_hash,
+    )
+
+
+def _trace_admit(entry: object) -> None:
+    if type(entry) is not _authority._TraceEntry or type(entry.reference) is not _authority.weakref.ReferenceType:
+        _fail()
+    if any(type(value) is not int for value in (entry.process_id, entry.graph_charge, entry.nodes, entry.charge, entry.work, entry.pins)):
+        _fail()
+    if entry.process_id <= 0 or not 0 < entry.nodes <= 1_000_000 or not 0 <= entry.pins <= 1 or any(not 0 < value <= _authority._TRACE_LIMIT for value in (entry.graph_charge, entry.charge, entry.work)):
+        _fail()
+    if type(entry.schema) is not str or entry.schema != _TRACE_SCHEMA or type(entry.facts) is not tuple or len(entry.facts) != 6:
+        _fail()
+    if any(type(value) is not bytes or len(value) != 32 for value in (*entry.facts, entry.native)):
+        _fail()
+    if any(type(value) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None for value in (entry.semantic, entry.exact)):
+        _fail()
+    if type(entry.operations) is not tuple or len(entry.operations) > MAX_OPERATIONS or type(entry.checkpoints) is not tuple or len(entry.checkpoints) != len(entry.operations) + 1:
+        _fail()
+    for row in (*entry.operations, *entry.checkpoints, entry.wire):
+        _packed_admit(row)
+    if type(entry.result) is not ReplayResult or entry.charge + entry.work > _authority._TRACE_LIMIT:
+        _fail()
+
+
+def _trace_digest(entry: _authority._TraceEntry) -> bytes:
+    _trace_admit(entry)
+    digest = hashlib.sha256(_TRACE_SCHEMA.encode())
+    digest.update(_json((entry.process_id, id(entry.reference), entry.semantic, entry.exact,
+                         entry.graph_charge, entry.nodes, entry.charge, entry.work,
+                         len(entry.operations), len(entry.checkpoints))))
+    for raw in (*entry.facts, entry.native):
+        digest.update(raw)
+    for row in (*entry.operations, *entry.checkpoints, entry.wire):
+        digest.update(_json((row.size, row.work, len(row.compressed))))
+        digest.update(row.digest)
+        digest.update(hashlib.sha256(row.compressed).digest())
+    return digest.digest()
+
+
+def _trace_poison(owner: ReplayManifest) -> None:
+    record = _authority._ISSUERS.get(id(owner))
+    if type(record) is _authority._IssuerRecord and type(record.reference) is _authority.weakref.ReferenceType and record.reference() is owner:
+        _authority._ISSUERS[id(owner)] = record._replace(corrupt=True)
+
+
+def _trace_check(entry: _authority._TraceEntry, owner: ReplayManifest) -> None:
+    # An inherited in-flight use is stale rather than proof of source poison.
+    if type(entry) is _authority._TraceEntry and type(entry.process_id) is int and entry.process_id != _authority._process():
+        _fail()
+    try:
+        _trace_admit(entry)
+        record = _authority._issuer(owner)
+        if entry.reference is not record.reference or entry.reference() is not owner or entry.facts != record.facts or entry.process_id != _authority._process():
+            _fail()
+        if record.trace_digest != _trace_digest(entry):
+            _fail()
+        owner._refresh()
+        if _trace_measure(entry.result, entry.graph_charge) != (entry.native, entry.graph_charge, entry.nodes):
+            _fail()
+        owner._refresh()
+    except Exception:
+        _trace_poison(owner)
+        _fail()
+
+
+def _trace_release(entry: _authority._TraceEntry, reservation: tuple) -> None:
+    process_id, work, reference = reservation
+    if _authority._process() != process_id:
+        return
+    with _authority._ISSUER_LOCK:
+        _authority._pool_check()
+        if _authority._TRACES.get(id(reference)) is not entry:
+            _fail()
+        entry.pins = 0
+        _authority._TRACE_WORK_BYTES -= work
+        _authority._TRACE_WORK_COUNT -= 1
+        if reference() is None:
+            _authority._remove_trace(entry)
+        _authority._pool_check()
+        _authority._ISSUER_LOCK.notify_all()
+
+
+def _trace_evict() -> bool:
+    # Caller holds the current issuer lock, with no other trace work active.
+    process_id = _authority._process()
+    for key, entry in tuple(_authority._TRACES.items()):
+        _trace_admit(entry)
+        if type(key) is not int or key != id(entry.reference):
+            _fail()
+        if entry.pins:
+            continue
+        owner = entry.reference()
+        if owner is None:
+            _authority._remove_trace(entry)
+            return True
+        if _authority._TRACE_BYTES + entry.work > _authority._TRACE_LIMIT:
+            _fail()
+        work = entry.work
+        _authority._TRACE_WORK_BYTES += work
+        _authority._TRACE_WORK_COUNT += 1
+        try:
+            _authority._pool_check()
+            _trace_check(entry, owner)
+            _authority._remove_trace(entry)
+            return True
+        finally:
+            if _authority._process() == process_id:
+                _authority._TRACE_WORK_BYTES -= work
+                _authority._TRACE_WORK_COUNT -= 1
+    return False
+
+
+class _TraceBuild:
+    """Optional collection owns a reservation, never financial or issuer authority."""
+
+    def __init__(self, owner: ReplayManifest, reservation: int) -> None:
+        self.process_id = _authority._process()
+        self.reference = _authority._issuer(owner).reference
+        self.reservation, self.active = reservation, True
+        self.operations, self.checkpoints = [], []
+        self.stored = 512
+        self.op_work = self.cp_work = 0
+
+    def cancel(self) -> None:
+        self.operations.clear()
+        self.checkpoints.clear()
+        if self.active:
+            self.active = False
+            if _authority._process() == self.process_id:
+                with _authority._ISSUER_LOCK:
+                    _authority._TRACE_WORK_BYTES -= self.reservation
+                    _authority._TRACE_WORK_COUNT -= 1
+                    _authority._pool_check()
+                    _authority._ISSUER_LOCK.notify_all()
+
+    def pack(self, raw: bytes) -> _Packed:
+        work = _wire_work(raw)
+        if self.stored + max(work, 2 * len(raw)) + _CODEC_WORK > self.reservation:
+            raise _authority._CacheCapacity()
+        compressed = zlib.compress(raw)
+        self.stored += len(compressed) + 256
+        return _Packed(len(raw), compressed, hashlib.sha256(raw).digest(), work)
+
+    def add(self, raw: bytes, *, checkpoint: bool = False) -> None:
+        if not self.active:
+            return
+        try:
+            row = self.pack(raw)
+            if checkpoint:
+                self.checkpoints.append(row)
+                self.cp_work = max(self.cp_work, row.work)
+            else:
+                self.operations.append(row)
+                self.op_work = max(self.op_work, row.work)
+        except _authority._CacheCapacity:
+            self.cancel()
+
+    def candidate(self, owner: ReplayManifest, result: ReplayResult, raw: bytes) -> _authority._TraceEntry | None:
+        if not self.active:
+            return None
+        try:
+            wire = self.pack(raw)
+            signature, graph, nodes = _trace_measure(result, self.reservation - self.stored)
+            charge = self.stored + graph
+            work = 2 * graph + max(self.op_work + 2 * self.cp_work, wire.work) + _CODEC_WORK
+            if charge + work > self.reservation:
+                raise _authority._CacheCapacity()
+            if _result_bytes(result) != raw:
+                _fail()
+            copied = _trace_copy(result)
+            if _trace_measure(copied, graph) != (signature, graph, nodes) or _trace_measure(result, graph) != (signature, graph, nodes):
+                _fail()
+            record = _authority._issuer(owner)
+            return _authority._TraceEntry(record.reference, record.facts, self.process_id,
+                _TRACE_SCHEMA, result.semantic_input_hash, owner.artifact_integrity_hash(),
+                tuple(self.operations), tuple(self.checkpoints), wire, copied, signature,
+                graph, nodes, charge, work)
+        except _authority._CacheCapacity:
+            self.cancel()
+            return None
+
+
+def _trace_begin(owner: ReplayManifest) -> _TraceBuild | None:
+    _authority._process()
+    with _authority._ISSUER_LOCK:
+        _authority._pool_check()
+        if _authority._TRACE_WORK_COUNT:
+            return None
+        while len(_authority._TRACES) + 2 > _authority._TRACE_ENTRIES:
+            if not _trace_evict():
+                return None
+        available = _authority._TRACE_LIMIT - _authority._TRACE_BYTES
+        if available <= _CODEC_WORK:
+            return None
+        builder = _TraceBuild(owner, available)
+        _authority._TRACE_WORK_BYTES += available
+        _authority._TRACE_WORK_COUNT += 1
+        _authority._pool_check()
+        return builder
+
+
+def _trace_pin(owner: ReplayManifest) -> _TraceCursor | None:
+    _authority._process()
+    with _authority._ISSUER_LOCK:
+        while True:
+            _authority._pool_check()
+            record = _authority._issuer(owner)
+            entry = _authority._TRACES.get(id(record.reference))
+            if entry is None:
+                return None
+            try:
+                _trace_admit(entry)
+            except Exception:
+                _trace_poison(owner)
+                _fail()
+            if record.trace_digest != _trace_digest(entry):
+                _trace_poison(owner)
+                _fail()
+            if entry.pins and not _authority._TRACE_WORK_COUNT:
+                _trace_poison(owner)
+                _fail()
+            if _authority._TRACE_WORK_COUNT:
+                return None  # Busy optional workspace selects genuine cold work.
+            if entry.reference is not record.reference or _authority._TRACE_BYTES + entry.work > _authority._TRACE_LIMIT or len(_authority._TRACES) + 1 > _authority._TRACE_ENTRIES:
+                _fail()
+            entry.pins += 1
+            _authority._TRACE_WORK_BYTES += entry.work
+            _authority._TRACE_WORK_COUNT += 1
+            _authority._TRACES.move_to_end(id(record.reference))
+            reservation = (entry.process_id, entry.work, record.reference)
+            break
+    try:
+        _trace_check(entry, owner)
+        copied = _trace_copy(entry.result)
+        if _trace_measure(copied, entry.graph_charge) != (entry.native, entry.graph_charge, entry.nodes):
+            _fail()
+        _trace_check(entry, owner)
+        return _TraceCursor(owner, entry, copied, reservation)
+    except BaseException:
+        _trace_release(entry, reservation)
+        raise
+
+
+class _TraceCursor:
+    """Traverse immutable expected receipts without restoring a financial reducer."""
+
+    def __init__(self, owner: ReplayManifest, entry: _authority._TraceEntry, result: ReplayResult, reservation: tuple) -> None:
+        self.manifest, self.entry, self._result = owner, entry, result
+        self.reservation = reservation
+        self.operations = object.__getattribute__(owner, "_operations")
+        self.index, self._wire_cache = 0, None
+        self._load_checkpoint()
+
+    def _load_checkpoint(self) -> None:
+        raw, data = _unpack(self.entry.checkpoints[self.index])
+        self._checkpoint = ReplayCheckpoint.from_bytes(raw)
+        if data["operation_count"] != self.index or data["semantic_input_hash"] != self.entry.semantic or data["artifact_integrity_hash"] != self.entry.exact:
+            _fail()
+        count = data["ledger_event_count"]
+        if count > len(self._result.events):
+            _fail()
+        self.status, self._state = data["status"], data
+        self.events = self._result.events[:count]
+        terminal = self.index == len(self.entry.operations)
+        if terminal != (self.index == len(self.operations) or self.status != "available"):
+            _fail()
+
+    def checkpoint(self) -> ReplayCheckpoint:
+        return ReplayCheckpoint.from_bytes(self._checkpoint.canonical_bytes())
+
+    def step(self) -> bytes:
+        if self.index >= len(self.entry.operations) or self.status != "available":
+            _fail()
+        self.manifest._refresh()
+        raw, row = _unpack(self.entry.operations[self.index], 16 * 1024 * 1024)
+        if type(row) is not dict or set(row) != {"schema_version", "operation_index", "cursor", "previous_hash", "event", "progress"}:
+            _fail()
+        if row["schema_version"] != "v1" or type(row["operation_index"]) is not int or row["operation_index"] != self.index or row["cursor"] != list(self.operations[self.index]) or row["previous_hash"] != self._state["operation_prefix_hash"]:
+            _fail()
+        previous_count = len(self.events)
+        self.index += 1
+        self._load_checkpoint()
+        expected = dict(self._state)
+        prefix = expected.pop("operation_prefix_hash")
+        if row["progress"] != expected or prefix != _hash(_OPERATION_DOMAIN, raw) or len(self.events) - previous_count not in (0, 1):
+            _fail()
+        event = None if len(self.events) == previous_count else _exact_event(self.events[-1])
+        if row["event"] != event:
+            _fail()
+        self.manifest._refresh()
+        return raw
+
+    def result(self) -> ReplayResult:
+        if self.index != len(self.entry.operations) or not self._result.completed:
+            _fail()
+        raw, _ = _unpack(self.entry.wire)
+        if self._result.checkpoint.canonical_bytes() != self._checkpoint.canonical_bytes() or _result_bytes(self._result) != raw:
+            _fail()
+        self._wire_cache = raw
+        return self._result
 
 
 class _Engine:
@@ -897,50 +1316,104 @@ class ReplayRunner:
             raw = checkpoint.canonical_bytes()
             if checkpoints.get(checkpoint.operation_count) != raw:
                 _fail()
-        engine = _Engine(manifest)
-        current = engine.checkpoint().canonical_bytes()
-        if 0 in checkpoints and checkpoints[0] != current:
-            _fail()
-        for index in range(count):
-            stored = self._read(operation_names[index], 16 * 1024 * 1024)
-            _decode(stored, 16 * 1024 * 1024)
-            expected = engine.step()
-            if stored != expected:
-                _fail()
+        process_id = _authority._process()
+        engine = None
+        builder = None
+        try:
+            engine = _trace_pin(manifest) if maximum is None else None
+            if engine is None:
+                engine = _Engine(manifest)
+                if maximum is None:
+                    builder = _trace_begin(manifest)
             current = engine.checkpoint().canonical_bytes()
-            if index + 1 in checkpoints and checkpoints[index + 1] != current:
+            if builder is not None:
+                builder.add(current, checkpoint=True)
+            if 0 in checkpoints and checkpoints[0] != current:
                 _fail()
-        if events is not None:
-            actual = tuple(engine.events)
-            if len(events) != len(actual) or any(_exact_event(left) != _exact_event(right) for left, right in zip(events, actual, strict=True)):
+            for index in range(count):
+                stored = self._read(operation_names[index], 16 * 1024 * 1024)
+                _decode(stored, 16 * 1024 * 1024)
+                expected = engine.step()
+                if stored != expected:
+                    _fail()
+                current = engine.checkpoint().canonical_bytes()
+                if builder is not None:
+                    builder.add(expected)
+                    builder.add(current, checkpoint=True)
+                if index + 1 in checkpoints and checkpoints[index + 1] != current:
+                    _fail()
+            if events is not None:
+                actual = tuple(engine.events)
+                if len(events) != len(actual) or any(_exact_event(left) != _exact_event(right) for left, right in zip(events, actual, strict=True)):
+                    _fail()
+            validated_result = None
+            if "result.json" in published:
+                if not (engine.index == len(engine.operations) or engine.status != "available"):
+                    _fail()
+                validated_result = engine.result()
+                if self._read("result.json") != engine._wire_cache:
+                    _fail()
+            self._verify_accepted()
+            # Every existing record is reconciled before creating any new artifact.
+            if new:
+                self._publish("manifest.json", manifest.canonical_bytes(), manifest)
+            if 0 not in checkpoints and count == 0:
+                self._publish("checkpoint-000000.json", current, manifest)
+            added = 0
+            while engine.index < len(engine.operations) and engine.status == "available" and (maximum is None or added < maximum):
+                raw = engine.step()
+                self._publish(f"operation-{engine.index - 1:06d}.json", raw, manifest)
+                checkpoint_raw = engine.checkpoint().canonical_bytes()
+                self._publish(f"checkpoint-{engine.index:06d}.json", checkpoint_raw, manifest)
+                if builder is not None:
+                    builder.add(raw)
+                    builder.add(checkpoint_raw, checkpoint=True)
+                added += 1
+            result = validated_result if validated_result is not None else engine.result()
+            if result.completed:
+                self._publish("result.json", engine._wire_cache, manifest)
+            candidate = None
+            if builder is not None and builder.active and type(engine) is _Engine and result.completed:
+                candidate = builder.candidate(manifest, result, engine._wire_cache)
+            if type(engine) is _TraceCursor:
+                _trace_check(engine.entry, manifest)
+            self._inventory()
+            manifest._refresh()
+            self._verify()
+            self._verify_accepted()
+            if _authority._process() != process_id:
                 _fail()
-        validated_result = None
-        if "result.json" in published:
-            if not (engine.index == len(engine.operations) or engine.status != "available"):
-                _fail()
-            validated_result = engine.result()
-            if self._read("result.json") != engine._wire_cache:
-                _fail()
-        self._verify_accepted()
-        # Every existing record is reconciled before creating any new artifact.
-        if new:
-            self._publish("manifest.json", manifest.canonical_bytes(), manifest)
-        if 0 not in checkpoints and count == 0:
-            self._publish("checkpoint-000000.json", current, manifest)
-        added = 0
-        while engine.index < len(engine.operations) and engine.status == "available" and (maximum is None or added < maximum):
-            raw = engine.step()
-            self._publish(f"operation-{engine.index - 1:06d}.json", raw, manifest)
-            self._publish(f"checkpoint-{engine.index:06d}.json", engine.checkpoint().canonical_bytes(), manifest)
-            added += 1
-        result = validated_result if validated_result is not None else engine.result()
-        if result.completed:
-            self._publish("result.json", engine._wire_cache, manifest)
-        self._inventory()
-        manifest._refresh()
-        self._verify()
-        self._verify_accepted()
-        return result
+            if candidate is not None:
+                # Only this genuine completed cold Engine, after every final
+                # publication/source/root/leaf guard, can issue retained proof.
+                with _authority._ISSUER_LOCK:
+                    record = _authority._issuer(manifest)
+                    digest = _trace_digest(candidate)
+                    if record.reference is not candidate.reference or record.facts != candidate.facts or candidate.process_id != process_id:
+                        _fail()
+                    if record.trace_digest is not None and record.trace_digest != digest:
+                        _trace_poison(manifest)
+                        _fail()
+                    for retained in _authority._TRACES.values():
+                        _trace_admit(retained)
+                    headroom = max((entry.work for entry in _authority._TRACES.values()), default=0)
+                    if (_authority._TRACE_BYTES + candidate.charge + max(headroom, candidate.work) <= _authority._TRACE_LIMIT
+                            and len(_authority._TRACES) + 2 <= _authority._TRACE_ENTRIES):
+                        _authority._ISSUERS[id(manifest)] = record._replace(trace_digest=digest)
+                        _authority._TRACES[id(record.reference)] = candidate
+                        _authority._TRACE_BYTES += candidate.charge
+                        _authority._TRACE_WORK_BYTES -= builder.reservation
+                        _authority._TRACE_WORK_COUNT -= 1
+                        builder.active = False
+                        _authority._pool_check()
+                        _authority._ISSUER_LOCK.notify_all()
+            return result
+        finally:
+            if builder is not None:
+                builder.cancel()
+            if type(engine) is _TraceCursor:
+                _trace_release(engine.entry, engine.reservation)
+
 
 
 __all__ = ["ReplayCheckpoint", "ReplayResult", "ReplayRunner"]

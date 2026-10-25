@@ -2282,3 +2282,18 @@ def test_bt05_perf_process_admission_precedes_inherited_issuer_lock(
     assert all(value > 0 for value in counts.values()), "parent proof must be ineligible"
     assert _bt05_perf_identity(result) == case.identity
     assert _snapshot(root) == case.files
+
+
+@pytest.fixture(autouse=True)
+def _bt05_perf_reconcile_simulated_process_baseline(request: pytest.FixtureRequest) -> Any:
+    """Restore real process admission around only the three simulated-PID cases."""
+    selected = request.node.originalname == "test_bt05_perf_process_admission_precedes_inherited_issuer_lock"
+    module = importlib.import_module("mytradingalpha.backtest.manifest") if selected else None
+    admission = None if module is None else vars(module).get("_process")
+    if admission is not None:
+        admission()
+    try:
+        yield
+    finally:
+        if admission is not None:
+            admission()
