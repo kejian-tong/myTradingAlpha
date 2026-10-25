@@ -1826,3 +1826,166 @@ def test_bt05_root_directory_capacity_reserves_new_lock_slot(tmp_path: Path, cap
         assert len(after) == 16384
         assert all(by_name.get(row[0]) == row for row in before)
         assert tuple(row[0] for row in after).count(".bt05.lock") == 1
+
+
+# M1 repair RED: every opened artifact needs a fresh admitted metadata baseline.
+@pytest.fixture(scope="module")
+def _bt05_m1_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    api = _api()
+    manifest, _, _ = _manifest(api, days=1, prices=("100",))
+    root = tmp_path_factory.mktemp("bt05-m1-control") / "partial"
+    result = _run(api, root, manifest, max_operations=0)
+    assert result.run_valid and result.status == "available" and not result.completed
+    return SimpleNamespace(api=api, manifest=manifest, baseline=result, files=_snapshot(root))
+
+
+def _bt05_m1_retained_rejection(case: Any, root: Path, retained: tuple[Any, ...]) -> None:
+    assert _bt05_p2_tree(root) == retained
+    _reject(lambda: _resume(case.api, root, case.manifest, max_operations=0))
+    assert _bt05_p2_tree(root) == retained
+
+
+def test_bt05_m1_genuine_partial_cold_resume_control(_bt05_m1_case: Any, tmp_path: Path) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "genuine"
+    _bt05_p2_copy(case, root)
+    before = _bt05_p2_tree(root)
+    result = _resume(case.api, root, case.manifest, max_operations=0)
+    assert result.run_valid and not result.completed
+    assert _economic(result) == _economic(case.baseline)
+    assert _bt05_p2_tree(root) == before
+
+
+@pytest.mark.parametrize("damage", ("world_write", "outside_link"))
+def test_bt05_m1_fresh_read_rejects_unsafe_metadata_after_execution_inventory(
+    _bt05_m1_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "admission-race"
+    _bt05_p2_copy(case, root)
+    target = root / "manifest.json"
+    original_bytes = target.read_bytes()
+    outside = tmp_path / "outside-sentinel"
+    outside.write_bytes(b"m1-sensitive-sentinel-unchanged")
+    alias = tmp_path / "outside-alias"
+    real_inventory, real_open = case.api.ReplayRunner._inventory, os.open
+    armed, opened, retained = [], [], []
+
+    try:
+        with case.api.ReplayRunner(root=root) as runner:
+            def mutate_after_inventory(owner: Any) -> Any:
+                inventory = real_inventory(owner)
+                if owner is runner and not armed:
+                    assert "manifest.json" in inventory
+                    if damage == "world_write":
+                        target.chmod(0o666)
+                    else:
+                        os.link(target, alias)
+                    retained.append(_bt05_p2_tree(root))
+                    armed.append(damage)
+                return inventory
+
+            def observe_open(path: Any, *args: Any, **kwargs: Any) -> int:
+                if armed and path == "manifest.json":
+                    opened.append(path)
+                return real_open(path, *args, **kwargs)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(case.api.ReplayRunner, "_inventory", mutate_after_inventory)
+                patch.setattr(os, "open", observe_open)
+                _reject(lambda: runner.resume(case.manifest, max_operations=0))
+    finally:
+        assert armed == [damage], "the post-inventory metadata fault must execute"
+        assert target.read_bytes() == original_bytes
+        _bt05_m1_retained_rejection(case, root, retained[0])
+        assert outside.read_bytes() == b"m1-sensitive-sentinel-unchanged"
+        if damage == "outside_link":
+            assert alias.read_bytes() == original_bytes
+            assert alias.stat().st_ino == target.stat().st_ino
+            assert alias.stat().st_nlink == target.stat().st_nlink == 2
+        else:
+            assert target.stat().st_mode & 0o777 == 0o666
+        assert opened == [], "an artifact with unadmitted metadata was opened"
+
+
+def test_bt05_m1_opened_descriptor_must_match_full_preopen_identity(
+    _bt05_m1_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "open-race"
+    _bt05_p2_copy(case, root)
+    target = root / "manifest.json"
+    real_open = os.open
+    armed, retained = [], []
+
+    def change_mode_before_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        if path == "manifest.json" and not armed:
+            assert target.stat().st_mode & 0o777 == 0o400
+            target.chmod(0o600)  # Still allowed on a future, independently admitted read.
+            retained.append(_bt05_p2_tree(root))
+            armed.append(path)
+        return real_open(path, *args, **kwargs)
+
+    try:
+        with case.api.ReplayRunner(root=root) as runner, monkeypatch.context() as patch:
+            patch.setattr(os, "open", change_mode_before_open)
+            _reject(lambda: runner.resume(case.manifest, max_operations=0))
+    finally:
+        assert armed == ["manifest.json"], "the pre-open metadata fault must execute"
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert _bt05_p2_tree(root) == retained[0]
+        # Preserve the existing mode policy: owner-write is allowed when the
+        # whole metadata identity is established afresh, rather than changing mid-read.
+        recovered = _resume(case.api, root, case.manifest, max_operations=0)
+        assert recovered.run_valid and _economic(recovered) == _economic(case.baseline)
+        assert _bt05_p2_tree(root) == retained[0]
+
+
+def test_bt05_m1_legitimate_root_local_crash_pair_remains_resumable(
+    _bt05_m1_case: Any, tmp_path: Path,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "crash-pair"
+    _bt05_p2_copy(case, root)
+    final, temporary = root / "manifest.json", root / ".tmp-000000"
+    os.link(final, temporary)
+    assert final.stat().st_ino == temporary.stat().st_ino
+    assert final.stat().st_nlink == temporary.stat().st_nlink == 2
+    before = _bt05_p2_tree(root)
+    for _ in range(2):
+        result = _resume(case.api, root, case.manifest, max_operations=0)
+        assert result.run_valid and _economic(result) == _economic(case.baseline)
+        assert _bt05_p2_tree(root) == before
+        assert final.stat().st_nlink == temporary.stat().st_nlink == 2
+
+
+def test_bt05_m1_completion_rejects_new_unsafe_unaccepted_temporary_entry(
+    _bt05_m1_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "completion-race"
+    _bt05_p2_copy(case, root)
+    module = importlib.import_module("mytradingalpha.backtest.replay")
+    real_result = module._Engine.result
+    temporary = root / ".tmp-000000"
+    armed, retained = [], []
+
+    def introduce_unsafe_entry(engine: Any) -> Any:
+        result = real_result(engine)
+        if not armed:
+            assert not temporary.exists()
+            temporary.write_bytes(b"m1-sensitive-sentinel-temporary-evidence")
+            temporary.chmod(0o666)
+            retained.append(_bt05_p2_tree(root))
+            armed.append(temporary.name)
+        return result
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module._Engine, "result", introduce_unsafe_entry)
+            _reject(lambda: _resume(case.api, root, case.manifest, max_operations=0))
+    finally:
+        assert armed == [".tmp-000000"], "the pre-completion inventory fault must execute"
+        assert temporary.read_bytes() == b"m1-sensitive-sentinel-temporary-evidence"
+        assert temporary.stat().st_mode & 0o777 == 0o666
+        _bt05_m1_retained_rejection(case, root, retained[0])
