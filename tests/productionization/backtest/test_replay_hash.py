@@ -1989,3 +1989,296 @@ def test_bt05_m1_completion_rejects_new_unsafe_unaccepted_temporary_entry(
         assert temporary.read_bytes() == b"m1-sensitive-sentinel-temporary-evidence"
         assert temporary.stat().st_mode & 0o777 == 0o666
         _bt05_m1_retained_rejection(case, root, retained[0])
+
+
+# Performance repair RED: genuine reducer counts are independent of host speed.
+def _bt05_perf_count(patch: pytest.MonkeyPatch) -> dict[str, int]:
+    counts = {"ledger_append": 0, "fill_simulate": 0}
+    ledger, fills = bt03._bt03_api().Ledger, bt02._bt02_api().FillModel
+    real_append, real_simulate = ledger.append, fills.simulate
+
+    def append(self: Any, *args: Any, **kwargs: Any) -> Any:
+        counts["ledger_append"] += 1
+        return real_append(self, *args, **kwargs)
+
+    def simulate(*args: Any, **kwargs: Any) -> Any:
+        counts["fill_simulate"] += 1
+        return real_simulate(*args, **kwargs)
+
+    patch.setattr(ledger, "append", append)
+    patch.setattr(fills, "simulate", staticmethod(simulate))
+    return counts
+
+
+def _bt05_perf_identity(result: Any) -> tuple[Any, ...]:
+    return (_economic(result), result.completed, result.semantic_input_hash,
+            result.artifact_integrity_hash, result.checkpoint.canonical_bytes(),
+            object.__getattribute__(result.checkpoint, "_seal"))
+
+
+@pytest.fixture(scope="module")
+def _bt05_perf_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    api = _api()
+    manifest, fields, _ = _manifest(api, days=1, prices=("100",))
+    root = tmp_path_factory.mktemp("bt05-perf-genuine") / "completed"
+    with pytest.MonkeyPatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _run(api, root, manifest)
+    assert result.completed and result.run_valid and result.events
+    assert all(value > 0 for value in counts.values()), counts
+    return SimpleNamespace(api=api, manifest=manifest, fields=fields, result=result,
+                           identity=_bt05_perf_identity(result), files=_snapshot(root),
+                           cold_counts=dict(counts))
+
+
+@pytest.mark.parametrize("mode", ("new", "complete_resume", "partial_resume"))
+def test_bt05_perf_completed_same_owner_has_zero_new_financial_work(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / mode
+    if mode == "complete_resume":
+        _bt05_p2_copy(case, root)
+    elif mode == "partial_resume":
+        with monkeypatch.context() as patch:
+            cold = _bt05_perf_count(patch)
+            partial = _run(case.api, root, case.manifest, max_operations=3)
+        assert not partial.completed and partial.checkpoint.operation_count == 3
+        assert partial.events and all(value > 0 for value in cold.values())
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        if mode == "new":
+            result = _run(case.api, root, case.manifest)
+        elif mode == "partial_resume":
+            result = _resume(case.api, root, case.manifest,
+                             checkpoint=partial.checkpoint, events=partial.events)
+        else:
+            result = _resume(case.api, root, case.manifest)
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, (
+        "retained genuine completion must avoid repeated financial reducers", mode,
+        case.cold_counts, counts,
+    )
+
+
+def test_bt05_perf_explicit_limits_and_another_owner_reconstruct_cold(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_perf_case
+    other = case.api.ReplayManifest(**case.fields)
+    for name, owner, maximum in (("explicit", case.manifest, 4), ("other", other, None)):
+        root = tmp_path / name
+        _bt05_p2_copy(case, root)
+        with monkeypatch.context() as patch:
+            counts = _bt05_perf_count(patch)
+            result = _resume(case.api, root, owner, max_operations=maximum)
+        assert all(value > 0 for value in counts.values()), (name, counts)
+        assert _bt05_perf_identity(result) == case.identity
+        assert _snapshot(root) == case.files
+
+
+def test_bt05_perf_returned_nested_graph_does_not_alias_retained_authority(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / "caller-isolation"
+    _bt05_p2_copy(case, root)
+    caller = _resume(case.api, root, case.manifest)
+    assert _bt05_perf_identity(caller) == case.identity
+    object.__setattr__(caller, "completed", False)
+    object.__setattr__(caller.events[0], "_event_id", "sensitive-sentinel-caller-event")
+    object.__setattr__(caller.nav_points[0], "value", D("999999"))
+    object.__setattr__(caller.cash_benchmark.policy.common, "_storage", b"caller-storage")
+    object.__setattr__(caller.checkpoint, "_raw", b"{}")
+    object.__setattr__(caller.checkpoint, "_seal", hashlib.sha256(b"{}").digest())
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _resume(case.api, root, case.manifest)
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, counts
+
+
+@pytest.mark.parametrize("target", ("native", "source_bytes"))
+def test_bt05_perf_warm_source_admission_remains_fresh(
+    _bt05_perf_case: Any, tmp_path: Path, target: str,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / target
+    _bt05_p2_copy(case, root)
+    if target == "native":
+        source, name, replacement = case.fields["intents"][0], "quantity", D("3.00")
+    else:
+        source = object.__getattribute__(case.manifest, "_owned")["bindings"][0]
+        name = "_sealed_source_json"
+        replacement = object.__getattribute__(source, name) + b" "
+    original = object.__getattribute__(source, name)
+    before = _bt05_p2_tree(root)
+    try:
+        object.__setattr__(source, name, replacement)
+        _reject(lambda: _resume(case.api, root, case.manifest))
+        assert _bt05_p2_tree(root) == before
+    finally:
+        object.__setattr__(source, name, original)
+    assert case.manifest.semantic_input_hash() == case.result.semantic_input_hash
+
+
+@pytest.mark.parametrize("damage", ("operation", "checkpoint", "world_write", "missing_events"))
+def test_bt05_perf_warm_prefix_and_metadata_still_require_exact_evidence(
+    _bt05_perf_case: Any, tmp_path: Path, damage: str,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / damage
+    _bt05_p2_copy(case, root)
+    kwargs = {}
+    target = _records(root, "operation-")[0]
+    if damage == "world_write":
+        target.chmod(0o666)
+    elif damage == "missing_events":
+        kwargs["events"] = case.result.events[:-1]
+    else:
+        if damage == "checkpoint":
+            target = root / "checkpoint-000001.json"
+            data = _json(target.read_bytes())
+            data["operation_prefix_hash"] = "sha256:" + "0" * 64
+            raw = _canonical(data)
+        else:
+            raw = b"!" + target.read_bytes()[1:]
+        target.chmod(0o600)
+        target.write_bytes(raw)
+        target.chmod(0o400)
+    before = _bt05_p2_tree(root)
+    _reject(lambda: _resume(case.api, root, case.manifest, **kwargs))
+    assert _bt05_p2_tree(root) == before
+
+
+def test_bt05_perf_failed_cold_publication_does_not_issue_completed_proof(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_perf_case
+    owner = case.api.ReplayManifest(**case.fields)
+    root = tmp_path / "failed-cold"
+    real_publish, observed = case.api.ReplayRunner._publish, []
+
+    def fail_result(runner: Any, name: str, raw: bytes, manifest: Any) -> None:
+        if name == "result.json":
+            observed.append(name)
+            raise _Crash()
+        real_publish(runner, name, raw, manifest)
+
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        patch.setattr(case.api.ReplayRunner, "_publish", fail_result)
+        with pytest.raises(_Crash):
+            _run(case.api, root, owner)
+    assert observed == ["result.json"] and not (root / "result.json").exists()
+    assert all(value > 0 for value in counts.values()), counts
+    retained = dict(_snapshot(root))
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _resume(case.api, root, owner)
+    assert all(value > 0 for value in counts.values()), "failed publication grants no proof"
+    assert _bt05_perf_identity(result) == case.identity
+    assert all((root / name).read_bytes() == raw for name, raw in retained.items())
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _resume(case.api, root, owner)
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, counts
+
+
+def test_bt05_perf_warm_sig05_nested_native_mutation_rejects(tmp_path: Path) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api, kind="quant_llm", days=1, prices=("100",))
+    root = tmp_path / "sig05"
+    result = _run(api, root, manifest)
+    assert result.completed and result.run_valid
+    signal = object.__getattribute__(fields["bindings"][0], "_envelope_snapshot").quant
+    original = signal.score
+    sign, digits, exponent = original.as_tuple()
+    replacement = D((sign, digits + (0,), exponent - 1))
+    assert replacement == original and replacement.as_tuple() != original.as_tuple()
+    before = _bt05_p2_tree(root)
+    try:
+        object.__setattr__(signal, "score", replacement)
+        _reject(lambda: _resume(api, root, manifest))
+        assert _bt05_p2_tree(root) == before
+    finally:
+        object.__setattr__(signal, "score", original)
+
+
+def test_bt05_perf_unavailable_completion_keeps_early_partial_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    fields, source = _fields(days=2, prices=("100", "100"))
+    sessions = list(fields["sessions"])
+    sessions[1] = bt04._session_input(bt04._api(), sessions[1].session.session_date,
+                                    case=source, marks=())
+    fields["sessions"] = tuple(sessions)
+    manifest = api.ReplayManifest(**fields)
+    full_root, early_root = tmp_path / "unavailable", tmp_path / "early"
+    full = _run(api, full_root, manifest)
+    assert full.completed and not full.run_valid and full.status == "unavailable"
+    assert full.checkpoint.operation_count == 8 and full.reason_code
+    early = _run(api, early_root, manifest, max_operations=4)
+    assert not early.completed and early.run_valid and early.status == "available"
+    assert len(early.buy_and_hold_benchmark.nav_points) == 1
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        resumed = _resume(api, early_root, manifest, checkpoint=early.checkpoint, events=early.events)
+    assert _bt05_perf_identity(resumed) == _bt05_perf_identity(full)
+    assert _snapshot(early_root) == _snapshot(full_root)
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, counts
+
+
+@pytest.mark.parametrize("first_entry", ("refresh", "constructor", "weak_cleanup"))
+def test_bt05_perf_process_admission_precedes_inherited_issuer_lock(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_entry: str,
+) -> None:
+    import weakref
+
+    case = _bt05_perf_case
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    root = tmp_path / first_entry
+    _bt05_p2_copy(case, root)
+    original_lock, original_pid = module._ISSUER_LOCK, os.getpid()
+    entered = []
+
+    class InheritedLock:
+        def __enter__(self) -> Any:
+            entered.append(os.getpid())
+            assert os.getpid() == original_pid, "process admission touched an inherited issuer lock"
+            return original_lock.__enter__()
+
+        def __exit__(self, *args: Any) -> Any:
+            return original_lock.__exit__(*args)
+
+    class WeakOwner:
+        pass
+
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        patch.setattr(module, "_ISSUER_LOCK", InheritedLock())
+        case.manifest._refresh()
+        assert entered == [original_pid], "same-process refresh must use its current lock"
+        entered.clear()
+        patch.setattr(os, "getpid", lambda: original_pid + 1_000_000)
+        owner = case.manifest
+        if first_entry == "refresh":
+            owner._refresh()
+        elif first_entry == "constructor":
+            owner = case.api.ReplayManifest(**case.fields)
+        else:
+            temporary = WeakOwner()
+            reference = weakref.ref(temporary)
+            del temporary
+            assert reference() is None
+            module._weak_cleanup(-1, reference)
+        result = _resume(case.api, root, owner)
+        assert not entered, "changed-process admission must replace locks first"
+    assert all(value > 0 for value in counts.values()), "parent proof must be ineligible"
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
