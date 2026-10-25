@@ -1715,6 +1715,8 @@ def _economic_projection(manifest: ReplayManifest, events: tuple, results: tuple
             result_values.append({"type": "LedgerBalance", "value": balances[index]})
         elif kind is SimOrder:
             _native(value)
+            if value.reason_code is not None and type(value.reason_code) is not str:
+                _fail()
             intent = next((intent for intent in _mget(manifest, "intents") if intent.intent_id == value.intent_id), None)
             if intent is None or value.status not in ("filled", "cancelled", "expired", "open_at_horizon"):
                 _fail()
