@@ -2340,3 +2340,63 @@ def test_bt05_r1_valid_order_reason_preserves_exact_hashes(
     for _ in range(2):
         assert case.manifest.economic_output_hash((), (order,)) == economic_hash
         assert case.manifest.artifact_integrity_hash(events=(), results=(order,)) == artifact_hash
+
+
+def test_bt05_r2_public_decimal_rejection_bounds_derived_coefficient_scratch() -> None:
+    import tracemalloc
+
+    api = _api()
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    fields, _ = _fields(days=1, prices=("100",))
+    oversized = D("2000." + "0" * 9_000_000)
+    assert oversized == fields["opening_cash"]
+    fields = {**fields, "opening_cash": oversized}
+    def attempt() -> Any:
+        return api.ReplayManifest(**fields)
+    ceiling = module.MAX_RECORD
+    already_tracing = tracemalloc.is_tracing()
+    if not already_tracing:
+        tracemalloc.start()
+    baseline = tracemalloc.get_traced_memory()[0]
+    tracemalloc.reset_peak()
+    try:
+        _reject(attempt)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        if not already_tracing:
+            tracemalloc.stop()
+    scratch = max(0, peak - baseline)
+    assert scratch <= ceiling, (
+        "malformed Decimal admission exceeded the derived scratch ceiling", scratch, ceiling,
+    )
+
+
+def test_bt05_r2_valid_decimal_boundaries_keep_exact_context_free_normalization() -> None:
+    normalize = importlib.import_module("mytradingalpha.backtest.manifest")._decimal
+    controls = (
+        (D((0, (9,) * 128, -64)), "9" * 64 + "." + "9" * 64),
+        (D("1E64"), "1" + "0" * 64),
+        (D("1E-64"), "0." + "0" * 63 + "1"),
+        (D("-0"), "0"), (D("-0.00"), "0"),
+        (D((1, (0,), 64)), "0"), (D((1, (0,), -64)), "0"),
+        (D("2000"), "2000"), (D("2000.00"), "2000"),
+    )
+    for value, expected in controls:
+        assert normalize(value) == expected
+    with localcontext() as context:
+        context.prec, context.Emax, context.Emin, context.clamp = 1, 2, -2, 1
+        context.rounding = "ROUND_UP"
+        context.traps[Inexact] = context.traps[Rounded] = True
+        for value, expected in controls:
+            assert normalize(value) == expected
+
+
+def test_bt05_r2_one_over_coefficient_and_extreme_exponents_still_reject() -> None:
+    normalize = importlib.import_module("mytradingalpha.backtest.manifest")._decimal
+    invalid = (D((0, (1,) + (0,) * 128, -64)),
+               D("1E1000000000"), D("1E-1000000000"), D("0E1000000000"))
+    with localcontext() as context:
+        context.prec, context.Emax, context.Emin = 1, 2, -2
+        context.traps[Inexact] = context.traps[Rounded] = True
+        for value in invalid:
+            _reject(lambda value=value: normalize(value))
