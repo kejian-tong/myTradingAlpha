@@ -2297,3 +2297,46 @@ def _bt05_perf_reconcile_simulated_process_baseline(request: pytest.FixtureReque
     finally:
         if admission is not None:
             admission()
+
+
+@pytest.fixture(scope="module")
+def _bt05_r1_case() -> Any:
+    from mytradingalpha.backtest.orders import SimOrder
+
+    manifest, fields, _ = _manifest(_api(), days=1, prices=("100",))
+    return SimpleNamespace(manifest=manifest, intent=fields["intents"][0], order_type=SimOrder)
+
+
+@pytest.mark.parametrize("reason", (True, 1, ("unsupported",)))
+def test_bt05_r1_order_reason_requires_exact_string_or_none(_bt05_r1_case: Any, reason: Any) -> None:
+    case = _bt05_r1_case
+    order = case.order_type(case.intent.intent_id, case.intent.quantity, D("0"), D("0"),
+                            "cancelled", reason)
+    for route in (
+        lambda: case.manifest.economic_bytes((), (order,)),
+        lambda: case.manifest.economic_output_hash((), (order,)),
+        lambda: case.manifest.artifact_integrity_hash(events=(), results=(order,)),
+    ):
+        _reject(route)
+
+
+@pytest.mark.parametrize("status,reason,economic_hash,artifact_hash", (
+    ("cancelled", "unsupported",
+     "sha256:05b94d68b5a0fa3fc374243d7364461f9b4a457c979ed2bc05c82cf2f0aa3240",
+     "sha256:fe779b6dd4bce512b4a45639f03beb2a92bb5ae3fcc704d6303bfe491e9ad641"),
+    ("open_at_horizon", None,
+     "sha256:7c27452e262d8b776ab764e7be85e3ddd39ed6363e07e213bf7af596ea221879",
+     "sha256:d661e076303af0aef5ce064e257c850e1b4b4e8fabe1132fc863ccbbd5abfa9a"),
+))
+def test_bt05_r1_valid_order_reason_preserves_exact_hashes(
+    _bt05_r1_case: Any, status: str, reason: str | None, economic_hash: str, artifact_hash: str,
+) -> None:
+    case = _bt05_r1_case
+    order = case.order_type(case.intent.intent_id, case.intent.quantity, D("0"), D("0"),
+                            status, reason)
+    raw = case.manifest.economic_bytes((), (order,))
+    assert case.manifest.economic_bytes((), (order,)) == raw
+    assert _digest(DOMAINS[1], raw) == economic_hash
+    for _ in range(2):
+        assert case.manifest.economic_output_hash((), (order,)) == economic_hash
+        assert case.manifest.artifact_integrity_hash(events=(), results=(order,)) == artifact_hash
