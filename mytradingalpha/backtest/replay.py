@@ -699,11 +699,18 @@ class ReplayRunner:
         descriptor = None
         try:
             prior = os.stat(name, dir_fd=self._root, follow_symlinks=False)
-            if not stat.S_ISREG(prior.st_mode) or prior.st_size > maximum:
+            if (not stat.S_ISREG(prior.st_mode) or prior.st_size > maximum
+                    or prior.st_uid != os.getuid() or prior.st_mode & 0o022 or prior.st_nlink < 1):
                 _fail()
+            identity = self._identity(prior)
+            if prior.st_nlink > 1:
+                inventory = self._inventory()
+                if name not in inventory or self._identity(inventory[name]) != identity:
+                    _fail()
             descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self._root)
             actual = os.fstat(descriptor)
-            if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino, actual.st_size) != (prior.st_dev, prior.st_ino, prior.st_size):
+            if (self._identity(actual) != identity
+                    or self._identity(os.stat(name, dir_fd=self._root, follow_symlinks=False)) != identity):
                 _fail()
             chunks, size = [], 0
             while True:
@@ -716,7 +723,6 @@ class ReplayRunner:
                 chunks.append(block)
             after = os.fstat(descriptor)
             leaf = os.stat(name, dir_fd=self._root, follow_symlinks=False)
-            identity = self._identity(actual)
             if identity != self._identity(after) or identity != self._identity(leaf) or size != actual.st_size:
                 _fail()
             if name in self._accepted and self._accepted[name] != identity:
@@ -930,6 +936,7 @@ class ReplayRunner:
         result = validated_result if validated_result is not None else engine.result()
         if result.completed:
             self._publish("result.json", engine._wire_cache, manifest)
+        self._inventory()
         manifest._refresh()
         self._verify()
         self._verify_accepted()

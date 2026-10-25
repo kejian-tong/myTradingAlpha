@@ -21,11 +21,11 @@ Bounded snapshot, not a chronological log; GitHub/current `main` is authoritativ
 
 ## BT-05 current recovery
 
-- exact base/main and tree above. JIT6381289594/P1:6382054926/P2:6386576083/root:6387965520; integration6386046726; REDs3f3dec8/490690e/e35d3c5.
+- exact base/main and tree above. JIT6381289594/6382054926/6386576083/6387965520/6388312641; int6386046726; REDs3f3dec8/490690e/e35d3c5/a258190
 - Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh. Master configured Sol/xhigh; native Sol/max is distinct. Isolation unauthenticated.
 - Scope: BT05 replay/hashes/seals/recovery; BT01-04 preserved; BT06/Phase04+ deferred.
 - RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`:188expected failures/4fixture passes; log `00c87380bd908427c0e4b1c7c83f3ce116ac7a841b9f6b7454cccaa268ab1e53`; released RED lease6/digest `89827d9959f6f6a45be425d6740870689c85a37098ccc7f9c7b8fdaf1c6fed70`.
-- P1/P2/root target GREEN; final validation/review/CI/Master gate pending.
+- P1/P2/root/M1 target GREEN; final validation/review/CI/Master gate pending.
 - Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 goldens pending. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
 
 ## BT-04 completed recovery
