@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -20,7 +21,7 @@ LOCK_CHECKER_PATH = REPOSITORY_ROOT / "scripts" / "check_lock_consistency.py"
 CI_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 README_PATH = REPOSITORY_ROOT / "README.md"
 
-SUPPORTED_PYTHON_VERSIONS = {"3.10", "3.11", "3.12", "3.13", "3.14"}
+CI_PYTHON_VERSIONS = {"3.14"}
 SETUP_UV_COMMIT = "20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
 UV_VERSION = "0.12.7"
 
@@ -157,7 +158,8 @@ def test_ci_uses_the_locked_uv_matrix_and_current_foundation_gate() -> None:
     )
     matrix_versions.update(re.findall(r'python-version:\s*["\'](3\.\d+)["\']', ci_text))
 
-    assert matrix_versions >= SUPPORTED_PYTHON_VERSIONS
+    assert matrix_versions == CI_PYTHON_VERSIONS
+    _assert_active_ci_policy(yaml.safe_load(ci_text))
     assert f"astral-sh/setup-uv@{SETUP_UV_COMMIT}" in ci_text
     assert re.search(rf"version:\s*[\"']?{re.escape(UV_VERSION)}[\"']?", ci_text)
     assert "uv sync --locked" in ci_text
@@ -285,3 +287,138 @@ def test_lock_checker_reports_requires_python_drift_without_mutating_lock(tmp_pa
     assert result.returncode != 0
     assert re.search(r"(?i)(requires-python|mismatch|drift)", _combined_output(result))
     assert lock_path.read_bytes() == drifted_bytes
+
+
+def _required_ci_runs() -> dict[str, dict[str, str]]:
+    return {
+        "test": {
+            "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
+            "Run test suite": "uv run --no-sync pytest -q",
+        },
+        "foundation-contract-docs-lock": {
+            "Install locked development environment": "uv sync --locked --extra dev",
+            "Run foundation contract tests": "uv run --no-sync pytest -q tests/productionization",
+        },
+        "smoke-install": {
+            "Fresh locked install (no dev extras) and import": "uv sync --locked --no-dev --no-editable",
+            "Import installed packages": (
+                'PYTHON="$GITHUB_WORKSPACE/.venv/bin/python"\n'
+                'cd "$(mktemp -d)"\n'
+                '"$PYTHON" -I "$GITHUB_WORKSPACE/scripts/smoke_installed.py"'
+            ),
+        },
+        "lint": {
+            "Install locked development environment": "uv sync --locked --extra dev",
+            "Lint the repository": "uv run --no-sync ruff check .",
+            "Check diff integrity against event base": (
+                'if [[ "${{ github.event_name }}" == "pull_request" ]]; then\n'
+                '  BASE_SHA="${{ github.event.pull_request.base.sha }}"\n'
+                'else\n  BASE_SHA="${{ github.event.before }}"\nfi\n'
+                'git cat-file -e "${BASE_SHA}^{commit}"\n'
+                'git diff --check "$BASE_SHA" HEAD'
+            ),
+            "Run network-deny canary": (
+                'uv run --no-sync pytest -q -m "not integration" '
+                'tests/productionization/test_validation_boundaries.py -k network_denial_canary'
+            ),
+            "Check agent harness": "uv run --no-sync python scripts/check_agent_harness.py",
+            "Check dependency direction": "uv run --no-sync python scripts/check_dependency_direction.py",
+            "Check lock consistency": "uv run --no-sync python scripts/check_lock_consistency.py",
+            "Check Markdown contracts": "uv run --no-sync python scripts/check_markdown_contracts.py",
+        },
+    }
+
+
+def _assert_active_ci_policy(workflow: dict) -> None:
+    jobs = workflow.get("jobs")
+    assert type(jobs) is dict and "test" in jobs
+    strategy = jobs["test"].get("strategy")
+    assert type(strategy) is dict
+    matrix = strategy.get("matrix")
+    assert type(matrix) is dict and set(matrix) == {"python-version"}
+    versions = matrix["python-version"]
+    assert type(versions) is list and all(type(version) is str for version in versions)
+    assert versions == ["3.14"]
+    assert jobs["test"]["name"] == "tests (py${{ matrix.python-version }})"
+    for job_name, commands in _required_ci_runs().items():
+        job = jobs.get(job_name)
+        assert type(job) is dict
+        assert job.get("if", True) is True and job.get("continue-on-error", False) is False
+        steps = job.get("steps")
+        assert type(steps) is list and all(type(step) is dict for step in steps)
+        for step in steps:
+            assert step.get("if", True) is True and step.get("continue-on-error", False) is False
+        uv_steps = [step for step in steps if step.get("uses") == f"astral-sh/setup-uv@{SETUP_UV_COMMIT}"]
+        assert len(uv_steps) == 1
+        assert uv_steps[0]["with"]["version"] == UV_VERSION
+        expected = "${{ matrix.python-version }}" if job_name == "test" else "3.14"
+        assert uv_steps[0]["with"]["python-version"] == expected
+        for name, command in commands.items():
+            matches = [step for step in steps if step.get("name") == name]
+            assert len(matches) == 1
+            assert matches[0].get("run", "").strip() == command
+
+
+def _active_ci_fixture() -> dict:
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    workflow["jobs"]["test"]["strategy"]["matrix"] = {"python-version": ["3.14"]}
+    return workflow
+
+
+def test_active_ci_runtime_fixture_preserves_all_locked_full_and_security_gates() -> None:
+    _assert_active_ci_policy(_active_ci_fixture())
+
+
+def test_active_ci_policy_rejects_retired_ambiguous_or_hidden_matrix_expansion() -> None:
+    template = _active_ci_fixture()
+    invalid = [
+        None, {}, {"python-version": []}, {"python-version": ["3.13"]},
+        {"python-version": ["3.14", "3.14"]}, {"python-version": [3.14]},
+        {"python-version": ("3.14",)}, {"python-version": ["3.14"], "os": ["ubuntu-latest"]},
+        {"python-version": ["3.14"], "include": [{"python-version": "3.13"}]},
+        {"python-version": ["3.14"], "exclude": []},
+    ]
+    invalid.extend({"python-version": ["3.14", version]} for version in ("3.10", "3.11", "3.12", "3.13"))
+    for matrix in invalid:
+        candidate = copy.deepcopy(template)
+        candidate["jobs"]["test"]["strategy"]["matrix"] = matrix
+        with pytest.raises(AssertionError):
+            _assert_active_ci_policy(candidate)
+    for remove in ("strategy", "name"):
+        candidate = copy.deepcopy(template)
+        candidate["jobs"]["test"].pop(remove)
+        with pytest.raises((AssertionError, KeyError)):
+            _assert_active_ci_policy(candidate)
+    candidate = copy.deepcopy(template)
+    candidate["jobs"]["test"]["strategy"].pop("matrix")
+    with pytest.raises(AssertionError):
+        _assert_active_ci_policy(candidate)
+
+
+def test_active_ci_policy_rejects_removed_filtered_or_disabled_required_work() -> None:
+    template = _active_ci_fixture()
+    for job_name, commands in _required_ci_runs().items():
+        candidate = copy.deepcopy(template)
+        candidate["jobs"].pop(job_name)
+        with pytest.raises(AssertionError):
+            _assert_active_ci_policy(candidate)
+        for flag, value in (("if", False), ("if", "${{ false }}"), ("continue-on-error", True)):
+            candidate = copy.deepcopy(template)
+            candidate["jobs"][job_name][flag] = value
+            with pytest.raises(AssertionError):
+                _assert_active_ci_policy(candidate)
+        for name in commands:
+            candidate = copy.deepcopy(template)
+            steps = candidate["jobs"][job_name]["steps"]
+            index = next(index for index, step in enumerate(steps) if step.get("name") == name)
+            for alteration in ("remove", "filter", "if", "continue-on-error"):
+                broken = copy.deepcopy(candidate)
+                target = broken["jobs"][job_name]["steps"]
+                if alteration == "remove":
+                    target.pop(index)
+                elif alteration == "filter":
+                    target[index]["run"] += " -k narrowed_selection"
+                else:
+                    target[index][alteration] = alteration == "continue-on-error"
+                with pytest.raises(AssertionError):
+                    _assert_active_ci_policy(broken)

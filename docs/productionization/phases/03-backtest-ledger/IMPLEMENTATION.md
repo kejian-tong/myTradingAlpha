@@ -1,6 +1,6 @@
 # Phase 03 — Backtest and Ledger Implementation
 
-Status: planned. This document is an implementation plan; its commands and test names are not claims that code or tests exist or have run. The PH03-DOCS reconciliation is prose-only, so its RED phase is not applicable and it creates no synthetic failing test. Each future executable BT PR must have its own exact-base JIT, dedicated tests-only RED commit pushed before implementation, focused expected failure, minimum GREEN, in-scope refactor, exact validation and rollback evidence. Implement one BT ID per fresh Master session after its prerequisite is merged and main is refreshed.
+Status: in progress. BT-01 through BT-04 are implemented; BT-05 is the PR104 candidate pending final validation, independent review, required CI and the Master gate. BT-06 remains deferred. Commands below remain plans unless execution evidence is recorded separately. The original PH03-DOCS reconciliation was prose-only with RED not applicable. Every executable BT PR requires its own exact-base JIT, dedicated tests-only RED pushed before implementation, focused expected failure, minimum GREEN, in-scope refactor, exact validation and rollback evidence. Implement one BT ID per fresh Master session after its prerequisite is merged and main is refreshed.
 
 ## Current integration facts and compatibility
 
@@ -25,7 +25,7 @@ At replay, map `decision_time` through exactly one sealed `CalendarReplayDay` wi
 
 ### Proposed interfaces
 
-These signatures describe intended ownership only; no Phase 03 code currently defines them. The BT-01 JIT fixes exact field bounds, reason codes and serialization before RED.
+These signatures describe BT-01 ownership. The implemented interfaces and exact field bounds, reason codes and serialization are governed by the current code and BT-01 JIT evidence.
 
 ```python
 SessionClock.bind(
@@ -172,7 +172,9 @@ Cash and B&H have their own reducer, event stream, and NAV. Both use strategy in
 ReplayManifest.semantic_input_hash() -> str
 ReplayManifest.economic_output_hash(events: tuple[LedgerEvent, ...], results: tuple[object, ...]) -> str
 ReplayManifest.artifact_integrity_hash() -> str
-ReplayRunner.resume(manifest: ReplayManifest, checkpoint: ReplayCheckpoint, events: tuple[LedgerEvent, ...]) -> ReplayResult
+ReplayRunner.resume(manifest: ReplayManifest, checkpoint: ReplayCheckpoint | None = None,
+                    events: tuple[LedgerEvent, ...] | None = None,
+                    *, max_operations: int | None = None) -> ReplayResult
 ```
 
 The manifest's semantic input contains exact typed bundle/outcome source content projections, policies/witnesses, universe and instrument IDs, variant and full signal semantic content, model/config/code/schema versions, numerical/fill/cost/action/benchmark versions, initial capital, eligible sessions and seed. It binds exact original v1 source bytes, content hashes and IDs separately as integrity provenance; never rewrite source IDs or sealed bytes.
@@ -186,6 +188,10 @@ Reject unknown schema/fields, cycles, duplicate JSON keys, NaN/infinity, custom 
 The checkpoint binds both semantic and exact inputs; event prefix count and hash; next runner cursor; open intents; cumulative order fees; remaining cap; action entitlements/payables; Cash/B&H state; and reducer/schema versions. Events are authoritative. On resume verify all manifest and prefix values, replay/reconcile the checkpoint, then process exactly the next unapplied event. A crash before atomic fill append commits no half-fill. A crash after append but before checkpoint is idempotently replayed once. Torn record, changed input, unknown version, conflicting event, sequence/hash mismatch or checkpoint disagreement stops with evidence retained.
 
 One explicit local append owner writes canonical immutable artifacts atomically only below an explicit caller-supplied root. Reject path escape, symlinks, overwriting an existing artifact and concurrent writers. No environment/credential discovery, network, subprocess, model or provider is allowed. A changed semantic input creates a new artifact. A recovered unchanged run must have the same economic output hash and exact economic events/results as uninterrupted execution; exact artifact integrity may differ when run/operational provenance differs.
+
+Optional checkpoint/events supplement the published exact journal; their absence never waives manifest or prefix reconciliation. Private completed-trace reuse is issued only by a genuine completed cold engine after final guards, binds the exact live manifest owner, and restores no reducer state. Every record/read/source/root/lock/leaf/publication guard remains active; explicit operation limits stay financially cold. A standard context-manager decorator gives each execution a fresh private identifier scope in contracts/orders: at most 256 positive lexemes/32768 UTF-8 bytes, with cold fallback at capacity. The first/current-validator check is genuine, exact native/UTF-8 admission precedes lookup, and artifact redaction is fresh on every eligible call. Retain success only after both checks, evict on redaction failure, and clear/deactivate/reset in finally even for BaseException. Nested invocations restore their outer scope; stale or foreign PID/thread copies and default callers remain cold. No global raw/decoded memo, changed financial/source authority, schema/hash version or artifact bytes are introduced.
+
+JSON escape sizing uses native byte counts, and quoted-token scanning uses monotonic byte searches with explicit backslash parity; all decode, canonicality and resource checks and resulting bytes remain unchanged.
 
 ### RED, GREEN, refactor and slice checks
 
@@ -240,6 +246,6 @@ python scripts/check_lock_consistency.py
 git diff --check
 ```
 
-Also run applicable production package/import smoke and a clean installed-origin smoke, all five locked Python 3.10–3.14 CI test jobs, Ruff, CodeQL and Dependency Review. Do not claim a skipped optional integration as passed. Record interpreter, exact candidate SHA, commands, exit status, outputs, CI run identity and skipped tests. Each later commit makes earlier exact-head review and CI stale.
+Also run applicable production package/import smoke and a clean installed-origin smoke, the locked Python 3.14 CI test job and Foundation gate, Ruff, CodeQL and Dependency Review. The package/lock compatibility floor remains `>=3.10`; current CI covers Python 3.14 only. Do not claim a skipped optional integration as passed. Record interpreter, exact candidate SHA, commands, exit status, outputs, CI run identity and skipped tests. Each later commit makes earlier exact-head review and CI stale.
 
 The phase gate is pass, fail, or insufficient_evidence, never inferred from a plan or synthetic run. It requires all six separately merged slices, complete exact-head reviews and CI, and successful required golden runs. Expected negative-case rejections and documented later-phase unavailable metrics must pass their assertions and do not themselves block software acceptance. An unexpected failure in a required successful golden run or failed required check blocks; missing artifacts/checks are insufficient_evidence. Failed or incomparable experiment runs remain visible and block EXP qualification. Even a phase pass remains software acceptance only; historical source authenticity, alpha, risk qualification, paper/live approval and Phase 04+ implementation are separate gates. Rollback preserves immutable bundles, decisions, event prefixes, manifests and failed artifacts; choose an older version to create a new derived result, never rewrite the old one.

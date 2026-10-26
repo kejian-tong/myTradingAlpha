@@ -1,0 +1,2816 @@
+"""BT-05 RED contracts for typed identity and immutable local recovery.
+
+Resolve the new API in test bodies: the BT-04 base must collect successfully and
+fail for the missing manifested-replay behavior. All financial inputs below use
+the real PIT/SIG/BT validators. Cached fixture graphs are read-only; corruption
+tests alter fresh inputs or files owned by their individual temporary root.
+"""
+
+from __future__ import annotations
+
+import ast
+import copy
+import hashlib
+import importlib
+import json
+import os
+import socket
+import subprocess
+import urllib.request
+import zoneinfo
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, Inexact, Rounded, localcontext
+from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from mytradingalpha.contracts.research import EvidenceReference
+from mytradingalpha.contracts.signals import LLMOverlay
+from mytradingalpha.quant.envelope import combine_quant_overlay
+from mytradingalpha.quant.variants import VariantRegistry
+from tests.productionization.backtest import (
+    test_actions_benchmarks as bt04,
+    test_clock_events as bt01,
+    test_fills_costs as bt02,
+    test_ledger_nav as bt03,
+)
+from tests.productionization.quant import test_signal as quant
+from tests.productionization.research import test_overlay as research
+
+D = Decimal
+UTC = timezone.utc
+PRIORITY = "bt05-semantic-priority-v1"
+DOMAINS = (
+    b"mytradingalpha:bt05:semantic-input:v1\0",
+    b"mytradingalpha:bt05:economic-output:v1\0",
+    b"mytradingalpha:bt05:artifact-integrity:v1\0",
+)
+OPENING = bt03.OPENING_TIME
+CREATED = datetime(2024, 7, 11, 1, 2, 3, 456789, UTC)
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _api() -> SimpleNamespace:
+    modules = {}
+    for name in ("manifest", "replay"):
+        try:
+            modules[name] = importlib.import_module(f"mytradingalpha.backtest.{name}")
+        except ModuleNotFoundError as error:
+            if error.name == f"mytradingalpha.backtest.{name}":
+                pytest.fail(f"BT-05 RED: missing {name} behavioral contract", pytrace=False)
+            raise
+    expected = {"manifest": ("ReplayManifest",),
+                "replay": ("ReplayRunner", "ReplayCheckpoint", "ReplayResult")}
+    for module, names in expected.items():
+        for name in names:
+            assert hasattr(modules[module], name), f"BT-05 RED: missing {name} contract"
+    return SimpleNamespace(**{name: getattr(modules[module], name)
+                              for module, names in expected.items() for name in names})
+
+
+def _research_case(run_id: str) -> SimpleNamespace:
+    """Capture a genuine data-only note with this run's exact references."""
+    bundle = quant._bundle(calendar=bt04._case().bundle.calendar)
+    variant = "variant-bt05-quant-llm"
+    captured_context = bt01._context(
+        bundle, run_id=run_id, variant_id=variant,
+        decision_time="2024-07-02T20:04:00Z",
+        earliest_execution_time="2024-07-03T13:30:00Z",
+    )
+    instrument = ("Symbol: KEEP; instrument_id: inst-survivor; asset_class: equity; "
+                  "exchange: XNAS; currency: USD")
+    output = research.make_output()
+    output.update(research.create_historical_initial_state(
+        company_name="KEEP", trade_date="2024-07-02", asset_type="stock",
+        instrument_context=instrument,
+    ))
+    captured = research.parse_cached_graph_response(research.build_cached_graph_response(
+        **research.make_response_kwargs(
+            bundle=bundle, context=captured_context, output=output,
+            response_id=f"response-{run_id}", instrument_id=bt04.INST,
+            ticker="KEEP", trade_date="2024-07-02", instrument_context=instrument,
+        )
+    ))
+    note = research.ResearchNoteBuilder(
+        bundle=bundle, context=captured_context, response=captured,
+    ).build(source_agent="sentiment_analyst",
+            source_fields={"thesis": "market_report", "risks": "news_report"},
+            claim_citations={
+                "thesis": (EvidenceReference(schema_version="v1", bundle_id=bundle.bundle_id,
+                                             domain="actions", record_id="action-acme-split"),),
+                "risks": (EvidenceReference(schema_version="v1", bundle_id=bundle.bundle_id,
+                                            domain="events", record_id="news-aapl-earnings"),),
+            })
+    signal = quant._score(quant._api(), bundle=bundle, run_id=run_id)
+    context = bt01._context(
+        bundle, run_id=run_id, variant_id=variant,
+        decision_time="2024-07-03T17:00:00Z",
+        earliest_execution_time="2024-07-05T13:30:00Z",
+    )
+    overlay = LLMOverlay.model_validate(research._candidate(note, signal))
+    envelope = combine_quant_overlay(
+        signal, context=context, registry=VariantRegistry().register(variant, kind="quant_llm"),
+        note=note, overlay=overlay,
+    )
+    binding = bt01._bt_api().SessionClock.bind(context, bundle, envelope)
+    decision, opportunity = bt01._bt_api().BacktestRunner().run((binding,))
+    return SimpleNamespace(context=context, bundle=bundle, envelope=envelope,
+                           binding=binding, decision=decision, opportunity=opportunity)
+
+
+def _fields(*, run_id: str = "run-bt05-fixture", kind: str = "quant_only",
+            actions: bool = False, prices: tuple[str, ...] | None = None,
+            order: dict[str, Any] | None = None, costs: dict[str, Any] | None = None,
+            days: int = 3, bundle_cutoff: str | None = None) -> tuple[dict[str, Any], SimpleNamespace]:
+    a2, a3, a4 = bt02._bt02_api(), bt03._bt03_api(), bt04._api()
+    case = _research_case(run_id) if kind == "quant_llm" else bt02._case_for_bundle(
+        bundle=bt04._case().bundle if bundle_cutoff is None else quant._bundle(
+            calendar=bt04._case().bundle.calendar, cutoff=bundle_cutoff),
+        run_id=run_id, variant_id="variant-bt01-quant-only",
+        decision_time=bt01.DECISION_TIME, earliest_execution_time="2024-07-03T13:30:00Z",
+    )
+    first = bt04.SESSIONS.index(case.binding.next_session.session_date)
+    selected = bt04.SESSIONS[first:first + days]
+    price_values = prices or (("100", "50", "50") if actions else ("100",) * days)
+    assert len(price_values) == days
+    cost = bt02._policy(a2, **{
+        "half_spread_bps": D("0"), "slippage_bps": D("0"),
+        "commission_per_share": D("0"), "order_minimum": D("1"),
+        "fixed_share_cap": D("2"), "lot_size": D("1"), **(costs or {}),
+    })
+    intent = bt02._intent(a2, case, **{
+        "quantity": D("3"), "time_in_force": "gtc",
+        "expires_at": case.bundle.calendar.session(selected[-1]).close_at,
+        "plan_id": "plan-alpha", **(order or {}),
+    })
+    outcomes = tuple(bt02._outcome(a2, case, session=day, price=D(price))
+                     for day, price in zip(selected, price_values, strict=True))
+    session_inputs = []
+    for index, (day, price) in enumerate(zip(selected, price_values, strict=True)):
+        day_actions, references = (), ()
+        if actions and index == 1:
+            day_actions = tuple(bt04._available(a4, bt04._action(
+                action_kind, f"bt05-{action_kind}", effective=day,
+                **({"payable_date": selected[2]} if action_kind == "dividend" else {})))
+                for action_kind in ("split", "dividend"))
+            references = (a4.PositionReference(
+                instrument_id=bt04.INST, symbol="KEEP", cost_basis=D("100"),
+                mark=bt03._mark(a3, case, outcomes[index - 1]),
+            ),)
+        session_inputs.append(bt04._session_input(
+            a4, day, case=case, price=price, actions=day_actions, references=references,
+        ))
+    common = bt04._common(a4, case=case, cost_policy=cost, end=selected[-1],
+                          entry_session=selected[0], replay_policy=case.bundle.replay_policy)
+    benchmark_intent = bt02._intent(
+        a2, case, quantity=D("1"), plan_id="plan-benchmark",
+        time_in_force="day", expires_at=case.binding.next_session.close_at,
+    )
+    member = bt04._member(
+        a4, instrument_id=bt04.INST, weight=D(price_values[0]) / D("2000"),
+        quantity="1", lot_size=D("1"), intent=benchmark_intent, binding=case.binding,
+    )
+    cash = a4.CashBenchmarkPolicy(common=common, interest_policy="zero", annual_rate=D("0"))
+    bh = bt04._bh_policy(a4, common=common, members=(member,), universe=case.bundle)
+    fields = {
+        "schema_version": "v1", "run_id": run_id, "correlation_id": f"correlation-{run_id}",
+        "created_at": CREATED, "bindings": (case.binding,), "intents": (intent,), "outcomes": outcomes,
+        "sessions": tuple(session_inputs), "cost_policy": cost, "action_policy": bt04._policy(a4),
+        "cash_benchmark_policy": cash, "buy_and_hold_policy": bh,
+        "opening_cash": D("2000"), "opening_time": OPENING,
+        "resolution_cutoff": common.resolution_cutoff, "start_sequence": 0,
+        "code_version": "bt05-code-fixture-v1", "config_version": "bt05-config-fixture-v1",
+        "model_version": "bt05-model-fixture-v1",
+        "configuration": (("label", "caf\u00e9"), ("mode", "synthetic")),
+        "seed": 17, "priority_policy": PRIORITY,
+    }
+    return fields, case
+
+
+def _manifest(api: SimpleNamespace, **options: Any) -> tuple[Any, dict[str, Any], Any]:
+    fields, case = _fields(**options)
+    return api.ReplayManifest(**fields), fields, case
+
+
+def _run(api: SimpleNamespace, root: Path, manifest: Any, *, max_operations: int | None = None) -> Any:
+    root.mkdir()
+    with api.ReplayRunner(root=root) as runner:
+        return runner.run(manifest, max_operations=max_operations)
+
+
+def _resume(api: SimpleNamespace, root: Path, manifest: Any, **kwargs: Any) -> Any:
+    with api.ReplayRunner(root=root) as runner:
+        return runner.resume(manifest, **kwargs)
+
+
+def _reject(call: Any) -> BaseException:
+    with pytest.raises((TypeError, ValueError, RuntimeError, OverflowError)) as captured:
+        call()
+    assert len(str(captured.value)) <= 256
+    assert "sensitive-sentinel" not in str(captured.value)
+    assert captured.value.__cause__ is None
+    return captured.value
+
+
+def _digest(domain: bytes, raw: bytes) -> str:
+    return "sha256:" + hashlib.sha256(domain + raw).hexdigest()
+
+
+def _json(raw: bytes) -> Any:
+    return json.loads(raw)
+
+
+def _canonical(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _snapshot(root: Path) -> tuple[tuple[str, bytes], ...]:
+    return tuple(sorted((p.name, p.read_bytes()) for p in root.iterdir() if p.is_file()))
+
+
+def _records(root: Path, prefix: str) -> list[Path]:
+    """The local v1 layout uses immutable manifest/operation/checkpoint/result names."""
+    return sorted(p for p in root.iterdir() if p.name.startswith(prefix) and p.suffix == ".json")
+
+
+def _economic(result: Any) -> tuple[Any, ...]:
+    return (result.economic_output_hash,
+            tuple(event.canonical_bytes() for event in result.events),
+            tuple(balance.canonical_bytes() for balance in result.balances),
+            result.nav_points, result.orders,
+            result.cash_benchmark.canonical_bytes(), result.buy_and_hold_benchmark.canonical_bytes(),
+            result.status, result.run_valid, result.reason_code)
+
+
+def _oracle(fields: dict[str, Any], case: Any) -> Any:
+    return bt02._run(bt02._bt02_api(), case, fields["intents"], fields["outcomes"],
+                     fields["cost_policy"], cash=fields["opening_cash"],
+                     end_session=fields["sessions"][-1].session.session_date)
+
+
+@pytest.mark.parametrize("kind", ("quant_only", "quant_llm"))
+@pytest.mark.parametrize("actions", (False, True))
+def test_fixture_composes_real_sealed_signals_fills_and_independent_benchmarks(kind: str, actions: bool) -> None:
+    fields, case = _fields(kind=kind, actions=actions)
+    assert case.binding.bundle.calendar.replay_evidence is not None
+    assert case.envelope.shadow_only
+    assert (case.envelope.note is not None) == (kind == "quant_llm")
+    oracle = _oracle(fields, case)
+    assert sum((fill.quantity for fill in oracle.fills), D("0")) == D("3")
+    assert sum((fill.fee for fill in oracle.fills), D("0")) == D("1")
+    api = bt04._api()
+    cash = api.BenchmarkRunner().run_cash(fields["sessions"], policy=fields["cash_benchmark_policy"])
+    bh = api.BenchmarkRunner().run_buy_and_hold(fields["sessions"], policy=fields["buy_and_hold_policy"])
+    assert cash.run_valid and bh.run_valid
+    assert len(cash.nav_points) == len(bh.nav_points) == 3
+    if actions:
+        assert len(bh.events) >= 3
+        assert bh.balances[-1].positions == ((bt04.INST, D("2")),)
+        assert bh.balances[-1].receivables == D("0")
+    else:
+        assert cash.events == () and len(bh.events) == 1
+
+
+def test_three_hash_domains_use_independent_canonical_utf8_preimages(tmp_path: Path) -> None:
+    api = _api()
+    wire = b'{"decimal":"0","label":"caf\xc3\xa9","utc":"2024-07-11T01:02:03.456789Z"}'
+    assert tuple(_digest(domain, wire) for domain in DOMAINS) == (
+        "sha256:bf0e1c646b34795d5857941926c1821071c6d48df218449fc34521f8fcfa0936",
+        "sha256:712da5a5366c4bd29e3b4aa688769dca29f6fe7de2c068dc6faca66494b1a7b1",
+        "sha256:a18f06d62164a48ca531d2f128e8e81da498c5e74277e2f6ff4d5684b9a4b7f3",
+    )
+    manifest, fields, _ = _manifest(api)
+    result = _run(api, tmp_path / "run", manifest)
+    semantic = manifest.semantic_bytes()
+    economic = manifest.economic_bytes(result.events, result.results)
+    artifact = manifest.canonical_bytes()
+    for raw in (semantic, economic, artifact):
+        assert type(raw) is bytes and _canonical(_json(raw)) == raw
+    for raw in (semantic, artifact):
+        assert b"caf\xc3\xa9" in raw and b"\\u00e9" not in raw
+    assert manifest.semantic_input_hash().encode() in economic
+    assert manifest.semantic_input_hash() == _digest(DOMAINS[0], semantic)
+    assert manifest.economic_output_hash(result.events, result.results) == _digest(DOMAINS[1], economic)
+    assert manifest.artifact_integrity_hash() == _digest(DOMAINS[2], artifact)
+    assert len({manifest.semantic_input_hash(), result.economic_output_hash,
+                manifest.artifact_integrity_hash()}) == 3
+    assert PRIORITY.encode() in semantic and PRIORITY.encode() in artifact
+    assert fields["created_at"].isoformat(timespec="microseconds").replace("+00:00", "Z").encode() in artifact
+    assert manifest.semantic_input_hash().startswith("sha256:")
+    assert len(manifest.semantic_input_hash()) == 71
+    assert result.artifact_integrity_hash == manifest.artifact_integrity_hash(
+        events=result.events, results=result.results)
+    assert result.artifact_integrity_hash != manifest.artifact_integrity_hash()
+
+
+@pytest.mark.parametrize("kind", ("quant_only", "quant_llm"))
+@pytest.mark.parametrize("actions", (False, True))
+def test_run_and_operational_lineage_exclusions_preserve_typed_sources(
+    tmp_path: Path, kind: str, actions: bool,
+) -> None:
+    api = _api()
+    left, lf, lc = _manifest(api, run_id="run-bt05-A", kind=kind, actions=actions)
+    rf, rc = _fields(run_id="run-bt05-B", kind=kind, actions=actions)
+    rf.update(created_at=CREATED + timedelta(days=1), correlation_id="different-correlation")
+    right = api.ReplayManifest(**rf)
+    sealed = (lc.bundle.model_dump_json(), rc.bundle.model_dump_json(),
+              lc.envelope.model_dump_json(), rc.envelope.model_dump_json(),
+              tuple(i.canonical_bytes() for i in lf["intents"] + rf["intents"]))
+    assert left.semantic_bytes() == right.semantic_bytes()
+    assert left.semantic_input_hash() == right.semantic_input_hash()
+    assert left.artifact_integrity_hash() != right.artifact_integrity_hash()
+    lresult = _run(api, tmp_path / "left", left)
+    rresult = _run(api, tmp_path / "right", right)
+    assert lresult.economic_output_hash == rresult.economic_output_hash
+    assert left.economic_bytes(lresult.events, lresult.results) == right.economic_bytes(rresult.events, rresult.results)
+    assert lresult.artifact_integrity_hash != rresult.artifact_integrity_hash
+    assert sealed == (lc.bundle.model_dump_json(), rc.bundle.model_dump_json(),
+                      lc.envelope.model_dump_json(), rc.envelope.model_dump_json(),
+                      tuple(i.canonical_bytes() for i in lf["intents"] + rf["intents"]))
+    if kind == "quant_llm":
+        assert lc.envelope.note.note_id != rc.envelope.note.note_id
+        assert lc.envelope.overlay.overlay_id != rc.envelope.overlay.overlay_id
+        assert lc.envelope.note.output_hash == rc.envelope.note.output_hash
+
+
+@pytest.mark.parametrize("field,value", (
+    ("seed", 18), ("code_version", "bt05-code-v2"),
+    ("config_version", "bt05-config-v2"), ("model_version", "bt05-model-v2"),
+    ("configuration", (("label", "caf\u00e9"), ("mode", "changed"))),
+    ("start_sequence", 7),
+))
+def test_material_manifest_input_changes_output_identity_even_when_numbers_agree(
+    tmp_path: Path, field: str, value: Any,
+) -> None:
+    api = _api()
+    left, fields, _ = _manifest(api)
+    right = api.ReplayManifest(**{**fields, field: value})
+    lresult = _run(api, tmp_path / "left", left)
+    rresult = _run(api, tmp_path / "right", right)
+    assert lresult.balances[-1].cash == rresult.balances[-1].cash
+    assert lresult.balances[-1].positions == rresult.balances[-1].positions
+    assert left.semantic_input_hash() != right.semantic_input_hash()
+    assert lresult.economic_output_hash != rresult.economic_output_hash
+
+
+@pytest.mark.parametrize("change", ("fee", "spread", "cap", "source", "availability", "ingestion", "cutoff", "knowledge_cutoff", "created_at"))
+def test_economic_policy_provenance_and_order_times_are_material(change: str) -> None:
+    api = _api()
+    left, fields, case = _manifest(api)
+    if change in ("fee", "spread", "cap"):
+        key = {"fee": "order_minimum", "spread": "half_spread_bps", "cap": "fixed_share_cap"}[change]
+        changed, _ = _fields(costs={key: D("2") if change != "cap" else D("3")})
+    elif change == "knowledge_cutoff":
+        changed, _ = _fields(bundle_cutoff="2024-07-01T20:04:01Z")
+    elif change == "created_at":
+        changed, _ = _fields(order={"created_at": case.context.decision_time + timedelta(seconds=1)})
+    else:
+        changed = dict(fields)
+        kwargs = {"source": {"source": "synthetic-other-source"},
+                  "availability": {"available_offset_minutes": 2},
+                  "ingestion": {"ingestion_offset_minutes": 4},
+                  "cutoff": {"outcome_cutoff": fields["outcomes"][0].outcome_cutoff + timedelta(seconds=1)}}[change]
+        altered = bt02._outcome(bt02._bt02_api(), case, **kwargs)
+        changed["outcomes"] = (altered,) + fields["outcomes"][1:]
+        if change == "source":
+            changed["intents"] = (bt02._intent(
+                bt02._bt02_api(), case, quantity=D("3"), time_in_force="gtc",
+                expires_at=fields["intents"][0].expires_at, plan_id="plan-alpha",
+                outcome_source="synthetic-other-source"),)
+    assert left.semantic_input_hash() != api.ReplayManifest(**changed).semantic_input_hash()
+
+
+def test_competing_intents_have_run_independent_semantic_priority(tmp_path: Path) -> None:
+    api = _api()
+    manifests, fields_list, results, legacy = [], [], [], []
+    for suffix in ("0", "5"):
+        fields, case = _fields(run_id=f"run-bt05-order-probe-{suffix}")
+        first = bt02._intent(bt02._bt02_api(), case, quantity=D("1"), plan_id="plan-alpha")
+        second = bt02._intent(bt02._bt02_api(), case, quantity=D("2"), plan_id="plan-beta")
+        fields["intents"] = (first, second)
+        manifest = api.ReplayManifest(**fields)
+        manifests.append(manifest)
+        fields_list.append(fields)
+        results.append(_run(api, tmp_path / suffix, manifest))
+        legacy.append(_oracle(fields, case))
+    exact_priorities = [tuple(i.plan_id for i in sorted(f["intents"], key=lambda i: i.intent_id)) for f in fields_list]
+    assert exact_priorities[0] == tuple(reversed(exact_priorities[1]))
+    assert sorted(sum((f.fee for f in r.fills), D("0")) for r in legacy) == [D("1"), D("2")]
+    assert manifests[0].semantic_input_hash() == manifests[1].semantic_input_hash()
+    assert results[0].economic_output_hash == results[1].economic_output_hash
+    assert manifests[0].economic_bytes(results[0].events, results[0].results) == manifests[1].economic_bytes(results[1].events, results[1].results)
+    allocations = []
+    for fields, result in zip(fields_list, results, strict=True):
+        plan = {i.intent_id: i.plan_id for i in fields["intents"]}
+        allocations.append(sorted((plan[o.intent_id], o.cumulative_quantity, o.cumulative_fee, o.status) for o in result.orders))
+    assert allocations[0] == allocations[1]
+    assert results[0].artifact_integrity_hash != results[1].artifact_integrity_hash
+    # Reordering set-like caller input changes neither priority nor economics.
+    reversed_fields = {**fields_list[0], "intents": tuple(reversed(fields_list[0]["intents"]))}
+    assert api.ReplayManifest(**reversed_fields).semantic_input_hash() == manifests[0].semantic_input_hash()
+
+
+def test_duplicate_projected_intent_is_rejected_without_arbitrary_tie_break() -> None:
+    api = _api()
+    fields, _ = _fields()
+    _reject(lambda: api.ReplayManifest(**{**fields, "intents": fields["intents"] * 2}))
+
+
+@pytest.mark.parametrize("cancel", (False, True))
+def test_set_like_ownership_and_cancellation_indexes_use_projected_identity(tmp_path: Path, cancel: bool) -> None:
+    api = _api()
+    wires = []
+    for suffix in ("0", "5"):
+        fields, case = _fields(run_id=f"run-bt05-order-probe-{suffix}", actions=cancel,
+                               costs={"fixed_share_cap": D("4")})
+        fields["intents"] = tuple(bt02._intent(bt02._bt02_api(), case,
+            quantity=D(quantity), plan_id=plan, time_in_force="gtc",
+            expires_at=fields["intents"][0].expires_at,
+            order_type="limit", limit_price=D("1" if cancel else "101"))
+            for quantity, plan in (("1", "plan-alpha"), ("2", "plan-beta")))
+        manifest = api.ReplayManifest(**fields)
+        result = _run(api, tmp_path / suffix, manifest)
+        assert len(result.orders) == 2
+        assert all(order.status == ("cancelled" if cancel else "filled") for order in result.orders)
+        wires.append(manifest.economic_bytes(result.events, result.results))
+    assert wires[0] == wires[1]
+
+
+@pytest.mark.parametrize("tif", ("day", "gtc", "ioc", "fok"))
+@pytest.mark.parametrize("marketable", (True, False))
+def test_replay_matches_existing_single_intent_tif_and_fee_oracle(
+    tmp_path: Path, tif: str, marketable: bool,
+) -> None:
+    api = _api()
+    manifest, fields, case = _manifest(api, order={
+        "time_in_force": tif, "order_type": "limit", "limit_price": D("101" if marketable else "99"),
+    })
+    oracle = _oracle(fields, case)
+    result = _run(api, tmp_path / "run", manifest)
+    assert result.orders == oracle.orders
+    assert result.balances[-1].cash == oracle.cash
+    assert result.balances[-1].positions == oracle.holdings
+    assert result.balances[-1].total_fees == sum((fill.fee for fill in oracle.fills), D("0"))
+
+
+@pytest.mark.parametrize("tif", ("day", "gtc", "ioc", "fok"))
+def test_no_fill_operation_is_durable_even_with_empty_ledger_prefix(tmp_path: Path, tif: str) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, order={"time_in_force": tif, "order_type": "limit", "limit_price": D("1")})
+    partial = _run(api, tmp_path / "run", manifest, max_operations=3)
+    assert partial.checkpoint.operation_count == 3
+    assert partial.checkpoint.ledger_event_count == 0 and partial.events == ()
+    assert len(_records(tmp_path / "run", "operation-")) == 3
+    resumed = _resume(api, tmp_path / "run", manifest)
+    full = _run(api, tmp_path / "full", manifest)
+    assert _economic(resumed) == _economic(full)
+    assert _economic(_resume(api, tmp_path / "run", manifest)) == _economic(full)
+
+
+@pytest.mark.parametrize("tif", ("day", "gtc", "ioc", "fok"))
+@pytest.mark.parametrize("timing", ("expires_before_close", "submit_after_first_close"))
+def test_expiry_and_not_yet_eligible_reasons_match_existing_simulator(
+    tmp_path: Path, tif: str, timing: str,
+) -> None:
+    api = _api()
+    _, case = _fields()
+    close = case.binding.next_session.close_at
+    order = {"time_in_force": tif}
+    if timing == "expires_before_close":
+        order["expires_at"] = close - timedelta(seconds=1)
+    else:
+        order["earliest_submit_time"] = close + timedelta(seconds=1)
+    manifest, fields, case = _manifest(api, order=order)
+    result = _run(api, tmp_path / "run", manifest)
+    assert result.orders == _oracle(fields, case).orders
+
+
+@pytest.mark.parametrize("action_kind", ("split", "delisting"))
+def test_action_cancels_never_filled_gtc_remainder_and_keeps_atomic_action_state(tmp_path: Path, action_kind: str) -> None:
+    api = _api()
+    fields, case = _fields(actions=True, order={"order_type": "limit", "limit_price": D("1")})
+    if action_kind == "delisting":
+        sessions = list(fields["sessions"])
+        sessions[1] = bt04._session_input(bt04._api(), bt04.EX_DATE, case=case,
+            actions=(bt04._available(bt04._api(), bt04._action("delisting", "bt05-delist")),))
+        fields["sessions"] = tuple(sessions)
+    manifest = api.ReplayManifest(**fields)
+    result = _run(api, tmp_path / "run", manifest)
+    assert result.orders[0].status == "cancelled"
+    assert result.orders[0].cumulative_quantity == D("0")
+    assert result.orders[0].reason_code
+    assert result.balances[-1].positions == ()
+    assert result.balances[-1].cash == D("2000")
+    assert result.checkpoint.operation_count > result.checkpoint.ledger_event_count
+    assert any(e.kind == "action_batch" for e in result.events)
+
+
+def test_action_does_not_cancel_intent_created_after_its_opening_boundary(tmp_path: Path) -> None:
+    api = _api()
+    fields, case = _fields(actions=True)
+    later = bt02._case_for_bundle(
+        bundle=case.bundle, run_id=case.context.run_id, variant_id=case.context.variant_id,
+        decision_time="2024-07-05T20:00:00Z", earliest_execution_time="2024-07-08T13:30:00Z",
+    )
+    intent = bt02._intent(bt02._bt02_api(), later, quantity=D("1"), plan_id="plan-after-split")
+    fields.update(bindings=fields["bindings"] + (later.binding,), intents=fields["intents"] + (intent,))
+    result = _run(api, tmp_path / "run", api.ReplayManifest(**fields))
+    later_order = next(order for order in result.orders if order.intent_id == intent.intent_id)
+    assert later_order.status == "filled" and later_order.cumulative_quantity == D("1")
+
+
+def test_checkpoint_binds_complete_cursor_native_state_and_three_independent_ledgers(tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, actions=True)
+    result = _run(api, tmp_path / "run", manifest, max_operations=4)
+    checkpoint = result.checkpoint
+    assert type(checkpoint) is api.ReplayCheckpoint
+    raw = checkpoint.canonical_bytes()
+    assert api.ReplayCheckpoint.from_bytes(raw).canonical_bytes() == raw
+    required = {"schema_version", "semantic_input_hash", "artifact_integrity_hash",
+                "operation_count", "operation_prefix_hash", "next_cursor", "ledger_event_count",
+                "ledger_tail_hash", "ledger_balance", "ledger_native_witness", "orders",
+                "attempt_state", "remaining_cap", "action_state", "cash_benchmark",
+                "buy_and_hold_benchmark", "reducer_versions", "numeric_policy_version", "serialization_version"}
+    assert required <= set(_json(raw))
+    assert checkpoint.semantic_input_hash == manifest.semantic_input_hash()
+    assert checkpoint.artifact_integrity_hash == manifest.artifact_integrity_hash()
+    with pytest.raises((AttributeError, TypeError)):
+        checkpoint.operation_count = 999
+    assert result.cash_benchmark.events == ()
+    assert len(result.buy_and_hold_benchmark.events) == 1
+    assert result.events[0].event_id != result.buy_and_hold_benchmark.events[0].event_id or result.events[0].canonical_bytes() != result.buy_and_hold_benchmark.events[0].canonical_bytes()
+
+
+@pytest.mark.parametrize("completed", (0, 1, 2, 3))
+def test_benchmark_prefixes_follow_closing_stages_without_future_suffix(tmp_path: Path, completed: int) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    full = _run(api, tmp_path / "full", manifest)
+    # This GTC fixture attempts each of the first two closes; the third is terminal.
+    limits = (0, 4, 8, full.checkpoint.operation_count)
+    prefix = _run(api, tmp_path / "prefix", manifest, max_operations=limits[completed])
+    for short, whole in ((prefix.cash_benchmark, full.cash_benchmark),
+                         (prefix.buy_and_hold_benchmark, full.buy_and_hold_benchmark)):
+        assert short.policy.canonical_bytes() == whole.policy.canonical_bytes()
+        assert short.policy.common.end_session == fields["sessions"][-1].session.session_date
+        assert len(short.balances) == len(short.nav_points) == completed
+        assert short.nav_points == whole.nav_points[:completed]
+        assert tuple(b.canonical_bytes() for b in short.balances) == tuple(b.canonical_bytes() for b in whole.balances[:completed])
+        expected_count = whole.balances[completed - 1].event_count if completed else 0
+        assert tuple(e.canonical_bytes() for e in short.events) == tuple(e.canonical_bytes() for e in whole.events[:expected_count])
+        assert short.run_valid and short.reason_code is None
+
+
+def test_failed_required_benchmark_is_retained_only_when_its_failure_boundary_is_reached(tmp_path: Path) -> None:
+    api = _api()
+    fields, case = _fields()
+    sessions = list(fields["sessions"])
+    sessions[1] = bt04._session_input(bt04._api(), sessions[1].session.session_date, case=case, marks=())
+    fields["sessions"] = tuple(sessions)
+    manifest = api.ReplayManifest(**fields)
+    early = _run(api, tmp_path / "early", manifest, max_operations=4)
+    assert early.run_valid and early.buy_and_hold_benchmark.run_valid
+    assert len(early.buy_and_hold_benchmark.nav_points) == 1
+    failed = _resume(api, tmp_path / "early", manifest)
+    assert failed.status == "unavailable" and not failed.run_valid and failed.reason_code
+    assert not failed.buy_and_hold_benchmark.run_valid
+    assert failed.buy_and_hold_benchmark.nav_points[-1].status == "unavailable"
+    assert len(failed.buy_and_hold_benchmark.nav_points) == 2
+    assert _economic(_resume(api, tmp_path / "early", manifest)) == _economic(failed)
+
+
+def test_every_operation_boundary_and_stale_checkpoint_resume_once(tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, actions=True)
+    full = _run(api, tmp_path / "full", manifest)
+    for index in range(full.checkpoint.operation_count + 1):
+        root = tmp_path / f"cut-{index}"
+        partial = _run(api, root, manifest, max_operations=index)
+        checkpoint = partial.checkpoint
+        assert checkpoint.operation_count == index
+        resumed = _resume(api, root, manifest, checkpoint=checkpoint, events=partial.events)
+        assert _economic(resumed) == _economic(full)
+        # A formerly complete supplied prefix is stale after new operations publish.
+        if len(partial.events) != len(resumed.events):
+            _reject(lambda root=root, partial=partial: _resume(api, root, manifest, events=partial.events))
+        assert _economic(_resume(api, root, manifest, checkpoint=checkpoint)) == _economic(full)
+        before = _snapshot(root)
+        assert _economic(_resume(api, root, manifest)) == _economic(full)
+        assert _snapshot(root) == before
+
+
+class _Crash(BaseException):
+    pass
+
+
+@pytest.mark.parametrize("operation", ("link", "fsync"))
+@pytest.mark.parametrize("when", ("before", "after"))
+def test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, when: str,
+) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, actions=True)
+    real = getattr(os, operation)
+    observed = []
+    def count(*args: Any, **kwargs: Any) -> Any:
+        observed.append(1)
+        return real(*args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, operation, count)
+        full = _run(api, tmp_path / "full", manifest)
+    assert observed, "storage must use fsync plus create-only atomic link publication"
+    for cut in range(1, len(observed) + 1):
+        root = tmp_path / f"crash-{cut}"
+        calls = 0
+        def crash(*args: Any, _cut: int = cut, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == _cut and when == "before":
+                raise _Crash()
+            answer = real(*args, **kwargs)
+            if calls == _cut and when == "after":
+                raise _Crash()
+            return answer
+        with monkeypatch.context() as patch:
+            patch.setattr(os, operation, crash)
+            with pytest.raises(_Crash):
+                _run(api, root, manifest)
+        before = dict(_snapshot(root))
+        if _records(root, "manifest"):
+            recovered = _resume(api, root, manifest)
+        else:
+            with api.ReplayRunner(root=root) as runner:
+                recovered = runner.run(manifest)
+        assert _economic(recovered) == _economic(full)
+        after = dict(_snapshot(root))
+        assert all(after.get(name) == raw for name, raw in before.items())
+        assert _economic(_resume(api, root, manifest)) == _economic(full)
+
+
+@pytest.mark.parametrize("damage", ("torn_operation", "missing_operation", "duplicate_operation", "torn_checkpoint", "old_checkpoint", "result"))
+def test_persisted_corruption_rejects_and_retains_all_evidence(tmp_path: Path, damage: str) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, actions=True)
+    root = tmp_path / "run"
+    _run(api, root, manifest)
+    operations, checkpoints = _records(root, "operation-"), _records(root, "checkpoint-")
+    assert operations and len(checkpoints) >= 2
+    if damage == "missing_operation":
+        operations[0].unlink()
+    elif damage == "duplicate_operation":
+        (root / "operation-999999.json").write_bytes(operations[0].read_bytes())
+    else:
+        target = operations[0] if damage == "torn_operation" else (
+            checkpoints[0] if damage in ("torn_checkpoint", "old_checkpoint") else _records(root, "result")[0])
+        target.chmod(0o600)  # Corrupt only this test's artifact, even when publication is read-only.
+        target.write_bytes(target.read_bytes()[:-1] if damage != "old_checkpoint" else b"{}")
+    before = _snapshot(root)
+    _reject(lambda: _resume(api, root, manifest))
+    assert _snapshot(root) == before
+
+
+@pytest.mark.parametrize("field", ("operation_count", "operation_prefix_hash", "next_cursor", "ledger_event_count", "ledger_tail_hash", "orders", "attempt_state", "remaining_cap", "action_state", "cash_benchmark", "buy_and_hold_benchmark", "reducer_versions", "numeric_policy_version"))
+def test_checkpoint_fields_are_reconciled_instead_of_trusted(tmp_path: Path, field: str) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    root = tmp_path / "run"
+    result = _run(api, root, manifest, max_operations=4)
+    raw = _json(result.checkpoint.canonical_bytes())
+    raw[field] = 999 if field.endswith("count") else "sensitive-sentinel"
+    before = _snapshot(root)
+    def attempt() -> Any:
+        checkpoint = api.ReplayCheckpoint.from_bytes(_canonical(raw))
+        return _resume(api, root, manifest, checkpoint=checkpoint)
+    _reject(attempt)
+    assert _snapshot(root) == before
+
+
+@pytest.mark.parametrize("supply", ("missing", "extra", "reordered", "changed", "foreign_checkpoint"))
+def test_explicit_resume_evidence_must_equal_published_exact_prefix(tmp_path: Path, supply: str) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, actions=True)
+    root = tmp_path / "run"
+    full = _run(api, root, manifest)
+    other_manifest, _, _ = _manifest(api, run_id="run-bt05-foreign-checkpoint")
+    other = _run(api, tmp_path / "other", other_manifest, max_operations=1)
+    events = full.events
+    kwargs = {}
+    if supply == "missing":
+        kwargs["events"] = events[:-1]
+    elif supply == "extra":
+        kwargs["events"] = events + (events[-1],)
+    elif supply == "reordered":
+        assert len(events) > 1
+        kwargs["events"] = tuple(reversed(events))
+    elif supply == "changed":
+        kwargs["events"] = events
+    else:
+        kwargs["checkpoint"] = other.checkpoint
+    before = _snapshot(root)
+    def resume_corrupt_evidence() -> Any:
+        if supply == "changed":
+            # This event was returned by this fresh run; no cached source is mutated.
+            object.__setattr__(events[0], "_event_id", "changed-label")
+        return _resume(api, root, manifest, **kwargs)
+    _reject(resume_corrupt_evidence)
+    assert _snapshot(root) == before
+
+
+def test_changed_manifest_or_new_run_over_existing_artifacts_rejects(tmp_path: Path) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    root = tmp_path / "run"
+    _run(api, root, manifest, max_operations=1)
+    changed = api.ReplayManifest(**{**fields, "seed": 18})
+    before = _snapshot(root)
+    _reject(lambda: _resume(api, root, changed))
+    with api.ReplayRunner(root=root) as runner:
+        _reject(lambda: runner.run(manifest))
+    assert _snapshot(root) == before
+
+
+def test_output_hash_rejects_valid_same_run_plan_not_owned_by_manifest() -> None:
+    api = _api()
+    manifest, fields, case = _manifest(api)
+    a2, a3 = bt02._bt02_api(), bt03._bt03_api()
+    intent = bt02._intent(a2, case, quantity=D("1"), plan_id="unowned-plan")
+    outcome = fields["outcomes"][0]
+    fill = bt03._make_fill(a2, case, intent=intent, outcome=outcome, policy=fields["cost_policy"])
+    ledger = bt03._new_ledger(a3, case, opening_cash=fields["opening_cash"],
+                              resolution_cutoff=fields["resolution_cutoff"])
+    event = bt03._fill_event(a3, ledger, intent=intent, fill=fill, case=case,
+                             outcome=outcome, policy=fields["cost_policy"], event_id="foreign-plan")
+    ledger.append(event)
+    _reject(lambda: manifest.economic_output_hash((event,), (ledger.balance(),)))
+
+
+@pytest.mark.parametrize("result_kind", ("unknown", "wrapper", "bad_nav", "bad_order", "foreign_benchmark", "mutated_balance"))
+def test_output_hash_accepts_only_fixed_valid_manifest_bound_result_schemas(tmp_path: Path, result_kind: str) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    result = _run(api, tmp_path / "run", manifest)
+    if result_kind == "unknown":
+        value = {"cash": "1"}
+    elif result_kind == "wrapper":
+        value = result
+    elif result_kind == "bad_nav":
+        value = type(result.nav_points[0])("available", None, None, True)
+    elif result_kind == "bad_order":
+        value = type(result.orders[0])("unowned-intent", D("0"), D("1"), D("1"), "filled", None)
+    elif result_kind == "foreign_benchmark":
+        foreign, _ = _fields(run_id=fields["run_id"], prices=("101", "101", "101"))
+        value = bt04._api().BenchmarkRunner().run_buy_and_hold(foreign["sessions"], policy=foreign["buy_and_hold_policy"])
+        assert value.run_valid
+    else:
+        value = copy.deepcopy(result.balances[-1])
+        object.__setattr__(value, "cash", value.cash + D("1"))
+    _reject(lambda: manifest.economic_output_hash(result.events, (value,)))
+
+
+def test_economic_sequence_is_material_but_event_labels_are_artifact_lineage(tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api, actions=True)
+    result = _run(api, tmp_path / "run", manifest)
+    assert len(result.events) > 1
+    _reject(lambda: manifest.economic_output_hash(tuple(reversed(result.events)), result.results))
+    # Label exclusion never bypasses exact ID uniqueness or source/prefix validation.
+    _reject(lambda: manifest.economic_output_hash(result.events + (result.events[0],), result.results))
+
+
+@pytest.mark.parametrize("mutation", ("decimal_equal", "signed_zero", "utc_representation", "source_id", "hidden_field"))
+def test_native_source_mutation_after_manifest_sealing_is_rejected(mutation: str) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    intent = fields["intents"][0]
+    if mutation == "decimal_equal":
+        object.__setattr__(intent, "quantity", D("3.00"))
+    elif mutation == "signed_zero":
+        object.__setattr__(fields["cost_policy"], "half_spread_bps", D("-0"))
+    elif mutation == "utc_representation":
+        object.__setattr__(intent, "created_at", intent.created_at.replace(tzinfo=timezone(timedelta(0), "other-UTC")))
+    elif mutation == "source_id":
+        object.__setattr__(intent, "plan_id", "changed-plan")
+    else:
+        object.__getattribute__(intent, "__dict__")["unknown"] = "sensitive-sentinel"
+    for action in (manifest.semantic_input_hash, manifest.artifact_integrity_hash, manifest.canonical_bytes):
+        _reject(action)
+
+
+def test_completion_rechecks_sources_before_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    a2 = bt02._bt02_api()
+    original = a2.FillModel.simulate
+    changed = False
+    def mutate(*args: Any, **kwargs: Any) -> Any:
+        nonlocal changed
+        answer = original(*args, **kwargs)
+        if not changed:
+            changed = True
+            object.__setattr__(fields["intents"][0], "quantity", D("3.000"))
+        return answer
+    monkeypatch.setattr(a2.FillModel, "simulate", staticmethod(mutate))
+    root = tmp_path / "run"
+    _reject(lambda: _run(api, root, manifest))
+    assert changed
+    assert not _records(root, "result")
+
+
+class _Hostile:
+    calls = 0
+    def __getattribute__(self, name: str) -> Any:
+        type(self).calls += 1
+        raise AssertionError("hostile callback executed")
+    def __iter__(self) -> Any:
+        type(self).calls += 1
+        raise AssertionError("hostile iteration executed")
+    def __eq__(self, other: Any) -> bool:
+        type(self).calls += 1
+        raise AssertionError("hostile equality executed")
+    def __hash__(self) -> int:
+        type(self).calls += 1
+        raise AssertionError("hostile hash executed")
+    def __fspath__(self) -> str:
+        type(self).calls += 1
+        raise AssertionError("hostile path callback executed")
+
+
+@pytest.mark.parametrize("field", ("bindings", "intents", "outcomes", "sessions", "cost_policy", "action_policy", "cash_benchmark_policy", "buy_and_hold_policy", "run_id", "configuration", "seed", "created_at"))
+def test_hostile_values_reject_before_protocol_or_serializer_callbacks(field: str) -> None:
+    api = _api()
+    fields, _ = _fields()
+    _Hostile.calls = 0
+    _reject(lambda: api.ReplayManifest(**{**fields, field: _Hostile()}))
+    assert _Hostile.calls == 0
+
+
+def test_hostile_nested_model_keys_reject_before_hash_or_equality() -> None:
+    api = _api()
+    fields, _ = _fields()
+    calls = []
+    class Key(str):
+        def __hash__(self) -> int:
+            calls.append("hash")
+            return str.__hash__(self)
+        def __eq__(self, other: Any) -> bool:
+            calls.append("equality")
+            return str.__eq__(self, other)
+    context = object.__getattribute__(fields["bindings"][0], "_context_snapshot")
+    storage = dict(object.__getattribute__(context, "__dict__"))
+    run_id = storage.pop("run_id")
+    storage[Key("run_id")] = run_id
+    object.__setattr__(context, "__dict__", storage)
+    calls.clear()
+    _reject(lambda: api.ReplayManifest(**fields))
+    assert calls == []
+
+
+@pytest.mark.parametrize("phase", ("before_admission", "after_hash"))
+@pytest.mark.parametrize("target", ("quant_native", "note", "overlay_native", "context", "quant_hostile", "note_hostile", "overlay_hostile", "context_hostile", "unknown_nested"))
+def test_nested_sig05_and_context_sources_are_refreshed_without_callbacks(phase: str, target: str) -> None:
+    api = _api()
+    fields, _ = _fields(kind="quant_llm")
+    binding = fields["bindings"][0]
+    envelope = object.__getattribute__(binding, "_envelope_snapshot")
+    context = object.__getattribute__(binding, "_context_snapshot")
+    manifest = api.ReplayManifest(**fields) if phase == "after_hash" else None
+    if manifest is not None:
+        manifest.semantic_input_hash()
+    _Hostile.calls = 0
+    if target in ("quant_native", "overlay_native"):
+        source = envelope.quant if target == "quant_native" else envelope.overlay
+        name = "score" if target == "quant_native" else "multiplier"
+        original = object.__getattribute__(source, name)
+        sign, digits, exponent = original.as_tuple()
+        replacement = D((sign, digits + (0,), exponent - 1))
+        assert replacement == original and replacement.as_tuple() != original.as_tuple()
+        object.__setattr__(source, name, replacement)
+    elif target == "note":
+        object.__setattr__(envelope.note, "thesis", "Changed captured research content.")
+    elif target == "context":
+        object.__setattr__(context, "knowledge_cutoff", context.knowledge_cutoff + timedelta(microseconds=1))
+    elif target == "unknown_nested":
+        object.__getattribute__(envelope.note, "__dict__")["unknown"] = _Hostile()
+    else:
+        source, name = {"quant_hostile": (envelope.quant, "score"),
+                        "note_hostile": (envelope.note, "thesis"),
+                        "overlay_hostile": (envelope.overlay, "multiplier"),
+                        "context_hostile": (context, "run_id")}[target]
+        object.__setattr__(source, name, _Hostile())
+    if phase == "before_admission":
+        _reject(lambda: api.ReplayManifest(**fields))
+    else:
+        for action in (manifest.semantic_input_hash, manifest.artifact_integrity_hash, manifest.canonical_bytes):
+            _reject(action)
+    assert _Hostile.calls == 0
+
+
+@pytest.mark.parametrize("invalid", ("list", "tuple_subclass", "generator", "cycle", "unknown_field", "unknown_version", "bool_seed", "float_seed", "surrogate", "nan", "infinity", "decimal_subclass", "wrong_priority"))
+def test_strict_manifest_admission_rejects_ambiguous_or_unknown_values(invalid: str) -> None:
+    api = _api()
+    fields, _ = _fields()
+    class TupleSubclass(tuple):
+        pass
+    class DecimalSubclass(Decimal):
+        pass
+    if invalid == "list":
+        fields["bindings"] = list(fields["bindings"])
+    elif invalid == "tuple_subclass":
+        fields["bindings"] = TupleSubclass(fields["bindings"])
+    elif invalid == "generator":
+        fields["bindings"] = iter(fields["bindings"])
+    elif invalid == "cycle":
+        cycle: list[Any] = []
+        cycle.append(cycle)
+        fields["configuration"] = cycle
+    elif invalid == "unknown_field":
+        fields["unknown"] = "sensitive-sentinel"
+    elif invalid == "unknown_version":
+        fields["schema_version"] = "v999"
+    elif invalid == "bool_seed":
+        fields["seed"] = True
+    elif invalid == "float_seed":
+        fields["seed"] = 1.5
+    elif invalid == "surrogate":
+        fields["configuration"] = (("label", "\ud800"),)
+    elif invalid == "wrong_priority":
+        fields["priority_policy"] = "exact-id-priority"
+    else:
+        fields["opening_cash"] = {"nan": D("NaN"), "infinity": D("Infinity"),
+                                   "decimal_subclass": DecimalSubclass("2000")}[invalid]
+    _reject(lambda: api.ReplayManifest(**fields))
+
+
+@pytest.mark.parametrize("invalid", ("duplicate", "escaped_duplicate", "unknown", "version", "nan", "float", "depth", "oversize", "surrogate", "trailing", "utf8"))
+def test_checkpoint_raw_json_rejects_before_decode_or_unbounded_work(invalid: str, tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    result = _run(api, tmp_path / "run", manifest, max_operations=0)
+    raw = result.checkpoint.canonical_bytes()
+    field = next(iter(_json(raw)))
+    repeated = json.dumps(field).encode()
+    if invalid in ("duplicate", "escaped_duplicate"):
+        key = repeated if invalid == "duplicate" else f'"\\u{ord(field[0]):04x}{field[1:]}"'.encode()
+        altered = b"{" + key + b":null," + raw[1:]
+    elif invalid in ("unknown", "version"):
+        data = _json(raw)
+        data["unknown" if invalid == "unknown" else "schema_version"] = "v999"
+        altered = _canonical(data)
+    else:
+        altered = {"nan": b'{"value":NaN}', "float": b'{"value":1.5}',
+                   "depth": b"[" * 65 + b"0" + b"]" * 65,
+                   "oversize": b" " * (64 * 1024 * 1024 + 1),
+                   "surrogate": b'{"value":"\\ud800"}', "trailing": raw + b"{}",
+                   "utf8": b'{"value":"\xff"}'}[invalid]
+    _reject(lambda: api.ReplayCheckpoint.from_bytes(altered))
+
+
+@pytest.mark.parametrize("field,value", (
+    ("seed", 1 << 256), ("opening_cash", D("1E65")),
+    ("opening_cash", D("1E-65")), ("opening_cash", D("1" * 129)),
+    ("opening_cash", D("1E1000000000")), ("opening_cash", D("1E-1000000000")),
+    ("configuration", (("x", "x" * 65537),)),
+    ("configuration", (("x", "\u00e9" * 32769),)),
+    ("configuration", tuple((f"k{i:04d}", "v") for i in range(4097))),
+))
+def test_frozen_scalar_and_collection_resource_limits(field: str, value: Any) -> None:
+    api = _api()
+    fields, _ = _fields()
+    _reject(lambda: api.ReplayManifest(**{**fields, field: value}))
+
+
+def test_exact_text_and_integer_limits_and_decimal_context_are_deterministic() -> None:
+    api = _api()
+    fields, _ = _fields()
+    fields.update(seed=(1 << 256) - 1, configuration=(("label", "\u00e9" * 32768),))
+    manifest = api.ReplayManifest(**fields)
+    expected = (manifest.semantic_bytes(), manifest.semantic_input_hash(), manifest.canonical_bytes())
+    with localcontext() as context:
+        context.prec = 2
+        context.traps[Inexact] = context.traps[Rounded] = True
+        assert (manifest.semantic_bytes(), manifest.semantic_input_hash(), manifest.canonical_bytes()) == expected
+    left = api.ReplayManifest(**{**fields, "opening_cash": D("2000.00")})
+    assert left.semantic_input_hash() == manifest.semantic_input_hash()
+    assert left.artifact_integrity_hash() != manifest.artifact_integrity_hash()
+
+
+@pytest.mark.parametrize("field,limit", (("bindings", 256), ("intents", 256), ("outcomes", 4096), ("sessions", 16)))
+def test_record_count_one_over_rejects_before_nested_validation(field: str, limit: int) -> None:
+    api = _api()
+    fields, _ = _fields()
+    _Hostile.calls = 0
+    _reject(lambda: api.ReplayManifest(**{**fields, field: (_Hostile(),) * (limit + 1)}))
+    assert _Hostile.calls == 0
+
+
+@pytest.mark.parametrize("case", ("relative", "missing", "parent", "symlink_root", "symlink_ancestor", "file", "hostile"))
+def test_explicit_root_admission_cannot_escape_or_invoke_pathlike(tmp_path: Path, case: str) -> None:
+    api = _api()
+    target = tmp_path / "target"
+    target.mkdir()
+    sentinel = target / "outside-sentinel"
+    sentinel.write_bytes(b"unchanged")
+    _Hostile.calls = 0
+    if case == "relative":
+        root: Any = Path("relative")
+    elif case == "missing":
+        root = tmp_path / "missing"
+    elif case == "parent":
+        root = target / ".." / "target"
+    elif case in ("symlink_root", "symlink_ancestor"):
+        link = tmp_path / "link"
+        link.symlink_to(target, target_is_directory=True)
+        root = link if case == "symlink_root" else link / "child"
+        if case == "symlink_ancestor":
+            (target / "child").mkdir()
+    elif case == "file":
+        root = sentinel
+    else:
+        root = _Hostile()
+    _reject(lambda: api.ReplayRunner(root=root))
+    assert sentinel.read_bytes() == b"unchanged" and _Hostile.calls == 0
+
+
+@pytest.mark.parametrize("kind", ("symlink", "hardlink", "fifo", "directory", "oversize", "unknown"))
+def test_unsafe_root_entries_reject_without_reading_or_changing_outside_bytes(tmp_path: Path, kind: str) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    root = tmp_path / "run"
+    root.mkdir()
+    sentinel = tmp_path / "outside"
+    sentinel.write_bytes(b"outside-unchanged")
+    path = root / "operation-000000.json"
+    if kind == "symlink":
+        path.symlink_to(sentinel)
+    elif kind == "hardlink":
+        os.link(sentinel, path)
+    elif kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "directory":
+        path.mkdir()
+    elif kind == "oversize":
+        with path.open("wb") as handle:
+            handle.truncate(64 * 1024 * 1024 + 1)
+    else:
+        path.write_bytes(b"{}")
+    def open_run() -> Any:
+        with api.ReplayRunner(root=root) as runner:
+            return runner.resume(manifest)
+    _reject(open_run)
+    assert sentinel.read_bytes() == b"outside-unchanged"
+
+
+def test_root_directory_entry_bound_fails_closed(tmp_path: Path) -> None:
+    api = _api()
+    root = tmp_path / "run"
+    root.mkdir()
+    for index in range(16385):
+        (root / f"abandoned-{index:05d}").touch()
+    _reject(lambda: api.ReplayRunner(root=root))
+    assert len(tuple(root.iterdir())) == 16385
+
+
+def test_second_writer_rejects_and_releasing_owner_allows_resume(tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    root = tmp_path / "run"
+    root.mkdir()
+    with api.ReplayRunner(root=root) as owner:
+        partial = owner.run(manifest, max_operations=1)
+        _reject(lambda: api.ReplayRunner(root=root))
+    resumed = _resume(api, root, manifest, checkpoint=partial.checkpoint)
+    assert resumed.run_valid
+
+
+def test_process_death_releases_kernel_lock_without_removing_ownership_inode(tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    root = tmp_path / "run"
+    root.mkdir()
+    read_fd, write_fd = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(read_fd)
+        try:
+            runner = api.ReplayRunner(root=root)
+            runner.run(manifest, max_operations=3)
+            os.write(write_fd, b"ready")
+        except BaseException:
+            os._exit(2)
+        os._exit(0)  # Deliberately bypass context-manager close and Python finalizers.
+    os.close(write_fd)
+    try:
+        receipt = os.read(read_fd, 16)
+    finally:
+        os.close(read_fd)
+    _, status = os.waitpid(child, 0)
+    assert receipt == b"ready" and os.waitstatus_to_exitcode(status) == 0
+    before = dict(_snapshot(root))
+    recovered = _resume(api, root, manifest)
+    assert recovered.run_valid
+    after = dict(_snapshot(root))
+    assert all(after.get(name) == raw for name, raw in before.items())
+
+
+def test_deterministic_two_writer_race_has_one_append_owner(tmp_path: Path) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    root = tmp_path / "run"
+    root.mkdir()
+    entered, release = Event(), Event()
+    def owner() -> Any:
+        with api.ReplayRunner(root=root) as runner:
+            entered.set()
+            assert release.wait(10)
+            return runner.run(manifest)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(owner)
+        assert entered.wait(10)
+        try:
+            _reject(lambda: api.ReplayRunner(root=root))
+        finally:
+            release.set()
+        result = future.result()
+    assert result.run_valid
+    assert _economic(_resume(api, root, manifest)) == _economic(result)
+
+
+@pytest.mark.parametrize("replace", ("root", "lock"))
+def test_pinned_root_and_lock_inode_replacement_prevents_publication(tmp_path: Path, replace: str) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    root = tmp_path / "run"
+    root.mkdir()
+    with api.ReplayRunner(root=root) as runner:
+        if replace == "root":
+            root.rename(tmp_path / "original")
+            root.mkdir()
+            sentinel = root / "outside-sentinel"
+        else:
+            locks = tuple(root.iterdir())
+            assert len(locks) == 1 and locks[0].is_file()
+            locks[0].rename(root / "abandoned-original-lock")
+            sentinel = locks[0]
+        sentinel.write_bytes(b"unchanged")
+        _reject(lambda: runner.run(manifest))
+        assert sentinel.read_bytes() == b"unchanged"
+
+
+def test_local_success_and_negative_paths_deny_egress_process_environment_and_timezone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    root = tmp_path / "run"
+    root.mkdir()
+    changed = api.ReplayManifest(**{**fields, "seed": 18})
+    calls = []
+    def deny(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        raise AssertionError("BT-05 forbidden side effect")
+    # Build all sources first, then arm the success and failure paths themselves.
+    with monkeypatch.context() as patch:
+        for target, name in ((socket, "socket"), (socket, "create_connection"),
+                             (urllib.request, "urlopen"), (subprocess, "Popen"),
+                             (subprocess, "run"), (os, "getenv"), (os, "system"),
+                             (zoneinfo, "ZoneInfo")):
+            patch.setattr(target, name, deny)
+        patch.setattr(type(os.environ), "__getitem__", deny)
+        patch.setattr(type(os.environ), "get", deny)
+        controls = (
+            lambda: socket.create_connection(("denied.invalid", 443)),
+            lambda: subprocess.run(("unapproved-command",)),
+            lambda: os.getenv("BT05_FORBIDDEN_ENVIRONMENT"),
+            lambda: zoneinfo.ZoneInfo("UTC"),
+        )
+        for control in controls:
+            with pytest.raises(AssertionError, match="BT-05 forbidden side effect"):
+                control()
+        assert len(calls) == len(controls)
+        calls.clear()
+        with api.ReplayRunner(root=root) as runner:
+            partial = runner.run(manifest, max_operations=3)
+        with api.ReplayRunner(root=root) as runner:
+            _reject(lambda: runner.resume(changed))
+            result = runner.resume(manifest, checkpoint=partial.checkpoint)
+        assert result.run_valid
+    assert calls == []
+
+
+def test_backtest_imports_and_source_do_not_add_forbidden_runtime_dependencies() -> None:
+    _api()
+    forbidden = ("tradingagents", "subprocess", "socket", "urllib", "requests", "httpx",
+                 "langgraph", "langchain", "openai", "anthropic", "dotenv", "keyring")
+    for module in ("manifest", "replay"):
+        path = ROOT / "mytradingalpha" / "backtest" / f"{module}.py"
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports = tuple(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imports = (node.module or "",)
+            else:
+                imports = ()
+            assert not any(name == prefix or name.startswith(prefix + ".")
+                           for name in imports for prefix in forbidden)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                assert node.func.id not in {"eval", "exec", "__import__", "getattr"}
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in {"environ", "getenv", "system", "popen", "ZoneInfo"}
+
+
+def test_exact_source_bytes_and_native_witnesses_survive_resume(tmp_path: Path) -> None:
+    api = _api()
+    manifest, fields, case = _manifest(api, kind="quant_llm")
+    exact = manifest.canonical_bytes()
+    # Fixed v1 records retain an existing binding's exact canonical UTF-8 bytes
+    # and native storage witness; this is not a serializer protocol or key filter.
+    binding = fields["bindings"][0]
+    expected_source = {
+        "source_type": "SessionBinding",
+        "canonical_utf8": object.__getattribute__(binding, "_sealed_source_json").decode("utf-8"),
+        "native_witness": object.__getattribute__(binding, "_sealed_storage_bytes").hex(),
+    }
+    exact_sources = _json(exact)["exact_sources"]
+    assert expected_source in exact_sources
+    restored_source = expected_source["canonical_utf8"].encode("utf-8")
+    restored_native = bytes.fromhex(expected_source["native_witness"])
+    assert restored_source == object.__getattribute__(binding, "_sealed_source_json")
+    assert restored_native == object.__getattribute__(binding, "_sealed_storage_bytes")
+    assert case.envelope.note.note_id.encode() in restored_source
+    assert case.envelope.quant.signal_id.encode() in restored_source
+    sources = (case.bundle.model_dump_json(), case.envelope.model_dump_json(),
+               fields["intents"][0].canonical_bytes(), fields["outcomes"][0].bar.model_dump_json())
+    partial = _run(api, tmp_path / "run", manifest, max_operations=3)
+    result = _resume(api, tmp_path / "run", manifest, events=partial.events)
+    assert result.run_valid and manifest.canonical_bytes() == exact
+    persisted = _records(tmp_path / "run", "manifest")
+    assert len(persisted) == 1 and persisted[0].read_bytes() == exact
+    assert expected_source in _json(persisted[0].read_bytes())["exact_sources"]
+    assert sources == (case.bundle.model_dump_json(), case.envelope.model_dump_json(),
+                       fields["intents"][0].canonical_bytes(), fields["outcomes"][0].bar.model_dump_json())
+    assert manifest.artifact_integrity_hash() != result.artifact_integrity_hash
+
+
+# P1 repair RED: caller-recomputed seals are not ownership or issuer authority.
+def _p1_expect_prohibited_mutation(action: Any) -> None:
+    # A repaired implementation may remove the old fields/helpers or reject the
+    # installation itself. It need not retain an unsafe private mutation API.
+    with pytest.raises((AttributeError, TypeError, ValueError, RuntimeError, OverflowError)) as caught:
+        action()
+    assert len(str(caught.value)) <= 256
+    assert caught.value.__cause__ is None
+
+
+def test_bt05_p1_resealed_benchmark_cache_cannot_authorize_counterfeit_cash_nav() -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    runner = bt04._api().BenchmarkRunner()
+    correct_cash = runner.run_cash(fields["sessions"], policy=fields["cash_benchmark_policy"])
+    correct_bh = runner.run_buy_and_hold(fields["sessions"], policy=fields["buy_and_hold_policy"])
+    assert correct_cash.run_valid and correct_bh.run_valid
+    assert all(point.value == D("2000") for point in correct_cash.nav_points)
+    genuine_hash = manifest.economic_output_hash((), (correct_cash,))
+    assert genuine_hash.startswith("sha256:") and len(genuine_hash) == 71
+
+    forged_points = tuple(type(point)(
+        status="available", value=D("2001"), reason_code=None, run_valid=True,
+        formula_version=point.formula_version, numeric_policy_version=point.numeric_policy_version,
+    ) for point in correct_cash.nav_points)
+    forged_cash = type(correct_cash)(
+        status=correct_cash.status, run_valid=correct_cash.run_valid,
+        reason_code=correct_cash.reason_code, events=correct_cash.events,
+        balances=correct_cash.balances, nav_points=forged_points, policy=correct_cash.policy,
+    )
+    assert all(point.value == D("2001") for point in forged_cash.nav_points)
+    _p1_expect_prohibited_mutation(lambda: manifest.economic_output_hash((), (forged_cash,)))
+    print("P1 Cash controls PASS: real NAV 2000 accepted; ordinary counterfeit NAV 2001 rejected")
+
+    def replace_and_reseal() -> None:
+        module = importlib.import_module("mytradingalpha.backtest.manifest")
+        replacement = (forged_cash, correct_bh)
+        object.__setattr__(manifest, "_benchmark_cache", replacement)
+        object.__setattr__(manifest, "_benchmark_seal", module._encode_native(module._native(replacement)))
+        manifest.economic_output_hash((), (forged_cash,))
+
+    _p1_expect_prohibited_mutation(replace_and_reseal)
+
+
+def test_bt05_p1_resealed_owned_sources_cannot_authorize_changed_seed() -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    original_hash = manifest.semantic_input_hash()
+    changed_seed = fields["seed"] + 1
+    fresh = api.ReplayManifest(**{**fields, "seed": changed_seed})
+    assert fresh.semantic_input_hash() != original_hash
+    assert manifest.semantic_input_hash() == original_hash
+    print("P1 owned-source controls PASS: a fresh changed-seed manifest is valid and has a distinct input identity")
+
+    def change_owned_and_reseal() -> None:
+        module = importlib.import_module("mytradingalpha.backtest.manifest")
+        owned = object.__getattribute__(manifest, "_owned")
+        owned["seed"] = changed_seed
+        object.__setattr__(manifest, "_owned_native", module._source_capture(owned))
+        object.__setattr__(manifest, "_integrity", hashlib.sha256(
+            object.__getattribute__(manifest, "_cache_bytes")()
+        ).digest())
+        manifest.semantic_input_hash()
+
+    _p1_expect_prohibited_mutation(change_owned_and_reseal)
+
+
+def test_bt05_p1_existing_manifest_cannot_be_reinitialized_in_place() -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api)
+    original_hash = manifest.semantic_input_hash()
+    changed = {**fields, "seed": fields["seed"] + 1}
+    fresh = api.ReplayManifest(**changed)
+    assert fresh.semantic_input_hash() != original_hash
+    assert manifest.semantic_input_hash() == original_hash
+    print("P1 constructor controls PASS: fresh construction works without changing the existing manifest")
+
+    def reinitialize_existing() -> None:
+        api.ReplayManifest.__init__(manifest, **changed)
+        manifest.semantic_input_hash()
+
+    _p1_expect_prohibited_mutation(reinitialize_existing)
+
+
+# P2 repair RED: a published pathname cannot replace the originally written bytes.
+@pytest.fixture(scope="module")
+def _bt05_p2_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    api = _api()
+    manifest, _, _ = _manifest(api, days=1, prices=("100",))
+    base = tmp_path_factory.mktemp("bt05-p2-controls")
+    controls = {}
+    for stage, maximum in (("manifest", 0), ("partial", 1), ("completed", None)):
+        root = base / stage
+        result = _run(api, root, manifest, max_operations=maximum)
+        assert result.run_valid and result.status == "available"
+        assert result.completed == (stage == "completed")
+        target = ("manifest.json" if stage == "manifest" else
+                  "result.json" if stage == "completed" else "checkpoint-000001.json")
+        assert (root / "manifest.json").read_bytes() == manifest.canonical_bytes()
+        assert (root / target).is_file()
+        controls[stage] = SimpleNamespace(
+            root=root, result=result, target=target, maximum=maximum,
+            files=_snapshot(root), raw=(root / target).read_bytes(),
+        )
+    return SimpleNamespace(api=api, manifest=manifest, controls=controls)
+
+
+def _bt05_p2_tree(root: Path) -> tuple[Any, ...]:
+    """Snapshot retained evidence without following symlinks or opening FIFOs."""
+    import stat
+
+    rows = []
+    for path in sorted(root.iterdir()):
+        info = path.lstat()
+        raw = (path.read_bytes() if stat.S_ISREG(info.st_mode) else
+               os.readlink(path) if stat.S_ISLNK(info.st_mode) else None)
+        rows.append((path.name, info.st_dev, info.st_ino, info.st_mode, info.st_size, raw))
+    return tuple(rows)
+
+
+def _bt05_p2_damage(path: Path, damage: str, outside: Path) -> None:
+    raw = path.read_bytes()
+    corrupted = b"!" + raw[1:]
+    assert corrupted != raw and len(corrupted) == len(raw)
+    before = path.stat()
+    if damage == "same_inode":
+        path.chmod(0o600)
+        path.write_bytes(corrupted)
+        path.chmod(0o400)
+        after = path.stat()
+        assert (before.st_dev, before.st_ino, before.st_size) == (
+            after.st_dev, after.st_ino, after.st_size)
+        assert path.read_bytes() == corrupted
+        return
+    if damage == "regular":
+        replacement = path.with_name(".p2-counterfeit")
+        replacement.write_bytes(corrupted)
+        replacement.chmod(0o400)
+        replacement.replace(path)
+        assert path.stat().st_ino != before.st_ino
+    elif damage == "symlink":
+        path.unlink()
+        path.symlink_to(outside)
+    elif damage == "fifo":
+        path.unlink()
+        os.mkfifo(path, 0o400)
+    else:
+        raise AssertionError("unknown P2 fault")
+
+
+def _bt05_p2_copy(control: Any, root: Path) -> None:
+    root.mkdir()
+    for name, raw in control.files:
+        path = root / name
+        path.write_bytes(raw)
+        path.chmod(0o600 if name == ".bt05.lock" else 0o400)
+
+
+def _bt05_p2_retained(case: Any, root: Path, prefix: dict[str, bytes]) -> None:
+    for name, raw in prefix.items():
+        assert (root / name).read_bytes() == raw
+    before = _bt05_p2_tree(root)
+    _reject(lambda: _resume(case.api, root, case.manifest))
+    assert _bt05_p2_tree(root) == before
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed"))
+def test_bt05_p2_genuine_publication_and_cold_resume_control(
+    _bt05_p2_case: Any, tmp_path: Path, stage: str,
+) -> None:
+    case = _bt05_p2_case
+    control = case.controls[stage]
+    root = tmp_path / "genuine"
+    _bt05_p2_copy(control, root)
+    recovered = _resume(case.api, root, case.manifest)
+    assert recovered.run_valid and recovered.completed
+    assert _economic(recovered) == _economic(case.controls["completed"].result)
+    assert all((root / name).read_bytes() == raw for name, raw in control.files)
+    assert (root / control.target).read_bytes() == control.raw
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed"))
+@pytest.mark.parametrize("damage", ("regular", "symlink", "same_inode", "fifo"))
+def test_bt05_p2_postlink_substitution_rejects_before_public_success(
+    _bt05_p2_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stage: str, damage: str,
+) -> None:
+    import stat
+
+    case = _bt05_p2_case
+    control = case.controls[stage]
+    root = tmp_path / "attacked"
+    outside = tmp_path / "outside-sentinel"
+    outside.write_bytes(b"outside-sensitive-sentinel-unchanged")
+    outside_inode = (outside.stat().st_dev, outside.stat().st_ino)
+    real_link, real_read, real_open = os.link, os.read, os.open
+    armed, forbidden_reads, prefix = [], [], {}
+
+    def substitute(source: Any, destination: Any, **kwargs: Any) -> Any:
+        answer = real_link(source, destination, **kwargs)
+        if destination == control.target and not armed:
+            prefix.update((name, raw) for name, raw in _snapshot(root)
+                          if name != control.target and not name.startswith(".tmp-"))
+            assert (root / control.target).read_bytes() == control.raw
+            _bt05_p2_damage(root / control.target, damage, outside)
+            armed.append(destination)
+        return answer
+
+    def guarded_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if armed and path == control.target and damage in ("symlink", "fifo"):
+            assert flags & os.O_NOFOLLOW, "published leaf must never follow a replacement"
+            assert flags & os.O_NONBLOCK, "nonregular replacement must not block open"
+        return real_open(path, flags, *args, **kwargs)
+
+    def guarded_read(descriptor: int, size: int) -> bytes:
+        info = os.fstat(descriptor)
+        if armed and (not stat.S_ISREG(info.st_mode) or
+                      (info.st_dev, info.st_ino) == outside_inode):
+            forbidden_reads.append(descriptor)
+            pytest.fail("publication read a FIFO or followed the outside symlink")
+        return real_read(descriptor, size)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "link", substitute)
+            patch.setattr(os, "open", guarded_open)
+            patch.setattr(os, "read", guarded_read)
+            _reject(lambda: _run(case.api, root, case.manifest, max_operations=control.maximum))
+    finally:
+        assert armed == [control.target], "the public publication fault must execute"
+        assert not forbidden_reads
+        assert outside.read_bytes() == b"outside-sensitive-sentinel-unchanged"
+        assert (root / control.target).exists() or (root / control.target).is_symlink()
+        _bt05_p2_retained(case, root, prefix)
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed"))
+@pytest.mark.parametrize("damage", ("regular", "same_inode"))
+def test_bt05_p2_mutation_during_verified_public_resume_read_rejects(
+    _bt05_p2_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stage: str, damage: str,
+) -> None:
+    case = _bt05_p2_case
+    control = case.controls[stage]
+    root = tmp_path / "read-race"
+    _bt05_p2_copy(control, root)
+    target = root / control.target
+    original = target.stat()
+    real_read = os.read
+    armed = []
+    prefix = {name: raw for name, raw in control.files if name != control.target}
+
+    def mutate_during_read(descriptor: int, size: int) -> bytes:
+        info = os.fstat(descriptor)
+        block = real_read(descriptor, size)
+        if block and not armed and (info.st_dev, info.st_ino) == (
+            original.st_dev, original.st_ino,
+        ):
+            _bt05_p2_damage(target, damage, tmp_path / "unused-outside")
+            armed.append(control.target)
+        return block
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "read", mutate_during_read)
+            _reject(lambda: _resume(case.api, root, case.manifest))
+    finally:
+        assert armed == [control.target], "the verified-read fault must execute"
+        _bt05_p2_retained(case, root, prefix)
+
+
+@pytest.mark.parametrize("stage", ("manifest", "partial", "completed", "completed_retry"))
+@pytest.mark.parametrize("damage", ("regular", "same_inode"))
+def test_bt05_p2_accepted_leaf_mutation_before_public_completion_rejects(
+    _bt05_p2_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stage: str, damage: str,
+) -> None:
+    case = _bt05_p2_case
+    retry = stage == "completed_retry"
+    control = case.controls["completed" if retry else stage]
+    root = tmp_path / "completion-race"
+    if retry:
+        _bt05_p2_copy(control, root)
+    real_close = os.close
+    armed, closes, prefix = [], [], {}
+
+    def mutate_after_acceptance(descriptor: int) -> None:
+        info = os.fstat(descriptor)
+        target = root / control.target
+        linked = target.stat() if target.exists() else None
+        matches = linked is not None and (info.st_dev, info.st_ino) == (
+            linked.st_dev, linked.st_ino)
+        real_close(descriptor)
+        if matches and not armed:
+            closes.append(descriptor)
+            # Completed resume first reconciles the old result, then accepts
+            # that identical artifact again through create-only publication.
+            if not retry or len(closes) == 2:
+                assert target.read_bytes() == control.raw
+                prefix.update((name, raw) for name, raw in _snapshot(root)
+                              if name != control.target and not name.startswith(".tmp-"))
+                _bt05_p2_damage(target, damage, tmp_path / "unused-outside")
+                armed.append(control.target)
+
+    def attempt() -> Any:
+        if retry:
+            return _resume(case.api, root, case.manifest)
+        return _run(case.api, root, case.manifest, max_operations=control.maximum)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "close", mutate_after_acceptance)
+            _reject(attempt)
+    finally:
+        assert armed == [control.target], "the post-acceptance fault must execute"
+        _bt05_p2_retained(case, root, prefix)
+
+
+# Root-admission repair RED: native Path storage is untrusted caller input.
+def _bt05_root_tree(root: Path) -> tuple[Any, ...]:
+    return tuple(sorted((path.name, path.stat().st_ino, path.stat().st_mode,
+                         path.read_bytes()) for path in root.iterdir()))
+
+
+def _bt05_root_open(api: Any, candidate: Any) -> None:
+    with api.ReplayRunner(root=candidate):
+        pass
+
+
+def _bt05_root_hostile(base: type, raw: Any, calls: list[str], *, raising: bool = False) -> Any:
+    """Observe callbacks without using a hostile value in fixture assertions."""
+    def intercept(name: str) -> Any:
+        native = getattr(base, name)
+
+        def callback(instance: Any, *args: Any, **kwargs: Any) -> Any:
+            calls.append(name)
+            if raising:
+                raise ValueError("root storage callback executed")
+            return native(instance, *args, **kwargs)
+        return callback
+
+    names = ("__str__", "__len__", "__iter__", "__getitem__", "__contains__",
+             "__eq__", "__hash__", "startswith", "encode", "split", "replace", "rfind")
+    callbacks = {name: intercept(name) for name in names if callable(getattr(base, name, None))}
+    return type(f"RootHostile{base.__name__}", (base,), callbacks)(raw)
+
+
+def _bt05_root_storage(candidate: Path) -> tuple[str, Any]:
+    for name in ("_raw_paths", "_parts"):
+        try:
+            return name, object.__getattribute__(candidate, name)
+        except AttributeError:
+            continue
+    raise AssertionError("supported native Path must expose its declared rendering storage")
+
+
+def _bt05_root_reject(api: Any, candidate: Any, roots: tuple[Path, ...], calls: list[str]) -> None:
+    outside = roots[0].parent / "outside-sentinel"
+    outside.write_bytes(b"root-sensitive-sentinel-unchanged")
+    before = tuple(_bt05_root_tree(root) for root in roots)
+    try:
+        _reject(lambda: _bt05_root_open(api, candidate))
+    finally:
+        assert outside.read_bytes() == b"root-sensitive-sentinel-unchanged"
+        assert calls == [], "root admission invoked an untrusted storage callback"
+        assert tuple(_bt05_root_tree(root) for root in roots) == before, (
+            "rejected root admission created a lock or changed retained evidence"
+        )
+
+
+@pytest.mark.parametrize("form", ("string", "uncached", "cached", "joined", "unused_info"))
+def test_bt05_root_genuine_string_and_native_path_controls(tmp_path: Path, form: str) -> None:
+    api = _api()
+    trusted = tmp_path / "existing" / "root"
+    trusted.mkdir(parents=True)
+    raw = str(trusted)
+    candidate: Any = raw if form == "string" else Path(raw)
+    if form == "cached":
+        assert str(candidate) == raw
+    elif form == "joined":
+        candidate = Path(str(tmp_path)) / "existing" / "root"
+    elif form == "unused_info":
+        # PathInfo exists on newer interpreters; older versions have only
+        # unrelated hash/comparison metadata, which must remain compatible too.
+        if hasattr(type(candidate), "info"):
+            assert candidate.info is not None
+        hash(candidate)
+    _bt05_root_open(api, candidate)
+    before = _bt05_root_tree(trusted)
+    assert tuple(row[0] for row in before) == (".bt05.lock",)
+    _bt05_root_open(api, raw)
+    assert _bt05_root_tree(trusted) == before
+
+
+@pytest.mark.parametrize("raising", (False, True))
+def test_bt05_root_cached_text_subclass_rejects_without_callbacks_or_lock(
+    tmp_path: Path, raising: bool,
+) -> None:
+    trusted = tmp_path / "root"
+    trusted.mkdir()
+    candidate = Path(str(trusted))
+    calls: list[str] = []
+    object.__setattr__(candidate, "_str", _bt05_root_hostile(
+        str, str(trusted), calls, raising=raising,
+    ))
+    _bt05_root_reject(_api(), candidate, (trusted,), calls)
+
+
+@pytest.mark.parametrize("storage", (
+    "raw_list", "raw_tuple", "raw_scalar", "drive_scalar", "root_scalar", "parsed_list",
+))
+def test_bt05_root_native_storage_subclasses_reject_before_protocols(
+    tmp_path: Path, storage: str,
+) -> None:
+    trusted = tmp_path / "root"
+    trusted.mkdir()
+    candidate = Path(str(trusted))
+    calls: list[str] = []
+    authority, values = _bt05_root_storage(candidate)
+    if storage.startswith("raw_"):
+        if storage == "raw_scalar":
+            changed = list(values)
+            changed[0] = _bt05_root_hostile(str, changed[0], calls)
+        else:
+            changed = _bt05_root_hostile(list if storage == "raw_list" else tuple,
+                                        values, calls)
+        object.__setattr__(candidate, authority, changed)
+    else:
+        str(candidate)  # Populate only ordinary native parsed fields first.
+        object.__delattr__(candidate, "_str")
+        if storage == "parsed_list":
+            name = "_tail_cached" if authority == "_raw_paths" else "_parts"
+            changed = _bt05_root_hostile(list, object.__getattribute__(candidate, name), calls)
+        else:
+            name = "_drv" if storage == "drive_scalar" else "_root"
+            changed = _bt05_root_hostile(str, object.__getattribute__(candidate, name), calls)
+        object.__setattr__(candidate, name, changed)
+    _bt05_root_reject(_api(), candidate, (trusted,), calls)
+
+
+@pytest.mark.parametrize("damage", (
+    "missing_raw", "none_raw", "mapping_raw", "object_item", "none_cache",
+    "conflicting_cache", "conflicting_drive", "conflicting_root", "conflicting_parts",
+))
+def test_bt05_root_missing_malformed_or_conflicting_native_storage_rejects(
+    tmp_path: Path, damage: str,
+) -> None:
+    trusted, alternate = tmp_path / "root", tmp_path / "alternate"
+    trusted.mkdir()
+    alternate.mkdir()
+    candidate = Path(str(trusted))
+    str(candidate)
+    authority, _ = _bt05_root_storage(candidate)
+    if damage == "missing_raw":
+        object.__delattr__(candidate, authority)
+    elif damage in ("none_raw", "mapping_raw", "object_item"):
+        object.__setattr__(candidate, authority, {
+            "none_raw": None, "mapping_raw": {}, "object_item": [object()],
+        }[damage])
+    elif damage in ("none_cache", "conflicting_cache"):
+        object.__setattr__(candidate, "_str", None if damage == "none_cache" else str(alternate))
+    elif damage == "conflicting_drive":
+        object.__setattr__(candidate, "_drv", "X:")
+    elif damage == "conflicting_root":
+        object.__setattr__(candidate, "_root", "")
+    else:
+        name = "_tail_cached" if authority == "_raw_paths" else "_parts"
+        object.__setattr__(candidate, name,
+                           [*object.__getattribute__(candidate, name), "unexpected"])
+    _bt05_root_reject(_api(), candidate, (trusted, alternate), [])
+
+
+@pytest.mark.parametrize("budget", ("component_count", "aggregate_bytes", "text_bytes"))
+def test_bt05_root_native_storage_resource_bounds_precede_rendering(
+    tmp_path: Path, budget: str,
+) -> None:
+    trusted = tmp_path / "root"
+    trusted.mkdir()
+    raw = str(trusted)
+    candidate = Path(raw)
+    str(candidate)
+    authority, _ = _bt05_root_storage(candidate)
+    if budget == "component_count":
+        values = [raw, *([""] * 4096)]
+        assert len(values) == 4097
+    elif budget == "aggregate_bytes":
+        values = [*( ["/" + "a" * 4095] * 16), raw]
+        assert all(len(value.encode("utf-8")) <= 64 * 1024 for value in values)
+        assert sum(len(value.encode("utf-8")) for value in values) > 64 * 1024
+    else:
+        values = ["/" + "a" * (64 * 1024), raw]
+        assert len(values[0]) == 64 * 1024 + 1
+    object.__setattr__(candidate, authority, values)
+    _bt05_root_reject(_api(), candidate, (trusted,), [])
+
+
+def test_bt05_root_oversize_ascii_rejects_without_large_encoding_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tracemalloc
+
+    api = _api()
+    oversized = "/" + "a" * (16 * 1024 * 1024)  # Allocate before measuring admission.
+    opened = []
+    real_open = os.open
+
+    def observe_open(*args: Any, **kwargs: Any) -> int:
+        opened.append(1)
+        return real_open(*args, **kwargs)
+
+    already_tracing = tracemalloc.is_tracing()
+    if not already_tracing:
+        tracemalloc.start()
+    try:
+        baseline, _ = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "open", observe_open)
+            _reject(lambda: _bt05_root_open(api, oversized))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not already_tracing:
+            tracemalloc.stop()
+    assert opened == []
+    assert peak - baseline < 1024 * 1024, "root admission allocated an oversized UTF-8 copy"
+
+
+def test_bt05_root_unicode_byte_overflow_rejects_before_filesystem_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "/" + "\u00e9" * 2048
+    assert len(root) <= 4096 and len(root.encode("utf-8")) == 4097
+    opened = []
+    real_open = os.open
+
+    def observe_open(*args: Any, **kwargs: Any) -> int:
+        opened.append(1)
+        return real_open(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", observe_open)
+        _reject(lambda: _bt05_root_open(_api(), root))
+    assert opened == []
+
+
+@pytest.mark.parametrize("capacity", ("full_without_lock", "room_for_lock", "full_with_lock"))
+def test_bt05_root_directory_capacity_reserves_new_lock_slot(tmp_path: Path, capacity: str) -> None:
+    api = _api()
+    root = tmp_path / "root"
+    root.mkdir()
+    count = 16384 if capacity == "full_without_lock" else 16383
+    for index in range(count):
+        (root / f".tmp-{index:06d}").touch(mode=0o400)
+    if capacity == "full_with_lock":
+        (root / ".bt05.lock").touch(mode=0o600)
+    before = _bt05_root_tree(root)
+    if capacity == "full_without_lock":
+        try:
+            _reject(lambda: _bt05_root_open(api, root))
+        finally:
+            assert _bt05_root_tree(root) == before, "full root gained an unreserved lock entry"
+    else:
+        _bt05_root_open(api, root)
+        after = _bt05_root_tree(root)
+        by_name = {row[0]: row for row in after}
+        assert len(after) == 16384
+        assert all(by_name.get(row[0]) == row for row in before)
+        assert tuple(row[0] for row in after).count(".bt05.lock") == 1
+
+
+# M1 repair RED: every opened artifact needs a fresh admitted metadata baseline.
+@pytest.fixture(scope="module")
+def _bt05_m1_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    api = _api()
+    manifest, _, _ = _manifest(api, days=1, prices=("100",))
+    root = tmp_path_factory.mktemp("bt05-m1-control") / "partial"
+    result = _run(api, root, manifest, max_operations=0)
+    assert result.run_valid and result.status == "available" and not result.completed
+    return SimpleNamespace(api=api, manifest=manifest, baseline=result, files=_snapshot(root))
+
+
+def _bt05_m1_retained_rejection(case: Any, root: Path, retained: tuple[Any, ...]) -> None:
+    assert _bt05_p2_tree(root) == retained
+    _reject(lambda: _resume(case.api, root, case.manifest, max_operations=0))
+    assert _bt05_p2_tree(root) == retained
+
+
+def test_bt05_m1_genuine_partial_cold_resume_control(_bt05_m1_case: Any, tmp_path: Path) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "genuine"
+    _bt05_p2_copy(case, root)
+    before = _bt05_p2_tree(root)
+    result = _resume(case.api, root, case.manifest, max_operations=0)
+    assert result.run_valid and not result.completed
+    assert _economic(result) == _economic(case.baseline)
+    assert _bt05_p2_tree(root) == before
+
+
+@pytest.mark.parametrize("damage", ("world_write", "outside_link"))
+def test_bt05_m1_fresh_read_rejects_unsafe_metadata_after_execution_inventory(
+    _bt05_m1_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "admission-race"
+    _bt05_p2_copy(case, root)
+    target = root / "manifest.json"
+    original_bytes = target.read_bytes()
+    outside = tmp_path / "outside-sentinel"
+    outside.write_bytes(b"m1-sensitive-sentinel-unchanged")
+    alias = tmp_path / "outside-alias"
+    real_inventory, real_open = case.api.ReplayRunner._inventory, os.open
+    armed, opened, retained = [], [], []
+
+    try:
+        with case.api.ReplayRunner(root=root) as runner:
+            def mutate_after_inventory(owner: Any) -> Any:
+                inventory = real_inventory(owner)
+                if owner is runner and not armed:
+                    assert "manifest.json" in inventory
+                    if damage == "world_write":
+                        target.chmod(0o666)
+                    else:
+                        os.link(target, alias)
+                    retained.append(_bt05_p2_tree(root))
+                    armed.append(damage)
+                return inventory
+
+            def observe_open(path: Any, *args: Any, **kwargs: Any) -> int:
+                if armed and path == "manifest.json":
+                    opened.append(path)
+                return real_open(path, *args, **kwargs)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(case.api.ReplayRunner, "_inventory", mutate_after_inventory)
+                patch.setattr(os, "open", observe_open)
+                _reject(lambda: runner.resume(case.manifest, max_operations=0))
+    finally:
+        assert armed == [damage], "the post-inventory metadata fault must execute"
+        assert target.read_bytes() == original_bytes
+        _bt05_m1_retained_rejection(case, root, retained[0])
+        assert outside.read_bytes() == b"m1-sensitive-sentinel-unchanged"
+        if damage == "outside_link":
+            assert alias.read_bytes() == original_bytes
+            assert alias.stat().st_ino == target.stat().st_ino
+            assert alias.stat().st_nlink == target.stat().st_nlink == 2
+        else:
+            assert target.stat().st_mode & 0o777 == 0o666
+        assert opened == [], "an artifact with unadmitted metadata was opened"
+
+
+def test_bt05_m1_opened_descriptor_must_match_full_preopen_identity(
+    _bt05_m1_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "open-race"
+    _bt05_p2_copy(case, root)
+    target = root / "manifest.json"
+    real_open = os.open
+    armed, retained = [], []
+
+    def change_mode_before_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        if path == "manifest.json" and not armed:
+            assert target.stat().st_mode & 0o777 == 0o400
+            target.chmod(0o600)  # Still allowed on a future, independently admitted read.
+            retained.append(_bt05_p2_tree(root))
+            armed.append(path)
+        return real_open(path, *args, **kwargs)
+
+    try:
+        with case.api.ReplayRunner(root=root) as runner, monkeypatch.context() as patch:
+            patch.setattr(os, "open", change_mode_before_open)
+            _reject(lambda: runner.resume(case.manifest, max_operations=0))
+    finally:
+        assert armed == ["manifest.json"], "the pre-open metadata fault must execute"
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert _bt05_p2_tree(root) == retained[0]
+        # Preserve the existing mode policy: owner-write is allowed when the
+        # whole metadata identity is established afresh, rather than changing mid-read.
+        recovered = _resume(case.api, root, case.manifest, max_operations=0)
+        assert recovered.run_valid and _economic(recovered) == _economic(case.baseline)
+        assert _bt05_p2_tree(root) == retained[0]
+
+
+def test_bt05_m1_legitimate_root_local_crash_pair_remains_resumable(
+    _bt05_m1_case: Any, tmp_path: Path,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "crash-pair"
+    _bt05_p2_copy(case, root)
+    final, temporary = root / "manifest.json", root / ".tmp-000000"
+    os.link(final, temporary)
+    assert final.stat().st_ino == temporary.stat().st_ino
+    assert final.stat().st_nlink == temporary.stat().st_nlink == 2
+    before = _bt05_p2_tree(root)
+    for _ in range(2):
+        result = _resume(case.api, root, case.manifest, max_operations=0)
+        assert result.run_valid and _economic(result) == _economic(case.baseline)
+        assert _bt05_p2_tree(root) == before
+        assert final.stat().st_nlink == temporary.stat().st_nlink == 2
+
+
+def test_bt05_m1_completion_rejects_new_unsafe_unaccepted_temporary_entry(
+    _bt05_m1_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_m1_case
+    root = tmp_path / "completion-race"
+    _bt05_p2_copy(case, root)
+    module = importlib.import_module("mytradingalpha.backtest.replay")
+    real_result = module._Engine.result
+    temporary = root / ".tmp-000000"
+    armed, retained = [], []
+
+    def introduce_unsafe_entry(engine: Any) -> Any:
+        result = real_result(engine)
+        if not armed:
+            assert not temporary.exists()
+            temporary.write_bytes(b"m1-sensitive-sentinel-temporary-evidence")
+            temporary.chmod(0o666)
+            retained.append(_bt05_p2_tree(root))
+            armed.append(temporary.name)
+        return result
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module._Engine, "result", introduce_unsafe_entry)
+            _reject(lambda: _resume(case.api, root, case.manifest, max_operations=0))
+    finally:
+        assert armed == [".tmp-000000"], "the pre-completion inventory fault must execute"
+        assert temporary.read_bytes() == b"m1-sensitive-sentinel-temporary-evidence"
+        assert temporary.stat().st_mode & 0o777 == 0o666
+        _bt05_m1_retained_rejection(case, root, retained[0])
+
+
+# Performance repair RED: genuine reducer counts are independent of host speed.
+def _bt05_perf_count(patch: pytest.MonkeyPatch) -> dict[str, int]:
+    counts = {"ledger_append": 0, "fill_simulate": 0}
+    ledger, fills = bt03._bt03_api().Ledger, bt02._bt02_api().FillModel
+    real_append, real_simulate = ledger.append, fills.simulate
+
+    def append(self: Any, *args: Any, **kwargs: Any) -> Any:
+        counts["ledger_append"] += 1
+        return real_append(self, *args, **kwargs)
+
+    def simulate(*args: Any, **kwargs: Any) -> Any:
+        counts["fill_simulate"] += 1
+        return real_simulate(*args, **kwargs)
+
+    patch.setattr(ledger, "append", append)
+    patch.setattr(fills, "simulate", staticmethod(simulate))
+    return counts
+
+
+def _bt05_perf_identity(result: Any) -> tuple[Any, ...]:
+    return (_economic(result), result.completed, result.semantic_input_hash,
+            result.artifact_integrity_hash, result.checkpoint.canonical_bytes(),
+            object.__getattribute__(result.checkpoint, "_seal"))
+
+
+@pytest.fixture(scope="module")
+def _bt05_perf_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    api = _api()
+    manifest, fields, _ = _manifest(api, days=1, prices=("100",))
+    root = tmp_path_factory.mktemp("bt05-perf-genuine") / "completed"
+    with pytest.MonkeyPatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _run(api, root, manifest)
+    assert result.completed and result.run_valid and result.events
+    assert all(value > 0 for value in counts.values()), counts
+    return SimpleNamespace(api=api, manifest=manifest, fields=fields, result=result,
+                           identity=_bt05_perf_identity(result), files=_snapshot(root),
+                           cold_counts=dict(counts))
+
+
+@pytest.mark.parametrize("mode", ("new", "complete_resume", "partial_resume"))
+def test_bt05_perf_completed_same_owner_has_zero_new_financial_work(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / mode
+    if mode == "complete_resume":
+        _bt05_p2_copy(case, root)
+    elif mode == "partial_resume":
+        with monkeypatch.context() as patch:
+            cold = _bt05_perf_count(patch)
+            partial = _run(case.api, root, case.manifest, max_operations=3)
+        assert not partial.completed and partial.checkpoint.operation_count == 3
+        assert partial.events and all(value > 0 for value in cold.values())
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        if mode == "new":
+            result = _run(case.api, root, case.manifest)
+        elif mode == "partial_resume":
+            result = _resume(case.api, root, case.manifest,
+                             checkpoint=partial.checkpoint, events=partial.events)
+        else:
+            result = _resume(case.api, root, case.manifest)
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, (
+        "retained genuine completion must avoid repeated financial reducers", mode,
+        case.cold_counts, counts,
+    )
+
+
+def test_bt05_perf_explicit_limits_and_another_owner_reconstruct_cold(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_perf_case
+    other = case.api.ReplayManifest(**case.fields)
+    for name, owner, maximum in (("explicit", case.manifest, 4), ("other", other, None)):
+        root = tmp_path / name
+        _bt05_p2_copy(case, root)
+        with monkeypatch.context() as patch:
+            counts = _bt05_perf_count(patch)
+            result = _resume(case.api, root, owner, max_operations=maximum)
+        assert all(value > 0 for value in counts.values()), (name, counts)
+        assert _bt05_perf_identity(result) == case.identity
+        assert _snapshot(root) == case.files
+
+
+def test_bt05_perf_returned_nested_graph_does_not_alias_retained_authority(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / "caller-isolation"
+    _bt05_p2_copy(case, root)
+    caller = _resume(case.api, root, case.manifest)
+    assert _bt05_perf_identity(caller) == case.identity
+    object.__setattr__(caller, "completed", False)
+    object.__setattr__(caller.events[0], "_event_id", "sensitive-sentinel-caller-event")
+    object.__setattr__(caller.nav_points[0], "value", D("999999"))
+    object.__setattr__(caller.cash_benchmark.policy.common, "_storage", b"caller-storage")
+    object.__setattr__(caller.checkpoint, "_raw", b"{}")
+    object.__setattr__(caller.checkpoint, "_seal", hashlib.sha256(b"{}").digest())
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _resume(case.api, root, case.manifest)
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, counts
+
+
+@pytest.mark.parametrize("target", ("native", "source_bytes"))
+def test_bt05_perf_warm_source_admission_remains_fresh(
+    _bt05_perf_case: Any, tmp_path: Path, target: str,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / target
+    _bt05_p2_copy(case, root)
+    if target == "native":
+        source, name, replacement = case.fields["intents"][0], "quantity", D("3.00")
+    else:
+        source = object.__getattribute__(case.manifest, "_owned")["bindings"][0]
+        name = "_sealed_source_json"
+        replacement = object.__getattribute__(source, name) + b" "
+    original = object.__getattribute__(source, name)
+    before = _bt05_p2_tree(root)
+    try:
+        object.__setattr__(source, name, replacement)
+        _reject(lambda: _resume(case.api, root, case.manifest))
+        assert _bt05_p2_tree(root) == before
+    finally:
+        object.__setattr__(source, name, original)
+    assert case.manifest.semantic_input_hash() == case.result.semantic_input_hash
+
+
+@pytest.mark.parametrize("damage", ("operation", "checkpoint", "world_write", "missing_events"))
+def test_bt05_perf_warm_prefix_and_metadata_still_require_exact_evidence(
+    _bt05_perf_case: Any, tmp_path: Path, damage: str,
+) -> None:
+    case = _bt05_perf_case
+    root = tmp_path / damage
+    _bt05_p2_copy(case, root)
+    kwargs = {}
+    target = _records(root, "operation-")[0]
+    if damage == "world_write":
+        target.chmod(0o666)
+    elif damage == "missing_events":
+        kwargs["events"] = case.result.events[:-1]
+    else:
+        if damage == "checkpoint":
+            target = root / "checkpoint-000001.json"
+            data = _json(target.read_bytes())
+            data["operation_prefix_hash"] = "sha256:" + "0" * 64
+            raw = _canonical(data)
+        else:
+            raw = b"!" + target.read_bytes()[1:]
+        target.chmod(0o600)
+        target.write_bytes(raw)
+        target.chmod(0o400)
+    before = _bt05_p2_tree(root)
+    _reject(lambda: _resume(case.api, root, case.manifest, **kwargs))
+    assert _bt05_p2_tree(root) == before
+
+
+def test_bt05_perf_failed_cold_publication_does_not_issue_completed_proof(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bt05_perf_case
+    owner = case.api.ReplayManifest(**case.fields)
+    root = tmp_path / "failed-cold"
+    real_publish, observed = case.api.ReplayRunner._publish, []
+
+    def fail_result(runner: Any, name: str, raw: bytes, manifest: Any) -> None:
+        if name == "result.json":
+            observed.append(name)
+            raise _Crash()
+        real_publish(runner, name, raw, manifest)
+
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        patch.setattr(case.api.ReplayRunner, "_publish", fail_result)
+        with pytest.raises(_Crash):
+            _run(case.api, root, owner)
+    assert observed == ["result.json"] and not (root / "result.json").exists()
+    assert all(value > 0 for value in counts.values()), counts
+    retained = dict(_snapshot(root))
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _resume(case.api, root, owner)
+    assert all(value > 0 for value in counts.values()), "failed publication grants no proof"
+    assert _bt05_perf_identity(result) == case.identity
+    assert all((root / name).read_bytes() == raw for name, raw in retained.items())
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        result = _resume(case.api, root, owner)
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, counts
+
+
+def test_bt05_perf_warm_sig05_nested_native_mutation_rejects(tmp_path: Path) -> None:
+    api = _api()
+    manifest, fields, _ = _manifest(api, kind="quant_llm", days=1, prices=("100",))
+    root = tmp_path / "sig05"
+    result = _run(api, root, manifest)
+    assert result.completed and result.run_valid
+    signal = object.__getattribute__(fields["bindings"][0], "_envelope_snapshot").quant
+    original = signal.score
+    sign, digits, exponent = original.as_tuple()
+    replacement = D((sign, digits + (0,), exponent - 1))
+    assert replacement == original and replacement.as_tuple() != original.as_tuple()
+    before = _bt05_p2_tree(root)
+    try:
+        object.__setattr__(signal, "score", replacement)
+        _reject(lambda: _resume(api, root, manifest))
+        assert _bt05_p2_tree(root) == before
+    finally:
+        object.__setattr__(signal, "score", original)
+
+
+def test_bt05_perf_unavailable_completion_keeps_early_partial_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    fields, source = _fields(days=2, prices=("100", "100"))
+    sessions = list(fields["sessions"])
+    sessions[1] = bt04._session_input(bt04._api(), sessions[1].session.session_date,
+                                    case=source, marks=())
+    fields["sessions"] = tuple(sessions)
+    manifest = api.ReplayManifest(**fields)
+    full_root, early_root = tmp_path / "unavailable", tmp_path / "early"
+    full = _run(api, full_root, manifest)
+    assert full.completed and not full.run_valid and full.status == "unavailable"
+    assert full.checkpoint.operation_count == 8 and full.reason_code
+    early = _run(api, early_root, manifest, max_operations=4)
+    assert not early.completed and early.run_valid and early.status == "available"
+    assert len(early.buy_and_hold_benchmark.nav_points) == 1
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        resumed = _resume(api, early_root, manifest, checkpoint=early.checkpoint, events=early.events)
+    assert _bt05_perf_identity(resumed) == _bt05_perf_identity(full)
+    assert _snapshot(early_root) == _snapshot(full_root)
+    assert counts == {"ledger_append": 0, "fill_simulate": 0}, counts
+
+
+@pytest.mark.parametrize("first_entry", ("refresh", "constructor", "weak_cleanup"))
+def test_bt05_perf_process_admission_precedes_inherited_issuer_lock(
+    _bt05_perf_case: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_entry: str,
+) -> None:
+    import weakref
+
+    case = _bt05_perf_case
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    root = tmp_path / first_entry
+    _bt05_p2_copy(case, root)
+    original_lock, original_pid = module._ISSUER_LOCK, os.getpid()
+    entered = []
+
+    class InheritedLock:
+        def __enter__(self) -> Any:
+            entered.append(os.getpid())
+            assert os.getpid() == original_pid, "process admission touched an inherited issuer lock"
+            return original_lock.__enter__()
+
+        def __exit__(self, *args: Any) -> Any:
+            return original_lock.__exit__(*args)
+
+    class WeakOwner:
+        pass
+
+    with monkeypatch.context() as patch:
+        counts = _bt05_perf_count(patch)
+        patch.setattr(module, "_ISSUER_LOCK", InheritedLock())
+        case.manifest._refresh()
+        assert entered == [original_pid], "same-process refresh must use its current lock"
+        entered.clear()
+        patch.setattr(os, "getpid", lambda: original_pid + 1_000_000)
+        owner = case.manifest
+        if first_entry == "refresh":
+            owner._refresh()
+        elif first_entry == "constructor":
+            owner = case.api.ReplayManifest(**case.fields)
+        else:
+            temporary = WeakOwner()
+            reference = weakref.ref(temporary)
+            del temporary
+            assert reference() is None
+            module._weak_cleanup(-1, reference)
+        result = _resume(case.api, root, owner)
+        assert not entered, "changed-process admission must replace locks first"
+    assert all(value > 0 for value in counts.values()), "parent proof must be ineligible"
+    assert _bt05_perf_identity(result) == case.identity
+    assert _snapshot(root) == case.files
+
+
+@pytest.fixture(autouse=True)
+def _bt05_perf_reconcile_simulated_process_baseline(request: pytest.FixtureRequest) -> Any:
+    """Restore real process admission around only the three simulated-PID cases."""
+    selected = request.node.originalname == "test_bt05_perf_process_admission_precedes_inherited_issuer_lock"
+    module = importlib.import_module("mytradingalpha.backtest.manifest") if selected else None
+    admission = None if module is None else vars(module).get("_process")
+    if admission is not None:
+        admission()
+    try:
+        yield
+    finally:
+        if admission is not None:
+            admission()
+
+
+@pytest.fixture(scope="module")
+def _bt05_r1_case() -> Any:
+    from mytradingalpha.backtest.orders import SimOrder
+
+    manifest, fields, _ = _manifest(_api(), days=1, prices=("100",))
+    return SimpleNamespace(manifest=manifest, intent=fields["intents"][0], order_type=SimOrder)
+
+
+@pytest.mark.parametrize("reason", (True, 1, ("unsupported",)))
+def test_bt05_r1_order_reason_requires_exact_string_or_none(_bt05_r1_case: Any, reason: Any) -> None:
+    case = _bt05_r1_case
+    order = case.order_type(case.intent.intent_id, case.intent.quantity, D("0"), D("0"),
+                            "cancelled", reason)
+    for route in (
+        lambda: case.manifest.economic_bytes((), (order,)),
+        lambda: case.manifest.economic_output_hash((), (order,)),
+        lambda: case.manifest.artifact_integrity_hash(events=(), results=(order,)),
+    ):
+        _reject(route)
+
+
+@pytest.mark.parametrize("status,reason,economic_hash,artifact_hash", (
+    ("cancelled", "unsupported",
+     "sha256:05b94d68b5a0fa3fc374243d7364461f9b4a457c979ed2bc05c82cf2f0aa3240",
+     "sha256:fe779b6dd4bce512b4a45639f03beb2a92bb5ae3fcc704d6303bfe491e9ad641"),
+    ("open_at_horizon", None,
+     "sha256:7c27452e262d8b776ab764e7be85e3ddd39ed6363e07e213bf7af596ea221879",
+     "sha256:d661e076303af0aef5ce064e257c850e1b4b4e8fabe1132fc863ccbbd5abfa9a"),
+))
+def test_bt05_r1_valid_order_reason_preserves_exact_hashes(
+    _bt05_r1_case: Any, status: str, reason: str | None, economic_hash: str, artifact_hash: str,
+) -> None:
+    case = _bt05_r1_case
+    order = case.order_type(case.intent.intent_id, case.intent.quantity, D("0"), D("0"),
+                            status, reason)
+    raw = case.manifest.economic_bytes((), (order,))
+    assert case.manifest.economic_bytes((), (order,)) == raw
+    assert _digest(DOMAINS[1], raw) == economic_hash
+    for _ in range(2):
+        assert case.manifest.economic_output_hash((), (order,)) == economic_hash
+        assert case.manifest.artifact_integrity_hash(events=(), results=(order,)) == artifact_hash
+
+
+def test_bt05_r2_public_decimal_rejection_bounds_derived_coefficient_scratch() -> None:
+    import tracemalloc
+
+    api = _api()
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    fields, _ = _fields(days=1, prices=("100",))
+    oversized = D("2000." + "0" * 9_000_000)
+    assert oversized == fields["opening_cash"]
+    fields = {**fields, "opening_cash": oversized}
+    def attempt() -> Any:
+        return api.ReplayManifest(**fields)
+    ceiling = module.MAX_RECORD
+    already_tracing = tracemalloc.is_tracing()
+    if not already_tracing:
+        tracemalloc.start()
+    baseline = tracemalloc.get_traced_memory()[0]
+    tracemalloc.reset_peak()
+    try:
+        _reject(attempt)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        if not already_tracing:
+            tracemalloc.stop()
+    scratch = max(0, peak - baseline)
+    assert scratch <= ceiling, (
+        "malformed Decimal admission exceeded the derived scratch ceiling", scratch, ceiling,
+    )
+
+
+def test_bt05_r2_valid_decimal_boundaries_keep_exact_context_free_normalization() -> None:
+    normalize = importlib.import_module("mytradingalpha.backtest.manifest")._decimal
+    controls = (
+        (D((0, (9,) * 128, -64)), "9" * 64 + "." + "9" * 64),
+        (D("1E64"), "1" + "0" * 64),
+        (D("1E-64"), "0." + "0" * 63 + "1"),
+        (D("-0"), "0"), (D("-0.00"), "0"),
+        (D((1, (0,), 64)), "0"), (D((1, (0,), -64)), "0"),
+        (D("2000"), "2000"), (D("2000.00"), "2000"),
+    )
+    for value, expected in controls:
+        assert normalize(value) == expected
+    with localcontext() as context:
+        context.prec, context.Emax, context.Emin, context.clamp = 1, 2, -2, 1
+        context.rounding = "ROUND_UP"
+        context.traps[Inexact] = context.traps[Rounded] = True
+        for value, expected in controls:
+            assert normalize(value) == expected
+
+
+def test_bt05_r2_one_over_coefficient_and_extreme_exponents_still_reject() -> None:
+    normalize = importlib.import_module("mytradingalpha.backtest.manifest")._decimal
+    invalid = (D((0, (1,) + (0,) * 128, -64)),
+               D("1E1000000000"), D("1E-1000000000"), D("0E1000000000"))
+    with localcontext() as context:
+        context.prec, context.Emax, context.Emin = 1, 2, -2
+        context.traps[Inexact] = context.traps[Rounded] = True
+        for value in invalid:
+            _reject(lambda value=value: normalize(value))
+
+
+def _bt05_r3_scope(module: Any) -> Any:
+    scope = vars(module).get("_identifier_validation_scope")
+    assert callable(scope), "BT-05 R3 requires a private operation-local identifier scope"
+    return scope
+
+
+def _bt05_r3_observe(patch: pytest.MonkeyPatch) -> Any:
+    module = importlib.import_module("mytradingalpha.contracts.orders")
+    real_identifier, real_redaction = module.validate_sig03_identifier, module.validate_artifact_text
+    calls, redactions = {}, []
+
+    def identifier(value: Any, *args: Any, **kwargs: Any) -> Any:
+        calls[value] = calls.get(value, 0) + 1
+        return real_identifier(value, *args, **kwargs)
+
+    def redact(value: Any) -> Any:
+        redactions.append(value)
+        return real_redaction(value)
+
+    patch.setattr(module, "validate_sig03_identifier", identifier)
+    patch.setattr(module, "validate_artifact_text", redact)
+    return SimpleNamespace(module=module, calls=calls, redactions=redactions,
+                           real_identifier=real_identifier, real_redaction=real_redaction)
+
+
+def test_bt05_r3_public_cold_replay_bounds_lexical_work_and_preserves_frozen_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    observed = _bt05_r3_observe(monkeypatch)
+    expected = (
+        "sha256:6cbed3f584cc821f8d39531fcdcb8710f4a0c5fd9de3e95d8bb1cd6bd649e6aa",
+        "sha256:c4ff3f0118423712c8244de12293f042b27a9b9727647312b5735ef9b47b53b6",
+        "sha256:a2ac1b0f741b829d95bd6d661ef19ebc944259fa0ff195538b4657aecf3df62b",
+    )
+    for mode in ("cold", "new_call", "resume"):
+        observed.calls.clear()
+        root = tmp_path / ("cold" if mode == "resume" else mode)
+        with pytest.MonkeyPatch.context() as patch:
+            financial = _bt05_perf_count(patch)
+            result = _resume(api, root, manifest) if mode == "resume" else _run(api, root, manifest)
+        assert (result.semantic_input_hash, result.economic_output_hash,
+                result.artifact_integrity_hash) == expected
+        files = sorted(root.glob("*.json"))
+        assert len(files) == 27
+        digest = hashlib.sha256()
+        for path in files:
+            name, raw = path.name.encode("utf-8"), path.read_bytes()
+            digest.update(len(name).to_bytes(8, "big"))
+            digest.update(name)
+            digest.update(len(raw).to_bytes(8, "big"))
+            digest.update(raw)
+        assert digest.hexdigest() == "a56f831241f7c9baa9364de75aef586da4f9f871700108347a0737a0a7068b15"
+        if mode == "cold":
+            assert all(value > 0 for value in financial.values()), financial
+        assert observed.calls, "each new run/resume must perform genuine identifier validation"
+        assert max(observed.calls.values()) == 1, (
+            "repeated exact lexemes must validate at most once within one replay call",
+            mode, sum(observed.calls.values()), len(observed.calls), max(observed.calls.values()),
+        )
+
+
+def test_bt05_r3_default_identifier_validation_remains_cold(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    for _ in range(2):
+        assert observed.module._safe_string("r3-default-lexeme") == "r3-default-lexeme"
+    assert observed.calls == {"r3-default-lexeme": 2}
+    assert observed.redactions == ["r3-default-lexeme"] * 2
+
+
+def test_bt05_r3_scope_capacity_and_one_over_use_correct_cold_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    values = []
+    for index in range(256):
+        prefix = f"r3-{index:03d}-"
+        values.append(prefix + ("x." * 64)[:128 - len(prefix) - 4] + "safe")
+    assert sum(len(value.encode("utf-8")) for value in values) == 32768
+    with scope():
+        for value in values:
+            assert observed.module._safe_string(value) == value
+            assert observed.module._safe_string(value) == value
+        for _ in range(2):
+            assert observed.module._safe_string("r3-capacity-overflow") == "r3-capacity-overflow"
+        assert observed.module._safe_string(values[0]) == values[0]
+    assert all(observed.calls[value] == 1 for value in values)
+    assert observed.calls["r3-capacity-overflow"] == 2
+    assert len(observed.redactions) == 515
+
+
+def test_bt05_r3_validator_identity_churn_does_not_consume_lexeme_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    calls = {}
+    with scope():
+        for _ in range(300):
+            def replacement(value: Any) -> Any:
+                calls[value] = calls.get(value, 0) + 1
+                return observed.real_identifier(value)
+            monkeypatch.setattr(observed.module, "validate_sig03_identifier", replacement)
+            for _ in range(2):
+                assert observed.module._safe_string("r3-churn") == "r3-churn"
+        assert calls["r3-churn"] == 300
+        for index in range(255):
+            value = f"r3-after-churn-{index}"
+            for _ in range(2):
+                assert observed.module._safe_string(value) == value
+            assert calls[value] == 1
+        assert observed.module._safe_string("r3-churn") == "r3-churn"
+        assert calls["r3-churn"] == 300
+
+
+def test_bt05_r3_scope_admission_precedes_hostile_protocols_and_keeps_utf8_denials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import base64
+
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    callbacks = []
+
+    class HostileString(str):
+        def forbidden(self, *args: Any, **kwargs: Any) -> Any:
+            callbacks.append("protocol")
+            raise AssertionError("hostile string protocol executed")
+        __hash__ = __eq__ = __len__ = __bool__ = __str__ = encode = forbidden
+
+    with scope():
+        for value in (HostileString("r3-hostile"), "\ud800", "\u00e9" * 65):
+            _reject(lambda value=value: observed.module._safe_string(value))
+        assert not callbacks and not observed.calls and not observed.redactions
+        for _ in range(2):
+            assert observed.module._safe_string("caf\u00e9") == "caf\u00e9"
+        assert observed.calls["caf\u00e9"] == 1
+        _reject(lambda: observed.module._safe_string("caf\u00e9", max_bytes=4))
+        assert observed.calls["caf\u00e9"] == 1
+        secret = "secret-canary-R3-7d2c9"
+        encoded = base64.urlsafe_b64encode(secret.encode()).decode().rstrip("=")
+        for _ in range(2):
+            error = _reject(lambda: observed.module._safe_string(encoded))
+            assert secret not in str(error) and encoded not in str(error)
+        assert observed.calls[encoded] == 2
+
+
+@pytest.mark.parametrize("warm", (False, True))
+def test_bt05_r3_redaction_rejection_never_retains_reusable_identifier_success(
+    monkeypatch: pytest.MonkeyPatch, warm: bool,
+) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    fail = False
+
+    def fresh_redaction(value: str) -> str:
+        observed.redactions.append(value)
+        if fail:
+            raise ValueError("sensitive-sentinel-redaction-failure")
+        return observed.real_redaction(value)
+
+    monkeypatch.setattr(observed.module, "validate_artifact_text", fresh_redaction)
+    with scope():
+        if warm:
+            assert observed.module._safe_string("r3-redaction") == "r3-redaction"
+        fail = True
+        _reject(lambda: observed.module._safe_string("r3-redaction"))
+        fail = False
+        for _ in range(2):
+            assert observed.module._safe_string("r3-redaction") == "r3-redaction"
+    assert observed.calls == {"r3-redaction": 2}
+    assert observed.redactions == ["r3-redaction"] * (4 if warm else 3)
+
+
+def test_bt05_r3_nested_scopes_restore_outer_and_copied_failed_scope_stays_cold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextvars import copy_context
+
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    stale = None
+    with scope():
+        for _ in range(2):
+            observed.module._safe_string("r3-lifetime")
+        with pytest.raises(_Crash), scope():
+            for _ in range(2):
+                observed.module._safe_string("r3-lifetime")
+            stale = copy_context()
+            raise _Crash()
+        observed.module._safe_string("r3-lifetime")
+        assert observed.calls["r3-lifetime"] == 2
+    assert stale is not None
+    for _ in range(2):
+        stale.run(observed.module._safe_string, "r3-lifetime")
+    assert observed.calls["r3-lifetime"] == 4
+    for _ in range(2):
+        observed.module._safe_string("r3-lifetime")
+    assert observed.calls["r3-lifetime"] == 6
+    with scope():
+        for _ in range(2):
+            observed.module._safe_string("r3-lifetime")
+    assert observed.calls["r3-lifetime"] == 7
+
+
+def test_bt05_r3_live_populated_copied_context_is_cold_in_foreign_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextvars import copy_context
+
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    with scope():
+        for _ in range(2):
+            observed.module._safe_string("r3-owner")
+        copied = copy_context()
+
+        def foreign() -> None:
+            for value in ("r3-owner", "r3-owner", "r3-foreign", "r3-foreign"):
+                assert observed.module._safe_string(value) == value
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(copied.run, foreign).result()
+        assert observed.calls == {"r3-owner": 3, "r3-foreign": 2}
+        observed.module._safe_string("r3-owner")
+        for _ in range(2):
+            observed.module._safe_string("r3-foreign")
+        assert observed.calls == {"r3-owner": 3, "r3-foreign": 3}
+
+
+def _bt05_r4_work(call: Any, target: Any, event_kind: str) -> tuple[Any, int]:
+    import sys
+    from types import CodeType
+
+    codes, pending = set(), [target.__code__]
+    while pending:
+        code = pending.pop()
+        codes.add(code)
+        pending.extend(value for value in code.co_consts if type(value) is CodeType)
+    work = 0
+
+    def profile(frame: Any, event: str, argument: Any) -> None:
+        nonlocal work
+        if event == "call" and frame.f_code in codes:
+            work += 1
+
+    def trace(frame: Any, event: str, argument: Any) -> Any:
+        nonlocal work
+        if frame.f_code not in codes:
+            return None
+        if event == "line":
+            work += 1
+        return trace
+
+    previous_trace, previous_profile = sys.gettrace(), sys.getprofile()
+    try:
+        if event_kind == "call":
+            sys.setprofile(profile)
+        else:
+            sys.settrace(trace)
+        result = call()
+    finally:
+        sys.settrace(previous_trace)
+        sys.setprofile(previous_profile)
+    return result, work
+
+
+@pytest.mark.parametrize("size", (32 * 1024, 64 * 1024))
+def test_bt05_r4_json_admission_bounds_python_dispatch_including_generators(size: int) -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    value = {"canonical_utf8": "a" * size}
+    expected = _canonical(value)
+    encoded, work = _bt05_r4_work(lambda: module._json(value), module._json_admission, "call")
+    assert encoded == expected
+    assert work <= 4096, ("JSON admission Python dispatch must be bounded", size, work, 4096)
+
+
+@pytest.mark.parametrize("size", (32 * 1024, 64 * 1024))
+def test_bt05_r4_quoted_token_bounds_python_lines_including_nested_code(size: int) -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    value = {"canonical_utf8": "a" * size}
+    raw = _canonical(value)
+    decoded, work = _bt05_r4_work(lambda: module._decode(raw), module._lexical_limits, "line")
+    assert decoded == value
+    assert work <= 4096, ("quoted-token Python work must be bounded", size, work, 4096)
+
+
+def test_bt05_r4_exact_size_oracle_controls_parity_unicode_and_limit_edges() -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    strings = ["", "ordinary", "caf\u00e9", "\u00e9" * 64, "a" * 1024 + "\U0001f600",
+               "\U00010348" * 24, '"', "\\"]
+    strings.extend(chr(value) * 3 for value in range(32))
+    runs = (*range(17), 4096, 4097)
+    strings.extend("prefix" + "\\" * count + '"tail' for count in runs)
+    strings.extend("prefix" + "\\" * count for count in runs)
+    for text in strings:
+        value = {"canonical_utf8": text}
+        expected = _canonical(value)
+        maximum = len(expected)
+        assert module._json_admission(value, maximum) == maximum
+        assert module._json(value, maximum) == expected
+        assert module._decode(expected, maximum) == value
+        _reject(lambda value=value, maximum=maximum: module._json_admission(value, maximum - 1))
+        _reject(lambda value=value, maximum=maximum: module._json(value, maximum - 1))
+        _reject(lambda expected=expected, maximum=maximum: module._decode(expected, maximum - 1))
+
+
+def test_bt05_r4_codec_preserves_valid_encoded_content_without_redaction() -> None:
+    import base64
+
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    canary = "secret-canary-R4-1d4ba"
+    values = (canary, base64.urlsafe_b64encode(canary.encode()).decode().rstrip("="),
+              canary.encode().hex(), "".join(f"\\u{ord(value):04x}" for value in canary))
+    for text in values:
+        value = {"canonical_utf8": text}
+        expected = _canonical(value)
+        assert module._json(value) == expected
+        assert module._decode(expected) == value
+
+
+def test_bt05_r4_malformed_caps_and_hostile_values_keep_fixed_denials() -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    raw = _canonical({"canonical_utf8": 'safe"\\tail'})
+    malformed = (
+        raw[:-1], raw[:-2], b'{"canonical_utf8":"unterminated}',
+        b'{"canonical_utf8":"trailing' + b"\\",
+        b'{"canonical_utf8":"\xff"}', b'{"canonical_utf8":"\\ud800"}',
+        b'{"a":1,"\\u0061":2}', b'{"value":NaN}', b'{"value":Infinity}',
+        b'{"value":-Infinity}', b'{"value":1.5}',
+        b"[" * 65 + b"0" + b"]" * 65,
+        _canonical([0] * 4097), _canonical({f"k{index}": 0 for index in range(129)}),
+    )
+    for candidate in malformed:
+        error = _reject(lambda candidate=candidate: module._decode(candidate))
+        assert error.__suppress_context__ is True
+    for value in ({"canonical_utf8": "\ud800"}, {1: "invalid-key"},
+                  [0] * 4097, {f"k{index}": 0 for index in range(129)}, float("nan")):
+        _reject(lambda value=value: module._json(value))
+    callbacks = []
+
+    class HostileString(str):
+        def forbidden(self, *args: Any, **kwargs: Any) -> Any:
+            callbacks.append("string")
+            raise AssertionError("hostile string protocol executed")
+        __hash__ = __eq__ = __len__ = __bool__ = __str__ = encode = forbidden
+
+    class HostileBytes(bytes):
+        def forbidden(self, *args: Any, **kwargs: Any) -> Any:
+            callbacks.append("bytes")
+            raise AssertionError("hostile bytes protocol executed")
+        __hash__ = __eq__ = __len__ = __bool__ = __str__ = forbidden
+
+    _reject(lambda: module._json({"canonical_utf8": HostileString("hostile")}))
+    _reject(lambda: module._decode(HostileBytes(raw)))
+    _Hostile.calls = 0
+    _reject(lambda: module._json({"canonical_utf8": _Hostile()}))
+    assert callbacks == [] and _Hostile.calls == 0
+
+
+@pytest.fixture(scope="module")
+def _bt05_m2_filled_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    """Share genuine replay evidence read-only across the status consistency cases."""
+    from mytradingalpha.backtest.orders import SimOrder
+
+    api = _api()
+    manifest, _, _ = _manifest(api, days=1, prices=("100",), order={"quantity": D("1")})
+    result = _run(api, tmp_path_factory.mktemp("bt05-m2-filled") / "run", manifest)
+    assert result.run_valid and len(result.orders) == 1
+    order = result.orders[0]
+    assert type(order) is SimOrder
+    assert (order.status, order.remaining_quantity, order.cumulative_quantity,
+            order.reason_code) == ("filled", D("0"), D("1"), None)
+    assert len(result.events) == 1
+    event = result.events[0]
+    assert event.kind == "fill" and event.intent_id == order.intent_id
+    assert event.intent.quantity == event.fill.quantity == D("1")
+    assert event.fill.fee == order.cumulative_fee
+    return SimpleNamespace(manifest=manifest, result=result, order=order, order_type=SimOrder)
+
+
+@pytest.mark.parametrize("status,reason", (
+    ("cancelled", "time_in_force_remainder_cancelled"),
+    ("expired", "intent_expired"),
+    ("open_at_horizon", None),
+))
+@pytest.mark.parametrize("route", ("economic_bytes", "economic_output_hash", "artifact_integrity_hash"))
+def test_bt05_m2_zero_remaining_rejects_nonfilled_status_across_public_routes(
+    _bt05_m2_filled_case: Any, status: str, reason: str | None, route: str,
+) -> None:
+    case = _bt05_m2_filled_case
+    filled = case.order
+    order = case.order_type(filled.intent_id, filled.remaining_quantity,
+                            filled.cumulative_quantity, filled.cumulative_fee, status, reason)
+    _reject(lambda: getattr(case.manifest, route)(events=case.result.events, results=(order,)))
+
+
+@pytest.mark.parametrize("route", ("economic_bytes", "economic_output_hash", "artifact_integrity_hash"))
+def test_bt05_m2_filled_order_preserves_exact_public_hashes(
+    _bt05_m2_filled_case: Any, route: str,
+) -> None:
+    case = _bt05_m2_filled_case
+    value = getattr(case.manifest, route)(events=case.result.events, results=(case.order,))
+    if route == "economic_bytes":
+        value = _digest(DOMAINS[1], value)
+    expected = (
+        "sha256:6d2bdd301530da1c02b74b7f6452bb4222229f068d70c7b8c10b4f8df1370451" if route == "artifact_integrity_hash"
+        else "sha256:84c3321601c490ef2325318fc7dfaef96c5176599ddc1050d4ce4b701df667b2"
+    )
+    assert value == expected

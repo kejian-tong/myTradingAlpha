@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import (
     ROUND_HALF_EVEN,
@@ -16,6 +19,7 @@ from decimal import (
     localcontext,
 )
 from itertools import islice
+from threading import get_ident
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError, model_validator
@@ -89,6 +93,62 @@ def _fixed_context() -> Context:
     return context
 
 
+def _identifier_scope_support() -> tuple[Any, Any]:
+    class ScopeState:
+        __slots__ = ("pid", "thread", "active", "entries", "content_bytes")
+
+        def __init__(self) -> None:
+            self.pid, self.thread = os.getpid(), get_ident()
+            self.active = True
+            self.entries: dict[str, object] = {}
+            self.content_bytes = 0
+
+    current: ContextVar[ScopeState | None] = ContextVar("bt02_identifier_scope", default=None)
+    missing = object()
+
+    @contextmanager
+    def scope() -> Any:
+        state = ScopeState()
+        token = current.set(state)
+        try:
+            yield
+        finally:
+            state.active = False
+            state.entries.clear()
+            state.content_bytes = 0
+            current.reset(token)
+
+    def validate(value: str, byte_count: int) -> None:
+        state = current.get()
+        # Copied foreign/stale contexts never read or modify the owner's memo.
+        if (type(state) is not ScopeState or not state.active or state.pid != os.getpid()
+                or state.thread != get_ident() or byte_count > 128):
+            state = None
+        checker = validate_sig03_identifier
+        previous = missing if state is None else state.entries.get(value, missing)
+        hit = previous is checker
+        try:
+            if not hit and checker(value) != value:
+                _reject()
+            if validate_artifact_text(value) != value:
+                _reject()
+        except BaseException:
+            if state is not None and state.entries.pop(value, missing) is not missing:
+                state.content_bytes -= byte_count
+            raise
+        if state is not None and not hit:
+            if previous is not missing:
+                state.entries[value] = checker
+            elif len(state.entries) < 256 and state.content_bytes + byte_count <= 32768:
+                state.entries[value] = checker
+                state.content_bytes += byte_count
+
+    return scope, validate
+
+
+_identifier_validation_scope, _validate_identifier_lexeme = _identifier_scope_support()
+
+
 def _safe_string(value: object, *, max_bytes: int = 128, allow_empty: bool = False) -> str:
     if type(value) is not str:
         _reject()
@@ -100,8 +160,7 @@ def _safe_string(value: object, *, max_bytes: int = 128, allow_empty: bool = Fal
         raw = value.encode("utf-8", "strict")
         if len(raw) > max_bytes:
             _reject("resource_limit")
-        if validate_sig03_identifier(value) != value or validate_artifact_text(value) != value:
-            _reject()
+        _validate_identifier_lexeme(value, len(raw))
         return value
     except OrderInputError:
         raise

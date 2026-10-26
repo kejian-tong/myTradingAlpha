@@ -1,6 +1,6 @@
 # Phase 03 — Backtest and Ledger Design
 
-Status: planned. The current repository has no Phase 03 runner, simulator, financial ledger, replay store, or metric engine. This design specifies six separately authorized implementation slices; this documentation reconciliation implements none of them and makes no return, alpha, data-coverage, or readiness claim.
+Status: in progress. BT-01 through BT-04 implement the offline runner, simulator, ledger, actions and benchmarks. BT-05 replay and local recovery are candidates in PR104, pending final validation, independent review, required CI and the Master gate. The BT-06 metric/report engine remains deferred. Phase 03 is incomplete and makes no return, alpha, data-coverage, or readiness claim.
 
 ## Purpose and boundary
 
@@ -103,6 +103,8 @@ Before canonicalization or hashing, reject unknown fields/schema versions, cycle
 A checkpoint binds both semantic and exact manifest inputs; committed ledger prefix count and hash; runner cursor; open orders; cumulative fees; remaining fill cap; action entitlements/payables; benchmark state; and reducer versions. The checkpoint is derived evidence; ledger events remain authoritative. Resume validates the exact manifest and event prefix, replays and reconciles state to the checkpoint, then resumes at the next unapplied event. Crash before an atomic fill commits nothing; a crash after event commit but before checkpoint replays the event once. Torn event, unmatched hash/sequence, conflict, changed input, unknown version, or unreconciled checkpoint stops and retains evidence.
 
 There is one explicit local append owner. Publish each canonical event/artifact atomically under an explicit caller-supplied artifact root. Do not overwrite prior inputs/results. Reject symlink traversal, path escape, opaque object loaders and concurrent writers. File I/O is allowed only beneath that root; the Phase 03 path cannot discover environment credentials or invoke a provider, network, subprocess, or model. A semantic change creates a new derived artifact. Unchanged resume must match uninterrupted economic output exactly.
+
+Bounded private reuse changes neither journal authority nor artifacts. A genuine completed cold replay may retain an immutable expected trace for its exact live manifest owner after final publication guards; a later full call still reconciles every record and guard without restoring reducers. Explicit operation limits remain on the cold financial path. Each replay execution also has a private positive identifier memo capped at 256 keys and 32768 UTF-8 content bytes. First checks and validator replacements use the genuine identifier validator; native/UTF-8 admission and artifact redaction remain fresh on every eligible call. Insert only after both validations succeed, invalidate on redaction failure, and clear/deactivate/reset on every exit, including BaseException. Nested scopes start fresh; stale or foreign PID/thread contexts and calls outside the opt-in scope validate cold. No process-global raw/decoded cache or financial/source authority is added; schemas, hashes, artifact bytes and all publication checks remain unchanged.
 
 ## BT-06 — Metrics and reports
 
