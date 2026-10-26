@@ -74,7 +74,7 @@ The current codebase includes:
 - structured debate between competing research perspectives;
 - persistent decision history and optional checkpoint-based recovery;
 - CLI and Python package interfaces;
-- automated CI across **Python 3.10, 3.11, 3.12, 3.13, and 3.14**;
+- automated CI on **Python 3.14**;
 - Ruff linting, CodeQL security scanning, and dependency-review checks.
 
 ## Installation
@@ -86,7 +86,7 @@ git clone https://github.com/kejian-tong/myTradingAlpha.git
 cd myTradingAlpha
 ```
 
-The repository's default development runtime is pinned to **Python 3.14.7** in `.python-version`, while the package remains compatible with Python 3.10 through 3.14. Use Python 3.14 for new local development unless you are explicitly testing an older supported interpreter.
+The repository's default development runtime is pinned to **Python 3.14.7** in `.python-version`. The package and lock retain the Python `>=3.10` compatibility declaration; current CI tests Python 3.14 only. Use Python 3.14 for new local development.
 
 Create and activate a Python virtual environment, then install the package:
 
@@ -122,7 +122,7 @@ the prior dependency declarations and repair the lock in a reviewed change. Once
 the locked uv workflow; the package name, CLI, Python support, and Research Graph behavior do not
 change.
 
-The project declares Python `>=3.10` for backward compatibility and continuously tests Python 3.10 through 3.14. The Docker runtime and default CI smoke/lint lanes use Python 3.14.
+The project declares Python `>=3.10` for backward compatibility; CI runs the complete test suite on Python 3.14 only. The Docker runtime and CI smoke/lint lanes also use Python 3.14.
 
 ## Configuration
 
