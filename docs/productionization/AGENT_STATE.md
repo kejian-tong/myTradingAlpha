@@ -24,7 +24,7 @@ Bounded snapshot, not a chronological log; GitHub/current `main` is authoritativ
 - exact base/main and tree above; PR104 only; GitHub head overrides this snapshot.
 - Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; fresh `reviewer_xhigh` / GPT-6.1 Sol / xhigh plus boundary review. Host attestation unavailable.
 - Original RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`; P1/P2/root/M1/performance/R1/R2 history: PR104. R1/R2 closed:6401678234/6402537952.
-- JIT6405736903/6406302176; R3 RED `99c4fd8a5ef5dd32534c3565a4a5a22ce575f2aa`/6405904139:8fail/9controls. All301cases/PID fixture and functional assertions remain; human waived only20s computation bound. Codec RED `8ba60ecae8287f00b9a9d0c3ed64dc80403ccf65`/6406469971.
+- JIT6405736903/6406302176; R3 RED `99c4fd8a5ef5dd32534c3565a4a5a22ce575f2aa`/6405904139:8fail/9controls. All313cases/PID fixture and functional assertions remain; human waived only20s computation bound. Codec RED `8ba60ecae8287f00b9a9d0c3ed64dc80403ccf65`/6406469971.
 - Rejected R3 attempt remains unaccepted. Human-authorized clock repair removes only20s computation bound; synchronization/resource/security/financial/publication checks remain.
 - Private per-call positive lexemes:256keys/32768UTF8bytes, genuine first/current-validator checks, fresh redaction; insert after both, evict failures, clear/reset finally. PID/thread copies stay cold; defaults unchanged; no global raw/decoded memo.
 - Heavy pools64MiB/eight: benchmark16MiB/four, trace48MiB/four; no reducer restoration or omitted link/fsync; schemas/bytes unchanged. Explicit operation limits stay financially cold.

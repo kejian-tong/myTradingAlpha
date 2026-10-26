@@ -1743,6 +1743,8 @@ def _economic_projection(manifest: ReplayManifest, events: tuple, results: tuple
             owner = owners.get(value.intent_id)
             if (value.cumulative_quantity, value.cumulative_fee) != ((Decimal(0), Decimal(0)) if owner is None else (owner.cumulative_quantity, owner.cumulative_fee)):
                 _fail()
+            if value.remaining_quantity == 0 and value.status != "filled":
+                _fail()
             if (value.status == "filled" and (value.remaining_quantity != 0 or value.reason_code is not None)) or (value.status in ("cancelled", "expired") and not value.reason_code):
                 _fail()
             result_values.append({"type": "SimOrder", "value": {"intent_id": projection.reference("intent", value.intent_id),
