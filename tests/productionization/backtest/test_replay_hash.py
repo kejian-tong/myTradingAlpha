@@ -2632,3 +2632,133 @@ def test_bt05_r3_live_populated_copied_context_is_cold_in_foreign_thread(
         for _ in range(2):
             observed.module._safe_string("r3-foreign")
         assert observed.calls == {"r3-owner": 3, "r3-foreign": 3}
+
+
+def _bt05_r4_work(call: Any, target: Any, event_kind: str) -> tuple[Any, int]:
+    import sys
+    from types import CodeType
+
+    codes, pending = set(), [target.__code__]
+    while pending:
+        code = pending.pop()
+        codes.add(code)
+        pending.extend(value for value in code.co_consts if type(value) is CodeType)
+    work = 0
+
+    def profile(frame: Any, event: str, argument: Any) -> None:
+        nonlocal work
+        if event == "call" and frame.f_code in codes:
+            work += 1
+
+    def trace(frame: Any, event: str, argument: Any) -> Any:
+        nonlocal work
+        if frame.f_code not in codes:
+            return None
+        if event == "line":
+            work += 1
+        return trace
+
+    previous_trace, previous_profile = sys.gettrace(), sys.getprofile()
+    try:
+        if event_kind == "call":
+            sys.setprofile(profile)
+        else:
+            sys.settrace(trace)
+        result = call()
+    finally:
+        sys.settrace(previous_trace)
+        sys.setprofile(previous_profile)
+    return result, work
+
+
+@pytest.mark.parametrize("size", (32 * 1024, 64 * 1024))
+def test_bt05_r4_json_admission_bounds_python_dispatch_including_generators(size: int) -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    value = {"canonical_utf8": "a" * size}
+    expected = _canonical(value)
+    encoded, work = _bt05_r4_work(lambda: module._json(value), module._json_admission, "call")
+    assert encoded == expected
+    assert work <= 4096, ("JSON admission Python dispatch must be bounded", size, work, 4096)
+
+
+@pytest.mark.parametrize("size", (32 * 1024, 64 * 1024))
+def test_bt05_r4_quoted_token_bounds_python_lines_including_nested_code(size: int) -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    value = {"canonical_utf8": "a" * size}
+    raw = _canonical(value)
+    decoded, work = _bt05_r4_work(lambda: module._decode(raw), module._lexical_limits, "line")
+    assert decoded == value
+    assert work <= 4096, ("quoted-token Python work must be bounded", size, work, 4096)
+
+
+def test_bt05_r4_exact_size_oracle_controls_parity_unicode_and_limit_edges() -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    strings = ["", "ordinary", "caf\u00e9", "\u00e9" * 64, "a" * 1024 + "\U0001f600",
+               "\U00010348" * 24, '"', "\\"]
+    strings.extend(chr(value) * 3 for value in range(32))
+    runs = (*range(17), 4096, 4097)
+    strings.extend("prefix" + "\\" * count + '"tail' for count in runs)
+    strings.extend("prefix" + "\\" * count for count in runs)
+    for text in strings:
+        value = {"canonical_utf8": text}
+        expected = _canonical(value)
+        maximum = len(expected)
+        assert module._json_admission(value, maximum) == maximum
+        assert module._json(value, maximum) == expected
+        assert module._decode(expected, maximum) == value
+        _reject(lambda value=value, maximum=maximum: module._json_admission(value, maximum - 1))
+        _reject(lambda value=value, maximum=maximum: module._json(value, maximum - 1))
+        _reject(lambda expected=expected, maximum=maximum: module._decode(expected, maximum - 1))
+
+
+def test_bt05_r4_codec_preserves_valid_encoded_content_without_redaction() -> None:
+    import base64
+
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    canary = "secret-canary-R4-1d4ba"
+    values = (canary, base64.urlsafe_b64encode(canary.encode()).decode().rstrip("="),
+              canary.encode().hex(), "".join(f"\\u{ord(value):04x}" for value in canary))
+    for text in values:
+        value = {"canonical_utf8": text}
+        expected = _canonical(value)
+        assert module._json(value) == expected
+        assert module._decode(expected) == value
+
+
+def test_bt05_r4_malformed_caps_and_hostile_values_keep_fixed_denials() -> None:
+    module = importlib.import_module("mytradingalpha.backtest.manifest")
+    raw = _canonical({"canonical_utf8": 'safe"\\tail'})
+    malformed = (
+        raw[:-1], raw[:-2], b'{"canonical_utf8":"unterminated}',
+        b'{"canonical_utf8":"trailing' + b"\\",
+        b'{"canonical_utf8":"\xff"}', b'{"canonical_utf8":"\\ud800"}',
+        b'{"a":1,"\\u0061":2}', b'{"value":NaN}', b'{"value":Infinity}',
+        b'{"value":-Infinity}', b'{"value":1.5}',
+        b"[" * 65 + b"0" + b"]" * 65,
+        _canonical([0] * 4097), _canonical({f"k{index}": 0 for index in range(129)}),
+    )
+    for candidate in malformed:
+        error = _reject(lambda candidate=candidate: module._decode(candidate))
+        assert error.__suppress_context__ is True
+    for value in ({"canonical_utf8": "\ud800"}, {1: "invalid-key"},
+                  [0] * 4097, {f"k{index}": 0 for index in range(129)}, float("nan")):
+        _reject(lambda value=value: module._json(value))
+    callbacks = []
+
+    class HostileString(str):
+        def forbidden(self, *args: Any, **kwargs: Any) -> Any:
+            callbacks.append("string")
+            raise AssertionError("hostile string protocol executed")
+        __hash__ = __eq__ = __len__ = __bool__ = __str__ = encode = forbidden
+
+    class HostileBytes(bytes):
+        def forbidden(self, *args: Any, **kwargs: Any) -> Any:
+            callbacks.append("bytes")
+            raise AssertionError("hostile bytes protocol executed")
+        __hash__ = __eq__ = __len__ = __bool__ = __str__ = forbidden
+
+    _reject(lambda: module._json({"canonical_utf8": HostileString("hostile")}))
+    _reject(lambda: module._decode(HostileBytes(raw)))
+    _Hostile.calls = 0
+    _reject(lambda: module._json({"canonical_utf8": _Hostile()}))
+    assert callbacks == [] and _Hostile.calls == 0
