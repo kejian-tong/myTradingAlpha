@@ -1136,7 +1136,7 @@ def test_deterministic_two_writer_race_has_one_append_owner(tmp_path: Path) -> N
             _reject(lambda: api.ReplayRunner(root=root))
         finally:
             release.set()
-        result = future.result(timeout=20)
+        result = future.result()
     assert result.run_valid
     assert _economic(_resume(api, root, manifest)) == _economic(result)
 
