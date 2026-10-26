@@ -2762,3 +2762,55 @@ def test_bt05_r4_malformed_caps_and_hostile_values_keep_fixed_denials() -> None:
     _Hostile.calls = 0
     _reject(lambda: module._json({"canonical_utf8": _Hostile()}))
     assert callbacks == [] and _Hostile.calls == 0
+
+
+@pytest.fixture(scope="module")
+def _bt05_m2_filled_case(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    """Share genuine replay evidence read-only across the status consistency cases."""
+    from mytradingalpha.backtest.orders import SimOrder
+
+    api = _api()
+    manifest, _, _ = _manifest(api, days=1, prices=("100",), order={"quantity": D("1")})
+    result = _run(api, tmp_path_factory.mktemp("bt05-m2-filled") / "run", manifest)
+    assert result.run_valid and len(result.orders) == 1
+    order = result.orders[0]
+    assert type(order) is SimOrder
+    assert (order.status, order.remaining_quantity, order.cumulative_quantity,
+            order.reason_code) == ("filled", D("0"), D("1"), None)
+    assert len(result.events) == 1
+    event = result.events[0]
+    assert event.kind == "fill" and event.intent_id == order.intent_id
+    assert event.intent.quantity == event.fill.quantity == D("1")
+    assert event.fill.fee == order.cumulative_fee
+    return SimpleNamespace(manifest=manifest, result=result, order=order, order_type=SimOrder)
+
+
+@pytest.mark.parametrize("status,reason", (
+    ("cancelled", "time_in_force_remainder_cancelled"),
+    ("expired", "intent_expired"),
+    ("open_at_horizon", None),
+))
+@pytest.mark.parametrize("route", ("economic_bytes", "economic_output_hash", "artifact_integrity_hash"))
+def test_bt05_m2_zero_remaining_rejects_nonfilled_status_across_public_routes(
+    _bt05_m2_filled_case: Any, status: str, reason: str | None, route: str,
+) -> None:
+    case = _bt05_m2_filled_case
+    filled = case.order
+    order = case.order_type(filled.intent_id, filled.remaining_quantity,
+                            filled.cumulative_quantity, filled.cumulative_fee, status, reason)
+    _reject(lambda: getattr(case.manifest, route)(events=case.result.events, results=(order,)))
+
+
+@pytest.mark.parametrize("route", ("economic_bytes", "economic_output_hash", "artifact_integrity_hash"))
+def test_bt05_m2_filled_order_preserves_exact_public_hashes(
+    _bt05_m2_filled_case: Any, route: str,
+) -> None:
+    case = _bt05_m2_filled_case
+    value = getattr(case.manifest, route)(events=case.result.events, results=(case.order,))
+    if route == "economic_bytes":
+        value = _digest(DOMAINS[1], value)
+    expected = (
+        "sha256:6d2bdd301530da1c02b74b7f6452bb4222229f068d70c7b8c10b4f8df1370451" if route == "artifact_integrity_hash"
+        else "sha256:84c3321601c490ef2325318fc7dfaef96c5176599ddc1050d4ce4b701df667b2"
+    )
+    assert value == expected
