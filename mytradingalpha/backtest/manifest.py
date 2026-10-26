@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -65,6 +66,10 @@ _VALUE_FIELDS = {model: model._fields for model in _VALUES}
 _NAV_FIELDS = ("status", "value", "reason_code", "run_valid", "formula_version", "numeric_policy_version")
 _ORDER_FIELDS = ("intent_id", "remaining_quantity", "cumulative_quantity", "cumulative_fee", "status", "reason_code")
 _BLOB_KEYS = frozenset(("canonical_utf8", "native_witness", "native_inputs", "ledger_native_witness", "event_native_witness"))
+_JSON_CONTROL_BYTES = re.compile(rb"[\x00-\x1f]")
+_JSON_CONTROL_ESCAPES = tuple(
+    (bytes((byte,)), 1 if byte in (8, 9, 10, 12, 13) else 5) for byte in range(32)
+)
 _HEAVY_LIMIT = 64 * 1024 * 1024
 _HEAVY_ENTRIES = 8
 _BENCHMARK_LIMIT = 16 * 1024 * 1024
@@ -499,7 +504,9 @@ def _json_admission(value: object, maximum: int) -> int:
             except UnicodeError:
                 _fail()
             size += len(encoded) + 2
-            size += sum(1 if byte in (34, 92, 8, 9, 10, 12, 13) else 5 if byte < 32 else 0 for byte in encoded)
+            size += encoded.count(b'"') + encoded.count(b"\\")
+            if _JSON_CONTROL_BYTES.search(encoded) is not None:
+                size += sum(encoded.count(char) * cost for char, cost in _JSON_CONTROL_ESCAPES)
         elif kind is dict or kind is list or kind is tuple:
             if id(item) in active or len(item) > (128 if kind is dict else 4096):
                 _fail()
@@ -637,18 +644,16 @@ def _lexical_limits(raw: bytes, maximum: int) -> None:
         elif byte == 34:
             start = offset
             offset += 1
-            escaped = False
-            while offset < length:
-                current = raw[offset]
-                offset += 1
-                if escaped:
-                    escaped = False
-                elif current == 92:
-                    escaped = True
-                elif current == 34:
+            while True:
+                quote = raw.find(b'"', offset)
+                if quote < 0:
+                    _fail()
+                preceding = quote - 1
+                while preceding > start and raw[preceding] == 92:
+                    preceding -= 1
+                offset = quote + 1
+                if (quote - preceding - 1) % 2 == 0:
                     break
-            else:
-                _fail()
             owner = None if frame is None else frame[3]
             limit = maximum if not is_key and owner in _BLOB_KEYS else 6 * 65536 + 2
             if offset - start > limit:

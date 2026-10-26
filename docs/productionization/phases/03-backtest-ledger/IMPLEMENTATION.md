@@ -172,7 +172,9 @@ Cash and B&H have their own reducer, event stream, and NAV. Both use strategy in
 ReplayManifest.semantic_input_hash() -> str
 ReplayManifest.economic_output_hash(events: tuple[LedgerEvent, ...], results: tuple[object, ...]) -> str
 ReplayManifest.artifact_integrity_hash() -> str
-ReplayRunner.resume(manifest: ReplayManifest, checkpoint: ReplayCheckpoint, events: tuple[LedgerEvent, ...]) -> ReplayResult
+ReplayRunner.resume(manifest: ReplayManifest, checkpoint: ReplayCheckpoint | None = None,
+                    events: tuple[LedgerEvent, ...] | None = None,
+                    *, max_operations: int | None = None) -> ReplayResult
 ```
 
 The manifest's semantic input contains exact typed bundle/outcome source content projections, policies/witnesses, universe and instrument IDs, variant and full signal semantic content, model/config/code/schema versions, numerical/fill/cost/action/benchmark versions, initial capital, eligible sessions and seed. It binds exact original v1 source bytes, content hashes and IDs separately as integrity provenance; never rewrite source IDs or sealed bytes.
@@ -186,6 +188,10 @@ Reject unknown schema/fields, cycles, duplicate JSON keys, NaN/infinity, custom 
 The checkpoint binds both semantic and exact inputs; event prefix count and hash; next runner cursor; open intents; cumulative order fees; remaining cap; action entitlements/payables; Cash/B&H state; and reducer/schema versions. Events are authoritative. On resume verify all manifest and prefix values, replay/reconcile the checkpoint, then process exactly the next unapplied event. A crash before atomic fill append commits no half-fill. A crash after append but before checkpoint is idempotently replayed once. Torn record, changed input, unknown version, conflicting event, sequence/hash mismatch or checkpoint disagreement stops with evidence retained.
 
 One explicit local append owner writes canonical immutable artifacts atomically only below an explicit caller-supplied root. Reject path escape, symlinks, overwriting an existing artifact and concurrent writers. No environment/credential discovery, network, subprocess, model or provider is allowed. A changed semantic input creates a new artifact. A recovered unchanged run must have the same economic output hash and exact economic events/results as uninterrupted execution; exact artifact integrity may differ when run/operational provenance differs.
+
+Optional checkpoint/events supplement the published exact journal; their absence never waives manifest or prefix reconciliation. Private completed-trace reuse is issued only by a genuine completed cold engine after final guards, binds the exact live manifest owner, and restores no reducer state. Every record/read/source/root/lock/leaf/publication guard remains active; explicit operation limits stay financially cold. A standard context-manager decorator gives each execution a fresh private identifier scope in contracts/orders: at most 256 positive lexemes/32768 UTF-8 bytes, with cold fallback at capacity. The first/current-validator check is genuine, exact native/UTF-8 admission precedes lookup, and artifact redaction is fresh on every eligible call. Retain success only after both checks, evict on redaction failure, and clear/deactivate/reset in finally even for BaseException. Nested invocations restore their outer scope; stale or foreign PID/thread copies and default callers remain cold. No global raw/decoded memo, changed financial/source authority, schema/hash version or artifact bytes are introduced.
+
+JSON escape sizing uses native byte counts, and quoted-token scanning uses monotonic byte searches with explicit backslash parity; all decode, canonicality and resource checks and resulting bytes remain unchanged.
 
 ### RED, GREEN, refactor and slice checks
 

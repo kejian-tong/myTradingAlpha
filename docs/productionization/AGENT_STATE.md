@@ -21,17 +21,15 @@ Bounded snapshot, not a chronological log; GitHub/current `main` is authoritativ
 
 ## BT-05 current recovery
 
-- exact base/main and tree above; repair base `81b7babd5a9efb057e4e28a0024e29ab286b97c9`; PR104 only.
-- Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; `reviewer_xhigh` / GPT-6.1 Sol / xhigh plus fresh boundary review. Configuration does not authenticate isolation.
-- BT05 only; signatures/hash domains/artifacts and BT01-04 preserved; BT06/Phase04+ deferred.
-- Original RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463` and P1/P2/root/M1 history: PR104. JIT6400719037, boundary6400718742, reservation6400933890.
-- Performance RED `46cc19a0ca0732aa8fa34fb852269a5ac5b3619c`/6400900347:9 expected failures/8 controls. All260 old cases unchanged. Append-only PID cleanup preserves277 bodies/assertions; detached RED3 expected failures/0 errors.
-- Performance GREEN:17 passed/260 deselected in463.71s. Exact frozen-head validation, reviews and CI remain pending. Guard regressions:23 passed; interrupted/timed-out suites are not passes.
-- Three-day diagnostic:12 operations/3 events; cold Ledger22/Fill4, warm0/0; identical hashes/files. Charge11012755+work35109746 fits48MiB; diagnostic only.
-- Optional pools total64MiB/8: benchmark16MiB/4 plus trace48MiB/4 with copy/codec work. Explicit limits stay cold; no reducer restoration or omitted guards/link/fsync.
-- CI40122805672 exceeded6h; canceled jobs are not passes. Every unchanged crash cut, full validation, installed-origin smoke, five-version CI and exact-head independent reviews remain mandatory.
-- Master owns lease release and merge; GREEN lease f677a79b remains active; no merge approval.
-- Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 pending. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
+- exact base/main and tree above; PR104 only; GitHub head overrides this snapshot.
+- Hardest route `sol_xhigh_sol_xhigh`: `critical_implementer` / GPT-6.1 Sol / xhigh; fresh `reviewer_xhigh` / GPT-6.1 Sol / xhigh plus boundary review. Host attestation unavailable.
+- Original RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`; P1/P2/root/M1/performance/R1/R2 history: PR104. R1/R2 closed:6401678234/6402537952.
+- JIT6405736903/6406302176; R3 RED `99c4fd8a5ef5dd32534c3565a4a5a22ce575f2aa`/6405904139:8fail/9controls. All285 old cases/PID fixture/20-second race unchanged; R3/R4 add9/7cases. Codec RED `8ba60ecae8287f00b9a9d0c3ed64dc80403ccf65`/6406469971.
+- Uncommitted R3 attempt kept hashes/files/financial checks but cold22.02s failed20s; not accepted. Codec completion retains every admission/source/financial/publication guard; no deadline relaxation.
+- Private per-call positive lexemes:256keys/32768UTF8bytes, genuine first/current-validator checks, fresh redaction; insert after both, evict failures, clear/reset finally. PID/thread copies stay cold; defaults unchanged; no global raw/decoded memo.
+- Heavy pools64MiB/eight: benchmark16MiB/four, trace48MiB/four; no reducer restoration or omitted link/fsync; schemas/bytes unchanged. Explicit operation limits stay financially cold.
+- Exact frozen-head validation, reviews and CI remain pending, including installed orders/manifest/replay bytes. Interrupted/failed/superseded runs are not passes. Lease/commit/review evidence: PR104; Master alone releases after stopped-writer observation and owns merge.
+- Phase 03 gate: insufficient_evidence until all six separately merged slices; BT06 needs separate authorization. No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
 
 ## BT-04 completed recovery
 

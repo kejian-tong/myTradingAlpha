@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from pathlib import PosixPath
 
-from mytradingalpha.contracts.orders import _fixed_context
+from mytradingalpha.contracts.orders import _fixed_context, _identifier_validation_scope
 
 from . import (
     benchmarks as _bench,
@@ -1272,6 +1272,7 @@ class ReplayRunner:
                events: tuple | None = None, *, max_operations: int | None = None) -> ReplayResult:
         return self._execute(manifest, checkpoint, events, max_operations, new=False)
 
+    @_identifier_validation_scope()
     def _execute(self, manifest: object, checkpoint: object, events: object,
                  maximum: object, *, new: bool) -> ReplayResult:
         if type(manifest) is not ReplayManifest:
