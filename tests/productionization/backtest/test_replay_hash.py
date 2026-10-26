@@ -2400,3 +2400,235 @@ def test_bt05_r2_one_over_coefficient_and_extreme_exponents_still_reject() -> No
         context.traps[Inexact] = context.traps[Rounded] = True
         for value in invalid:
             _reject(lambda value=value: normalize(value))
+
+
+def _bt05_r3_scope(module: Any) -> Any:
+    scope = vars(module).get("_identifier_validation_scope")
+    assert callable(scope), "BT-05 R3 requires a private operation-local identifier scope"
+    return scope
+
+
+def _bt05_r3_observe(patch: pytest.MonkeyPatch) -> Any:
+    module = importlib.import_module("mytradingalpha.contracts.orders")
+    real_identifier, real_redaction = module.validate_sig03_identifier, module.validate_artifact_text
+    calls, redactions = {}, []
+
+    def identifier(value: Any, *args: Any, **kwargs: Any) -> Any:
+        calls[value] = calls.get(value, 0) + 1
+        return real_identifier(value, *args, **kwargs)
+
+    def redact(value: Any) -> Any:
+        redactions.append(value)
+        return real_redaction(value)
+
+    patch.setattr(module, "validate_sig03_identifier", identifier)
+    patch.setattr(module, "validate_artifact_text", redact)
+    return SimpleNamespace(module=module, calls=calls, redactions=redactions,
+                           real_identifier=real_identifier, real_redaction=real_redaction)
+
+
+def test_bt05_r3_public_cold_replay_bounds_lexical_work_and_preserves_frozen_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    manifest, _, _ = _manifest(api)
+    observed = _bt05_r3_observe(monkeypatch)
+    expected = (
+        "sha256:6cbed3f584cc821f8d39531fcdcb8710f4a0c5fd9de3e95d8bb1cd6bd649e6aa",
+        "sha256:c4ff3f0118423712c8244de12293f042b27a9b9727647312b5735ef9b47b53b6",
+        "sha256:a2ac1b0f741b829d95bd6d661ef19ebc944259fa0ff195538b4657aecf3df62b",
+    )
+    for mode in ("cold", "new_call", "resume"):
+        observed.calls.clear()
+        root = tmp_path / ("cold" if mode == "resume" else mode)
+        with pytest.MonkeyPatch.context() as patch:
+            financial = _bt05_perf_count(patch)
+            result = _resume(api, root, manifest) if mode == "resume" else _run(api, root, manifest)
+        assert (result.semantic_input_hash, result.economic_output_hash,
+                result.artifact_integrity_hash) == expected
+        files = sorted(root.glob("*.json"))
+        assert len(files) == 27
+        digest = hashlib.sha256()
+        for path in files:
+            name, raw = path.name.encode("utf-8"), path.read_bytes()
+            digest.update(len(name).to_bytes(8, "big"))
+            digest.update(name)
+            digest.update(len(raw).to_bytes(8, "big"))
+            digest.update(raw)
+        assert digest.hexdigest() == "a56f831241f7c9baa9364de75aef586da4f9f871700108347a0737a0a7068b15"
+        if mode == "cold":
+            assert all(value > 0 for value in financial.values()), financial
+        assert observed.calls, "each new run/resume must perform genuine identifier validation"
+        assert max(observed.calls.values()) == 1, (
+            "repeated exact lexemes must validate at most once within one replay call",
+            mode, sum(observed.calls.values()), len(observed.calls), max(observed.calls.values()),
+        )
+
+
+def test_bt05_r3_default_identifier_validation_remains_cold(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    for _ in range(2):
+        assert observed.module._safe_string("r3-default-lexeme") == "r3-default-lexeme"
+    assert observed.calls == {"r3-default-lexeme": 2}
+    assert observed.redactions == ["r3-default-lexeme"] * 2
+
+
+def test_bt05_r3_scope_capacity_and_one_over_use_correct_cold_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    values = []
+    for index in range(256):
+        prefix = f"r3-{index:03d}-"
+        values.append(prefix + ("x." * 64)[:128 - len(prefix) - 4] + "safe")
+    assert sum(len(value.encode("utf-8")) for value in values) == 32768
+    with scope():
+        for value in values:
+            assert observed.module._safe_string(value) == value
+            assert observed.module._safe_string(value) == value
+        for _ in range(2):
+            assert observed.module._safe_string("r3-capacity-overflow") == "r3-capacity-overflow"
+        assert observed.module._safe_string(values[0]) == values[0]
+    assert all(observed.calls[value] == 1 for value in values)
+    assert observed.calls["r3-capacity-overflow"] == 2
+    assert len(observed.redactions) == 515
+
+
+def test_bt05_r3_validator_identity_churn_does_not_consume_lexeme_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    calls = {}
+    with scope():
+        for _ in range(300):
+            def replacement(value: Any) -> Any:
+                calls[value] = calls.get(value, 0) + 1
+                return observed.real_identifier(value)
+            monkeypatch.setattr(observed.module, "validate_sig03_identifier", replacement)
+            for _ in range(2):
+                assert observed.module._safe_string("r3-churn") == "r3-churn"
+        assert calls["r3-churn"] == 300
+        for index in range(255):
+            value = f"r3-after-churn-{index}"
+            for _ in range(2):
+                assert observed.module._safe_string(value) == value
+            assert calls[value] == 1
+        assert observed.module._safe_string("r3-churn") == "r3-churn"
+        assert calls["r3-churn"] == 300
+
+
+def test_bt05_r3_scope_admission_precedes_hostile_protocols_and_keeps_utf8_denials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import base64
+
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    callbacks = []
+
+    class HostileString(str):
+        def forbidden(self, *args: Any, **kwargs: Any) -> Any:
+            callbacks.append("protocol")
+            raise AssertionError("hostile string protocol executed")
+        __hash__ = __eq__ = __len__ = __bool__ = __str__ = encode = forbidden
+
+    with scope():
+        for value in (HostileString("r3-hostile"), "\ud800", "\u00e9" * 65):
+            _reject(lambda value=value: observed.module._safe_string(value))
+        assert not callbacks and not observed.calls and not observed.redactions
+        for _ in range(2):
+            assert observed.module._safe_string("caf\u00e9") == "caf\u00e9"
+        assert observed.calls["caf\u00e9"] == 1
+        _reject(lambda: observed.module._safe_string("caf\u00e9", max_bytes=4))
+        assert observed.calls["caf\u00e9"] == 1
+        secret = "secret-canary-R3-7d2c9"
+        encoded = base64.urlsafe_b64encode(secret.encode()).decode().rstrip("=")
+        for _ in range(2):
+            error = _reject(lambda: observed.module._safe_string(encoded))
+            assert secret not in str(error) and encoded not in str(error)
+        assert observed.calls[encoded] == 2
+
+
+@pytest.mark.parametrize("warm", (False, True))
+def test_bt05_r3_redaction_rejection_never_retains_reusable_identifier_success(
+    monkeypatch: pytest.MonkeyPatch, warm: bool,
+) -> None:
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    fail = False
+
+    def fresh_redaction(value: str) -> str:
+        observed.redactions.append(value)
+        if fail:
+            raise ValueError("sensitive-sentinel-redaction-failure")
+        return observed.real_redaction(value)
+
+    monkeypatch.setattr(observed.module, "validate_artifact_text", fresh_redaction)
+    with scope():
+        if warm:
+            assert observed.module._safe_string("r3-redaction") == "r3-redaction"
+        fail = True
+        _reject(lambda: observed.module._safe_string("r3-redaction"))
+        fail = False
+        for _ in range(2):
+            assert observed.module._safe_string("r3-redaction") == "r3-redaction"
+    assert observed.calls == {"r3-redaction": 2}
+    assert observed.redactions == ["r3-redaction"] * (4 if warm else 3)
+
+
+def test_bt05_r3_nested_scopes_restore_outer_and_copied_failed_scope_stays_cold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextvars import copy_context
+
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    stale = None
+    with scope():
+        for _ in range(2):
+            observed.module._safe_string("r3-lifetime")
+        with pytest.raises(_Crash), scope():
+            for _ in range(2):
+                observed.module._safe_string("r3-lifetime")
+            stale = copy_context()
+            raise _Crash()
+        observed.module._safe_string("r3-lifetime")
+        assert observed.calls["r3-lifetime"] == 2
+    assert stale is not None
+    for _ in range(2):
+        stale.run(observed.module._safe_string, "r3-lifetime")
+    assert observed.calls["r3-lifetime"] == 4
+    for _ in range(2):
+        observed.module._safe_string("r3-lifetime")
+    assert observed.calls["r3-lifetime"] == 6
+    with scope():
+        for _ in range(2):
+            observed.module._safe_string("r3-lifetime")
+    assert observed.calls["r3-lifetime"] == 7
+
+
+def test_bt05_r3_live_populated_copied_context_is_cold_in_foreign_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextvars import copy_context
+
+    observed = _bt05_r3_observe(monkeypatch)
+    scope = _bt05_r3_scope(observed.module)
+    with scope():
+        for _ in range(2):
+            observed.module._safe_string("r3-owner")
+        copied = copy_context()
+
+        def foreign() -> None:
+            for value in ("r3-owner", "r3-owner", "r3-foreign", "r3-foreign"):
+                assert observed.module._safe_string(value) == value
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(copied.run, foreign).result()
+        assert observed.calls == {"r3-owner": 3, "r3-foreign": 2}
+        observed.module._safe_string("r3-owner")
+        for _ in range(2):
+            observed.module._safe_string("r3-foreign")
+        assert observed.calls == {"r3-owner": 3, "r3-foreign": 3}
