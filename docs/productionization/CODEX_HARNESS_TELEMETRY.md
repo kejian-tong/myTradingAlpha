@@ -82,6 +82,8 @@ The legacy stream keeps its historical row shape and summary keys. Legacy token 
 original meaning; missing cached-token fields are incomplete evidence, not an observed zero. The summary
 reports `legacy_token_accounting_complete` alongside the compatibility totals. V2 usage totals are
 returned separately under `usage_v2`; they are never added to legacy totals.
+Legacy additive duration, blocking-finding and input/cache/output totals also use checked signed 64-bit
+arithmetic. Overflow rejects the summary without modifying the evidence stream.
 Legacy `pr_id` metadata accepts the bounded FND/PIT/SIG/BT/RSK/EXC/EXP/OMS/FWD/LIVE roadmap families,
 numeric PR references and reviewed Harness identifiers. Metadata acceptance grants no execution authority.
 

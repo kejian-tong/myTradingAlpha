@@ -648,11 +648,20 @@ def record(repo: Path, payload: dict) -> Path:
         return metadata.path / name
 
 
+def _legacy_total(rows: list[dict], field: str) -> int:
+    total = 0
+    for row in rows:
+        value = row.get(field, 0)
+        if value > MAX_SIGNED_INT - total:
+            raise _error("legacy telemetry total exceeds signed 64-bit range")
+        total += value
+    return total
+
+
 def summarize(repo: Path) -> dict:
     legacy_rows = load(repo)
     usage_rows = load(repo, schema_version=2)
     peak_agents = max((row.get("active_agents", 0) for row in legacy_rows), default=0)
-    durations = [row["duration_ms"] for row in legacy_rows if "duration_ms" in row]
     token_rows = [
         row
         for row in legacy_rows
@@ -673,15 +682,13 @@ def summarize(repo: Path) -> dict:
             Counter(row["trigger"] for row in legacy_rows if "trigger" in row)
         ),
         "peak_active_agents": peak_agents,
-        "duration_ms_total": sum(durations),
+        "duration_ms_total": _legacy_total(legacy_rows, "duration_ms"),
         "review_round_max": max((row.get("review_round", 0) for row in legacy_rows), default=0),
-        "blocking_findings_total": sum(row.get("blocking_findings", 0) for row in legacy_rows),
+        "blocking_findings_total": _legacy_total(legacy_rows, "blocking_findings"),
         "token_observation_records": len(token_rows),
-        "input_tokens_observed": sum(row.get("input_tokens", 0) for row in token_rows),
-        "cached_input_tokens_observed": sum(
-            row.get("cached_input_tokens", 0) for row in token_rows
-        ),
-        "output_tokens_observed": sum(row.get("output_tokens", 0) for row in token_rows),
+        "input_tokens_observed": _legacy_total(token_rows, "input_tokens"),
+        "cached_input_tokens_observed": _legacy_total(token_rows, "cached_input_tokens"),
+        "output_tokens_observed": _legacy_total(token_rows, "output_tokens"),
         "legacy_token_accounting_complete": legacy_complete,
         "usage_v2_records": len(usage_rows),
         "usage_v2": observations.summarize_usage([row["usage"] for row in usage_rows])

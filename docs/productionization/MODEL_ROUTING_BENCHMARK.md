@@ -22,11 +22,16 @@ Do not reinterpret these rows as inclusive input.
 
 Schema v2 places usage in a nested `usage` object. Its `input_tokens` includes cached reads and cache
 writes; cached input and writes are subsets and must not be added to input again. Reasoning output is
-already included in output. Nullable counts remain unknown. An `observation_ref` identifies a cumulative
-snapshot series, and a later revision replaces its prior value. Identical retries count once; conflicting
+already included in output. Nullable counts remain unknown. In shared telemetry accounting, an
+`observation_ref` identifies a cumulative snapshot series, and a later revision replaces its prior value.
+Identical retries count once; conflicting
 content or changed source/scope/aggregation identity is rejected. The summary keeps request, turn, agent,
 and task usage in separate groups and exposes incomplete coverage without promoting partial subtotals to
 complete totals.
+
+Within a benchmark comparison, each v2 observation reference belongs to one completed run identified by
+`task_class`, `task_id`, `model` and `effort`. Cross-run reuse is rejected regardless of revision or content,
+before aggregation, sample eligibility or pricing. Duplicate task/route rows remain rejected.
 
 A v2 task cost is available only when `task_usage_complete=true`, `usage_scope=task`, aggregation is
 `exclusive`, input/cached/output counts are known, cache writes are known zero, the pricing surface is

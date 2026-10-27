@@ -461,6 +461,7 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
     validated = []
     identities = set()
     provenance_by_task: dict[tuple[str, str], dict[str, str]] = {}
+    observation_owners: dict[str, tuple[str, str, str, str]] = {}
     for raw in records:
         row = validate(raw)
         task_key = (row["task_class"], row["task_id"])
@@ -473,6 +474,13 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
         if identity in identities:
             raise ValueError("duplicate task_id for the same task class/model/effort route")
         identities.add(identity)
+        if row.get("schema_version") == 2:
+            owner = (row["task_class"], row["task_id"], row["model"], row["effort"])
+            reference = row["usage"]["observation_ref"]
+            prior_owner = observation_owners.get(reference)
+            if prior_owner is not None and prior_owner != owner:
+                raise ValueError("usage observation cannot be reused across benchmark runs")
+            observation_owners[reference] = owner
         validated.append(row)
         grouped[(row["task_class"], row["model"], row["effort"])].append(row)
 
