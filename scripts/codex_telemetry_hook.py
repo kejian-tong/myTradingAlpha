@@ -10,10 +10,10 @@ import importlib.util
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 
@@ -59,10 +59,6 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _runtime_root(repo: Path, telemetry: ModuleType, *, create: bool = False) -> Path:
-    return telemetry._runtime_directory(repo, create=create)
-
-
 def _valid_identifier(value: object) -> bool:
     if type(value) is not str or not value or len(value) > 128:
         return False
@@ -73,26 +69,32 @@ def _valid_identifier(value: object) -> bool:
     return len(encoded) <= 128
 
 
-def _session_dir(
-    repo: Path,
-    telemetry: ModuleType,
-    session_id: object,
-    *,
-    create: bool = False,
-) -> Path | None:
+@contextmanager
+def _session_transaction(
+    repo: Path, telemetry: ModuleType, session_id: object, *, create: bool = False,
+):
     if not _valid_identifier(session_id):
-        return None
-    runtime = _runtime_root(repo, telemetry, create=create)
-    directory = runtime / _digest(session_id)
-    if create:
-        telemetry._ensure_directory(directory, create=True)
-    return directory
+        yield None
+        return
+    session_ref = _digest(session_id)
+    with telemetry._metadata_handle(repo, create=create) as metadata:
+        if metadata is None:
+            yield None
+            return
+        with telemetry._child_directory(metadata, _RUNTIME_DIR, create=create) as runtime:
+            if runtime is None:
+                yield None
+                return
+            # The lock outlives removal/recreation of the session directory it protects.
+            with (
+                telemetry._entry_lock(runtime, f".{session_ref}.lock"),
+                telemetry._child_directory(runtime, session_ref, create=create) as session,
+            ):
+                yield session
 
 
-def _agent_file(session_dir: Path | None, agent_id: object) -> Path | None:
-    if session_dir is None or not _valid_identifier(agent_id):
-        return None
-    return session_dir / f"{_digest(agent_id)}.json"
+def _agent_name(agent_id: object) -> str | None:
+    return f"{_digest(agent_id)}.json" if _valid_identifier(agent_id) else None
 
 
 def _basic_agent_payload(
@@ -119,102 +121,78 @@ def _basic_agent_payload(
         return None
 
 
-def _read_state(path: Path, telemetry: ModuleType) -> tuple[dict, os.stat_result] | None:
-    info = telemetry._regular_file_info(path)
-    if info is None:
-        return None
-    if info.st_size > _MAX_SCRATCH_BYTES:
-        raise ValueError("scratch state exceeds the reviewed byte limit")
-    observations = telemetry._observations_module()
-    raw = observations._safe_read(path, max_bytes=_MAX_SCRATCH_BYTES)
-    state = observations.decode_json(raw, max_bytes=_MAX_SCRATCH_BYTES)
-    keys = telemetry._safe_keys(
-        state,
-        {"started_at_ms", "role", "model"},
-        {"started_at_ms", "role"},
-        label="scratch state",
-    )
-    assert type(state) is dict
-    started = state["started_at_ms"]
-    if type(started) is not int or not 0 <= started <= telemetry.MAX_SIGNED_INT:
-        raise ValueError("scratch timestamp is invalid")
-    validated: dict[str, object] = {"started_at_ms": started}
-    record: dict[str, object] = {"event": "agent_spawn", "role": state["role"]}
-    if "model" in keys:
-        record["model"] = state["model"]
-    safe_record = telemetry._validate(record)
-    validated["role"] = safe_record["role"]
-    if "model" in safe_record:
-        validated["model"] = safe_record["model"]
-    return validated, info
+def _read_state(session, name: str, telemetry: ModuleType) -> tuple[dict, os.stat_result] | None:
+    with telemetry._regular_handle(session, name, mutable=True) as fd:
+        if fd is None:
+            return None
+        info = os.fstat(fd)
+        if info.st_size > _MAX_SCRATCH_BYTES:
+            raise ValueError("scratch state exceeds the reviewed byte limit")
+        observations = telemetry._observations_module()
+        raw = telemetry._read_fd(fd, max_bytes=_MAX_SCRATCH_BYTES)
+        state = observations.decode_json(raw, max_bytes=_MAX_SCRATCH_BYTES)
+        keys = telemetry._safe_keys(
+            state,
+            {"started_at_ms", "role", "model"},
+            {"started_at_ms", "role"},
+            label="scratch state",
+        )
+        assert type(state) is dict
+        started = state["started_at_ms"]
+        if type(started) is not int or not 0 <= started <= telemetry.MAX_SIGNED_INT:
+            raise ValueError("scratch timestamp is invalid")
+        validated: dict[str, object] = {"started_at_ms": started}
+        record: dict[str, object] = {"event": "agent_spawn", "role": state["role"]}
+        if "model" in keys:
+            record["model"] = state["model"]
+        safe_record = telemetry._validate(record)
+        validated["role"] = safe_record["role"]
+        if "model" in safe_record:
+            validated["model"] = safe_record["model"]
+        session.verify_file(name, info, fd=fd, mutable=True, expected_size=len(raw))
+        return validated, info
 
 
-def _write_state_new(path: Path, state: dict) -> None:
+def _write_state_new(session, name: str, state: dict, telemetry: ModuleType) -> None:
     encoded = json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
         "utf-8"
     )
     if len(encoded) > _MAX_SCRATCH_BYTES:
         raise ValueError("scratch state exceeds the reviewed byte limit")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(path, flags, 0o600)
-    except FileExistsError:
-        raise
-    except OSError as exc:
-        raise ValueError("scratch state cannot be created safely") from exc
-    try:
+    with telemetry._regular_handle(session, name, write=True, create=True, exclusive=True) as fd:
+        assert fd is not None
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            raise ValueError("scratch state is not a regular file")
         offset = 0
         while offset < len(encoded):
+            session.verify_file(name, info, fd=fd, mutable=True, expected_size=offset)
             written = os.write(fd, encoded[offset:])
             if written <= 0:
                 raise ValueError("scratch state write did not complete")
             offset += written
-    finally:
-        os.close(fd)
+        session.verify_file(name, info, fd=fd, mutable=True, expected_size=offset)
 
 
-def _safe_unlink(path: Path, expected: os.stat_result) -> None:
-    current = path.lstat()
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or current.st_dev != expected.st_dev
-        or current.st_ino != expected.st_ino
-    ):
-        raise ValueError("scratch state changed before removal")
-    path.unlink()
+def _scan_states(session) -> list[tuple[str, os.stat_result]]:
+    states = []
+    session.verify()
+    with os.scandir(session.fd) as entries:
+        for entry in entries:
+            if len(states) >= _MAX_SESSION_AGENTS:
+                raise ValueError("session scratch file limit exceeded")
+            if not entry.name.endswith(".json") or _HEX64.fullmatch(entry.name[:-5]) is None:
+                raise ValueError("session scratch contains an unsafe entry")
+            info = session.entry_info(entry.name, mutable=True)
+            if info is None:
+                raise ValueError("session scratch changed during scan")
+            if info.st_size > _MAX_SCRATCH_BYTES:
+                raise ValueError("scratch state exceeds the reviewed byte limit")
+            states.append((entry.name, info))
+    session.verify()
+    return states
 
 
-def _active_agents(session_dir: Path | None) -> int | None:
-    if session_dir is None:
-        return None
-    try:
-        info = session_dir.lstat()
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISDIR(info.st_mode):
-        raise ValueError("session scratch path is not a real directory")
-    count = 0
-    try:
-        with os.scandir(session_dir) as entries:
-            for entry in entries:
-                if count >= _MAX_SESSION_AGENTS:
-                    raise ValueError("session scratch file limit exceeded")
-                if _HEX64.fullmatch(entry.name.removesuffix(".json")) is None or not entry.name.endswith(
-                    ".json"
-                ):
-                    raise ValueError("session scratch contains an unsafe entry")
-                if not entry.is_file(follow_symlinks=False):
-                    raise ValueError("session scratch contains a non-regular entry")
-                state_info = entry.stat(follow_symlinks=False)
-                if state_info.st_size > _MAX_SCRATCH_BYTES:
-                    raise ValueError("scratch state exceeds the reviewed byte limit")
-                count += 1
-    except OSError as exc:
-        raise ValueError("session scratch cannot be scanned safely") from exc
-    return count
+def _active_agents(session) -> int | None:
+    return None if session is None else len(_scan_states(session))
 
 
 def _start_payload(event: dict, repo: Path, telemetry: ModuleType) -> dict | None:
@@ -222,34 +200,27 @@ def _start_payload(event: dict, repo: Path, telemetry: ModuleType) -> dict | Non
     if payload is None:
         return None
     session_id = event.get("session_id")
-    agent_id = event.get("agent_id")
-    session_dir = _session_dir(repo, telemetry, session_id, create=False)
-    state_file = _agent_file(session_dir, agent_id)
-    if session_dir is None or state_file is None:
+    name = _agent_name(event.get("agent_id"))
+    if not _valid_identifier(session_id) or name is None:
         return payload
 
-    session_dir = _session_dir(repo, telemetry, session_id, create=True)
-    assert session_dir is not None
-    current = _active_agents(session_dir)
-    existing = _read_state(state_file, telemetry)
-    if existing is None:
-        if current is not None and current >= _MAX_SESSION_AGENTS:
-            raise ValueError("session scratch file limit exceeded")
-        state: dict[str, object] = {
-            "started_at_ms": time.time_ns() // 1_000_000,
-            "role": payload["role"],
-        }
-        if "model" in payload:
-            state["model"] = payload["model"]
-        try:
-            _write_state_new(state_file, state)
-        except FileExistsError:
-            existing = _read_state(state_file, telemetry)
-            if existing is None:
-                raise ValueError("scratch state changed during creation") from None
-    active = _active_agents(session_dir)
-    if active is not None:
-        payload["active_agents"] = active
+    with _session_transaction(repo, telemetry, session_id, create=True) as session:
+        assert session is not None
+        current = _active_agents(session)
+        existing = _read_state(session, name, telemetry)
+        if existing is None:
+            if current is not None and current >= _MAX_SESSION_AGENTS:
+                raise ValueError("session scratch file limit exceeded")
+            state: dict[str, object] = {
+                "started_at_ms": time.time_ns() // 1_000_000,
+                "role": payload["role"],
+            }
+            if "model" in payload:
+                state["model"] = payload["model"]
+            _write_state_new(session, name, state, telemetry)
+        active = _active_agents(session)
+        if active is not None:
+            payload["active_agents"] = active
     return payload
 
 
@@ -257,60 +228,41 @@ def _stop_payload(event: dict, repo: Path, telemetry: ModuleType) -> dict | None
     payload = _basic_agent_payload(event, telemetry, started=False)
     if payload is None:
         return None
-    session_dir = _session_dir(repo, telemetry, event.get("session_id"), create=False)
-    state_file = _agent_file(session_dir, event.get("agent_id"))
     started_at_ms = None
-    if state_file is not None:
-        saved = _read_state(state_file, telemetry)
-        if saved is not None:
-            state, info = saved
-            started_at_ms = state["started_at_ms"]
-            _safe_unlink(state_file, info)
-    active = _active_agents(session_dir)
-    if active is not None:
-        payload["active_agents"] = active
-    if started_at_ms is not None:
-        payload["duration_ms"] = max(0, time.time_ns() // 1_000_000 - started_at_ms)
-    if session_dir is not None and active == 0:
-        session_dir.rmdir()
+    with _session_transaction(repo, telemetry, event.get("session_id")) as session:
+        if session is None:
+            return payload
+        name = _agent_name(event.get("agent_id"))
+        if name is not None:
+            saved = _read_state(session, name, telemetry)
+            if saved is not None:
+                state, info = saved
+                started_at_ms = state["started_at_ms"]
+                session.unlink_file(name, info)
+        active = _active_agents(session)
+        if active is not None:
+            payload["active_agents"] = active
+        if started_at_ms is not None:
+            payload["duration_ms"] = max(0, time.time_ns() // 1_000_000 - started_at_ms)
+        if active == 0:
+            session.remove()
     return payload
 
 
 def _cleanup_session(event: dict, repo: Path, telemetry: ModuleType) -> None:
-    session_dir = _session_dir(repo, telemetry, event.get("session_id"), create=False)
-    if session_dir is None:
-        return
-    try:
-        info = session_dir.lstat()
-    except FileNotFoundError:
-        return
-    if not stat.S_ISDIR(info.st_mode):
-        raise ValueError("session scratch path is not a real directory")
-
-    states: list[tuple[Path, os.stat_result]] = []
-    try:
-        with os.scandir(session_dir) as entries:
-            for entry in entries:
-                if len(states) >= _MAX_SESSION_AGENTS:
-                    raise ValueError("session scratch file limit exceeded")
-                if (
-                    not entry.name.endswith(".json")
-                    or _HEX64.fullmatch(entry.name[:-5]) is None
-                    or not entry.is_file(follow_symlinks=False)
-                ):
-                    raise ValueError("session scratch contains an unsafe entry")
-                state_path = session_dir / entry.name
-                saved = _read_state(state_path, telemetry)
-                if saved is None:
-                    raise ValueError("session scratch changed during cleanup")
-                _, state_info = saved
-                states.append((state_path, state_info))
-    except OSError as exc:
-        raise ValueError("session scratch cannot be scanned safely") from exc
-
-    for state_path, state_info in states:
-        _safe_unlink(state_path, state_info)
-    session_dir.rmdir()
+    with _session_transaction(repo, telemetry, event.get("session_id")) as session:
+        if session is None:
+            return
+        states = []
+        for name, _info in _scan_states(session):
+            saved = _read_state(session, name, telemetry)
+            if saved is None:
+                raise ValueError("session scratch changed during cleanup")
+            _, info = saved
+            states.append((name, info))
+        for name, info in states:
+            session.unlink_file(name, info)
+        session.remove()
 
 
 def _payload(event: dict, repo: Path, telemetry: ModuleType) -> dict | None:

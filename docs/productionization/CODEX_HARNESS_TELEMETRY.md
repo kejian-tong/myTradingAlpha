@@ -62,10 +62,19 @@ Use `scripts/harness_telemetry.py`. Legacy lifecycle records remain in
 directory, not into the checked-out source tree. This is intentional: observing the harness must not dirty
 a candidate worktree, create a new source commit, or invalidate exact-head review.
 
-The recorder sanitizes inherited Git path redirects before resolving that directory. It rejects symlinked
-or non-regular metadata paths and streams, bounds reads/appends, and serializes cooperating appends with a
-short-lived per-stream lock. A partial tail or unresolved lock contention is an explicit failure. Existing
-unsafe or oversized records are left untouched; telemetry does not migrate or delete durable evidence.
+The recorder sanitizes inherited Git path redirects before resolving that directory. It retains opened
+directory descriptors for every ancestor and uses no-follow, descriptor-relative operations beneath them.
+Stream validation and append share one opened regular inode; entry identity, size, ancestor identity and
+link count are checked before mutation. Multiply linked writable streams are rejected. Cooperating
+appends use a per-stream lock with a one-second acquisition deadline checked on every retry, including a
+disappearing lock. A partial tail or unresolved contention is an explicit failure. Existing unsafe or
+oversized evidence is left untouched; there is no stale-lock recovery, migration or truncation.
+
+Secure storage requires POSIX no-follow directory opens, descriptor-relative open/stat/mkdir/unlink/rmdir,
+and descriptor-based directory scanning. Unsupported platforms, including native Windows Python without
+these primitives, receive a bounded sanitized manual error; lifecycle hooks return silently with success.
+There is no path-based write fallback. Importlib, direct CLI and unrelated-CWD runpy loading remain
+supported. A runpy command-shape test on POSIX verifies loading, not Windows storage confinement.
 
 ### Legacy lifecycle stream and explicit usage v2
 
@@ -73,6 +82,8 @@ The legacy stream keeps its historical row shape and summary keys. Legacy token 
 original meaning; missing cached-token fields are incomplete evidence, not an observed zero. The summary
 reports `legacy_token_accounting_complete` alongside the compatibility totals. V2 usage totals are
 returned separately under `usage_v2`; they are never added to legacy totals.
+Legacy `pr_id` metadata accepts the bounded FND/PIT/SIG/BT/RSK/EXC/EXP/OMS/FWD/LIVE roadmap families,
+numeric PR references and reviewed Harness identifiers. Metadata acceptance grants no execution authority.
 
 V2 records use `schema_version=2`, `event=usage_observation`, `observed_at_ms`, and a nested `usage` object.
 The usage object has a pseudonymous 64-hex `observation_ref`, non-negative `revision`, asserted
@@ -84,8 +95,12 @@ order differs. Rebinding its source, scope, aggregation, or approved outer attri
 
 Summaries partition request, turn, agent, and task usage. They count only exclusive observations and show
 observed subtotals separately from complete totals; exclusions or unknown required counts make complete
-totals unavailable. The 272,000-token exposure count applies only to known request-scoped input. Aggregate
-usage or missing input remains unknown.
+totals unavailable. The 272,000-token exposure count applies only to known exclusive request-scoped input.
+`over_limit_count` reports that observed subtotal and is null when there are no eligible known requests.
+`request_scoped_records` and `non_request_records` disclose coverage among the latest snapshots.
+`complete_over_limit_count` is null when request data is absent, unknown or excluded, or when non-request
+aggregate scopes are present. `unknown_count` counts only unknown or excluded request rows; aggregate
+usage never supplies an inferred request count or an observed zero exceedance count.
 
 This is a schema example using illustrative caller-reported values, not an observed runtime measurement:
 
@@ -155,6 +170,12 @@ Each hook event is limited to 65,536 bytes. Per-agent scratch files are limited 
 session may have at most 64 agent files. The bridge reads and cleans only bounded, regular files beneath
 the canonical runtime directory; cleanup does not recurse. A symlink, special file, oversized state, or
 unsafe directory is left untouched and causes the hook to fail open silently.
+
+A process-shared lock in the runtime parent serializes each session's entire count/create/read/remove
+transaction. It remains outside the removable session directory, so stop and SessionEnd removal cannot
+split serialization from a later recreation. Count plus creation is atomic, duplicate starts preserve
+the original start time, and acquisition has the same bounded deadline as stream locking. Session locks
+are released before durable stream recording; a failed observation remains an observability gap.
 
 Raw session/agent identifiers, transcripts, prompts, assistant messages and tool inputs are not written to
 these files or to `telemetry.jsonl`. Runtime correlation state is operational scratch data, not durable

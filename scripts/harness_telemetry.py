@@ -15,7 +15,7 @@ import subprocess
 import time
 from collections import Counter
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from pathlib import Path
 
 MAX_RECORD_BYTES = 16_384
@@ -67,7 +67,10 @@ ALLOWED_MODELS = frozenset(
 ALLOWED_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 )
-_PR_ID = re.compile(r"(?:PR[0-9]{1,8}|(?:BT|SIG)-[0-9]{2}|HARNESS(?:-[A-Z0-9]{1,16}){1,5})\Z")
+_PR_ID = re.compile(
+    r"(?:PR[0-9]{1,8}|(?:FND|PIT|SIG|BT|RSK|EXC|EXP|OMS|FWD|LIVE)-[0-9]{2}"
+    r"|HARNESS(?:-[A-Z0-9]{1,16}){1,5})\Z"
+)
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _LEGACY_FIELDS = {
@@ -250,71 +253,208 @@ def _common_directory(repo: Path) -> Path:
         raise _error("Git common directory cannot be canonicalized") from exc
 
 
-def _ensure_directory(path: Path, *, create: bool) -> Path:
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        if not create:
-            return path
+def _require_storage() -> None:
+    """Fail before mutation when descriptor-relative confinement is unavailable."""
+    flags = ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+    if (
+        os.name != "posix"
+        or any(not getattr(os, flag, 0) for flag in flags)
+        or not {os.open, os.stat, os.mkdir, os.unlink, os.rmdir} <= os.supports_dir_fd
+        or os.scandir not in os.supports_fd
+        or os.stat not in os.supports_follow_symlinks
+    ):
+        raise _error("secure telemetry storage is unsupported on this platform")
+
+
+def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+class _Directory:
+    """An opened directory whose verified ancestor descriptors remain alive."""
+
+    def __init__(self, fd: int, path: Path, parent: _Directory | None = None):
+        self.fd = fd
+        self.path = path
+        self.parent = parent
+        self.info = os.fstat(fd)
+
+    def verify(self) -> None:
+        current = os.fstat(self.fd)
+        if not stat.S_ISDIR(current.st_mode) or not _same_inode(current, self.info):
+            raise _error("telemetry directory changed during access")
+        if self.parent is not None:
+            self.parent.verify()
+            entry = os.stat(self.path.name, dir_fd=self.parent.fd, follow_symlinks=False)
+            if not stat.S_ISDIR(entry.st_mode) or not _same_inode(entry, self.info):
+                raise _error("telemetry directory changed during access")
+
+    def entry_info(
+        self, name: str, *, directory: bool = False, mutable: bool = False
+    ) -> os.stat_result | None:
+        self.verify()
         try:
-            path.mkdir(mode=0o700)
-            info = path.lstat()
-        except FileExistsError:
-            info = path.lstat()
-        except OSError as exc:
-            raise _error("telemetry metadata directory cannot be created safely") from exc
-    except OSError as exc:
-        raise _error("telemetry metadata directory cannot be inspected safely") from exc
-    if not stat.S_ISDIR(info.st_mode):
-        raise _error("telemetry metadata path is not a real directory")
+            info = os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            self.verify()
+            return None
+        self.verify()
+        if directory:
+            if not stat.S_ISDIR(info.st_mode):
+                raise _error("telemetry metadata path is not a real directory")
+        elif not stat.S_ISREG(info.st_mode):
+            raise _error("telemetry entry is not a regular file")
+        elif mutable and info.st_nlink != 1:
+            raise _error("multiply linked telemetry evidence cannot be modified")
+        return info
+
+    def verify_file(
+        self, name: str, expected: os.stat_result, *, fd: int | None = None,
+        mutable: bool = False, expected_size: int | None = None,
+    ) -> None:
+        current = self.entry_info(name, mutable=mutable)
+        if current is None or not _same_inode(current, expected):
+            raise _error("telemetry file changed during access")
+        opened = current if fd is None else os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not _same_inode(opened, expected)
+            or (mutable and opened.st_nlink != 1)
+            or (expected_size is not None and (
+                current.st_size != expected_size or opened.st_size != expected_size
+            ))
+        ):
+            raise _error("telemetry file changed during access")
+
+    def unlink_file(self, name: str, expected: os.stat_result) -> None:
+        self.verify_file(name, expected, mutable=True, expected_size=expected.st_size)
+        os.unlink(name, dir_fd=self.fd)
+
+    def remove(self) -> None:
+        self.verify()
+        if self.parent is None:
+            raise _error("telemetry root cannot be removed")
+        os.rmdir(self.path.name, dir_fd=self.parent.fd)
+
+
+@contextmanager
+def _child_directory(
+    parent: _Directory, name: str, *, create: bool = False
+) -> Iterator[_Directory | None]:
+    expected = parent.entry_info(name, directory=True)
+    if expected is None:
+        if not create:
+            yield None
+            return
+        parent.verify()
+        with suppress(FileExistsError):
+            os.mkdir(name, mode=0o700, dir_fd=parent.fd)
+        expected = parent.entry_info(name, directory=True)
+        if expected is None:
+            raise _error("telemetry directory changed during creation")
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent.fd)
     try:
-        canonical = path.resolve(strict=True)
+        child = _Directory(fd, parent.path / name, parent)
+        if not _same_inode(child.info, expected):
+            raise _error("telemetry directory changed during open")
+        child.verify()
+        yield child
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _directory_path(path: Path) -> Iterator[_Directory]:
+    """Open each canonical ancestor relative to its retained parent, starting at root."""
+    with ExitStack() as stack:
+        fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        stack.callback(os.close, fd)
+        directory = _Directory(fd, Path(path.anchor))
+        for name in path.parts[1:]:
+            child = stack.enter_context(_child_directory(directory, name))
+            if child is None:
+                raise _error("Git common directory is unavailable")
+            directory = child
+        yield directory
+
+
+@contextmanager
+def _metadata_handle(repo: Path, *, create: bool = False) -> Iterator[_Directory | None]:
+    _require_storage()
+    try:
+        with (
+            _directory_path(_common_directory(repo)) as common,
+            _child_directory(common, "codex-harness", create=create) as metadata,
+        ):
+            yield metadata
     except OSError as exc:
-        raise _error("telemetry metadata directory cannot be canonicalized") from exc
-    if canonical != path:
-        raise _error("telemetry metadata directory is not canonical")
-    return path
-
-
-def _metadata_directory(repo: Path, *, create: bool) -> Path:
-    common = _common_directory(repo)
-    common = _ensure_directory(common, create=False)
-    metadata = common / "codex-harness"
-    return _ensure_directory(metadata, create=create)
-
-
-def _runtime_directory(repo: Path, *, create: bool = False) -> Path:
-    metadata = _metadata_directory(repo, create=create)
-    runtime = metadata / "runtime"
-    return _ensure_directory(runtime, create=create)
+        raise _error("telemetry storage cannot be accessed safely") from exc
 
 
 def telemetry_path(repo: Path, *, schema_version: int = 1) -> Path:
     if type(schema_version) is not int or schema_version not in (1, 2):
         raise _error("unsupported telemetry schema version")
-    metadata = _metadata_directory(repo, create=False)
-    filename = "telemetry.jsonl" if schema_version == 1 else "telemetry-v2.jsonl"
-    return metadata / filename
-
-
-def _regular_file_info(path: Path) -> os.stat_result | None:
+    _require_storage()
+    common = _common_directory(repo)
     try:
-        info = path.lstat()
-    except FileNotFoundError:
-        return None
+        with _directory_path(common) as parent, _child_directory(parent, "codex-harness"):
+            filename = "telemetry.jsonl" if schema_version == 1 else "telemetry-v2.jsonl"
+            return common / "codex-harness" / filename
     except OSError as exc:
-        raise _error("telemetry stream cannot be inspected safely") from exc
-    if not stat.S_ISREG(info.st_mode):
-        raise _error("telemetry stream is not a regular file")
-    return info
+        raise _error("telemetry storage cannot be accessed safely") from exc
 
 
-def _read_stream(path: Path, schema_version: int) -> tuple[list[dict], int]:
+@contextmanager
+def _regular_handle(
+    directory: _Directory, name: str, *, write: bool = False, create: bool = False,
+    mutable: bool = False, exclusive: bool = False,
+) -> Iterator[int | None]:
+    mutable = mutable or write
+    expected = directory.entry_info(name, mutable=mutable)
+    if expected is None and not create:
+        yield None
+        return
+    if expected is not None and exclusive:
+        raise FileExistsError("telemetry entry already exists")
+    flags = (os.O_RDWR | os.O_APPEND) if write else os.O_RDONLY
+    flags |= os.O_NOFOLLOW | os.O_NONBLOCK
+    if expected is None:
+        flags |= os.O_CREAT | os.O_EXCL
+    fd = os.open(name, flags, 0o600, dir_fd=directory.fd)
+    try:
+        info = os.fstat(fd)
+        if expected is None:
+            expected = info
+        directory.verify_file(
+            name, expected, fd=fd, mutable=mutable, expected_size=expected.st_size,
+        )
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _read_fd(fd: int, *, max_bytes: int) -> bytes:
+    if os.fstat(fd).st_size > max_bytes:
+        raise _error("JSONL file size exceeds the reviewed limit")
+    chunks = []
+    total = 0
+    while True:
+        chunk = os.read(fd, min(65_536, max_bytes + 1 - total))
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise _error("JSONL file size exceeds the reviewed limit")
+
+
+def _read_stream(
+    directory: _Directory, name: str, fd: int, schema_version: int, *, mutable: bool = False
+) -> tuple[list[dict], int]:
     observations = _observations_module()
-    info = _regular_file_info(path)
-    if info is None:
-        return [], 0
-    raw = observations._safe_read(path, max_bytes=MAX_FILE_BYTES)
+    info = os.fstat(fd)
+    raw = _read_fd(fd, max_bytes=MAX_FILE_BYTES)
+    directory.verify_file(name, info, fd=fd, mutable=mutable, expected_size=len(raw))
     if raw and not raw.endswith(b"\n"):
         raise _error("telemetry stream has an incomplete tail")
     rows = []
@@ -385,52 +525,53 @@ def _validate_v2_series(rows: list[dict]) -> None:
 def load(repo: Path, *, schema_version: int = 1) -> list[dict]:
     if type(schema_version) is not int or schema_version not in (1, 2):
         raise _error("unsupported telemetry schema version")
-    path = telemetry_path(repo, schema_version=schema_version)
-    rows, _ = _read_stream(path, schema_version)
-    if schema_version == 2:
-        _validate_v2_series(rows)
-    return rows
+    name = "telemetry.jsonl" if schema_version == 1 else "telemetry-v2.jsonl"
+    with _metadata_handle(repo) as metadata:
+        if metadata is None:
+            return []
+        with _regular_handle(metadata, name) as fd:
+            if fd is None:
+                return []
+            rows, _ = _read_stream(metadata, name, fd, schema_version)
+            if schema_version == 2:
+                _validate_v2_series(rows)
+            return rows
 
 
 @contextmanager
-def _stream_lock(path: Path) -> Iterator[None]:
-    lock_path = path.with_name(f".{path.name}.lock")
+def _entry_lock(directory: _Directory, name: str) -> Iterator[None]:
+    """Serialize cooperating transactions; never recover or remove an existing lock."""
     deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     lock_fd = None
     lock_info = None
+    acquired = False
     while lock_fd is None:
+        if time.monotonic() >= deadline:
+            raise _error("telemetry lock is contended")
+        directory.verify()
         try:
-            lock_fd = os.open(lock_path, flags, 0o600)
-            lock_info = os.fstat(lock_fd)
-            if not stat.S_ISREG(lock_info.st_mode):
-                os.close(lock_fd)
-                lock_fd = None
-                raise _error("telemetry append lock is unsafe")
+            lock_fd = os.open(name, flags, 0o600, dir_fd=directory.fd)
         except FileExistsError:
-            existing = _regular_file_info(lock_path)
-            if existing is None:
-                continue
+            directory.entry_info(name, mutable=True)
             if time.monotonic() >= deadline:
-                raise _error("telemetry append lock is contended") from None
+                raise _error("telemetry lock is contended") from None
             time.sleep(0.005)
-        except OSError as exc:
-            raise _error("telemetry append lock cannot be acquired safely") from exc
     try:
+        lock_info = os.fstat(lock_fd)
+        directory.verify_file(name, lock_info, fd=lock_fd, mutable=True, expected_size=0)
+        acquired = True
         yield
     finally:
-        os.close(lock_fd)
         try:
-            current = lock_path.lstat()
-            if (
-                lock_info is not None
-                and current.st_dev == lock_info.st_dev
-                and current.st_ino == lock_info.st_ino
-                and stat.S_ISREG(current.st_mode)
-            ):
-                lock_path.unlink()
-        except OSError:
+            if acquired:
+                directory.verify_file(name, lock_info, fd=lock_fd, mutable=True, expected_size=0)
+                directory.unlink_file(name, lock_info)
+        except (OSError, ValueError):
+            # Preserve a replaced/unsafe lock instead of deleting unverified evidence.
             pass
+        finally:
+            os.close(lock_fd)
 
 
 def _encode_record(record: dict) -> bytes:
@@ -449,28 +590,26 @@ def _encode_record(record: dict) -> bytes:
     return encoded
 
 
-def _append_locked(path: Path, payload: dict, schema_version: int) -> None:
-    rows, expected_size = _read_stream(path, schema_version)
-    if len(rows) >= MAX_JSONL_RECORDS:
-        raise _error("telemetry record count exceeds the reviewed limit")
-    encoded = _encode_record(payload)
-    if expected_size + len(encoded) > MAX_FILE_BYTES:
-        raise _error("telemetry file size exceeds the reviewed limit")
-    if schema_version == 2:
-        _validate_v2_series([*rows, payload])
-
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(path, flags, 0o600)
-    except OSError as exc:
-        raise _error("telemetry stream cannot be opened safely") from exc
-    try:
+def _append_locked(
+    directory: _Directory, name: str, payload: dict, schema_version: int
+) -> None:
+    # The same opened regular inode supplies the validated prefix and receives the append.
+    with _regular_handle(directory, name, write=True, create=True) as fd:
+        assert fd is not None
+        rows, expected_size = _read_stream(directory, name, fd, schema_version, mutable=True)
+        if len(rows) >= MAX_JSONL_RECORDS:
+            raise _error("telemetry record count exceeds the reviewed limit")
+        encoded = _encode_record(payload)
+        if expected_size + len(encoded) > MAX_FILE_BYTES:
+            raise _error("telemetry file size exceeds the reviewed limit")
+        if schema_version == 2:
+            _validate_v2_series([*rows, payload])
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size != expected_size:
-            raise _error("telemetry stream changed during append")
         written = 0
         while written < len(encoded):
+            directory.verify_file(
+                name, info, fd=fd, mutable=True, expected_size=expected_size + written,
+            )
             try:
                 count = os.write(fd, encoded[written:])
             except OSError as exc:
@@ -478,8 +617,9 @@ def _append_locked(path: Path, payload: dict, schema_version: int) -> None:
             if count <= 0:
                 raise _error("telemetry append did not complete")
             written += count
-    finally:
-        os.close(fd)
+        directory.verify_file(
+            name, info, fd=fd, mutable=True, expected_size=expected_size + written,
+        )
 
 
 def record(repo: Path, payload: dict) -> Path:
@@ -500,11 +640,12 @@ def record(repo: Path, payload: dict) -> Path:
         validated["observed_at_ms"] = time.time_ns() // 1_000_000
     validated = _validate_v2(validated) if schema_version == 2 else _validate(validated)
 
-    metadata = _metadata_directory(repo, create=True)
-    path = metadata / ("telemetry-v2.jsonl" if schema_version == 2 else "telemetry.jsonl")
-    with _stream_lock(path):
-        _append_locked(path, validated, schema_version)
-    return path
+    name = "telemetry-v2.jsonl" if schema_version == 2 else "telemetry.jsonl"
+    with _metadata_handle(repo, create=True) as metadata:
+        assert metadata is not None
+        with _entry_lock(metadata, f".{name}.lock"):
+            _append_locked(metadata, name, validated, schema_version)
+        return metadata.path / name
 
 
 def summarize(repo: Path) -> dict:
@@ -555,17 +696,20 @@ def main() -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--json", help="JSON object for the record action")
     args = parser.parse_args()
-    if args.action == "path":
-        print(telemetry_path(args.repo))
-    elif args.action == "summary":
-        print(json.dumps(summarize(args.repo), indent=2, sort_keys=True))
-    else:
-        if args.json is None:
-            parser.error("--json is required for record")
-        payload = _observations_module().decode_json(args.json)
-        if type(payload) is not dict:
-            parser.error("--json must decode to an object")
-        print(record(args.repo, payload))
+    try:
+        if args.action == "path":
+            print(telemetry_path(args.repo))
+        elif args.action == "summary":
+            print(json.dumps(summarize(args.repo), indent=2, sort_keys=True))
+        else:
+            if args.json is None:
+                parser.error("--json is required for record")
+            payload = _observations_module().decode_json(args.json)
+            if type(payload) is not dict:
+                parser.error("--json must decode to an object")
+            print(record(args.repo, payload))
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0
 
 

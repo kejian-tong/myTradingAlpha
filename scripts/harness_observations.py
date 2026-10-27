@@ -384,6 +384,9 @@ def summarize_usage(usages: object) -> dict:
     summary = {}
     exposure_over_limit = 0
     exposure_unknown = 0
+    exposure_known = 0
+    request_records = len(by_scope.get("request", []))
+    non_request_records = len(latest) - request_records
     for scope in sorted(by_scope):
         records = by_scope[scope]
         exclusive = [row for row in records if row["aggregation_scope"] == "exclusive"]
@@ -423,13 +426,20 @@ def summarize_usage(usages: object) -> dict:
                 input_tokens = row["input_tokens"]
                 if row["aggregation_scope"] != "exclusive" or input_tokens is None:
                     exposure_unknown += 1
-                elif input_tokens > REQUEST_INPUT_EXPOSURE_LIMIT:
-                    exposure_over_limit += 1
+                else:
+                    exposure_known += 1
+                    if input_tokens > REQUEST_INPUT_EXPOSURE_LIMIT:
+                        exposure_over_limit += 1
 
     return {
         "by_usage_scope": summary,
         "request_input_exposure": {
-            "over_limit_count": exposure_over_limit,
+            "over_limit_count": exposure_over_limit if exposure_known else None,
             "unknown_count": exposure_unknown,
+            "request_scoped_records": request_records,
+            "non_request_records": non_request_records,
+            "complete_over_limit_count": exposure_over_limit
+            if request_records and not exposure_unknown and not non_request_records
+            else None,
         },
     }
