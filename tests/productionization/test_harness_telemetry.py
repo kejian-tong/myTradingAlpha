@@ -21,7 +21,7 @@ def _module():
 
 def _repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
-    repo.mkdir()
+    repo.mkdir(parents=True)
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     return repo
 
