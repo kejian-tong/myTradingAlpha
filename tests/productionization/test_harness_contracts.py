@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import os
+import pickle
 import re
 import shutil
+import socket
+import stat
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+STATE_RELATIVE = Path("docs/productionization/AGENT_STATE.md")
+STATE_BYTE_LIMIT = 12_288
+PRIVATE_STATE_SENTINEL = "PRIVATE_STATE_SENTINEL_SHOULD_NOT_ESCAPE"
 
 _NON_MASTER_ROLES = (
     "normal_implementer",
@@ -98,6 +107,29 @@ def _checker():
     return module
 
 
+def _valid_agent_state() -> bytes:
+    return (
+        "# Productionization Agent State\n\n"
+        "## Current control state\n\n"
+        "- `schema_version`: 3\n"
+        f"- `last_reconciled_main_sha`: `{('a' * 40)}`\n"
+        f"- `last_reconciled_main_tree`: `{('b' * 40)}`\n"
+        "- `roadmap_status`: arbitrary inert status\n\n"
+        "## Historical references\n\n"
+    ).encode("ascii")
+
+
+def _state_with_exact_bytes(byte_count: int) -> bytes:
+    base = _valid_agent_state()
+    assert len(base) <= byte_count
+    return base + (b"x" * (byte_count - len(base)))
+
+
+def _write_fixture_state(root: Path, content: bytes) -> None:
+    path = root / STATE_RELATIVE
+    path.write_bytes(content)
+
+
 def _gate() -> dict:
     return {
         "operation": "merge", "authorized_operations": ["merge"],
@@ -118,6 +150,384 @@ def _gate() -> dict:
 
 def test_current_configuration_is_consistent() -> None:
     assert _checker().configuration_errors(ROOT) == []
+
+
+def test_agent_state_accepts_exact_byte_ceiling_and_rejects_ceiling_plus_one(tmp_path: Path) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    state = fixture / STATE_RELATIVE
+    checker = _checker()
+
+    at_limit = _state_with_exact_bytes(STATE_BYTE_LIMIT)
+    over_limit = _state_with_exact_bytes(STATE_BYTE_LIMIT + 1)
+    assert len(at_limit) == STATE_BYTE_LIMIT
+    assert len(over_limit) == STATE_BYTE_LIMIT + 1
+
+    state.write_bytes(at_limit)
+    assert checker.configuration_errors(fixture) == []
+
+    state.write_bytes(over_limit)
+    errors = checker.configuration_errors(fixture)
+    assert errors, "AGENT_STATE.md larger than 12 KiB must be rejected"
+    assert all(len(error) <= 256 for error in errors)
+
+
+def test_agent_state_ceiling_counts_original_utf8_bytes(tmp_path: Path) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    checker = _checker()
+    prefix = _valid_agent_state().decode("ascii")
+    text = prefix + ("x" * (STATE_BYTE_LIMIT - 1 - len(prefix))) + "é"
+    encoded = text.encode("utf-8")
+    assert len(text) == STATE_BYTE_LIMIT
+    assert len(encoded) == STATE_BYTE_LIMIT + 1
+
+    _write_fixture_state(fixture, encoded)
+    errors = checker.configuration_errors(fixture)
+    assert errors, "UTF-8 byte ceiling must not be measured as decoded characters"
+
+
+def test_agent_state_rejects_invalid_utf8_empty_missing_nonregular_and_symlink_sources(
+    tmp_path: Path,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    checker = _checker()
+    state = fixture / STATE_RELATIVE
+
+    state.write_bytes((PRIVATE_STATE_SENTINEL + "\xff").encode("latin-1"))
+    invalid_utf8_errors = checker.configuration_errors(fixture)
+
+    state.write_bytes(b"")
+    empty_errors = checker.configuration_errors(fixture)
+
+    state.unlink()
+    missing_errors = checker.configuration_errors(fixture)
+
+    state.mkdir()
+    nonregular_errors = checker.configuration_errors(fixture)
+    state.rmdir()
+
+    target = fixture / "private-state-target.md"
+    target.write_bytes(_valid_agent_state())
+    state.symlink_to(target)
+    symlink_errors = checker.configuration_errors(fixture)
+    assert state.is_symlink()
+    assert target.read_bytes() == _valid_agent_state()
+
+    cases = {
+        "invalid UTF-8": invalid_utf8_errors,
+        "empty file": empty_errors,
+        "missing file": missing_errors,
+        "nonregular source": nonregular_errors,
+        "symlink source": symlink_errors,
+    }
+    missing_rejections = [name for name, errors in cases.items() if not errors]
+    assert not missing_rejections, f"state source cases were accepted: {missing_rejections}"
+    assert PRIVATE_STATE_SENTINEL not in "\n".join(invalid_utf8_errors)
+    assert all(len(error) <= 256 for errors in cases.values() for error in errors)
+
+
+def test_agent_state_rejects_duplicate_quoted_fenced_and_wrong_identity_fields(
+    tmp_path: Path,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    checker = _checker()
+    valid = _valid_agent_state().decode("ascii")
+    sha_line = f"- `last_reconciled_main_sha`: `{('a' * 40)}`\n"
+    tree_line = f"- `last_reconciled_main_tree`: `{('b' * 40)}`\n"
+    schema_line = "- `schema_version`: 3\n"
+    boundary = "## Historical references\n"
+    malformed = (
+        valid.replace(sha_line, sha_line + sha_line),
+        valid.replace(sha_line, "").replace(
+            boundary, f"> {sha_line}\n{boundary}",
+        ),
+        valid.replace(sha_line, "").replace(
+            boundary, f"```text\n{sha_line}```\n{boundary}",
+        ),
+        valid + "\n## Current control state\n\n- `schema_version`: 3\n",
+        valid.replace(schema_line, "- `schema_version`: 4\n"),
+        valid.replace(sha_line, f"- `last_reconciled_main_sha`: `{('A' * 40)}`\n"),
+        valid.replace(sha_line, f"- `last_reconciled_main_sha`: `{('a' * 39)}а`\n"),
+        valid.replace(sha_line, f"- `last_reconciled_main_sha`: `{('a' * 39)}`\n"),
+        valid.replace(sha_line, f"- `last_reconciled_main_sha`: {('a' * 40)}\n"),
+        valid.replace(tree_line, f"- `last_reconciled_main_tree`: `{('B' * 40)}`\n"),
+        valid.replace(tree_line, f"- `last_reconciled_main_tree`: `{('b' * 39)}`\n"),
+        valid.replace(tree_line, f"- `last_reconciled_main_tree`: {('b' * 40)}\n"),
+    )
+
+    state = fixture / STATE_RELATIVE
+    accepted_cases: list[int] = []
+    for content in malformed:
+        state.write_text(content, encoding="utf-8")
+        errors = checker.configuration_errors(fixture)
+        if not errors:
+            accepted_cases.append(malformed.index(content))
+    assert not accepted_cases, f"malformed current-state cases passed: {accepted_cases}"
+
+
+def test_agent_state_identity_grammar_does_not_authenticate_status_or_sha_origin(
+    tmp_path: Path,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    state = _valid_agent_state().replace(
+        b"arbitrary inert status", b"unrecognized status stays inert",
+    )
+    # The deliberately synthetic hashes are structurally valid and need not equal HEAD.
+    _write_fixture_state(fixture, state)
+    assert _checker().configuration_errors(fixture) == []
+
+
+def test_agent_state_diagnostics_are_bounded_fixed_and_do_not_echo_input(
+    tmp_path: Path,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    checker = _checker()
+    state = fixture / STATE_RELATIVE
+    first = _valid_agent_state().replace(
+        b"`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`",
+        f"`{PRIVATE_STATE_SENTINEL}`".encode("ascii"),
+    )
+    state.write_bytes(first)
+    first_errors = checker.configuration_errors(fixture)
+
+    second_sentinel = "PRIVATE_STATE_SENTINEL_DIFFERENT_TEXT"
+    second = _valid_agent_state().replace(
+        b"`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`",
+        f"`{second_sentinel}`".encode("ascii"),
+    )
+    state.write_bytes(second)
+    second_errors = checker.configuration_errors(fixture)
+    assert first_errors
+    assert PRIVATE_STATE_SENTINEL not in "\n".join(first_errors)
+    assert all(len(error) <= 256 for error in first_errors)
+    assert second_errors == first_errors
+    assert second_sentinel not in "\n".join(second_errors)
+
+
+def test_configuration_checker_is_repeatable_read_only_and_offline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    _write_fixture_state(fixture, _valid_agent_state())
+    checker = _checker()
+    state_before = {
+        path.relative_to(fixture).as_posix(): path.read_bytes()
+        for path in fixture.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    observed: list[str] = []
+
+    def blocked(name: str):
+        def observe(*_args: object, **_kwargs: object) -> None:
+            observed.append(name)
+            raise RuntimeError(name)
+
+        return observe
+
+    monkeypatch.setattr(subprocess, "run", blocked("subprocess.run"))
+    monkeypatch.setattr(subprocess, "Popen", blocked("subprocess.Popen"))
+    monkeypatch.setattr(socket, "socket", blocked("socket.socket"))
+    monkeypatch.setattr(urllib.request, "urlopen", blocked("urlopen"))
+    monkeypatch.setattr(Path, "write_text", blocked("Path.write_text"))
+    monkeypatch.setattr(Path, "write_bytes", blocked("Path.write_bytes"))
+    monkeypatch.setattr(os, "write", blocked("os.write"))
+    monkeypatch.setattr(os, "remove", blocked("os.remove"))
+    monkeypatch.setattr(os, "replace", blocked("os.replace"))
+    monkeypatch.setattr(os, "rename", blocked("os.rename"))
+    monkeypatch.setattr(os, "unlink", blocked("os.unlink"))
+    monkeypatch.setattr(pickle, "load", blocked("pickle.load"))
+    monkeypatch.setattr(pickle, "loads", blocked("pickle.loads"))
+
+    positive_controls = (
+        ("subprocess.run", lambda: subprocess.run(["control"])),
+        ("subprocess.Popen", lambda: subprocess.Popen(["control"])),
+        ("socket.socket", lambda: socket.socket()),
+        ("urlopen", lambda: urllib.request.urlopen("https://invalid.example")),
+        ("Path.write_text", lambda: Path("unused").write_text("x")),
+        ("Path.write_bytes", lambda: Path("unused").write_bytes(b"x")),
+        ("os.write", lambda: os.write(1, b"x")),
+        ("os.remove", lambda: os.remove("unused")),
+        ("os.replace", lambda: os.replace("unused", "unused")),
+        ("os.rename", lambda: os.rename("unused", "unused")),
+        ("os.unlink", lambda: os.unlink("unused")),
+        ("pickle.load", lambda: pickle.load(io.BytesIO(b""))),
+        ("pickle.loads", lambda: pickle.loads(b"")),
+    )
+    for name, action in positive_controls:
+        with pytest.raises(RuntimeError):
+            action()
+        assert observed[-1] == name
+    observed.clear()
+
+    first = checker.configuration_errors(fixture)
+    second = checker.configuration_errors(fixture)
+    state_after = {
+        path.relative_to(fixture).as_posix(): path.read_bytes()
+        for path in fixture.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    assert first == second == []
+    assert observed == []
+    assert state_after == state_before
+
+
+def test_agent_state_reader_bounds_descriptor_reads_when_source_grows_after_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+
+    fixture = _copy_harness_fixture(tmp_path)
+    state = fixture / STATE_RELATIVE
+    state.write_bytes(_state_with_exact_bytes(STATE_BYTE_LIMIT))
+    assert state.stat().st_size == STATE_BYTE_LIMIT
+
+    real_builtin_open = builtins.open
+    real_io_open = io.open
+    real_os_open = os.open
+    real_os_fdopen = os.fdopen
+    real_os_fstat = os.fstat
+    real_os_read = os.read
+    opened: list[str] = []
+    state_fds: set[int] = set()
+    read_sizes: list[int] = []
+    read_bytes: list[int] = []
+    state_file_modes: list[int] = []
+    path_reads: list[str] = []
+    grew = False
+
+    def is_state_path(candidate: object) -> bool:
+        try:
+            return Path(os.fsdecode(candidate)).absolute() == state.absolute()
+        except (TypeError, ValueError, OSError):
+            return False
+
+    def grow_once() -> None:
+        nonlocal grew
+        if not grew:
+            os.truncate(state, STATE_BYTE_LIMIT + 4_096)
+            grew = True
+
+    class ObservedReader:
+        def __init__(self, handle: object) -> None:
+            self.handle = handle
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.handle, name)
+
+        def __enter__(self) -> "ObservedReader":
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self.handle.__exit__(*args)
+
+        def read(self, size: int = -1) -> object:
+            grow_once()
+            result = self.handle.read(size)
+            read_sizes.append(size)
+            read_bytes.append(len(result.encode("utf-8")) if isinstance(result, str) else len(result))
+            return result
+
+        def readinto(self, buffer: object) -> object:
+            grow_once()
+            requested = len(buffer)
+            result = self.handle.readinto(buffer)
+            read_sizes.append(requested)
+            read_bytes.append(result)
+            return result
+
+        def readline(self, size: int = -1) -> object:
+            grow_once()
+            result = self.handle.readline(size)
+            read_sizes.append(size)
+            read_bytes.append(len(result.encode("utf-8")) if isinstance(result, str) else len(result))
+            return result
+
+        def readall(self) -> object:
+            grow_once()
+            result = self.handle.read()
+            read_sizes.append(-1)
+            read_bytes.append(len(result.encode("utf-8")) if isinstance(result, str) else len(result))
+            return result
+
+        def readlines(self, hint: int = -1) -> object:
+            grow_once()
+            result = self.handle.readlines(hint)
+            read_sizes.append(hint)
+            read_bytes.append(
+                sum(len(line.encode("utf-8")) if isinstance(line, str) else len(line) for line in result)
+            )
+            return result
+
+    def track_stream(handle: object) -> ObservedReader:
+        return ObservedReader(handle)
+
+    def watched_builtin_open(file: object, *args: object, **kwargs: object) -> object:
+        handle = real_builtin_open(file, *args, **kwargs)
+        if is_state_path(file):
+            opened.append("builtins.open")
+            state_fds.add(handle.fileno())
+            return track_stream(handle)
+        return handle
+
+    def watched_io_open(file: object, *args: object, **kwargs: object) -> object:
+        handle = real_io_open(file, *args, **kwargs)
+        if is_state_path(file):
+            opened.append("io.open")
+            state_fds.add(handle.fileno())
+            return track_stream(handle)
+        return handle
+
+    def watched_os_open(file: object, flags: int, *args: object, **kwargs: object) -> int:
+        descriptor = real_os_open(file, flags, *args, **kwargs)
+        if is_state_path(file):
+            opened.append("os.open")
+            state_fds.add(descriptor)
+        return descriptor
+
+    def watched_fdopen(descriptor: int, *args: object, **kwargs: object) -> object:
+        handle = real_os_fdopen(descriptor, *args, **kwargs)
+        return track_stream(handle) if descriptor in state_fds else handle
+
+    def watched_os_read(descriptor: int, size: int) -> bytes:
+        if descriptor in state_fds:
+            grow_once()
+            read_sizes.append(size)
+            result = real_os_read(descriptor, size)
+            read_bytes.append(len(result))
+            return result
+        return real_os_read(descriptor, size)
+
+    def watched_os_fstat(descriptor: int) -> os.stat_result:
+        result = real_os_fstat(descriptor)
+        if descriptor in state_fds:
+            state_file_modes.append(result.st_mode)
+        return result
+
+    real_path_read_text = Path.read_text
+
+    def watched_path_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        if path.absolute() == state.absolute():
+            path_reads.append(str(path))
+        return real_path_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", watched_builtin_open)
+    monkeypatch.setattr(io, "open", watched_io_open)
+    monkeypatch.setattr(os, "open", watched_os_open)
+    monkeypatch.setattr(os, "fdopen", watched_fdopen)
+    monkeypatch.setattr(os, "read", watched_os_read)
+    monkeypatch.setattr(os, "fstat", watched_os_fstat)
+    monkeypatch.setattr(Path, "read_text", watched_path_read_text)
+
+    errors = _checker().configuration_errors(fixture)
+    assert errors, "a file that grows beyond 12 KiB during the read must be rejected"
+    assert grew
+    assert not path_reads, "bounded state text must be reused for fallback rejection"
+    assert len(opened) == 1
+    assert state_file_modes and all(stat.S_ISREG(mode) for mode in state_file_modes)
+    assert all(0 <= size <= STATE_BYTE_LIMIT + 1 for size in read_sizes)
+    assert 0 < sum(read_bytes) <= STATE_BYTE_LIMIT + 1
 
 
 def test_spawned_thread_cap_above_eight_is_rejected(tmp_path: Path) -> None:
