@@ -56,10 +56,69 @@ parsing, or file writes.
 
 ## Storage and exact-head safety
 
-Use `scripts/harness_telemetry.py`. Durable records are written beneath the repository Git common
-directory at `codex-harness/telemetry.jsonl`, not into the checked-out source tree. This is intentional:
-observing the harness must not dirty a candidate worktree, create a new source commit, or invalidate
-exact-head review.
+Use `scripts/harness_telemetry.py`. Legacy lifecycle records remain in
+`codex-harness/telemetry.jsonl`; explicit v2 usage observations use the separate
+`codex-harness/telemetry-v2.jsonl` stream. Both are written beneath the canonical repository Git common
+directory, not into the checked-out source tree. This is intentional: observing the harness must not dirty
+a candidate worktree, create a new source commit, or invalidate exact-head review.
+
+The recorder sanitizes inherited Git path redirects before resolving that directory. It rejects symlinked
+or non-regular metadata paths and streams, bounds reads/appends, and serializes cooperating appends with a
+short-lived per-stream lock. A partial tail or unresolved lock contention is an explicit failure. Existing
+unsafe or oversized records are left untouched; telemetry does not migrate or delete durable evidence.
+
+### Legacy lifecycle stream and explicit usage v2
+
+The legacy stream keeps its historical row shape and summary keys. Legacy token fields retain their
+original meaning; missing cached-token fields are incomplete evidence, not an observed zero. The summary
+reports `legacy_token_accounting_complete` alongside the compatibility totals. V2 usage totals are
+returned separately under `usage_v2`; they are never added to legacy totals.
+
+V2 records use `schema_version=2`, `event=usage_observation`, `observed_at_ms`, and a nested `usage` object.
+The usage object has a pseudonymous 64-hex `observation_ref`, non-negative `revision`, asserted
+`source_kind`, `usage_scope`, `aggregation_scope`, and seven required nullable counts: input, cached input,
+cache writes, both cache-write TTL components, output, and reasoning output. Null means unknown. Input
+includes cached reads and writes; reasoning output is already included in output. A revision replaces its
+prior snapshot. Retries of the same revision and content count once even if the observation time or key
+order differs. Rebinding its source, scope, aggregation, or approved outer attribution is rejected.
+
+Summaries partition request, turn, agent, and task usage. They count only exclusive observations and show
+observed subtotals separately from complete totals; exclusions or unknown required counts make complete
+totals unavailable. The 272,000-token exposure count applies only to known request-scoped input. Aggregate
+usage or missing input remains unknown.
+
+This is a schema example using illustrative caller-reported values, not an observed runtime measurement:
+
+```json
+{
+  "schema_version": 2,
+  "event": "usage_observation",
+  "observed_at_ms": 0,
+  "role": "normal_implementer",
+  "model": "gpt-6-luna",
+  "effort": "max",
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pr_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "usage": {
+    "observation_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "revision": 0,
+    "source_kind": "caller_report",
+    "usage_scope": "task",
+    "aggregation_scope": "exclusive",
+    "input_tokens": 100,
+    "cached_input_tokens": 20,
+    "cache_write_tokens": 0,
+    "cache_write_30m_tokens": 0,
+    "cache_write_12h_tokens": 0,
+    "output_tokens": 30,
+    "reasoning_output_tokens": 10
+  }
+}
+```
+
+JSON records are limited to 16,384 bytes, each stream to 16,777,216 bytes and 10,000 nonblank records.
+Metadata labels are limited to 128 UTF-8 bytes, and token measurements and derived arithmetic use the
+non-negative signed 64-bit range. Diagnostics do not include untrusted values.
 
 Do not commit raw telemetry by default. Publish only deliberately summarized, non-sensitive benchmark
 results through a reviewed harness PR when they change policy.
@@ -91,6 +150,11 @@ Measuring duration and concurrency requires correlating the documented lifecycle
 3. stores only start time, role and observed model in the per-agent ephemeral JSON file;
 4. removes the agent file at `SubagentStop`; and
 5. removes the remaining hashed session directory at `SessionEnd`.
+
+Each hook event is limited to 65,536 bytes. Per-agent scratch files are limited to 4,096 bytes and each
+session may have at most 64 agent files. The bridge reads and cleans only bounded, regular files beneath
+the canonical runtime directory; cleanup does not recurse. A symlink, special file, oversized state, or
+unsafe directory is left untouched and causes the hook to fail open silently.
 
 Raw session/agent identifiers, transcripts, prompts, assistant messages and tool inputs are not written to
 these files or to `telemetry.jsonl`. Runtime correlation state is operational scratch data, not durable

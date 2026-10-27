@@ -438,7 +438,13 @@ def test_request_level_consumption_cannot_create_cheaper_whole_task_frontier() -
         "gpt-5.6-terra",
         quality=99,
         duration=1,
-        usage_overrides={"usage_scope": "request", "input_tokens": 1_000},
+        usage_overrides={
+            "usage_scope": "request",
+            "input_tokens": 1_000,
+            "cached_input_tokens": 0,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 50,
+        },
         task_usage_complete=False,
     )
 

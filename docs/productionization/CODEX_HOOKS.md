@@ -84,6 +84,13 @@ Lifecycle hook input can contain session/transcript/tool context. Durable teleme
 **not** store transcripts, prompts, tool inputs, assistant messages, credentials, repository source,
 permission decisions, raw session IDs or raw agent IDs.
 
+The bridge reads at most 65,536 bytes per hook event and projects only lifecycle event, role/model,
+trigger, and bounded identifier inputs needed for scratch correlation. It ignores usage and transcript
+fields. Scratch state is limited to 4,096 bytes per agent and 64 agent files per session. Storage is
+confined to the canonical Git common metadata directory; symlinks, special files, oversized state, and
+unsafe directories are rejected. Cleanup inspects at most those bounded files and does not recurse. Hook
+errors remain silent and fail open, leaving unsafe existing evidence untouched.
+
 `SubagentStart`/`SubagentStop` use the documented lifecycle identifiers only as ephemeral correlation
 inputs. The bridge hashes session/agent IDs with SHA-256 and stores per-agent start time, role and observed
 model beneath the Git-common-dir `codex-harness/runtime/` scratch area. No raw identifier is written.

@@ -14,6 +14,30 @@ review, and master synthesis have different failure costs.
 Use `scripts/model_routing_benchmark.py` on representative replay/shadow records. The script never calls
 a model and never edits `.codex` routing; it only evaluates supplied evidence.
 
+## Versioned token accounting
+
+Unversioned rows retain the historical disjoint convention: `input_tokens` is non-cached input and
+`cached_input_tokens` is a separate component. The existing Luna fixture therefore remains 0.81 credits.
+Do not reinterpret these rows as inclusive input.
+
+Schema v2 places usage in a nested `usage` object. Its `input_tokens` includes cached reads and cache
+writes; cached input and writes are subsets and must not be added to input again. Reasoning output is
+already included in output. Nullable counts remain unknown. An `observation_ref` identifies a cumulative
+snapshot series, and a later revision replaces its prior value. Identical retries count once; conflicting
+content or changed source/scope/aggregation identity is rejected. The summary keeps request, turn, agent,
+and task usage in separate groups and exposes incomplete coverage without promoting partial subtotals to
+complete totals.
+
+A v2 task cost is available only when `task_usage_complete=true`, `usage_scope=task`, aggregation is
+`exclusive`, input/cached/output counts are known, cache writes are known zero, the pricing surface is
+`historical_work_codex`, and the context tier is `short`. Reasoning is not charged twice. Request, turn,
+agent, partial, unknown, non-short, or write-bearing usage stays unpriced and cannot create a cost frontier.
+Short request observations with known input above 272,000 tokens are rejected. Comparisons that mix
+unversioned and v2 rows are rejected; no implicit normalization is performed.
+
+`task_usage_complete`, `pricing_surface`, `context_tier`, and `source_kind` are supplied assertions.
+Schema validation does not authenticate their source, establish runtime identity, or prove actual billing.
+
 ## Historical official rate-card priors
 
 The Work/Codex rate cards were re-checked on 2026-09-07. The benchmark keeps these values as dated rate
@@ -113,9 +137,10 @@ A cost frontier is valid only when:
 3. at least one route is reliability-eligible; and
 4. **every reliability-eligible route** has all three observed token fields on every task run.
 
-Token observations are all-or-none per run: `input_tokens`, `cached_input_tokens`, and `output_tokens`.
-If a reliable route lacks token evidence, output is `incomplete_cost_observation` and no other route is
-allowed to become a false cost winner. Unknown usage stays unknown.
+For unversioned rows, the three historical token fields are all-or-none per run. If a reliable route lacks
+token evidence, output is `incomplete_cost_observation` and no other route can become a false cost winner.
+For v2 rows, nullable nested usage remains unknown and must satisfy the complete whole-task pricing rule
+described above before contributing cost. Unknown usage stays unknown.
 If any supplied route has no verified rate coverage, output is `unknown_route_pricing`; that task class
 receives no Pareto frontier and cannot be promotion-ready. GPT-6.1 Sol/xhigh is deliberately unpriced;
 historical Astra/xhigh rate values remain subject to rate-card freshness.
@@ -206,7 +231,7 @@ Until representative paired benchmark evidence accumulates, keep current product
 
 ## Record format
 
-Each JSONL row contains:
+An unversioned JSONL row contains:
 
 - `task_id`, `task_class`, `model`, `effort`;
 - `repository_commit_sha` and `repository_tree_sha` as lowercase 40-hex values, plus
@@ -215,6 +240,11 @@ Each JSONL row contains:
 - `quality_score` in 0..100;
 - measured `duration_ms` and `retries`;
 - optionally, all three observed `input_tokens`, `cached_input_tokens`, and `output_tokens`.
+
+A schema v2 row contains the same task, quality, acceptance, safety, duration, retry and provenance fields,
+plus `schema_version=2`, `usage`, exact-boolean `task_usage_complete`, `pricing_surface`, and `context_tier`.
+It must not contain top-level legacy token fields. `usage` contains the exact observation reference,
+revision, source/scope/aggregation labels and seven nullable counts defined above.
 
 All nonnegative integer measurements use the inclusive signed 64-bit range `0..2**63 - 1` to bound
 input arithmetic and serialized benchmark economics. This is an input-safety/economics bound, not a

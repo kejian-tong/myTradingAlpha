@@ -6,6 +6,7 @@ model, changes routing, or grants merge authority; it evaluates supplied evidenc
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import re
@@ -76,6 +77,69 @@ _REQUIRED = {
     "missed_blocker_high", "quality_score", "duration_ms", "retries", *_PROVENANCE_FIELDS,
 }
 _OPTIONAL = set(_TOKEN_FIELDS)
+_V2_REQUIRED = {"schema_version", "usage", "task_usage_complete", "pricing_surface", "context_tier"}
+_V2_PRICING_SURFACES = frozenset({"historical_work_codex", "unknown"})
+_V2_CONTEXT_TIERS = frozenset({"short", "long", "mixed", "unknown"})
+_LABEL_MAX_BYTES = 128
+
+
+def _observations_module():
+    path = Path(__file__).resolve().with_name("harness_observations.py")
+    spec = importlib.util.spec_from_file_location("benchmark_harness_observations", path)
+    if spec is None or spec.loader is None:
+        raise OSError("cannot load harness observations module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _keys(record: dict) -> set[str]:
+    keys = []
+    for key in dict.keys(record):
+        if type(key) is not str:
+            raise ValueError("benchmark record fields must be built-in strings")
+        keys.append(key)
+    return set(keys)
+
+
+def _label(value: object, *, name: str) -> str:
+    if type(value) is not str or not value or len(value) > _LABEL_MAX_BYTES:
+        raise ValueError(f"{name} must be a bounded non-empty string")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{name} must be valid Unicode") from exc
+    if len(encoded) > _LABEL_MAX_BYTES or any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+        raise ValueError(f"{name} must be a bounded valid Unicode string")
+    return value
+
+
+def _validate_common(record: dict) -> dict:
+    for key in ("task_id", "task_class", "model", "effort"):
+        _label(record[key], name=key)
+    if record["model"] not in _MODELS:
+        raise ValueError("model is not in the routing benchmark set")
+    if record["effort"] not in _ALLOWED_EFFORTS[record["model"]]:
+        raise ValueError("model/effort pair is not in the routing benchmark policy matrix")
+    if (
+        type(record["repository_commit_sha"]) is not str
+        or _HEX40.fullmatch(record["repository_commit_sha"]) is None
+        or type(record["repository_tree_sha"]) is not str
+        or _HEX40.fullmatch(record["repository_tree_sha"]) is None
+        or type(record["task_manifest_sha256"]) is not str
+        or _HEX64.fullmatch(record["task_manifest_sha256"]) is None
+    ):
+        raise ValueError("benchmark record provenance fields must be lowercase hexadecimal")
+    for key in ("acceptance_pass", "safety_gate_pass"):
+        if type(record[key]) is not bool:
+            raise ValueError(f"{key} must be boolean")
+    for key in _NONNEGATIVE_INTEGER_FIELDS:
+        if type(record[key]) is not int or not 0 <= record[key] <= MAX_SIGNED_INT:
+            raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
+    quality = _number(record["quality_score"], name="quality_score")
+    if quality > 100:
+        raise ValueError("quality_score must be <= 100")
+    return dict(record)
 
 
 def _number(value: object, *, name: str) -> float:
@@ -95,53 +159,54 @@ def _number(value: object, *, name: str) -> float:
 def validate(record: object) -> dict:
     if type(record) is not dict:
         raise ValueError("benchmark record must be an object")
-    keys = set(record)
+    keys = _keys(record)
     missing_provenance = set(_PROVENANCE_FIELDS) - keys
     if missing_provenance:
         raise ValueError("benchmark record provenance fields are required")
-    if not keys >= _REQUIRED or not keys <= (_REQUIRED | _OPTIONAL):
-        raise ValueError("benchmark record fields differ from reviewed schema")
-    for key in ("task_id", "task_class", "model", "effort"):
-        if type(record[key]) is not str or not record[key].strip():
-            raise ValueError(f"{key} must be a non-empty string")
-    if record["model"] not in _MODELS:
-        raise ValueError("model is not in the routing benchmark set")
-    if record["effort"] not in _ALLOWED_EFFORTS[record["model"]]:
-        raise ValueError("model/effort pair is not in the routing benchmark policy matrix")
+    if "schema_version" not in keys:
+        if not keys >= _REQUIRED or not keys <= (_REQUIRED | _OPTIONAL):
+            raise ValueError("benchmark record fields differ from reviewed schema")
+        result = _validate_common(record)
+        present_tokens = [key in keys for key in _TOKEN_FIELDS]
+        if any(present_tokens) and not all(present_tokens):
+            raise ValueError("token observations must provide input/cached/output together")
+        if all(present_tokens):
+            for key in _TOKEN_FIELDS:
+                if type(record[key]) is not int or not 0 <= record[key] <= MAX_SIGNED_INT:
+                    raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
+        return result
+
+    allowed = _REQUIRED | _V2_REQUIRED
+    if not keys >= (_REQUIRED | _V2_REQUIRED) or not keys <= allowed:
+        raise ValueError("benchmark record fields differ from reviewed v2 schema")
+    if type(record["schema_version"]) is not int or record["schema_version"] != 2:
+        raise ValueError("schema_version must equal 2")
+    if any(key in keys for key in _TOKEN_FIELDS):
+        raise ValueError("v2 benchmark record cannot contain legacy flat token fields")
+    if type(record["task_usage_complete"]) is not bool:
+        raise ValueError("task_usage_complete must be boolean")
     if (
-        type(record["repository_commit_sha"]) is not str
-        or _HEX40.fullmatch(record["repository_commit_sha"]) is None
-        or type(record["repository_tree_sha"]) is not str
-        or _HEX40.fullmatch(record["repository_tree_sha"]) is None
-        or type(record["task_manifest_sha256"]) is not str
-        or _HEX64.fullmatch(record["task_manifest_sha256"]) is None
+        type(record["pricing_surface"]) is not str
+        or record["pricing_surface"] not in _V2_PRICING_SURFACES
     ):
-        raise ValueError("benchmark record provenance fields must be lowercase hexadecimal")
-    for key in ("acceptance_pass", "safety_gate_pass"):
-        if type(record[key]) is not bool:
-            raise ValueError(f"{key} must be boolean")
-    for key in _NONNEGATIVE_INTEGER_FIELDS:
-        if (
-            type(record[key]) is not int
-            or isinstance(record[key], bool)
-            or not 0 <= record[key] <= MAX_SIGNED_INT
-        ):
-            raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
-    quality = _number(record["quality_score"], name="quality_score")
-    if quality > 100:
-        raise ValueError("quality_score must be <= 100")
-    present_tokens = [key in record for key in _TOKEN_FIELDS]
-    if any(present_tokens) and not all(present_tokens):
-        raise ValueError("token observations must provide input/cached/output together")
-    if all(present_tokens):
-        for key in _TOKEN_FIELDS:
-            if (
-                type(record[key]) is not int
-                or isinstance(record[key], bool)
-                or not 0 <= record[key] <= MAX_SIGNED_INT
-            ):
-                raise ValueError(f"{key} must be a non-negative signed 64-bit integer")
-    return dict(record)
+        raise ValueError("pricing_surface is unsupported")
+    if (
+        type(record["context_tier"]) is not str
+        or record["context_tier"] not in _V2_CONTEXT_TIERS
+    ):
+        raise ValueError("context_tier is unsupported")
+    result = _validate_common(record)
+    observations = _observations_module()
+    usage = observations.validate_usage(record["usage"])
+    if (
+        usage["usage_scope"] == "request"
+        and record["context_tier"] == "short"
+        and usage["input_tokens"] is not None
+        and usage["input_tokens"] > observations.REQUEST_INPUT_EXPOSURE_LIMIT
+    ):
+        raise ValueError("request input exposure exceeds 272000 tokens")
+    result["usage"] = usage
+    return result
 
 
 def eligible(record: dict) -> bool:
@@ -154,6 +219,42 @@ def eligible(record: dict) -> bool:
 
 
 def token_cost(record: dict, rates: dict[str, dict[str, float]]) -> float | None:
+    if record.get("schema_version") == 2:
+        usage = record.get("usage")
+        if type(usage) is not dict:
+            return None
+        if (
+            record.get("task_usage_complete") is not True
+            or usage.get("usage_scope") != "task"
+            or usage.get("aggregation_scope") != "exclusive"
+            or record.get("pricing_surface") != "historical_work_codex"
+            or record.get("context_tier") != "short"
+            or usage.get("input_tokens") is None
+            or usage.get("cached_input_tokens") is None
+            or usage.get("output_tokens") is None
+            or usage.get("cache_write_tokens") != 0
+            or any(
+                value not in (None, 0)
+                for value in (
+                    usage.get("cache_write_30m_tokens"),
+                    usage.get("cache_write_12h_tokens"),
+                )
+            )
+        ):
+            return None
+        if (record["model"], record["effort"]) not in _RATE_CARD_ROUTE_PAIRS:
+            return None
+        model_rates = rates.get(record["model"])
+        if model_rates is None:
+            return None
+        ordinary_input = usage["input_tokens"] - usage["cached_input_tokens"]
+        if ordinary_input < 0:
+            return None
+        return (
+            ordinary_input / 1_000_000 * model_rates["input"]
+            + usage["cached_input_tokens"] / 1_000_000 * model_rates["cached_input"]
+            + usage["output_tokens"] / 1_000_000 * model_rates["output"]
+        )
     if not all(key in record for key in _TOKEN_FIELDS):
         return None
     if (record["model"], record["effort"]) not in _RATE_CARD_ROUTE_PAIRS:
@@ -375,6 +476,9 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
         validated.append(row)
         grouped[(row["task_class"], row["model"], row["effort"])].append(row)
 
+    if len({row.get("schema_version", 1) for row in validated}) > 1:
+        raise ValueError("mixed schema benchmark comparisons are not allowed")
+
     by_class: dict[str, list[dict]] = defaultdict(list)
     for (task_class, model, effort), rows in sorted(grouped.items()):
         summary = {"model": model, "effort": effort, **_aggregate(rows)}
@@ -440,13 +544,17 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
 
 
 def load_jsonl(path: Path) -> list[dict]:
+    try:
+        raw_rows = _observations_module().load_jsonl(path)
+    except ValueError as exc:
+        if "non-finite JSON number" in str(exc):
+            raise ValueError("quality_score must be finite") from exc
+        raise
     rows = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
+    for number, raw in enumerate(raw_rows, start=1):
         try:
-            rows.append(validate(json.loads(line, object_pairs_hook=_unique_object)))
-        except (json.JSONDecodeError, ValueError) as exc:
+            rows.append(validate(raw))
+        except ValueError as exc:
             raise ValueError(f"invalid benchmark record on line {number}: {exc}") from exc
     return rows
 

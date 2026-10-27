@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import socket
 import subprocess
@@ -139,6 +138,16 @@ def test_usage_validates_cache_write_and_reasoning_subset_relationships() -> Non
     )
     assert observations.validate_usage(partial)["cache_write_12h_tokens"] is None
 
+    lower_bound_overflow = _usage(
+        input_tokens=100,
+        cached_input_tokens=None,
+        cache_write_tokens=None,
+        cache_write_30m_tokens=101,
+        cache_write_12h_tokens=None,
+    )
+    with pytest.raises(ValueError, match="cache writes"):
+        observations.validate_usage(lower_bound_overflow)
+
 
 def test_usage_validation_rejects_callback_bearing_subclasses_before_copying() -> None:
     observations = _module()
@@ -175,6 +184,8 @@ def test_decode_json_rejects_duplicate_equivalent_keys_nonfinite_and_surrogates(
         observations.decode_json('{"usage": 1, "\\u0075sage": 2}')
     with pytest.raises(ValueError, match="finite"):
         observations.decode_json('{"count": NaN}')
+    with pytest.raises(ValueError, match="finite"):
+        observations.decode_json('{"count": 1e999}')
     with pytest.raises(ValueError, match="surrogate|Unicode"):
         observations.decode_json('{"label": "\\ud800"}')
 
@@ -215,10 +226,36 @@ def test_load_jsonl_enforces_record_count_and_file_limits(tmp_path: Path) -> Non
     assert oversized.stat().st_size == before
 
 
+def test_load_jsonl_bounds_reads_when_a_file_grows_after_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations = _module()
+    path = tmp_path / "growing.jsonl"
+    path.write_bytes(b"{}\n")
+    original_read = os.read
+    bytes_read = 0
+    grew = False
+
+    def grow_after_first_read(fd: int, size: int) -> bytes:
+        nonlocal bytes_read, grew
+        chunk = original_read(fd, size)
+        bytes_read += len(chunk)
+        if not grew:
+            os.truncate(path, MAX_FILE_BYTES + 1)
+            grew = True
+        return chunk
+
+    monkeypatch.setattr(observations.os, "read", grow_after_first_read)
+    with pytest.raises(ValueError, match="file size"):
+        observations.load_jsonl(path)
+    assert bytes_read <= MAX_FILE_BYTES + 1
+
+
 def test_load_jsonl_rejects_fifo_without_waiting_for_a_writer(tmp_path: Path) -> None:
     if not hasattr(os, "mkfifo"):
         pytest.skip("FIFO creation is unavailable on this platform")
-    observations = _module()
+    _module()
     fifo = tmp_path / "stream.jsonl"
     os.mkfifo(fifo)
     code = (
@@ -236,6 +273,19 @@ def test_load_jsonl_rejects_fifo_without_waiting_for_a_writer(tmp_path: Path) ->
     )
     assert result.returncode != 0
     assert "regular file" in result.stderr
+
+
+def test_load_jsonl_rejects_symlink_without_modifying_target(tmp_path: Path) -> None:
+    observations = _module()
+    target = tmp_path / "target.jsonl"
+    target.write_bytes(b"{}\n")
+    link = tmp_path / "link.jsonl"
+    link.symlink_to(target)
+    before = target.read_bytes()
+
+    with pytest.raises(ValueError, match="regular file"):
+        observations.load_jsonl(link)
+    assert target.read_bytes() == before
 
 
 def test_snapshot_revisions_replace_in_any_arrival_order_and_scope_is_partitioned() -> None:
@@ -257,6 +307,16 @@ def test_snapshot_revisions_replace_in_any_arrival_order_and_scope_is_partitione
     assert request_scope["complete_totals"]["input_tokens"] == 272_000
     assert set(forward["by_usage_scope"]) == {"task", "request"}
     assert forward["by_usage_scope"] == reverse["by_usage_scope"]
+
+
+def test_identical_duplicate_snapshot_with_reordered_keys_counts_once() -> None:
+    observations = _module()
+    first = _usage(input_tokens=100)
+    reordered_retry = dict(reversed(list(first.items())))
+    summary = observations.summarize_usage([first, reordered_retry])
+    task = summary["by_usage_scope"]["task"]
+    assert task["coverage"]["selected_records"] == 1
+    assert task["complete_totals"]["input_tokens"] == 100
 
 
 @pytest.mark.parametrize("identity_field", ("source_kind", "usage_scope", "aggregation_scope"))

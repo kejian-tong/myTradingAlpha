@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -274,6 +274,33 @@ def test_hook_refuses_symlinked_scratch_state_without_modifying_target(tmp_path:
     assert outside.read_text(encoding="utf-8") == "preserve"
 
 
+def test_session_cleanup_refuses_symlinked_state_without_removing_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-cleanup-link-test"
+    agent_id = "agent-cleanup-link-test"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-cleanup-state.json"
+    outside.write_text("preserve", encoding="utf-8")
+    (session_dir / f"{agent_ref}.json").symlink_to(outside)
+    before = outside.read_text(encoding="utf-8")
+    event = {
+        **_common(repo),
+        "hook_event_name": "SessionEnd",
+        "session_id": session_id,
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert outside.read_text(encoding="utf-8") == before
+    assert (session_dir / f"{agent_ref}.json").is_symlink()
+
+
 def test_hook_refuses_oversized_scratch_state_without_deleting_evidence(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _git_repo(repo)
@@ -301,6 +328,38 @@ def test_hook_refuses_oversized_scratch_state_without_deleting_evidence(tmp_path
     assert state_file.read_bytes() == before
 
 
+def test_hook_accepts_scratch_state_at_exact_byte_limit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-exact-size"
+    agent_id = "agent-exact-size"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    state_file = session_dir / f"{agent_ref}.json"
+    payload = json.dumps(
+        {"started_at_ms": 1, "role": "code_explorer"},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    state_file.write_bytes(payload + (b" " * (4_096 - len(payload))))
+    assert state_file.stat().st_size == 4_096
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStop",
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert not state_file.exists()
+
+
 def test_hook_never_creates_more_than_64_agent_scratch_files_per_session(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _git_repo(repo)
@@ -321,6 +380,7 @@ def test_hook_never_creates_more_than_64_agent_scratch_files_per_session(tmp_pat
     runtime = repo / ".git/codex-harness/runtime"
     files = list(runtime.rglob("*.json"))
     assert len(files) == 64
+    assert all(path.stat().st_size <= 4_096 for path in files)
     extra = _run(
         {
             **common,

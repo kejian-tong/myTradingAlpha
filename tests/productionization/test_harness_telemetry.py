@@ -176,6 +176,26 @@ def test_usage_snapshot_series_replaces_revisions_and_cannot_rebind_outer_identi
     assert path.read_bytes().startswith(before)
 
 
+def test_identical_usage_retry_with_later_observation_time_is_not_double_counted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    event = _usage_event()
+    path = telemetry.record(repo, event)
+    retry = {**event, "observed_at_ms": event["observed_at_ms"] + 60_000}
+    retry["usage"] = dict(reversed(list(event["usage"].items())))
+    telemetry.record(repo, retry)
+
+    summary = telemetry.summarize(repo)
+    assert summary["usage_v2_records"] == 2
+    assert summary["usage_v2"]["by_usage_scope"]["task"]["coverage"][
+        "selected_records"
+    ] == 1
+    assert summary["usage_v2"]["by_usage_scope"]["task"]["complete_totals"][
+        "input_tokens"
+    ] == 100
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
+
 def test_v2_metadata_and_pseudonymous_references_are_validated_without_echo(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     telemetry = _module()
@@ -205,11 +225,35 @@ def test_v2_stream_rejects_symlink_target_without_modifying_outside_file(tmp_pat
     assert outside.read_bytes() == b"keep this evidence\n"
 
 
-def test_git_redirect_environment_does_not_select_another_repository_metadata(tmp_path: Path, monkeypatch) -> None:
+def test_metadata_directory_symlink_is_rejected_without_outside_write(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "repo")
+    telemetry = _module()
+    outside = tmp_path / "outside-metadata"
+    outside.mkdir()
+    (repo / ".git/codex-harness").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="real directory"):
+        telemetry.record(repo, {"event": "ci_rerun"})
+    assert not (outside / "telemetry.jsonl").exists()
+
+
+@pytest.mark.parametrize("redirect", ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE"))
+def test_git_redirect_environment_does_not_select_another_repository_metadata(
+    tmp_path: Path,
+    monkeypatch,
+    redirect: str,
+) -> None:
     repo = _repo(tmp_path / "target")
     redirected = _repo(tmp_path / "redirected")
     telemetry = _module()
-    monkeypatch.setenv("GIT_DIR", str(redirected / ".git"))
+    if redirect == "GIT_DIR":
+        monkeypatch.setenv("GIT_DIR", str(redirected / ".git"))
+    elif redirect == "GIT_COMMON_DIR":
+        monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
+        monkeypatch.setenv("GIT_COMMON_DIR", str(redirected / ".git"))
+    else:
+        monkeypatch.setenv("GIT_DIR", str(redirected / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(repo))
 
     path = telemetry.record(repo, {"event": "ci_rerun"})
     assert path == repo / ".git/codex-harness/telemetry.jsonl"
@@ -252,6 +296,33 @@ def test_legacy_partial_tail_is_failure_and_is_not_rewritten(tmp_path: Path) -> 
     with pytest.raises((ValueError, OSError)):
         telemetry.load(repo)
     assert path.read_bytes() == before
+
+
+def test_v2_partial_tail_is_failure_and_is_not_rewritten(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    path = telemetry.record(repo, _usage_event())
+    with path.open("ab") as handle:
+        handle.write(b'{"schema_version":2')
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError, match="incomplete tail"):
+        telemetry.load(repo, schema_version=2)
+    assert path.read_bytes() == before
+
+
+def test_forced_append_contention_fails_without_changing_stream(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    path = telemetry.record(repo, {"event": "ci_rerun"})
+    before = path.read_bytes()
+    lock = path.with_name(f".{path.name}.lock")
+    lock.write_bytes(b"")
+
+    with pytest.raises(ValueError, match="contended"):
+        telemetry.record(repo, {"event": "ci_rerun"})
+    assert path.read_bytes() == before
+    assert lock.is_file()
 
 
 def test_concurrent_legacy_appends_leave_only_complete_jsonl_records(tmp_path: Path) -> None:
