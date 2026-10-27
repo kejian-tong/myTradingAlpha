@@ -64,6 +64,8 @@ a candidate worktree, create a new source commit, or invalidate exact-head revie
 
 The recorder sanitizes inherited Git path redirects before resolving that directory. It retains opened
 directory descriptors for every ancestor and uses no-follow, descriptor-relative operations beneath them.
+Git-common discovery retains the originally inspected device, inode and file type through canonicalization;
+the final opened common descriptor must match before any telemetry descendants are accessed.
 Stream validation and append share one opened regular inode; entry identity, size, ancestor identity and
 link count are checked before mutation. Multiply linked writable streams are rejected. Cooperating
 appends use a per-stream lock with a one-second acquisition deadline checked on every retry, including a

@@ -227,7 +227,7 @@ def _clean_git_environment() -> dict[str, str]:
     }
 
 
-def _common_directory(repo: Path) -> Path:
+def _common_directory(repo: Path) -> tuple[Path, os.stat_result]:
     try:
         repo_path = repo.resolve(strict=True)
         raw = subprocess.check_output(
@@ -248,7 +248,7 @@ def _common_directory(repo: Path) -> Path:
     if not stat.S_ISDIR(info.st_mode):
         raise _error("Git common directory is not a real directory")
     try:
-        return common.resolve(strict=True)
+        return common.resolve(strict=True), info
     except OSError as exc:
         raise _error("Git common directory cannot be canonicalized") from exc
 
@@ -364,7 +364,7 @@ def _child_directory(
 
 
 @contextmanager
-def _directory_path(path: Path) -> Iterator[_Directory]:
+def _directory_path(path: Path, inspected: os.stat_result) -> Iterator[_Directory]:
     """Open each canonical ancestor relative to its retained parent, starting at root."""
     with ExitStack() as stack:
         fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -375,6 +375,12 @@ def _directory_path(path: Path) -> Iterator[_Directory]:
             if child is None:
                 raise _error("Git common directory is unavailable")
             directory = child
+        opened = os.fstat(directory.fd)
+        if (
+            not _same_inode(opened, inspected)
+            or stat.S_IFMT(opened.st_mode) != stat.S_IFMT(inspected.st_mode)
+        ):
+            raise _error("Git common directory changed during discovery")
         yield directory
 
 
@@ -382,8 +388,9 @@ def _directory_path(path: Path) -> Iterator[_Directory]:
 def _metadata_handle(repo: Path, *, create: bool = False) -> Iterator[_Directory | None]:
     _require_storage()
     try:
+        common_path, inspected = _common_directory(repo)
         with (
-            _directory_path(_common_directory(repo)) as common,
+            _directory_path(common_path, inspected) as common,
             _child_directory(common, "codex-harness", create=create) as metadata,
         ):
             yield metadata
@@ -395,9 +402,9 @@ def telemetry_path(repo: Path, *, schema_version: int = 1) -> Path:
     if type(schema_version) is not int or schema_version not in (1, 2):
         raise _error("unsupported telemetry schema version")
     _require_storage()
-    common = _common_directory(repo)
+    common, inspected = _common_directory(repo)
     try:
-        with _directory_path(common) as parent, _child_directory(parent, "codex-harness"):
+        with _directory_path(common, inspected) as parent, _child_directory(parent, "codex-harness"):
             filename = "telemetry.jsonl" if schema_version == 1 else "telemetry-v2.jsonl"
             return common / "codex-harness" / filename
     except OSError as exc:
