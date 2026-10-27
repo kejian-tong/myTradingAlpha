@@ -406,3 +406,51 @@ def test_accounting_codec_is_pure_and_offline(monkeypatch: pytest.MonkeyPatch) -
     assert observations.summarize_usage([usage])["by_usage_scope"]["task"]["complete_totals"][
         "input_tokens"
     ] == 100
+
+
+@pytest.mark.parametrize(
+    ("rows", "over_limit", "unknown", "requests", "non_requests", "complete"),
+    (
+        pytest.param([], None, 0, 0, 0, None, id="empty"),
+        pytest.param([("task", "exclusive", 800_000)], None, 0, 0, 1, None, id="task-only"),
+        pytest.param([("turn", "exclusive", 800_000)], None, 0, 0, 1, None, id="turn-only"),
+        pytest.param([("agent", "exclusive", 800_000)], None, 0, 0, 1, None, id="agent-only"),
+        pytest.param([("request", "exclusive", 272_000)], 0, 0, 1, 0, 0, id="observed-zero"),
+        pytest.param([("request", "exclusive", 272_001)], 1, 0, 1, 0, 1, id="known-exceedance"),
+        pytest.param([("request", "exclusive", None)], None, 1, 1, 0, None, id="unknown-input"),
+        pytest.param([("request", "includes_children", 272_001)], None, 1, 1, 0, None, id="excluded-request"),
+        pytest.param([("request", "unknown", 272_001)], None, 1, 1, 0, None, id="unknown-aggregation"),
+        pytest.param(
+            [("request", "exclusive", 272_001), ("task", "exclusive", 800_000)],
+            1, 0, 1, 1, None, id="request-with-aggregate",
+        ),
+        pytest.param(
+            [("request", "exclusive", 272_000), ("request", "exclusive", 272_001),
+             ("turn", "exclusive", 800_000), ("request", "exclusive", None)],
+            1, 1, 3, 1, None, id="known-and-unknown-request-mix",
+        ),
+    ),
+)
+def test_r1_request_exposure_distinguishes_observed_subtotals_from_complete_coverage(
+    rows, over_limit, unknown, requests, non_requests, complete,
+) -> None:
+    observations = _module()
+    usages = [
+        _usage(
+            observation_ref=f"{index + 1:064x}",
+            usage_scope=scope,
+            aggregation_scope=aggregation,
+            input_tokens=input_tokens,
+        )
+        for index, (scope, aggregation, input_tokens) in enumerate(rows)
+    ]
+    exposure = observations.summarize_usage(usages)["request_input_exposure"]
+    expected = {
+        "over_limit_count": over_limit,
+        "unknown_count": unknown,
+        "request_scoped_records": requests,
+        "non_request_records": non_requests,
+        "complete_over_limit_count": complete,
+    }
+    for field, value in expected.items():
+        assert exposure.get(field, "missing exposure coverage field") == value, field

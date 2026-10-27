@@ -553,3 +553,19 @@ def test_r1_unsupported_storage_primitives_fail_before_metadata_mutation(
     assert error is not None
     assert len(str(error)) <= 256
     assert str(repo) not in str(error)
+
+
+@pytest.mark.parametrize(
+    "pr_id",
+    ("FND-01", "PIT-01", "SIG-01", "BT-01", "RSK-01", "EXC-01", "EXP-01", "OMS-01", "FWD-01", "LIVE-01"),
+)
+def test_r1_legacy_roadmap_identifiers_remain_valid_telemetry_metadata(
+    tmp_path: Path, pr_id: str
+) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    payload = {"event": "phase_complete", "pr_id": pr_id, "observed_at_ms": 1}
+
+    telemetry.record(repo, payload)
+
+    assert telemetry.load(repo) == [payload]
