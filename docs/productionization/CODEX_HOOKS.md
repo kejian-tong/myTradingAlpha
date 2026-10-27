@@ -84,6 +84,26 @@ Lifecycle hook input can contain session/transcript/tool context. Durable teleme
 **not** store transcripts, prompts, tool inputs, assistant messages, credentials, repository source,
 permission decisions, raw session IDs or raw agent IDs.
 
+The bridge reads at most 65,536 bytes per hook event and projects only lifecycle event, role/model,
+trigger, and bounded identifier inputs needed for scratch correlation. It ignores usage and transcript
+fields. Scratch state is limited to 4,096 bytes per agent and 64 agent files per session. Storage is
+confined to the canonical Git common metadata directory; symlinks, special files, oversized state, and
+unsafe directories are rejected. Cleanup inspects at most those bounded files and does not recurse. Hook
+errors remain silent and fail open, leaving unsafe existing evidence untouched.
+
+Storage operations retain no-follow directory descriptors through Git-common metadata, runtime and
+session ancestors. Each complete session transaction holds a process-shared lock in the runtime parent,
+outside the removable session directory; this serializes count/create, duplicate starts, stop, cleanup
+and removal/recreation. Stream validation and append use the same opened regular inode and reject
+multiply linked writable evidence. Every lock retry checks a one-second deadline; existing locks are
+never recovered automatically.
+
+This confinement requires POSIX no-follow directory flags, descriptor-relative operations and descriptor
+scanning. Unsupported platforms, including native Windows Python lacking these capabilities, cause
+silent hook success without storage mutation. Manual telemetry commands return a bounded sanitized error.
+There is no unsafe path-write fallback. The runpy command-shape test on POSIX demonstrates loading from
+an unrelated CWD; it does not demonstrate Windows storage support.
+
 `SubagentStart`/`SubagentStop` use the documented lifecycle identifiers only as ephemeral correlation
 inputs. The bridge hashes session/agent IDs with SHA-256 and stores per-agent start time, role and observed
 model beneath the Git-common-dir `codex-harness/runtime/` scratch area. No raw identifier is written.

@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
+import io
 import json
+import multiprocessing
+import os
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / "scripts/codex_telemetry_hook.py"
@@ -18,6 +26,16 @@ def _run(event: dict) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_raw(event_json: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=event_json,
         text=True,
         capture_output=True,
         check=False,
@@ -142,6 +160,248 @@ def test_telemetry_hook_is_best_effort_and_fail_open(tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+def test_hook_event_byte_limit_is_inclusive_and_oversize_input_is_silent(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    limit = 65_536
+    prefix = '{"hook_event_name":"PostCompact","trigger":"auto","cwd":' + json.dumps(str(repo)) + ',"pad":"'
+    suffix = '"}'
+    at_limit = prefix + ("x" * (limit - len(prefix.encode("utf-8")) - len(suffix))) + suffix
+    over_limit = at_limit + " "
+    assert len(at_limit.encode("utf-8")) == limit
+
+    accepted = _run_raw(at_limit)
+    assert accepted.returncode == 0
+    assert accepted.stdout == ""
+    assert accepted.stderr == ""
+    assert [row["event"] for row in _rows(repo)] == ["context_compaction"]
+
+    rejected = _run_raw(over_limit)
+    assert rejected.returncode == 0
+    assert rejected.stdout == ""
+    assert rejected.stderr == ""
+    assert [row["event"] for row in _rows(repo)] == ["context_compaction"]
+
+
+def test_hook_never_persists_request_usage_or_transcript_fields(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    marker = "raw-hook-secret-marker-7b8e"
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-usage-private",
+        "agent_type": "normal_implementer",
+        "usage": {
+            "input_tokens": 1_000,
+            "cached_input_tokens": 200,
+            "cache_write_tokens": 20,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 50,
+            "raw_provider_payload": marker,
+        },
+        "total_tokens": 1_100,
+        "prompt": marker,
+        "last_assistant_message": marker,
+        "transcript_path": f"/private/{marker}.jsonl",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    durable = repo / ".git/codex-harness/telemetry.jsonl"
+    runtime = repo / ".git/codex-harness/runtime"
+    persisted = durable.read_text(encoding="utf-8") + "\n".join(
+        path.read_text(encoding="utf-8") for path in runtime.rglob("*.json")
+    )
+    assert marker not in persisted
+    assert "input_tokens" not in persisted
+    assert "reasoning_output_tokens" not in persisted
+    assert "total_tokens" not in persisted
+    assert "transcript_path" not in persisted
+
+
+def test_unreviewed_model_and_overlong_labels_fail_open_before_scratch_write(tmp_path: Path) -> None:
+    model_repo = tmp_path / "model-repo"
+    _git_repo(model_repo)
+    base = {
+        **_common(model_repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-invalid-label",
+        "agent_type": "normal_implementer",
+    }
+    unknown_model = _run({**base, "model": "unknown-model-marker"})
+    assert unknown_model.returncode == 0
+    assert unknown_model.stdout == ""
+    assert unknown_model.stderr == ""
+    assert not (model_repo / ".git/codex-harness/telemetry.jsonl").exists()
+    assert not (model_repo / ".git/codex-harness/runtime").exists()
+
+    role_repo = tmp_path / "role-repo"
+    _git_repo(role_repo)
+    role_event = {
+        **_common(role_repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-overlong",
+        "agent_type": "r" * 129,
+    }
+    overlong_role = _run(role_event)
+    assert overlong_role.returncode == 0
+    assert overlong_role.stdout == ""
+    assert overlong_role.stderr == ""
+    assert not (role_repo / ".git/codex-harness/telemetry.jsonl").exists()
+    assert not (role_repo / ".git/codex-harness/runtime").exists()
+
+
+def test_hook_refuses_symlinked_scratch_state_without_modifying_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-link-test"
+    agent_id = "agent-link-test"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-state.json"
+    outside.write_text("preserve", encoding="utf-8")
+    (session_dir / f"{agent_ref}.json").symlink_to(outside)
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStart",
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert outside.read_text(encoding="utf-8") == "preserve"
+
+
+def test_session_cleanup_refuses_symlinked_state_without_removing_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-cleanup-link-test"
+    agent_id = "agent-cleanup-link-test"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-cleanup-state.json"
+    outside.write_text("preserve", encoding="utf-8")
+    (session_dir / f"{agent_ref}.json").symlink_to(outside)
+    before = outside.read_text(encoding="utf-8")
+    event = {
+        **_common(repo),
+        "hook_event_name": "SessionEnd",
+        "session_id": session_id,
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert outside.read_text(encoding="utf-8") == before
+    assert (session_dir / f"{agent_ref}.json").is_symlink()
+
+
+def test_hook_refuses_oversized_scratch_state_without_deleting_evidence(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-size-test"
+    agent_id = "agent-size-test"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    state_file = session_dir / f"{agent_ref}.json"
+    state_file.write_bytes(b"x" * 4_097)
+    before = state_file.read_bytes()
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStop",
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert state_file.read_bytes() == before
+
+
+def test_hook_accepts_scratch_state_at_exact_byte_limit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-exact-size"
+    agent_id = "agent-exact-size"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    state_file = session_dir / f"{agent_ref}.json"
+    payload = json.dumps(
+        {"started_at_ms": 1, "role": "code_explorer"},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    state_file.write_bytes(payload + (b" " * (4_096 - len(payload))))
+    assert state_file.stat().st_size == 4_096
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStop",
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert not state_file.exists()
+
+
+def test_hook_never_creates_more_than_64_agent_scratch_files_per_session(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    common = _common(repo)
+    for index in range(64):
+        result = _run(
+            {
+                **common,
+                "hook_event_name": "SubagentStart",
+                "agent_id": f"agent-{index}",
+                "agent_type": "code_explorer",
+            }
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+
+    runtime = repo / ".git/codex-harness/runtime"
+    files = list(runtime.rglob("*.json"))
+    assert len(files) == 64
+    assert all(path.stat().st_size <= 4_096 for path in files)
+    extra = _run(
+        {
+            **common,
+            "hook_event_name": "SubagentStart",
+            "agent_id": "agent-64",
+            "agent_type": "code_explorer",
+        }
+    )
+    assert extra.returncode == 0
+    assert extra.stdout == ""
+    assert extra.stderr == ""
+    assert len(list(runtime.rglob("*.json"))) == 64
+
+
 def test_hooks_json_uses_current_official_field_names() -> None:
     hooks = json.loads((ROOT / ".codex/hooks.json").read_text(encoding="utf-8"))["hooks"]
     assert set(hooks) == {
@@ -162,3 +422,635 @@ def test_hooks_json_uses_current_official_field_names() -> None:
     assert session_end["timeout"] == 3
     assert session_end["async"] is False
     assert "codex_telemetry_hook.py" in session_end["command"]
+
+
+def _r1_hook_module():
+    spec = importlib.util.spec_from_file_location("r1_telemetry_hook", HOOK)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    return hook
+
+
+def _r1_event(repo: Path, name: str, agent_id: str = "agent-original") -> dict:
+    return {
+        **_common(repo),
+        "hook_event_name": name,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+        "trigger": "auto",
+    }
+
+
+def _r1_session(repo: Path) -> Path:
+    session_ref = hashlib.sha256(_common(repo)["session_id"].encode()).hexdigest()
+    return repo / ".git/codex-harness/runtime" / session_ref
+
+
+def _r1_seed_state(repo: Path, agent_id: str = "agent-original", started: int = 123) -> Path:
+    session = _r1_session(repo)
+    session.mkdir(parents=True, exist_ok=True)
+    path = session / (hashlib.sha256(agent_id.encode()).hexdigest() + ".json")
+    path.write_text(json.dumps({"started_at_ms": started, "role": "code_explorer"}))
+    return path
+
+
+def _r1_snapshot(directory: Path) -> dict:
+    if not directory.exists():
+        return {}
+    return {
+        path.relative_to(directory).as_posix(): None if path.is_dir() else path.read_bytes()
+        for path in directory.rglob("*")
+    }
+
+
+def _r1_invoke_hook(hook, event: dict) -> tuple[int, str, str]:
+    original_stdin = sys.stdin
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        sys.stdin = io.StringIO(json.dumps(event))
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = hook.main()
+        return status, stdout.getvalue(), stderr.getvalue()
+    finally:
+        sys.stdin = original_stdin
+
+
+def _r1_patch_os(patch, name: str, replacement) -> None:
+    original = getattr(os, name)
+    # Forwarding wrappers retain the real primitive's advertised platform capabilities.
+    for capability in ("supports_dir_fd", "supports_fd", "supports_follow_symlinks", "supports_effective_ids"):
+        supported = getattr(os, capability)
+        if original in supported:
+            patch.setattr(os, capability, supported | {replacement})
+    patch.setattr(os, name, replacement)
+
+
+def test_r1_stop_refuses_a_symlinked_session_and_preserves_outside_valid_state(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    inside = _r1_seed_state(repo)
+    state_name, state_bytes = inside.name, inside.read_bytes()
+    inside.unlink()
+    session = inside.parent
+    session.rmdir()
+    outside = tmp_path / "outside-session"
+    outside.mkdir()
+    (outside / state_name).write_bytes(state_bytes)
+    session.symlink_to(outside, target_is_directory=True)
+    before = _r1_snapshot(outside)
+
+    result = _run(_r1_event(repo, "SubagentStop"))
+
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+    assert _r1_snapshot(outside) == before, "stop deleted valid state through a session symlink"
+    assert session.is_symlink()
+
+
+@pytest.mark.parametrize("ancestor_name", ("metadata", "runtime", "session"))
+@pytest.mark.parametrize("event_name", ("SubagentStart", "SubagentStop", "SessionEnd"))
+def test_r1_ancestor_swap_at_scratch_operation_never_writes_or_unlinks_outside(
+    tmp_path: Path, monkeypatch, ancestor_name: str, event_name: str
+) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    state = _r1_seed_state(repo, "agent-other" if event_name == "SubagentStart" else "agent-original")
+    session = state.parent
+    metadata = repo / ".git/codex-harness"
+    ancestor = {"metadata": metadata, "runtime": session.parent, "session": session}[ancestor_name]
+    outside = tmp_path / "outside-ancestor"
+    outside_session = outside / session.relative_to(ancestor)
+    outside_session.mkdir(parents=True)
+    if event_name != "SubagentStart":
+        (outside_session / state.name).write_bytes(state.read_bytes())
+    guard = hashlib.sha256(b"outside-guard").hexdigest() + ".json"
+    (outside / guard).write_text(json.dumps({"started_at_ms": 1, "role": "code_explorer"}))
+    before = _r1_snapshot(outside)
+    held = ancestor.with_name("held-" + ancestor.name)
+    target_name = hashlib.sha256(b"agent-original").hexdigest() + ".json"
+    session_info = session.stat()
+    real_stat = os.stat
+    swapped = False
+
+    def is_session(target, **kwargs) -> bool:
+        try:
+            info = os.fstat(target) if isinstance(target, int) else real_stat(target, **kwargs)
+        except OSError:
+            return False
+        return (info.st_dev, info.st_ino) == (session_info.st_dev, session_info.st_ino)
+
+    def intercept(real_operation, *, scan: bool = False):
+        def wrapped(target, *args, **kwargs):
+            nonlocal swapped
+            boundary = is_session(target) if scan else (
+                not isinstance(target, int) and Path(os.fsdecode(target)).name == target_name
+            )
+            if not swapped and boundary:
+                swapped = True
+                ancestor.rename(held)
+                ancestor.symlink_to(outside, target_is_directory=True)
+            return real_operation(target, *args, **kwargs)
+
+        return wrapped
+
+    hook = _r1_hook_module()
+    with monkeypatch.context() as patch:
+        if event_name == "SessionEnd":
+            _r1_patch_os(patch, "scandir", intercept(os.scandir, scan=True))
+        else:
+            for name in ("lstat", "stat", "open"):
+                _r1_patch_os(patch, name, intercept(getattr(os, name)))
+        result = _r1_invoke_hook(hook, _r1_event(repo, event_name))
+
+    assert result == (0, "", "")
+    assert swapped, "the scratch filesystem boundary was not exercised"
+    assert _r1_snapshot(outside) == before, "scratch transaction followed a replaced ancestor"
+
+
+class _R1ScanGate:
+    """Pause after the real directory iterator is exhausted, before its caller can mutate."""
+
+    def __init__(self, entries, after_scan):
+        self.entries = entries
+        self.after_scan = after_scan
+        self.finished = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return next(self.entries)
+        except StopIteration:
+            if not self.finished:
+                self.finished = True
+                self.after_scan()
+            raise
+
+    def close(self):
+        self.entries.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+
+def _r1_process_hook(
+    event, result, *, rendezvous=None, scanned=None, peer_scanned=None,
+    paused=None, proceed=None, pause_boundary=None,
+) -> None:
+    """Run the real hook in a fresh process with bounded filesystem synchronization."""
+    sync_errors = []
+    original_scandir, original_unlink, original_remove = os.scandir, os.unlink, os.remove
+    original_rmdir = os.rmdir
+    capabilities = {
+        name: getattr(os, name)
+        for name in ("supports_dir_fd", "supports_fd", "supports_follow_symlinks", "supports_effective_ids")
+    }
+    session = _r1_session(Path(event["cwd"]))
+    try:
+        session_info = session.stat()
+    except FileNotFoundError:
+        session_info = None
+    used_gate = False
+
+    def wait_for(signal) -> None:
+        if not signal.wait(timeout=10):
+            sync_errors.append("filesystem synchronization deadline expired")
+            raise RuntimeError("filesystem synchronization deadline expired")
+
+    def at_scan_end() -> None:
+        if scanned is not None:
+            scanned.set()
+            wait_for(peer_scanned)
+        else:
+            paused.set()
+            wait_for(proceed)
+
+    def scan(target):
+        nonlocal used_gate
+        entries = original_scandir(target)
+        info = os.fstat(target) if isinstance(target, int) else os.stat(target)
+        if session_info is not None and not used_gate and (scanned is not None or pause_boundary == "scan") and (
+            info.st_dev, info.st_ino
+        ) == (session_info.st_dev, session_info.st_ino):
+            used_gate = True
+            return _R1ScanGate(entries, at_scan_end)
+        return entries
+
+    def unlink(real_operation):
+        def wrapped(target, *args, **kwargs):
+            nonlocal used_gate
+            if not used_gate and pause_boundary == "unlink" and str(target).endswith(".json"):
+                used_gate = True
+                paused.set()
+                wait_for(proceed)
+            return real_operation(target, *args, **kwargs)
+
+        return wrapped
+
+    def rmdir(target, *args, **kwargs):
+        nonlocal used_gate
+        removed = original_rmdir(target, *args, **kwargs)
+        if not used_gate and pause_boundary == "removed" and Path(os.fsdecode(target)).name == session.name:
+            used_gate = True
+            paused.set()
+            wait_for(proceed)
+        return removed
+
+    try:
+        for name, replacement in (("scandir", scan), ("unlink", unlink(original_unlink)), ("remove", unlink(original_remove)), ("rmdir", rmdir)):
+            original = getattr(os, name)
+            for capability in capabilities:
+                supported = getattr(os, capability)
+                if original in supported:
+                    setattr(os, capability, supported | {replacement})
+            setattr(os, name, replacement)
+        if rendezvous is not None:
+            rendezvous.wait(timeout=10)
+        result.put((*_r1_invoke_hook(_r1_hook_module(), event), sync_errors))
+    except BaseException as exc:
+        result.put(("worker_error", type(exc).__name__))
+    finally:
+        if scanned is not None:
+            # A serialized contender may fail open before it can scan the session.
+            scanned.set()
+        os.scandir, os.unlink, os.remove = original_scandir, original_unlink, original_remove
+        os.rmdir = original_rmdir
+        for name, supported in capabilities.items():
+            setattr(os, name, supported)
+
+
+def _r1_collect(process, result) -> tuple:
+    process.join(timeout=15)
+    assert process.exitcode == 0, "hook process did not finish within its synchronization bound"
+    outcome = result.get(timeout=3)
+    assert outcome == (0, "", "", []), outcome
+    return outcome
+
+
+def _r1_close_processes(processes) -> None:
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=3)
+
+
+def test_r1_process_starts_from_63_states_never_create_a_65th_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    for index in range(63):
+        _r1_seed_state(repo, f"existing-{index}")
+    context = multiprocessing.get_context("spawn")
+    rendezvous = context.Barrier(2)
+    scanned = [context.Event(), context.Event()]
+    results = [context.Queue(), context.Queue()]
+    processes = [
+        context.Process(
+            target=_r1_process_hook,
+            args=(_r1_event(repo, "SubagentStart", f"contender-{index}"), results[index]),
+            kwargs={"rendezvous": rendezvous, "scanned": scanned[index], "peer_scanned": scanned[1 - index]},
+        )
+        for index in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for process, result in zip(processes, results, strict=True):
+            _r1_collect(process, result)
+    finally:
+        _r1_close_processes(processes)
+
+    states = list(_r1_session(repo).glob("*.json"))
+    assert len(states) == 64, "count and creation were not one process-shared transaction"
+
+
+def test_r1_concurrent_duplicate_starts_preserve_the_original_timestamp(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    state = _r1_seed_state(repo, started=123)
+    original_timestamp = json.loads(state.read_text())["started_at_ms"]
+    context = multiprocessing.get_context("spawn")
+    rendezvous = context.Barrier(2)
+    results = [context.Queue(), context.Queue()]
+    processes = [
+        context.Process(
+            target=_r1_process_hook,
+            args=(_r1_event(repo, "SubagentStart"), result),
+            kwargs={"rendezvous": rendezvous},
+        )
+        for result in results
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for process, result in zip(processes, results, strict=True):
+            _r1_collect(process, result)
+    finally:
+        _r1_close_processes(processes)
+
+    assert json.loads(state.read_text())["started_at_ms"] == original_timestamp
+    assert len(list(state.parent.glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize(
+    ("first_event", "pause_boundary"),
+    (("SubagentStart", "scan"), ("SubagentStop", "unlink"), ("SessionEnd", "unlink"),
+     ("SubagentStop", "removed"), ("SessionEnd", "removed")),
+)
+def test_r1_session_transactions_exclude_a_process_start_until_completion(
+    tmp_path: Path, first_event: str, pause_boundary: str
+) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    _r1_seed_state(repo)
+    session = _r1_session(repo)
+    before = _r1_snapshot(session)
+    context = multiprocessing.get_context("spawn")
+    paused, proceed = context.Event(), context.Event()
+    first_result, second_result = context.Queue(), context.Queue()
+    first = context.Process(
+        target=_r1_process_hook,
+        args=(_r1_event(repo, first_event, "agent-first" if first_event == "SubagentStart" else "agent-original"), first_result),
+        kwargs={"paused": paused, "proceed": proceed, "pause_boundary": pause_boundary},
+    )
+    second = context.Process(
+        target=_r1_process_hook,
+        args=(_r1_event(repo, "SubagentStart", "agent-second"), second_result),
+    )
+    processes = [first]
+    try:
+        first.start()
+        assert paused.wait(timeout=10), "the first transaction never reached its filesystem boundary"
+        expected_exists = pause_boundary != "removed"
+        assert session.exists() == expected_exists
+        second.start()
+        processes.append(second)
+        _r1_collect(second, second_result)
+        during = _r1_snapshot(session)
+        during_exists = session.exists()
+        durable = repo / ".git/codex-harness/telemetry.jsonl"
+        during_rows = durable.read_bytes() if durable.exists() else b""
+    finally:
+        proceed.set()
+        _r1_close_processes([process for process in processes if process is not first])
+        first.join(timeout=15)
+        _r1_close_processes([first])
+
+    _r1_collect(first, first_result)
+    assert during_exists == expected_exists, "a second process recreated an unfinished session"
+    assert during == (before if expected_exists else {}), "a second process mutated a session during an unfinished transaction"
+    assert during_rows == b"", "a second lifecycle transaction completed while the first held the session"
+
+    # The stable lock must remain usable when stop/cleanup removes and later recreates the directory.
+    after = _r1_event(repo, "SubagentStart", "agent-after-removal")
+    assert _run(after).returncode == 0
+    recreated = session / (hashlib.sha256(b"agent-after-removal").hexdigest() + ".json")
+    assert recreated.is_file()
+    assert _run({**after, "hook_event_name": "SubagentStop"}).returncode == 0
+    assert _run({**after, "hook_event_name": "SessionEnd"}).returncode == 0
+    assert not session.exists()
+
+
+@pytest.mark.parametrize("missing", ("O_NOFOLLOW", "O_DIRECTORY", "dir_fd", "fd_scandir"))
+@pytest.mark.parametrize("event_name", ("SubagentStart", "SubagentStop", "SessionEnd", "PostCompact"))
+def test_r1_unsupported_primitives_make_hooks_silent_without_scratch_mutation(
+    tmp_path: Path, monkeypatch, missing: str, event_name: str
+) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    _r1_seed_state(repo)
+    metadata = repo / ".git/codex-harness"
+    before = _r1_snapshot(metadata)
+    hook = _r1_hook_module()
+    if missing in {"O_NOFOLLOW", "O_DIRECTORY"}:
+        monkeypatch.delattr(os, missing, raising=False)
+    elif missing == "dir_fd":
+        monkeypatch.setattr(os, "supports_dir_fd", set())
+    else:
+        monkeypatch.setattr(os, "supports_fd", os.supports_fd - {os.scandir})
+
+    result = _r1_invoke_hook(hook, _r1_event(repo, event_name, "agent-second" if event_name == "SubagentStart" else "agent-original"))
+
+    assert result == (0, "", "")
+    assert _r1_snapshot(metadata) == before, "unsupported hook storage used an unsafe fallback"
+
+
+def _r3_telemetry_module():
+    spec = importlib.util.spec_from_file_location("r3_telemetry", ROOT / "scripts/harness_telemetry.py")
+    telemetry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(telemetry)
+    return telemetry
+
+
+def _r3_payload(schema_version: int) -> dict:
+    if schema_version == 1:
+        return {"event": "ci_rerun", "observed_at_ms": 1}
+    return {
+        "schema_version": 2, "event": "usage_observation", "observed_at_ms": 1,
+        "usage": {
+            "observation_ref": "a" * 64, "revision": 0, "source_kind": "caller_report",
+            "usage_scope": "task", "aggregation_scope": "exclusive", "input_tokens": 10,
+            "cached_input_tokens": 0, "cache_write_tokens": 0, "cache_write_30m_tokens": 0,
+            "cache_write_12h_tokens": 0, "output_tokens": 2, "reasoning_output_tokens": 0,
+        },
+    }
+
+
+class _R3CommonSwap:
+    """Forward real filesystem calls while replacing one previously inspected Git directory."""
+
+    def __init__(self, common: Path, outside: Path, boundary: str):
+        self.common, self.outside, self.boundary = common, outside, boundary
+        self.held = common.with_name("held-git")
+        self.original_info = common.stat()
+        self.outside_info = outside.stat()
+        assert (self.original_info.st_dev, self.original_info.st_ino) != (
+            self.outside_info.st_dev, self.outside_info.st_ino
+        )
+        self.original_bytes, self.outside_bytes = _r1_snapshot(common), _r1_snapshot(outside)
+        self.inspected = self.swapped = False
+        self.descendant_io = []
+        self.fd_paths, self.outside_fds = {}, {}
+
+    def _path(self, target, kwargs) -> Path | None:
+        if isinstance(target, int):
+            return self.fd_paths.get(target)
+        path = Path(os.fsdecode(target))
+        if not path.is_absolute() and kwargs.get("dir_fd") in self.fd_paths:
+            path = self.fd_paths[kwargs["dir_fd"]] / path
+        return Path(os.path.abspath(path))
+
+    def _swap(self) -> None:
+        self.common.rename(self.held)
+        if self.boundary == "inspection_symlink":
+            self.common.symlink_to(self.outside, target_is_directory=True)
+        else:
+            self.outside.rename(self.common)
+        self.swapped = True
+
+    def _observe(self, operation, target, kwargs) -> None:
+        if not self.swapped:
+            return
+        if isinstance(target, int):
+            if target in self.outside_fds and (
+                operation in {"read", "write", "scandir"} or self.outside_fds[target]
+            ):
+                self.descendant_io.append(operation)
+            return
+        path = self._path(target, kwargs)
+        if kwargs.get("dir_fd") in self.outside_fds or any(
+            root in path.parents for root in (self.common, self.outside)
+        ):
+            self.descendant_io.append(operation)
+
+    def install(self, patch) -> None:
+        original_fstat = os.fstat
+
+        def forward(operation, original):
+            def wrapped(target, *args, **kwargs):
+                path = self._path(target, kwargs)
+                if (
+                    not self.swapped and self.inspected and self.boundary == "resolved_real"
+                    and path == self.common and (operation == "open" or (
+                        operation == "stat" and kwargs.get("dir_fd") is not None
+                    ))
+                ):
+                    # After canonicalization, substitute before descriptor-relative entry lookup.
+                    # Direct opens are covered too, without requiring Path.resolve to remain.
+                    self._swap()
+                self._observe(operation, target, kwargs)
+                result = original(target, *args, **kwargs)
+                if (
+                    operation in {"lstat", "stat"} and not self.swapped and path == self.common
+                    and (result.st_dev, result.st_ino) == (
+                        self.original_info.st_dev, self.original_info.st_ino
+                    )
+                ):
+                    self.inspected = True
+                    if self.boundary == "inspection_symlink":
+                        self._swap()
+                if operation == "open":
+                    self.fd_paths[result] = path
+                    info = original_fstat(result)
+                    is_root = (info.st_dev, info.st_ino) == (
+                        self.outside_info.st_dev, self.outside_info.st_ino
+                    )
+                    if is_root or kwargs.get("dir_fd") in self.outside_fds or (
+                        self.swapped and any(root in path.parents for root in (self.common, self.outside))
+                    ):
+                        self.outside_fds[result] = not is_root
+                elif operation == "close":
+                    self.fd_paths.pop(target, None)
+                    self.outside_fds.pop(target, None)
+                return result
+
+            return wrapped
+
+        for operation in ("lstat", "stat", "open", "read", "write", "scandir", "mkdir", "unlink", "rmdir", "close"):
+            _r1_patch_os(patch, operation, forward(operation, getattr(os, operation)))
+
+    def assert_rejected_before_descendants(self) -> None:
+        assert self.swapped, "the real Git-common filesystem replacement was not exercised"
+        outside_location = self.outside if self.boundary == "inspection_symlink" else self.common
+        assert _r1_snapshot(outside_location) == self.outside_bytes, "outside Git-common evidence changed"
+        assert _r1_snapshot(self.held) == self.original_bytes, "held original Git metadata changed"
+        assert self.descendant_io == [], "Git-common identity mismatch reached descendant I/O"
+
+
+@pytest.mark.parametrize("boundary", ("inspection_symlink", "resolved_real"))
+@pytest.mark.parametrize("schema_version", (1, 2))
+@pytest.mark.parametrize("operation", ("record", "load", "path"))
+def test_r3_discovered_git_common_identity_survives_resolution_and_open(
+    tmp_path: Path, monkeypatch, boundary: str, schema_version: int, operation: str
+) -> None:
+    base = tmp_path.resolve()
+    repo, outside = base / "repo", base / "outside-git"
+    _git_repo(repo)
+    telemetry = _r3_telemetry_module()
+    payload = _r3_payload(schema_version)
+    stream = telemetry.record(repo, payload)
+    outside_metadata = outside / "codex-harness"
+    outside_metadata.mkdir(parents=True)
+    (outside_metadata / stream.name).write_text(json.dumps({**payload, "observed_at_ms": 999}) + "\n")
+    race = _R3CommonSwap(repo / ".git", outside, boundary)
+    error = None
+
+    with monkeypatch.context() as patch:
+        race.install(patch)
+        try:
+            if operation == "record":
+                telemetry.record(repo, payload)
+            elif operation == "load":
+                telemetry.load(repo, schema_version=schema_version)
+            else:
+                telemetry.telemetry_path(repo, schema_version=schema_version)
+        except ValueError as exc:
+            error = exc
+
+    race.assert_rejected_before_descendants()
+    assert error is not None, "discovered Git-common identity mismatch was accepted"
+    assert len(str(error)) <= 256
+    assert all(str(path) not in str(error) for path in (race.common, race.outside, race.held))
+
+
+@pytest.mark.parametrize("boundary", ("inspection_symlink", "resolved_real"))
+def test_r3_session_end_rejects_replaced_git_common_before_outside_cleanup(
+    tmp_path: Path, monkeypatch, boundary: str
+) -> None:
+    base = tmp_path.resolve()
+    repo, outside = base / "repo", base / "outside-git"
+    _git_repo(repo)
+    state = _r1_seed_state(repo)
+    outside_state = outside / state.relative_to(repo / ".git")
+    outside_state.parent.mkdir(parents=True)
+    outside_state.write_text(json.dumps({"started_at_ms": 456, "role": "code_explorer"}))
+    race = _R3CommonSwap(repo / ".git", outside, boundary)
+
+    with monkeypatch.context() as patch:
+        race.install(patch)
+        result = _r1_invoke_hook(_r1_hook_module(), _r1_event(repo, "SessionEnd"))
+
+    assert result == (0, "", "")
+    race.assert_rejected_before_descendants()
+
+
+@pytest.mark.parametrize("discovery", ("repo_alias", "common_alias", "linked_worktree"))
+def test_r3_legitimate_git_common_aliases_keep_the_original_inode(discovery: str, tmp_path: Path) -> None:
+    base = tmp_path.resolve()
+    repo = base / "repo"
+    _git_repo(repo)
+    common, target = repo / ".git", repo
+    if discovery == "repo_alias":
+        target = base / "repo-alias"
+        target.symlink_to(repo, target_is_directory=True)
+    elif discovery == "common_alias":
+        parent = base / "git-parent"
+        parent.mkdir()
+        common.rename(parent / "git")
+        common = parent / "git"
+        alias = base / "metadata-alias"
+        alias.symlink_to(parent, target_is_directory=True)
+        (repo / ".git").write_text(f"gitdir: {alias / 'git'}\n")
+    else:
+        subprocess.run(
+            ["git", "-C", str(repo), "-c", "user.name=Test User", "-c", "user.email=test@example.invalid",
+             "commit", "--allow-empty", "-qm", "fixture base"], check=True,
+        )
+        target = base / "linked"
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "r3-linked", str(target)], check=True)
+
+    telemetry = _r3_telemetry_module()
+    for schema_version in (1, 2):
+        payload = _r3_payload(schema_version)
+        stream = telemetry.record(target, payload)
+        assert stream.parent == common / "codex-harness"
+        assert telemetry.telemetry_path(target, schema_version=schema_version) == stream
+        assert telemetry.load(target, schema_version=schema_version) == [payload]
+    session_ref = hashlib.sha256(_common(target)["session_id"].encode()).hexdigest()
+    session = common / "codex-harness/runtime" / session_ref
+    session.mkdir(parents=True)
+    (session / ("b" * 64 + ".json")).write_text(json.dumps({"started_at_ms": 1, "role": "code_explorer"}))
+    assert _r1_invoke_hook(_r1_hook_module(), _r1_event(target, "SessionEnd")) == (0, "", "")
+    assert not session.exists()
