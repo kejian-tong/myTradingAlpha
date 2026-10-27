@@ -603,3 +603,212 @@ def test_r2_legacy_additive_summary_bounds_preserve_evidence(
             assert len(str(error.value)) <= 256
     finally:
         assert path.read_bytes() == before
+
+
+def _r4_stream(tmp_path: Path, schema_version: int):
+    repo, telemetry = _repo(tmp_path), _module()
+    first = _usage_event() if schema_version == 2 else {"event": "ci_rerun"}
+    first["observed_at_ms"] = 1
+    path = telemetry.record(repo, first)
+    return repo, telemetry, path, first
+
+
+def _r4_reject_without_retry(monkeypatch, repo, telemetry, path, payload) -> None:
+    real_open = os.open
+    attempts = 0
+
+    def observe_open(target, flags, *args, **kwargs):
+        nonlocal attempts
+        if _r1_filename(target) == f".{path.name}.lock" and flags & os.O_EXCL:
+            attempts += 1
+        return real_open(target, flags, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        _r1_patch_os(patch, "open", observe_open)
+        with pytest.raises(ValueError):
+            telemetry.record(repo, payload)
+    assert attempts == 1, "unsafe lock evidence was treated as retryable contention"
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+def test_r4_released_owner_lock_snapshot_allows_one_complete_append(
+    tmp_path: Path, monkeypatch, schema_version: int
+) -> None:
+    repo, telemetry, path, first = _r4_stream(tmp_path, schema_version)
+    before = path.read_bytes()
+    lock = path.with_name(f".{path.name}.lock")
+    owner_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    owner_info = os.fstat(owner_fd)
+    real_stat, real_unlink = os.stat, os.unlink
+    released = False
+
+    def release_during_lookup(target, *args, **kwargs):
+        nonlocal released
+        info = real_stat(target, *args, **kwargs)
+        if not released and _r1_filename(target) == lock.name:
+            assert (info.st_dev, info.st_ino, info.st_nlink) == (
+                owner_info.st_dev, owner_info.st_ino, 1
+            )
+            real_unlink(target, dir_fd=kwargs.get("dir_fd"))
+            snapshot = os.fstat(owner_fd)
+            assert snapshot.st_nlink == 0
+            released = True
+            return snapshot
+        return info
+
+    second = {**first, "observed_at_ms": 2}
+    try:
+        with monkeypatch.context() as patch:
+            _r1_patch_os(patch, "stat", release_during_lookup)
+            try:
+                telemetry.record(repo, second)
+            finally:
+                assert released, "native unlink/fstat-zero transition was not exercised"
+        assert os.fstat(owner_fd).st_nlink == 0
+        assert telemetry.load(repo, schema_version=schema_version) == [first, second]
+        assert path.read_bytes().startswith(before) and path.read_bytes().endswith(b"\n")
+        assert not lock.exists()
+    finally:
+        os.close(owner_fd)
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+def test_r4_hardlinked_contender_lock_preserves_both_links_and_stream(
+    tmp_path: Path, monkeypatch, schema_version: int
+) -> None:
+    repo, telemetry, path, first = _r4_stream(tmp_path, schema_version)
+    before = path.read_bytes()
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"preserve unowned lock evidence")
+    lock = path.with_name(f".{path.name}.lock")
+    os.link(outside, lock)
+    identity = outside.stat()
+    assert identity.st_nlink == 2
+
+    _r4_reject_without_retry(monkeypatch, repo, telemetry, path, first)
+
+    assert path.read_bytes() == before
+    assert outside.read_bytes() == lock.read_bytes() == b"preserve unowned lock evidence"
+    for link in (outside, lock):
+        info = link.stat()
+        assert (info.st_dev, info.st_ino, info.st_nlink) == (identity.st_dev, identity.st_ino, 2)
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+@pytest.mark.parametrize("kind", ("symlink", "directory"))
+def test_r4_unsafe_contender_lock_is_never_removed_or_followed(
+    tmp_path: Path, monkeypatch, schema_version: int, kind: str
+) -> None:
+    repo, telemetry, path, first = _r4_stream(tmp_path, schema_version)
+    before = path.read_bytes()
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"preserve outside")
+    lock = path.with_name(f".{path.name}.lock")
+    if kind == "symlink":
+        lock.symlink_to(outside)
+    else:
+        lock.mkdir()
+
+    _r4_reject_without_retry(monkeypatch, repo, telemetry, path, first)
+
+    assert path.read_bytes() == before and outside.read_bytes() == b"preserve outside"
+    assert outside.stat().st_nlink == 1
+    if kind == "symlink":
+        assert lock.is_symlink()
+    else:
+        assert lock.is_dir() and list(lock.iterdir()) == []
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+def test_r4_zero_link_writable_stream_is_rejected_before_any_write_open(
+    tmp_path: Path, monkeypatch, schema_version: int
+) -> None:
+    repo, telemetry, path, first = _r4_stream(tmp_path, schema_version)
+    before = path.read_bytes()
+    stream_fd = os.open(path, os.O_RDONLY)
+    real_stat, real_unlink, real_open = os.stat, os.unlink, os.open
+    released, writable_opens = False, []
+
+    def release_stream(target, *args, **kwargs):
+        nonlocal released
+        info = real_stat(target, *args, **kwargs)
+        if not released and _r1_filename(target) == path.name:
+            real_unlink(target, dir_fd=kwargs.get("dir_fd"))
+            snapshot = os.fstat(stream_fd)
+            assert snapshot.st_nlink == 0
+            released = True
+            return snapshot
+        return info
+
+    def observe_open(target, flags, *args, **kwargs):
+        if released and _r1_filename(target) == path.name and flags & (os.O_RDWR | os.O_WRONLY):
+            writable_opens.append(flags)
+        return real_open(target, flags, *args, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            _r1_patch_os(patch, "stat", release_stream)
+            _r1_patch_os(patch, "open", observe_open)
+            with pytest.raises(ValueError):
+                telemetry.record(repo, first)
+        assert released and writable_opens == []
+        assert not path.exists() and os.fstat(stream_fd).st_nlink == 0
+        os.lseek(stream_fd, 0, os.SEEK_SET)
+        assert os.read(stream_fd, len(before) + 1) == before
+    finally:
+        os.close(stream_fd)
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+def test_r4_repeated_native_zero_link_lock_snapshots_obey_the_one_second_deadline(
+    tmp_path: Path, monkeypatch, schema_version: int
+) -> None:
+    repo, telemetry, path, first = _r4_stream(tmp_path, schema_version)
+    before = path.read_bytes()
+    lock_name = f".{path.name}.lock"
+    real_open, real_stat, real_unlink = os.open, os.stat, os.unlink
+    now, attempts, releases = 0.0, 0, 0
+    owner_fds = []
+
+    def contended_open(target, flags, *args, **kwargs):
+        nonlocal now, attempts
+        if _r1_filename(target) == lock_name and flags & os.O_EXCL:
+            attempts += 1
+            now += 0.25
+            if attempts > 16:
+                raise AssertionError("released lock retry bypassed the deadline")
+            owner_fds.append(real_open(target, flags, *args, **kwargs))
+            # The contender receives a native FileExistsError while the owner still has a name.
+        return real_open(target, flags, *args, **kwargs)
+
+    def release_during_lookup(target, *args, **kwargs):
+        nonlocal releases
+        info = real_stat(target, *args, **kwargs)
+        if _r1_filename(target) == lock_name:
+            assert info.st_nlink == 1
+            real_unlink(target, dir_fd=kwargs.get("dir_fd"))
+            owner_fd = owner_fds.pop()
+            try:
+                snapshot = os.fstat(owner_fd)
+                assert snapshot.st_nlink == 0
+                releases += 1
+                return snapshot
+            finally:
+                os.close(owner_fd)
+        return info
+
+    try:
+        with monkeypatch.context() as patch:
+            _r1_patch_os(patch, "open", contended_open)
+            _r1_patch_os(patch, "stat", release_during_lookup)
+            patch.setattr(telemetry.time, "monotonic", lambda: now)
+            patch.setattr(telemetry.time, "sleep", lambda _seconds: None)
+            with pytest.raises(ValueError, match="contended"):
+                telemetry.record(repo, first)
+        assert releases == attempts > 1
+        assert now == 1.0
+        assert not path.with_name(lock_name).exists()
+    finally:
+        for owner_fd in owner_fds:
+            os.close(owner_fd)
+        assert path.read_bytes() == before
