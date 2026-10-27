@@ -835,3 +835,222 @@ def test_r1_unsupported_primitives_make_hooks_silent_without_scratch_mutation(
 
     assert result == (0, "", "")
     assert _r1_snapshot(metadata) == before, "unsupported hook storage used an unsafe fallback"
+
+
+def _r3_telemetry_module():
+    spec = importlib.util.spec_from_file_location("r3_telemetry", ROOT / "scripts/harness_telemetry.py")
+    telemetry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(telemetry)
+    return telemetry
+
+
+def _r3_payload(schema_version: int) -> dict:
+    if schema_version == 1:
+        return {"event": "ci_rerun", "observed_at_ms": 1}
+    return {
+        "schema_version": 2, "event": "usage_observation", "observed_at_ms": 1,
+        "usage": {
+            "observation_ref": "a" * 64, "revision": 0, "source_kind": "caller_report",
+            "usage_scope": "task", "aggregation_scope": "exclusive", "input_tokens": 10,
+            "cached_input_tokens": 0, "cache_write_tokens": 0, "cache_write_30m_tokens": 0,
+            "cache_write_12h_tokens": 0, "output_tokens": 2, "reasoning_output_tokens": 0,
+        },
+    }
+
+
+class _R3CommonSwap:
+    """Forward real filesystem calls while replacing one previously inspected Git directory."""
+
+    def __init__(self, common: Path, outside: Path, boundary: str):
+        self.common, self.outside, self.boundary = common, outside, boundary
+        self.held = common.with_name("held-git")
+        self.original_info = common.stat()
+        self.outside_info = outside.stat()
+        assert (self.original_info.st_dev, self.original_info.st_ino) != (
+            self.outside_info.st_dev, self.outside_info.st_ino
+        )
+        self.original_bytes, self.outside_bytes = _r1_snapshot(common), _r1_snapshot(outside)
+        self.inspected = self.swapped = False
+        self.descendant_io = []
+        self.fd_paths, self.outside_fds = {}, {}
+
+    def _path(self, target, kwargs) -> Path | None:
+        if isinstance(target, int):
+            return self.fd_paths.get(target)
+        path = Path(os.fsdecode(target))
+        if not path.is_absolute() and kwargs.get("dir_fd") in self.fd_paths:
+            path = self.fd_paths[kwargs["dir_fd"]] / path
+        return Path(os.path.abspath(path))
+
+    def _swap(self) -> None:
+        self.common.rename(self.held)
+        if self.boundary == "inspection_symlink":
+            self.common.symlink_to(self.outside, target_is_directory=True)
+        else:
+            self.outside.rename(self.common)
+        self.swapped = True
+
+    def _observe(self, operation, target, kwargs) -> None:
+        if not self.swapped:
+            return
+        if isinstance(target, int):
+            if target in self.outside_fds and (
+                operation in {"read", "write", "scandir"} or self.outside_fds[target]
+            ):
+                self.descendant_io.append(operation)
+            return
+        path = self._path(target, kwargs)
+        if kwargs.get("dir_fd") in self.outside_fds or any(
+            root in path.parents for root in (self.common, self.outside)
+        ):
+            self.descendant_io.append(operation)
+
+    def install(self, patch) -> None:
+        original_fstat = os.fstat
+
+        def forward(operation, original):
+            def wrapped(target, *args, **kwargs):
+                path = self._path(target, kwargs)
+                if (
+                    not self.swapped and self.inspected and self.boundary == "resolved_real"
+                    and path == self.common and (operation == "open" or (
+                        operation == "stat" and kwargs.get("dir_fd") is not None
+                    ))
+                ):
+                    # After canonicalization, substitute before descriptor-relative entry lookup.
+                    # Direct opens are covered too, without requiring Path.resolve to remain.
+                    self._swap()
+                self._observe(operation, target, kwargs)
+                result = original(target, *args, **kwargs)
+                if (
+                    operation in {"lstat", "stat"} and not self.swapped and path == self.common
+                    and (result.st_dev, result.st_ino) == (
+                        self.original_info.st_dev, self.original_info.st_ino
+                    )
+                ):
+                    self.inspected = True
+                    if self.boundary == "inspection_symlink":
+                        self._swap()
+                if operation == "open":
+                    self.fd_paths[result] = path
+                    info = original_fstat(result)
+                    is_root = (info.st_dev, info.st_ino) == (
+                        self.outside_info.st_dev, self.outside_info.st_ino
+                    )
+                    if is_root or kwargs.get("dir_fd") in self.outside_fds or (
+                        self.swapped and any(root in path.parents for root in (self.common, self.outside))
+                    ):
+                        self.outside_fds[result] = not is_root
+                elif operation == "close":
+                    self.fd_paths.pop(target, None)
+                    self.outside_fds.pop(target, None)
+                return result
+
+            return wrapped
+
+        for operation in ("lstat", "stat", "open", "read", "write", "scandir", "mkdir", "unlink", "rmdir", "close"):
+            _r1_patch_os(patch, operation, forward(operation, getattr(os, operation)))
+
+    def assert_rejected_before_descendants(self) -> None:
+        assert self.swapped, "the real Git-common filesystem replacement was not exercised"
+        outside_location = self.outside if self.boundary == "inspection_symlink" else self.common
+        assert _r1_snapshot(outside_location) == self.outside_bytes, "outside Git-common evidence changed"
+        assert _r1_snapshot(self.held) == self.original_bytes, "held original Git metadata changed"
+        assert self.descendant_io == [], "Git-common identity mismatch reached descendant I/O"
+
+
+@pytest.mark.parametrize("boundary", ("inspection_symlink", "resolved_real"))
+@pytest.mark.parametrize("schema_version", (1, 2))
+@pytest.mark.parametrize("operation", ("record", "load", "path"))
+def test_r3_discovered_git_common_identity_survives_resolution_and_open(
+    tmp_path: Path, monkeypatch, boundary: str, schema_version: int, operation: str
+) -> None:
+    base = tmp_path.resolve()
+    repo, outside = base / "repo", base / "outside-git"
+    _git_repo(repo)
+    telemetry = _r3_telemetry_module()
+    payload = _r3_payload(schema_version)
+    stream = telemetry.record(repo, payload)
+    outside_metadata = outside / "codex-harness"
+    outside_metadata.mkdir(parents=True)
+    (outside_metadata / stream.name).write_text(json.dumps({**payload, "observed_at_ms": 999}) + "\n")
+    race = _R3CommonSwap(repo / ".git", outside, boundary)
+    error = None
+
+    with monkeypatch.context() as patch:
+        race.install(patch)
+        try:
+            if operation == "record":
+                telemetry.record(repo, payload)
+            elif operation == "load":
+                telemetry.load(repo, schema_version=schema_version)
+            else:
+                telemetry.telemetry_path(repo, schema_version=schema_version)
+        except ValueError as exc:
+            error = exc
+
+    race.assert_rejected_before_descendants()
+    assert error is not None, "discovered Git-common identity mismatch was accepted"
+    assert len(str(error)) <= 256
+    assert all(str(path) not in str(error) for path in (race.common, race.outside, race.held))
+
+
+@pytest.mark.parametrize("boundary", ("inspection_symlink", "resolved_real"))
+def test_r3_session_end_rejects_replaced_git_common_before_outside_cleanup(
+    tmp_path: Path, monkeypatch, boundary: str
+) -> None:
+    base = tmp_path.resolve()
+    repo, outside = base / "repo", base / "outside-git"
+    _git_repo(repo)
+    state = _r1_seed_state(repo)
+    outside_state = outside / state.relative_to(repo / ".git")
+    outside_state.parent.mkdir(parents=True)
+    outside_state.write_text(json.dumps({"started_at_ms": 456, "role": "code_explorer"}))
+    race = _R3CommonSwap(repo / ".git", outside, boundary)
+
+    with monkeypatch.context() as patch:
+        race.install(patch)
+        result = _r1_invoke_hook(_r1_hook_module(), _r1_event(repo, "SessionEnd"))
+
+    assert result == (0, "", "")
+    race.assert_rejected_before_descendants()
+
+
+@pytest.mark.parametrize("discovery", ("repo_alias", "common_alias", "linked_worktree"))
+def test_r3_legitimate_git_common_aliases_keep_the_original_inode(discovery: str, tmp_path: Path) -> None:
+    base = tmp_path.resolve()
+    repo = base / "repo"
+    _git_repo(repo)
+    common, target = repo / ".git", repo
+    if discovery == "repo_alias":
+        target = base / "repo-alias"
+        target.symlink_to(repo, target_is_directory=True)
+    elif discovery == "common_alias":
+        parent = base / "git-parent"
+        parent.mkdir()
+        common.rename(parent / "git")
+        common = parent / "git"
+        alias = base / "metadata-alias"
+        alias.symlink_to(parent, target_is_directory=True)
+        (repo / ".git").write_text(f"gitdir: {alias / 'git'}\n")
+    else:
+        subprocess.run(
+            ["git", "-C", str(repo), "-c", "user.name=Test User", "-c", "user.email=test@example.invalid",
+             "commit", "--allow-empty", "-qm", "fixture base"], check=True,
+        )
+        target = base / "linked"
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "r3-linked", str(target)], check=True)
+
+    telemetry = _r3_telemetry_module()
+    for schema_version in (1, 2):
+        payload = _r3_payload(schema_version)
+        stream = telemetry.record(target, payload)
+        assert stream.parent == common / "codex-harness"
+        assert telemetry.telemetry_path(target, schema_version=schema_version) == stream
+        assert telemetry.load(target, schema_version=schema_version) == [payload]
+    session_ref = hashlib.sha256(_common(target)["session_id"].encode()).hexdigest()
+    session = common / "codex-harness/runtime" / session_ref
+    session.mkdir(parents=True)
+    (session / ("b" * 64 + ".json")).write_text(json.dumps({"started_at_ms": 1, "role": "code_explorer"}))
+    assert _r1_invoke_hook(_r1_hook_module(), _r1_event(target, "SessionEnd")) == (0, "", "")
+    assert not session.exists()
