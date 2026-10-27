@@ -41,10 +41,11 @@ Keep the ledger concise and evidence-backed. Track at least base/final/merge SHA
 requested/configured routes, escalation reason, RED evidence when applicable, validation/CI, independent
 review, master gate, scope status, blockers, and the informational next dependency-valid PR.
 
-Follow `AGENT_STATE_COMPACTION.md` for state lifecycle. When no active PR owns the file, normal
-reconciliation should target a current operational snapshot no larger than about 12 KiB by replacing
-closed chronology with durable GitHub references and, only when useful, cold history under `history/`.
-The offline harness enforces a temporary 64 KiB absolute ceiling against unbounded growth.
+Follow `AGENT_STATE_COMPACTION.md` for state lifecycle and
+[`CONTEXT_MANAGEMENT.md`](CONTEXT_MANAGEMENT.md) for bounded summaries and source references. When no
+active PR owns the file, normal reconciliation should target a current operational snapshot no larger
+than 6 KiB. The offline harness enforces a hard 12 KiB original-UTF-8-byte ceiling. Replace closed
+chronology with durable GitHub references; use cold history only when it adds recovery value.
 
 Before any compaction rewrite, verify ownership from current GitHub. If another active roadmap or
 maintenance PR explicitly owns `AGENT_STATE.md`, do not compete for the same state file from a harness

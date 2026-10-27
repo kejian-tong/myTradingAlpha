@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
+from contextlib import suppress
 from pathlib import Path
 
 _ROLES = {
@@ -103,6 +106,14 @@ _PRETOOL_HOOK = "PreToolUse"
 _OPENAI_DOCS_MCP_URL = "https://developers.openai.com/mcp"
 _OPENAI_DOCS_MCP_TOOLS = ["fetch_openai_doc", "search_openai_docs"]
 _WATCHLIST_PATH = "docs/productionization/CODEX_FEATURE_WATCHLIST.md"
+_STATE_PATH = Path("docs/productionization/AGENT_STATE.md")
+_STATE_MAX_BYTES = 12_288
+_STATE_READ_MAX_BYTES = _STATE_MAX_BYTES + 1
+_STATE_CONTROL_HEADING = "## Current control state"
+_STATE_KEY_RE = re.compile(r"^- `([A-Za-z0-9_]+)`: (.+)$")
+_STATE_SHA_RE = re.compile(r"`[0-9a-f]{40}`\Z")
+_CONTEXT_POLICY_PATH = Path("docs/productionization/CONTEXT_MANAGEMENT.md")
+_CONTEXT_POLICY_MAX_BYTES = 6_144
 _MEMORY_WATCHLIST_CAPABILITY = "Codex Memories (`features.memories`)"
 _MEMORY_WATCHLIST_STATUS = "explicitly disabled / watch-only"
 _MEMORY_WATCHLIST_REASON = (
@@ -299,6 +310,137 @@ def _watch_only_feature_errors(root: Path, config: dict) -> list[str]:
     return errors
 
 
+def _same_regular_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(left.st_mode)
+        and stat.S_ISREG(right.st_mode)
+        and left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+    )
+
+
+def _read_agent_state(root: Path) -> tuple[bytes | None, str | None]:
+    """Read the state through one bounded descriptor bound to the inspected path."""
+    path = root / _STATE_PATH
+    try:
+        inspected = os.lstat(path)
+    except (OSError, TypeError, ValueError):
+        return None, "AGENT_STATE.md is missing or unavailable"
+    if not stat.S_ISREG(inspected.st_mode):
+        return None, "AGENT_STATE.md must be a regular file, not a symlink"
+    if inspected.st_size < 0:
+        return None, "AGENT_STATE.md has an invalid size"
+    if inspected.st_size > _STATE_MAX_BYTES:
+        return None, "AGENT_STATE.md exceeds the 12 KiB hard ceiling"
+
+    flags = os.O_RDONLY
+    for flag_name in ("O_BINARY", "O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK"):
+        flags |= getattr(os, flag_name, 0)
+
+    descriptor = None
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if not _same_regular_file(inspected, opened):
+            return None, "AGENT_STATE.md changed before its bounded read"
+        if opened.st_size < 0:
+            return None, "AGENT_STATE.md has an invalid size"
+        if opened.st_size > _STATE_MAX_BYTES:
+            return None, "AGENT_STATE.md exceeds the 12 KiB hard ceiling"
+
+        read_limit = min(_STATE_READ_MAX_BYTES, opened.st_size + 1)
+        content = bytearray()
+        while len(content) < read_limit:
+            chunk = os.read(descriptor, read_limit - len(content))
+            if not chunk:
+                break
+            content.extend(chunk)
+            if len(content) > _STATE_MAX_BYTES:
+                return None, "AGENT_STATE.md exceeds the 12 KiB hard ceiling"
+
+        after_read = os.fstat(descriptor)
+        if (
+            not _same_regular_file(opened, after_read)
+            or len(content) != opened.st_size
+        ):
+            return None, "AGENT_STATE.md changed during its bounded read"
+        return bytes(content), None
+    except (OSError, TypeError, ValueError):
+        return None, "AGENT_STATE.md is missing or unavailable"
+    finally:
+        if descriptor is not None:
+            with suppress(OSError):
+                os.close(descriptor)
+
+
+def _agent_state_structure_errors(text: str) -> list[str]:
+    """Check only schema-3 current identity fields; values remain inert text."""
+    headings = 0
+    in_current_section = False
+    fence_character = None
+    fence_length = 0
+    fields: dict[str, str] = {}
+    invalid = False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        fence = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence is not None:
+            marker = fence.group(1)
+            if fence_character is None:
+                fence_character = marker[0]
+                fence_length = len(marker)
+            elif marker[0] == fence_character and len(marker) >= fence_length:
+                fence_character = None
+                fence_length = 0
+            continue
+        if fence_character is not None or stripped.startswith(">"):
+            continue
+        if line == _STATE_CONTROL_HEADING:
+            headings += 1
+            in_current_section = True
+            continue
+        if in_current_section and re.match(r"^\s{0,3}#{1,6}\s", line):
+            in_current_section = False
+            continue
+        if not in_current_section or not stripped:
+            continue
+
+        match = _STATE_KEY_RE.fullmatch(line)
+        if match is None:
+            invalid = True
+            continue
+        key, value = match.groups()
+        if not value.strip() or key in fields:
+            invalid = True
+        fields[key] = value
+
+    if (
+        headings != 1
+        or invalid
+        or fields.get("schema_version") != "3"
+        or _STATE_SHA_RE.fullmatch(fields.get("last_reconciled_main_sha", "")) is None
+        or _STATE_SHA_RE.fullmatch(fields.get("last_reconciled_main_tree", "")) is None
+    ):
+        return ["AGENT_STATE.md has an invalid schema-3 current control section"]
+    return []
+
+
+def _agent_state_errors(root: Path) -> tuple[list[str], str | None]:
+    raw, read_error = _read_agent_state(root)
+    if read_error is not None:
+        return [read_error], None
+    if not raw:
+        return ["AGENT_STATE.md is empty"], ""
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return ["AGENT_STATE.md is not valid UTF-8"], None
+    return _agent_state_structure_errors(text), text
+
+
 def _instruction_and_skill_errors(root: Path) -> list[str]:
     errors = []
     root_agents = root / "AGENTS.md"
@@ -310,8 +452,25 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
     protocol_text = (root / "docs/productionization/AGENT_AUDIT_PROTOCOL.md").read_text(
         encoding="utf-8"
     )
+    productionization_agents_text = (root / "docs/productionization/AGENTS.md").read_text(
+        encoding="utf-8"
+    )
     if any(clause not in protocol_text for clause in _PROTOCOL_REVIEW_ASSURANCE_CONTRACT):
         errors.append("protocol read-only review assurance contract is missing")
+    if _CONTEXT_POLICY_PATH.as_posix() not in root_text:
+        errors.append("root context-management policy reference is missing")
+    if _CONTEXT_POLICY_PATH.name not in productionization_agents_text:
+        errors.append("productionization context-management policy reference is missing")
+    if _CONTEXT_POLICY_PATH.name not in protocol_text:
+        errors.append("audit protocol context-management policy reference is missing")
+    try:
+        context_info = os.lstat(root / _CONTEXT_POLICY_PATH)
+        if not stat.S_ISREG(context_info.st_mode):
+            errors.append("context-management policy must be a regular file")
+        elif context_info.st_size > _CONTEXT_POLICY_MAX_BYTES:
+            errors.append("context-management policy exceeds the 6 KiB limit")
+    except (OSError, TypeError, ValueError):
+        errors.append("context-management policy is missing or unavailable")
     for relative, text in (
         ("AGENTS.md", root_text),
         ("docs/productionization/AGENT_AUDIT_PROTOCOL.md", protocol_text),
@@ -323,7 +482,7 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
         (
             root_text,
             protocol_text,
-            (root / "docs/productionization/AGENTS.md").read_text(encoding="utf-8"),
+            productionization_agents_text,
             (root / "docs/productionization/HYBRID_CONCURRENCY_PROTOCOL.md").read_text(
                 encoding="utf-8"
             ),
@@ -371,6 +530,8 @@ def _instruction_and_skill_errors(root: Path) -> list[str]:
 def configuration_errors(root: Path) -> list[str]:
     errors = []
     try:
+        state_errors, state_text = _agent_state_errors(root)
+        errors.extend(state_errors)
         config = _toml(root / ".codex/config.toml")
         if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-6.1-sol", "xhigh"):
             errors.append("Master route differs from reviewed policy")
@@ -435,9 +596,10 @@ def configuration_errors(root: Path) -> list[str]:
         for filename in ("AGENT_AUDIT_PROTOCOL.md", "PR_IMPLEMENTATION_SPEC_TEMPLATE.md"):
             if "sol_high_sol_high" not in (root / "docs/productionization" / filename).read_text():
                 errors.append(f"missing approved implementation-only route in {filename}")
-        for path in (root / "AGENTS.md", root / "docs/productionization/AGENT_STATE.md"):
-            if "strongest available compatible" in path.read_text():
-                errors.append(f"generic fallback contradicts named-role policy: {path.name}")
+        root_agents_text = (root / "AGENTS.md").read_text(encoding="utf-8")
+        for name, text in (("AGENTS.md", root_agents_text), ("AGENT_STATE.md", state_text)):
+            if text is not None and "strongest available compatible" in text:
+                errors.append(f"generic fallback contradicts named-role policy: {name}")
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         errors.append(f"configuration unavailable/invalid: {exc}")
     return errors

@@ -27,6 +27,9 @@ Scoped instruction routes are:
 - `tradingagents/AGENTS.md` — upstream/research compatibility;
 - `tests/productionization/AGENTS.md` — deterministic TDD and contract tests.
 
+Use [the context management policy](docs/productionization/CONTEXT_MANAGEMENT.md) for bounded summaries
+and recovery references; these budgets never reduce required reads, reviews, or evidence.
+
 ## 3. Productionization authority and roadmap
 
 Current GitHub/main and repository state define implementation reality. Approved architecture and order
