@@ -60,6 +60,7 @@ def test_current_harness_snapshot_is_pr105_and_authorizes_only_eff02() -> None:
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state
     assert "routing and ci are unchanged" in normalized.lower()
+    assert "Prospective harness policy" not in state
 
 
 def test_closed_chronology_resolves_through_the_immutable_cold_snapshot() -> None:
@@ -91,6 +92,8 @@ def test_completed_review_gate_completion_and_validation_refs_remain_recoverable
 
 def test_financial_and_host_assurance_boundaries_remain_truthful() -> None:
     normalized = _state_text().lower()
+    assert "degraded_master_review" not in normalized
+    assert "native read-only admission is unavailable" not in normalized
     required_groups = (
         ("separate", "review", "exact-head", "worktree"),
         ("host-origin", "supplemental", "disclosure", "not", "block"),
@@ -103,6 +106,9 @@ def test_financial_and_host_assurance_boundaries_remain_truthful() -> None:
         ("sig-05 authorizes no portfolio, risk, order, broker, paper/live, or promotion behavior",),
         ("no paper/live operation", "explicit human paper/live gates remain mandatory and unexercised"),
         ("no live broker write before phase 09",),
+        ("apps", "memories", "disabled"),
+        ("rules", "permission profiles", "otel", "repo plugins", "watch-only"),
+        ("external-spec", "docs mcp", "configuration intent", "observed"),
     )
     for group in required_groups:
         missing = [marker for marker in group if marker not in normalized]
@@ -131,5 +137,6 @@ def test_compact_state_has_no_stale_bt05_active_or_pending_checklist() -> None:
         "current_pr_id`: bt-05 / pr #104",
         "fresh exact-head evidence above remains pending",
         "merge: pending",
+        "sig_02_candidate_pending_final_exact_head_review",
     )
     assert not any(marker in normalized for marker in stale_markers)
