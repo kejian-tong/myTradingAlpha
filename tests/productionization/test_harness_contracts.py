@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import io
 import json
@@ -375,8 +376,6 @@ def test_agent_state_reader_bounds_descriptor_reads_when_source_grows_after_open
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import builtins
-
     fixture = _copy_harness_fixture(tmp_path)
     state = fixture / STATE_RELATIVE
     state.write_bytes(_state_with_exact_bytes(STATE_BYTE_LIMIT))
@@ -415,7 +414,7 @@ def test_agent_state_reader_bounds_descriptor_reads_when_source_grows_after_open
         def __getattr__(self, name: str) -> object:
             return getattr(self.handle, name)
 
-        def __enter__(self) -> "ObservedReader":
+        def __enter__(self) -> ObservedReader:
             self.handle.__enter__()
             return self
 
@@ -528,6 +527,231 @@ def test_agent_state_reader_bounds_descriptor_reads_when_source_grows_after_open
     assert state_file_modes and all(stat.S_ISREG(mode) for mode in state_file_modes)
     assert all(0 <= size <= STATE_BYTE_LIMIT + 1 for size in read_sizes)
     assert 0 < sum(read_bytes) <= STATE_BYTE_LIMIT + 1
+
+
+@pytest.mark.parametrize("replacement_kind", ("regular", "symlink"))
+def test_agent_state_rejects_path_replacement_between_inspection_and_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_kind: str,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    state = fixture / STATE_RELATIVE
+    valid_state = _valid_agent_state()
+    state.write_bytes(valid_state)
+
+    if replacement_kind == "regular":
+        replacement = tmp_path / "replacement-state.md"
+        replacement.write_bytes(valid_state)
+        target_path = replacement
+    else:
+        replacement = None
+        target_path = tmp_path / "outside-state.md"
+        target_path.write_bytes(valid_state)
+
+    real_builtin_open = builtins.open
+    real_io_open = io.open
+    real_os_open = os.open
+    real_os_fdopen = os.fdopen
+    real_os_read = os.read
+    real_os_fstat = os.fstat
+    real_os_stat = os.stat
+    real_os_lstat = os.lstat
+    real_os_replace = os.replace
+    real_os_unlink = os.unlink
+    real_os_symlink = os.symlink
+
+    def identity(result: os.stat_result) -> tuple[int, int]:
+        return result.st_dev, result.st_ino
+
+    target_before = real_os_stat(target_path)
+    target_identity = identity(target_before)
+    target_bytes_before = real_io_open(target_path, "rb").read()
+    path_inspections: list[tuple[int, int, int]] = []
+    opens_after_inspection: list[bool] = []
+    opened_paths: list[str] = []
+    state_fds: set[int] = set()
+    descriptor_identities: list[tuple[int, int]] = []
+    observed_reads: list[tuple[tuple[int, int], bytes]] = []
+    swap_armed = False
+    swapped = False
+
+    def is_state_path(candidate: object) -> bool:
+        try:
+            return Path(os.fsdecode(candidate)).absolute() == state.absolute()
+        except (OSError, TypeError, ValueError):
+            return False
+
+    def swap_at_open() -> None:
+        nonlocal swapped
+        if not swap_armed or swapped:
+            return
+        opens_after_inspection.append(bool(path_inspections))
+        swapped = True
+        if replacement_kind == "regular":
+            assert replacement is not None
+            real_os_replace(replacement, state)
+        else:
+            real_os_unlink(state)
+            real_os_symlink(target_path, state)
+
+    def record_read(descriptor: int, value: object) -> None:
+        data = value.encode("utf-8") if isinstance(value, str) else bytes(value)
+        opened_identity = identity(real_os_fstat(descriptor))
+        observed_reads.append((opened_identity, data))
+
+    class ReadObserver:
+        def __init__(self, handle: object) -> None:
+            self.handle = handle
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.handle, name)
+
+        def __enter__(self) -> ReadObserver:
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self.handle.__exit__(*args)
+
+        def read(self, size: int = -1) -> object:
+            value = self.handle.read(size)
+            record_read(self.handle.fileno(), value)
+            return value
+
+        def readinto(self, buffer: object) -> object:
+            size = self.handle.readinto(buffer)
+            if size:
+                record_read(self.handle.fileno(), memoryview(buffer)[:size])
+            return size
+
+        def readline(self, size: int = -1) -> object:
+            value = self.handle.readline(size)
+            record_read(self.handle.fileno(), value)
+            return value
+
+        def readlines(self, hint: int = -1) -> object:
+            values = self.handle.readlines(hint)
+            for value in values:
+                record_read(self.handle.fileno(), value)
+            return values
+
+    def watched_stat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        result = real_os_stat(path, *args, **kwargs)
+        if is_state_path(path):
+            path_inspections.append((result.st_dev, result.st_ino, result.st_mode))
+        return result
+
+    def watched_lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        result = real_os_lstat(path, *args, **kwargs)
+        if is_state_path(path):
+            path_inspections.append((result.st_dev, result.st_ino, result.st_mode))
+        return result
+
+    def watched_io_open(file: object, *args: object, **kwargs: object) -> object:
+        if not is_state_path(file):
+            return real_io_open(file, *args, **kwargs)
+        swap_at_open()
+        opened_paths.append("io.open")
+        handle = real_io_open(file, *args, **kwargs)
+        state_fds.add(handle.fileno())
+        return ReadObserver(handle)
+
+    def watched_builtin_open(file: object, *args: object, **kwargs: object) -> object:
+        if not is_state_path(file):
+            return real_builtin_open(file, *args, **kwargs)
+        swap_at_open()
+        opened_paths.append("builtins.open")
+        handle = real_builtin_open(file, *args, **kwargs)
+        state_fds.add(handle.fileno())
+        return ReadObserver(handle)
+
+    def watched_os_open(file: object, flags: int, *args: object, **kwargs: object) -> int:
+        if is_state_path(file):
+            swap_at_open()
+            opened_paths.append("os.open")
+        descriptor = real_os_open(file, flags, *args, **kwargs)
+        if is_state_path(file):
+            state_fds.add(descriptor)
+        return descriptor
+
+    def watched_fdopen(descriptor: int, *args: object, **kwargs: object) -> object:
+        handle = real_os_fdopen(descriptor, *args, **kwargs)
+        return ReadObserver(handle) if descriptor in state_fds else handle
+
+    def watched_os_read(descriptor: int, size: int) -> bytes:
+        value = real_os_read(descriptor, size)
+        if descriptor in state_fds:
+            record_read(descriptor, value)
+        return value
+
+    def watched_fstat(descriptor: int) -> os.stat_result:
+        result = real_os_fstat(descriptor)
+        if descriptor in state_fds:
+            descriptor_identities.append(identity(result))
+        return result
+
+    monkeypatch.setattr(os, "stat", watched_stat)
+    monkeypatch.setattr(os, "lstat", watched_lstat)
+    monkeypatch.setattr(io, "open", watched_io_open)
+    monkeypatch.setattr(os, "open", watched_os_open)
+    monkeypatch.setattr(os, "fdopen", watched_fdopen)
+    monkeypatch.setattr(os, "read", watched_os_read)
+    monkeypatch.setattr(os, "fstat", watched_fstat)
+    monkeypatch.setattr(builtins, "open", watched_builtin_open)
+
+    checker = _checker()
+    positive_errors = checker.configuration_errors(fixture)
+    positive_read = b"".join(data for _file_identity, data in observed_reads)
+    assert positive_errors == []
+    assert valid_state in positive_read, "positive read observer did not capture the valid state"
+
+    path_inspections.clear()
+    opens_after_inspection.clear()
+    opened_paths.clear()
+    state_fds.clear()
+    descriptor_identities.clear()
+    observed_reads.clear()
+    swap_armed = True
+
+    errors = checker.configuration_errors(fixture)
+    failures = []
+    if not errors:
+        failures.append(f"{replacement_kind} replacement was accepted")
+    if opens_after_inspection != [True]:
+        failures.append("state pathname was not inspected before the descriptor open")
+    if path_inspections and target_identity == path_inspections[0][:2]:
+        failures.append("replacement retained the inspected file identity")
+    if any(data for _file_identity, data in observed_reads):
+        failures.append("state bytes were read after the pathname changed")
+    if replacement_kind == "regular" and target_identity not in descriptor_identities:
+        failures.append("opened regular replacement was not inspected through its descriptor")
+
+    target_after = real_os_stat(target_path) if target_path.exists() else None
+    if replacement_kind == "symlink":
+        target_after_bytes = real_io_open(target_path, "rb").read()
+        if target_after is None or target_identity != identity(target_after):
+            failures.append("outside target identity changed")
+        if target_after_bytes != target_bytes_before:
+            failures.append("outside target bytes changed")
+        if target_after is not None and (
+            target_after.st_size != target_before.st_size
+            or target_after.st_mtime_ns != target_before.st_mtime_ns
+        ):
+            failures.append("outside target metadata changed")
+        if not stat.S_ISLNK(real_os_lstat(state).st_mode):
+            failures.append("state path was not replaced by the symlink attack fixture")
+    else:
+        state_after_bytes = real_io_open(state, "rb").read()
+        if state_after_bytes != valid_state:
+            failures.append("regular replacement bytes changed")
+        state_after = real_os_stat(state)
+        if (
+            state_after.st_size != target_before.st_size
+            or state_after.st_mtime_ns != target_before.st_mtime_ns
+        ):
+            failures.append("regular replacement metadata changed")
+    assert not failures, f"unsafe AGENT_STATE path replacement was not rejected: {failures}"
 
 
 def test_spawned_thread_cap_above_eight_is_rejected(tmp_path: Path) -> None:

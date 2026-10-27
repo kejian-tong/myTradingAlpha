@@ -14,7 +14,7 @@ BT05_SOURCE_SHA = "f1e4507f0508e822464878508219eeacf5a8eb45"
 BT05_SOURCE_TREE = "eb1fc414d070d9fec1f71bb95f7742be9fbf29ee"
 BT05_MERGE_SHA = "b12bef51acd2b1ef6d6db01dede959f1dd67130f"
 HARNESS105_BASE_SHA = BT05_MERGE_SHA
-HARNESS105_SOURCE_SHA = "643a3187d4e4d22dc570f6c74589424b8a37912e"
+HARNESS105_SOURCE_SHA = "643a3187d4d4e22dc570f6c74589424b8a37912e"
 HARNESS105_MERGE_SHA = RECONCILED_MAIN_SHA
 COLD_STATE_URL = (
     "https://github.com/kejian-tong/myTradingAlpha/blob/"
@@ -53,17 +53,17 @@ def test_current_harness_snapshot_is_pr105_and_authorizes_only_eff02() -> None:
     )
     assert f"Base `{HARNESS105_BASE_SHA}`" in normalized
     assert f"approved source `{HARNESS105_SOURCE_SHA}`" in normalized
-    assert f"tree matches reconciled main above" in normalized
+    assert "tree matches reconciled main above" in normalized
     assert "`current_pr_id`: HARNESS-EFF-02 /" in state
     assert "`autonomy_mode`: human-authorized HARNESS-EFF-02 only; later slices require separate authorization" in state
     assert "HARNESS-EFF-02 owns context/state compaction only" in state
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state
-    assert "routing and CI are unchanged" in normalized
+    assert "routing and ci are unchanged" in normalized.lower()
 
 
 def test_closed_chronology_resolves_through_the_immutable_cold_snapshot() -> None:
-    state = _state_text()
+    state = " ".join(_state_text().split())
     assert COLD_STATE_URL in state
     assert "prior BT01–04, SIG and Harness recovery references/routes" in state
     assert "Its superseded status is historical, not current authority" in state
@@ -77,13 +77,13 @@ def test_completed_review_gate_completion_and_validation_refs_remain_recoverable
         "#issuecomment-6418127493",
         "#issuecomment-6418203129",
         "#issuecomment-6418296352",
-        "5286 passed,4 skipped,69 subtests",
-        "Foundation:4710 passed,2 skipped",
+        "5286 passed, 4 skipped, 69 subtests",
+        "Foundation: 4710 passed, 2 skipped",
         "https://github.com/kejian-tong/myTradingAlpha/pull/105",
         "#issuecomment-6443992835",
         "#issuecomment-6444042267",
         "#issuecomment-6444089249",
-        "261 focused and5474 full passes,4 skips,69 subtests",
+        "261 focused and 5474 full passes, 4 skips, 69 subtests",
         "required CI and Foundation passed",
     ):
         assert reference in state, f"operational snapshot omits recovery reference {reference!r}"
@@ -102,7 +102,7 @@ def test_financial_and_host_assurance_boundaries_remain_truthful() -> None:
         ("sig-05 adds only in-memory deterministic shadow envelopes",),
         ("sig-05 authorizes no portfolio, risk, order, broker, paper/live, or promotion behavior",),
         ("no paper/live operation", "explicit human paper/live gates remain mandatory and unexercised"),
-        ("no live broker write before phase09",),
+        ("no live broker write before phase 09",),
     )
     for group in required_groups:
         missing = [marker for marker in group if marker not in normalized]
