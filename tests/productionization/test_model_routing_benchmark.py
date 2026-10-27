@@ -688,3 +688,67 @@ def test_missed_blocker_high_is_still_per_run_ineligible() -> None:
     benchmark = _module()
     row = _row("gpt-6-luna", missed=1)
     assert benchmark.eligible(benchmark.validate(row)) is False
+
+
+@pytest.mark.parametrize("identity_field", ("task_id", "task_class", "model", "effort"))
+@pytest.mark.parametrize("reuse", ("identical", "conflicting", "higher_revision"))
+def test_r2_v2_observation_cannot_supply_different_run_identities(
+    monkeypatch, identity_field: str, reuse: str
+) -> None:
+    benchmark = _module()
+    rows = [
+        *_v2_route_rows("gpt-5.6-terra", effort="high"),
+        *_v2_route_rows("gpt-6-sol", effort="high"),
+    ]
+    source = rows[0]
+    if identity_field == "task_id":
+        target = rows[1]
+    elif identity_field == "model":
+        target = rows[5]
+    elif identity_field == "effort":
+        other_effort = _v2_route_rows("gpt-5.6-terra", effort="xhigh")
+        rows.extend(other_effort)
+        target = other_effort[0]
+    else:
+        other_class = [
+            *_v2_route_rows("gpt-5.6-terra", effort="high", task_class="review"),
+            *_v2_route_rows("gpt-6-sol", effort="high", task_class="review"),
+        ]
+        rows.extend(other_class)
+        target = other_class[0]
+    target["usage"] = dict(source["usage"])
+    if reuse == "conflicting":
+        target["usage"]["input_tokens"] += 1
+    elif reuse == "higher_revision":
+        target["usage"]["revision"] += 1
+
+    calculations = []
+    for name in ("eligible", "token_cost"):
+        original = getattr(benchmark, name)
+
+        def observed(*args, _name=name, _original=original, **kwargs):
+            calculations.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(benchmark, name, observed)
+
+    with pytest.raises(ValueError) as error:
+        benchmark.analyze(rows, evaluation_date=EVAL_DATE)
+    assert calculations == [], "shared evidence reached sample eligibility or pricing"
+    assert source["usage"]["observation_ref"] not in str(error.value)
+    assert all(row["task_id"] not in str(error.value) for row in rows)
+    assert len(str(error.value)) <= 256
+
+
+def test_r2_unique_v2_observations_keep_complete_pairing_and_duplicate_row_rejection() -> None:
+    benchmark = _module()
+    rows = [*_v2_route_rows("gpt-6-luna"), *_v2_route_rows("gpt-5.6-terra")]
+    assert len({row["usage"]["observation_ref"] for row in rows}) == len(rows)
+
+    result = benchmark.analyze(rows, evaluation_date=EVAL_DATE)["task_classes"]["exploration"]
+
+    assert result["comparison_status"] == "complete"
+    assert all(route["runs"] == route["eligible_runs"] == 5 for route in result["routes"])
+    assert result["pareto_frontier"] == [{"model": "gpt-6-luna", "effort": "max"}]
+    with pytest.raises(ValueError, match="duplicate task_id"):
+        benchmark.analyze([*rows, rows[0]], evaluation_date=EVAL_DATE)

@@ -569,3 +569,37 @@ def test_r1_legacy_roadmap_identifiers_remain_valid_telemetry_metadata(
     telemetry.record(repo, payload)
 
     assert telemetry.load(repo) == [payload]
+
+
+@pytest.mark.parametrize(
+    ("field", "total_key"),
+    (
+        ("duration_ms", "duration_ms_total"),
+        ("blocking_findings", "blocking_findings_total"),
+        ("input_tokens", "input_tokens_observed"),
+        ("cached_input_tokens", "cached_input_tokens_observed"),
+        ("output_tokens", "output_tokens_observed"),
+    ),
+)
+@pytest.mark.parametrize("increment", (0, 1))
+def test_r2_legacy_additive_summary_bounds_preserve_evidence(
+    tmp_path: Path, field: str, total_key: str, increment: int
+) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    maximum = 2**63 - 1
+    path = telemetry.record(repo, {"event": "phase_complete", "observed_at_ms": 1, field: maximum})
+    telemetry.record(repo, {"event": "phase_complete", "observed_at_ms": 2, field: increment})
+    before = path.read_bytes()
+
+    try:
+        if increment == 0:
+            assert telemetry.summarize(repo)[total_key] == maximum
+        else:
+            with pytest.raises(ValueError) as error:
+                telemetry.summarize(repo)
+            assert str(maximum) not in str(error.value)
+            assert str(repo) not in str(error.value)
+            assert len(str(error.value)) <= 256
+    finally:
+        assert path.read_bytes() == before
