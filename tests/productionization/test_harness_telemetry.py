@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -346,3 +347,209 @@ def test_telemetry_labels_and_timestamp_are_bounded() -> None:
         telemetry._validate({"event": "ci_rerun", "observed_at_ms": 2**63})
     with pytest.raises(ValueError, match="pr_id"):
         telemetry._validate({"event": "review_result", "pr_id": "x" * 129})
+
+
+def _r1_filename(path: object) -> str | None:
+    return None if isinstance(path, int) else Path(os.fsdecode(path)).name
+
+
+def _r1_patch_os(patch, name: str, replacement) -> None:
+    original = getattr(os, name)
+    # The interceptor forwards descriptor/flag arguments without changing platform support.
+    for capability in ("supports_dir_fd", "supports_fd", "supports_follow_symlinks", "supports_effective_ids"):
+        supported = getattr(os, capability)
+        if original in supported:
+            patch.setattr(os, capability, supported | {replacement})
+    patch.setattr(os, name, replacement)
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+def test_r1_hardlinked_stream_rejects_append_and_preserves_both_links(
+    tmp_path: Path, schema_version: int
+) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    payload = _usage_event() if schema_version == 2 else {"event": "ci_rerun", "observed_at_ms": 1}
+    path = telemetry.record(repo, payload)
+    outside = tmp_path / "outside-evidence.jsonl"
+    os.link(path, outside)
+    before = outside.read_bytes()
+    identity = (outside.stat().st_dev, outside.stat().st_ino, outside.stat().st_nlink)
+
+    error = None
+    try:
+        telemetry.record(repo, payload)
+    except (OSError, ValueError) as exc:
+        error = exc
+
+    assert outside.read_bytes() == before, "append changed evidence through an outside hardlink"
+    assert path.read_bytes() == before
+    for link in (path, outside):
+        info = link.stat()
+        assert (info.st_dev, info.st_ino, info.st_nlink) == identity
+    assert error is not None, "multiply linked writable streams must be rejected"
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+@pytest.mark.parametrize("operation", ("record", "load"))
+def test_r1_metadata_swap_at_stream_operation_cannot_redirect_evidence(
+    tmp_path: Path, monkeypatch, schema_version: int, operation: str
+) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    payload = _usage_event() if schema_version == 2 else {"event": "ci_rerun", "observed_at_ms": 1}
+    path = telemetry.record(repo, payload)
+    original_rows = telemetry.load(repo, schema_version=schema_version)
+    metadata = path.parent
+    held = metadata.with_name("held-metadata")
+    outside = tmp_path / "outside-metadata"
+    outside.mkdir()
+    outside_stream = outside / path.name
+    outside_stream.write_text(json.dumps({**payload, "observed_at_ms": 999}) + "\n")
+    before = {entry.name: entry.read_bytes() for entry in outside.iterdir()}
+    swapped = False
+
+    def intercept(real_operation):
+        def wrapped(target, *args, **kwargs):
+            nonlocal swapped
+            if not swapped and _r1_filename(target) == path.name:
+                swapped = True
+                metadata.rename(held)
+                metadata.symlink_to(outside, target_is_directory=True)
+            return real_operation(target, *args, **kwargs)
+
+        return wrapped
+
+    result = None
+    with monkeypatch.context() as patch:
+        for name in ("lstat", "stat", "open"):
+            _r1_patch_os(patch, name, intercept(getattr(os, name)))
+        try:
+            if operation == "record":
+                telemetry.record(repo, payload)
+            else:
+                result = telemetry.load(repo, schema_version=schema_version)
+        except (OSError, ValueError):
+            pass
+
+    assert swapped, "the stream filesystem boundary was not exercised"
+    assert {entry.name: entry.read_bytes() for entry in outside.iterdir()} == before
+    if result is not None:
+        assert result == original_rows, "load followed a replaced metadata ancestor"
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+@pytest.mark.parametrize("replacement_kind", ("valid", "malformed"))
+def test_r1_equal_size_stream_replacement_after_read_is_rejected_without_append(
+    tmp_path: Path, monkeypatch, schema_version: int, replacement_kind: str
+) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    payload = _usage_event() if schema_version == 2 else {"event": "ci_rerun", "observed_at_ms": 1}
+    path = telemetry.record(repo, payload)
+    before = path.read_bytes()
+    replacement = path.with_name("replacement.jsonl")
+    if replacement_kind == "valid":
+        # Both changes preserve byte length; v2 changes conflict at the same revision.
+        replaced = before.replace(b'"input_tokens":100', b'"input_tokens":900') if schema_version == 2 else before.replace(b'"observed_at_ms":1', b'"observed_at_ms":2')
+    else:
+        replaced = b"x" * (len(before) - 1) + b"\n"
+    assert replaced != before and len(replaced) == len(before)
+    replacement.write_bytes(replaced)
+    identity = path.stat()
+    real_read = os.read
+    swapped = False
+    bytes_read = 0
+
+    def read_and_replace(fd: int, size: int) -> bytes:
+        nonlocal swapped, bytes_read
+        data = real_read(fd, size)
+        current = os.fstat(fd)
+        if not swapped and (current.st_dev, current.st_ino) == (
+            identity.st_dev, identity.st_ino
+        ):
+            bytes_read += len(data)
+            if bytes_read >= identity.st_size:
+                # The read descriptor still holds the original bytes after its name is replaced.
+                swapped = True
+                replacement.replace(path)
+        return data
+
+    error = None
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "read", read_and_replace)
+        try:
+            telemetry.record(repo, payload)
+        except (OSError, ValueError) as exc:
+            error = exc
+
+    assert swapped, "the stream read boundary was not exercised"
+    assert path.read_bytes() == replaced, "append modified a replacement stream of equal size"
+    assert error is not None, "replacement of the validated stream entry must reject the append"
+
+
+def test_r1_disappearing_append_locks_still_obey_the_deadline(tmp_path: Path, monkeypatch) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    path = telemetry.record(repo, {"event": "ci_rerun"})
+    before = path.read_bytes()
+    now = 0.0
+    attempts = 0
+    real_open = os.open
+    real_lstat = os.lstat
+    real_stat = os.stat
+    lock_name = f".{path.name}.lock"
+
+    def vanished_open(target, flags, *args, **kwargs):
+        nonlocal now, attempts
+        if _r1_filename(target) == lock_name and flags & os.O_EXCL:
+            attempts += 1
+            now += 0.25
+            if attempts > 16:
+                raise AssertionError("disappearing locks retried beyond the bounded deadline")
+            raise FileExistsError("disposable vanished lock")
+        return real_open(target, flags, *args, **kwargs)
+
+    def vanished_stat(real_operation):
+        def wrapped(target, *args, **kwargs):
+            if _r1_filename(target) == lock_name:
+                raise FileNotFoundError("disposable vanished lock")
+            return real_operation(target, *args, **kwargs)
+
+        return wrapped
+
+    with monkeypatch.context() as patch:
+        _r1_patch_os(patch, "open", vanished_open)
+        _r1_patch_os(patch, "lstat", vanished_stat(real_lstat))
+        _r1_patch_os(patch, "stat", vanished_stat(real_stat))
+        patch.setattr(telemetry.time, "monotonic", lambda: now)
+        with pytest.raises((OSError, ValueError)):
+            telemetry.record(repo, {"event": "ci_rerun"})
+
+    assert attempts > 0
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("missing", ("O_NOFOLLOW", "O_DIRECTORY", "dir_fd", "fd_scandir"))
+def test_r1_unsupported_storage_primitives_fail_before_metadata_mutation(
+    tmp_path: Path, monkeypatch, missing: str
+) -> None:
+    repo = _repo(tmp_path)
+    telemetry = _module()
+    if missing in {"O_NOFOLLOW", "O_DIRECTORY"}:
+        monkeypatch.delattr(os, missing, raising=False)
+    elif missing == "dir_fd":
+        monkeypatch.setattr(os, "supports_dir_fd", set())
+    else:
+        monkeypatch.setattr(os, "supports_fd", os.supports_fd - {os.scandir})
+
+    error = None
+    try:
+        telemetry.record(repo, {"event": "ci_rerun"})
+    except (OSError, ValueError) as exc:
+        error = exc
+
+    assert not (repo / ".git/codex-harness").exists(), "unsupported storage used a path fallback"
+    assert error is not None
+    assert len(str(error)) <= 256
+    assert str(repo) not in str(error)
