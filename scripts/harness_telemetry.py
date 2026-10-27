@@ -560,7 +560,9 @@ def _entry_lock(directory: _Directory, name: str) -> Iterator[None]:
         try:
             lock_fd = os.open(name, flags, 0o600, dir_fd=directory.fd)
         except FileExistsError:
-            directory.entry_info(name, mutable=True)
+            snapshot = directory.entry_info(name, mutable=False)
+            if snapshot is not None and snapshot.st_nlink not in (0, 1):
+                raise _error("telemetry contention lock has an unsafe link count") from None
             if time.monotonic() >= deadline:
                 raise _error("telemetry lock is contended") from None
             time.sleep(0.005)

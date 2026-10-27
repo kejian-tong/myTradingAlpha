@@ -69,7 +69,9 @@ the final opened common descriptor must match before any telemetry descendants a
 Stream validation and append share one opened regular inode; entry identity, size, ancestor identity and
 link count are checked before mutation. Multiply linked writable streams are rejected. Cooperating
 appends use a per-stream lock with a one-second acquisition deadline checked on every retry, including a
-disappearing lock. A partial tail or unresolved contention is an explicit failure. Existing unsafe or
+disappearing lock. Read-only contention inspection may retry a regular zero-link snapshot after release;
+ownership still requires a fresh exclusive open, and mutable evidence still requires exactly one link.
+A partial tail or unresolved contention is an explicit failure. Existing unsafe or
 oversized evidence is left untouched; there is no stale-lock recovery, migration or truncation.
 
 Secure storage requires POSIX no-follow directory opens, descriptor-relative open/stat/mkdir/unlink/rmdir,
