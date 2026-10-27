@@ -103,6 +103,68 @@ def _provenance_row(
     return row
 
 
+def _v2_row(
+    model: str,
+    *,
+    task_id: str = "t1",
+    task_class: str = "exploration",
+    effort: str = "max",
+    task_usage_complete: bool = True,
+    pricing_surface: str = "historical_work_codex",
+    context_tier: str = "short",
+    usage_overrides: dict | None = None,
+    **kwargs,
+) -> dict:
+    row = _provenance_row(
+        model,
+        task_id=task_id,
+        task_class=task_class,
+        effort=effort,
+        tokens=False,
+        **kwargs,
+    )
+    identity = f"{task_class}\0{task_id}\0{model}\0{effort}".encode()
+    usage = {
+        "observation_ref": hashlib.sha256(identity).hexdigest(),
+        "revision": 0,
+        "source_kind": "runtime_report",
+        "usage_scope": "task",
+        "aggregation_scope": "exclusive",
+        "input_tokens": 100_000,
+        "cached_input_tokens": 20_000,
+        "cache_write_tokens": 0,
+        "cache_write_30m_tokens": 0,
+        "cache_write_12h_tokens": 0,
+        "output_tokens": 10_000,
+        "reasoning_output_tokens": 1_000,
+    }
+    if usage_overrides is not None:
+        usage.update(usage_overrides)
+    row.update(
+        schema_version=2,
+        usage=usage,
+        task_usage_complete=task_usage_complete,
+        pricing_surface=pricing_surface,
+        context_tier=context_tier,
+    )
+    return row
+
+
+def _v2_route_rows(model: str, *, count: int = 5, effort: str | None = None, **kwargs) -> list[dict]:
+    if effort is None:
+        effort = {
+            "gpt-6-luna": "max",
+            "gpt-5.6-terra": "medium",
+            "gpt-6-sol": "high",
+            "gpt-6.1-sol": "xhigh",
+            "gpt-6-astra": "xhigh",
+        }[model]
+    return [
+        _v2_row(model, task_id=f"t{index}", effort=effort, **kwargs)
+        for index in range(1, count + 1)
+    ]
+
+
 def test_valid_enriched_record_preserves_frozen_task_provenance() -> None:
     benchmark = _module()
     validated = benchmark.validate(_provenance_row("gpt-6-luna"))
@@ -293,6 +355,110 @@ def test_benchmark_matrix_rejects_invented_combined_model_ids(model: str, effort
 def test_current_luna_credit_formula() -> None:
     benchmark = _module()
     assert benchmark.token_cost(_row("gpt-6-luna"), benchmark.CREDIT_RATES) == 0.81
+
+
+def test_v2_inclusive_input_is_priced_once_while_legacy_formula_stays_frozen() -> None:
+    benchmark = _module()
+    legacy = _row("gpt-6-luna")
+    inclusive = _v2_row("gpt-6-luna")
+
+    assert benchmark.token_cost(legacy, benchmark.CREDIT_RATES) == 0.81
+    assert benchmark.token_cost(inclusive, benchmark.CREDIT_RATES) == pytest.approx(0.71)
+    assert benchmark.validate(inclusive)["usage"]["reasoning_output_tokens"] == 1_000
+
+
+def test_v2_benchmark_rejects_legacy_flat_token_fields_and_non_boolean_completeness() -> None:
+    benchmark = _module()
+    mixed_flat_fields = _v2_row("gpt-6-luna")
+    mixed_flat_fields.update(input_tokens=100_000, cached_input_tokens=20_000, output_tokens=10_000)
+    with pytest.raises(ValueError, match="schema"):
+        benchmark.validate(mixed_flat_fields)
+
+    non_boolean = _v2_row("gpt-6-luna", task_usage_complete=1)
+    with pytest.raises(ValueError, match="task_usage_complete"):
+        benchmark.validate(non_boolean)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "complete", "surface", "tier"),
+    (
+        ({"usage_scope": "request"}, False, "historical_work_codex", "short"),
+        ({"usage_scope": "turn"}, False, "historical_work_codex", "short"),
+        ({"usage_scope": "agent"}, False, "historical_work_codex", "short"),
+        ({"cache_write_tokens": 1, "cache_write_30m_tokens": 1}, True, "historical_work_codex", "short"),
+        ({"cache_write_tokens": None}, True, "historical_work_codex", "short"),
+        ({"aggregation_scope": "includes_children"}, True, "historical_work_codex", "short"),
+        ({"aggregation_scope": "unknown"}, True, "historical_work_codex", "short"),
+        ({"input_tokens": None}, True, "historical_work_codex", "short"),
+        ({}, True, "unknown", "short"),
+        ({}, True, "historical_work_codex", "long"),
+        ({}, True, "historical_work_codex", "mixed"),
+    ),
+)
+def test_v2_non_whole_task_or_unknown_consumption_is_unpriced(
+    overrides: dict,
+    complete: bool,
+    surface: str,
+    tier: str,
+) -> None:
+    benchmark = _module()
+    row = _v2_row(
+        "gpt-6-luna",
+        task_usage_complete=complete,
+        pricing_surface=surface,
+        context_tier=tier,
+        usage_overrides=overrides,
+    )
+    assert benchmark.validate(row)["schema_version"] == 2
+    assert benchmark.token_cost(row, benchmark.CREDIT_RATES) is None
+
+
+@pytest.mark.parametrize(("input_tokens", "should_reject"), ((272_000, False), (272_001, True)))
+def test_request_scope_exposure_boundary_applies_before_pricing(
+    input_tokens: int,
+    should_reject: bool,
+) -> None:
+    benchmark = _module()
+    row = _v2_row(
+        "gpt-6-luna",
+        task_usage_complete=False,
+        usage_overrides={"usage_scope": "request", "input_tokens": input_tokens},
+    )
+    if should_reject:
+        with pytest.raises(ValueError, match="272000"):
+            benchmark.validate(row)
+    else:
+        assert benchmark.token_cost(benchmark.validate(row), benchmark.CREDIT_RATES) is None
+
+
+def test_request_level_consumption_cannot_create_cheaper_whole_task_frontier() -> None:
+    benchmark = _module()
+    whole_task = _v2_route_rows("gpt-6-luna", quality=90, duration=100)
+    single_request = _v2_route_rows(
+        "gpt-5.6-terra",
+        quality=99,
+        duration=1,
+        usage_overrides={"usage_scope": "request", "input_tokens": 1_000},
+        task_usage_complete=False,
+    )
+
+    result = benchmark.analyze(
+        [*whole_task, *single_request],
+        evaluation_date=EVAL_DATE,
+    )["task_classes"]["exploration"]
+    assert result["comparison_status"] == "incomplete_cost_observation"
+    assert result["pareto_frontier"] == []
+    terra = next(route for route in result["routes"] if route["model"] == "gpt-5.6-terra")
+    assert terra["credits_mean"] is None
+    assert terra["cost_observation_complete"] is False
+
+
+def test_mixed_legacy_and_v2_comparison_is_rejected_without_normalization() -> None:
+    benchmark = _module()
+    legacy = _route_rows("gpt-6-luna")
+    versioned = _v2_route_rows("gpt-5.6-terra")
+    with pytest.raises(ValueError, match="mixed schema"):
+        benchmark.analyze([*legacy, *versioned], evaluation_date=EVAL_DATE)
 
 
 def test_astra_credit_formula_is_two_point_five_times_sol_for_same_tokens() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,16 @@ def _run(event: dict) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_raw(event_json: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=event_json,
         text=True,
         capture_output=True,
         check=False,
@@ -140,6 +151,188 @@ def test_telemetry_hook_is_best_effort_and_fail_open(tmp_path: Path) -> None:
     result = _run(event)
     assert result.returncode == 0
     assert result.stdout == ""
+
+
+def test_hook_event_byte_limit_is_inclusive_and_oversize_input_is_silent(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    limit = 65_536
+    prefix = '{"hook_event_name":"PostCompact","trigger":"auto","cwd":' + json.dumps(str(repo)) + ',"pad":"'
+    suffix = '"}'
+    at_limit = prefix + ("x" * (limit - len(prefix.encode("utf-8")) - len(suffix))) + suffix
+    over_limit = at_limit + " "
+    assert len(at_limit.encode("utf-8")) == limit
+
+    accepted = _run_raw(at_limit)
+    assert accepted.returncode == 0
+    assert accepted.stdout == ""
+    assert accepted.stderr == ""
+    assert [row["event"] for row in _rows(repo)] == ["context_compaction"]
+
+    rejected = _run_raw(over_limit)
+    assert rejected.returncode == 0
+    assert rejected.stdout == ""
+    assert rejected.stderr == ""
+    assert [row["event"] for row in _rows(repo)] == ["context_compaction"]
+
+
+def test_hook_never_persists_request_usage_or_transcript_fields(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    marker = "raw-hook-secret-marker-7b8e"
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-usage-private",
+        "agent_type": "normal_implementer",
+        "usage": {
+            "input_tokens": 1_000,
+            "cached_input_tokens": 200,
+            "cache_write_tokens": 20,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 50,
+            "raw_provider_payload": marker,
+        },
+        "total_tokens": 1_100,
+        "prompt": marker,
+        "last_assistant_message": marker,
+        "transcript_path": f"/private/{marker}.jsonl",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    durable = repo / ".git/codex-harness/telemetry.jsonl"
+    runtime = repo / ".git/codex-harness/runtime"
+    persisted = durable.read_text(encoding="utf-8") + "\n".join(
+        path.read_text(encoding="utf-8") for path in runtime.rglob("*.json")
+    )
+    assert marker not in persisted
+    assert "input_tokens" not in persisted
+    assert "reasoning_output_tokens" not in persisted
+    assert "total_tokens" not in persisted
+    assert "transcript_path" not in persisted
+
+
+def test_unreviewed_model_and_overlong_labels_fail_open_before_scratch_write(tmp_path: Path) -> None:
+    model_repo = tmp_path / "model-repo"
+    _git_repo(model_repo)
+    base = {
+        **_common(model_repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-invalid-label",
+        "agent_type": "normal_implementer",
+    }
+    unknown_model = _run({**base, "model": "unknown-model-marker"})
+    assert unknown_model.returncode == 0
+    assert unknown_model.stdout == ""
+    assert unknown_model.stderr == ""
+    assert not (model_repo / ".git/codex-harness/telemetry.jsonl").exists()
+    assert not (model_repo / ".git/codex-harness/runtime").exists()
+
+    role_repo = tmp_path / "role-repo"
+    _git_repo(role_repo)
+    role_event = {
+        **_common(role_repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-overlong",
+        "agent_type": "r" * 129,
+    }
+    overlong_role = _run(role_event)
+    assert overlong_role.returncode == 0
+    assert overlong_role.stdout == ""
+    assert overlong_role.stderr == ""
+    assert not (role_repo / ".git/codex-harness/telemetry.jsonl").exists()
+    assert not (role_repo / ".git/codex-harness/runtime").exists()
+
+
+def test_hook_refuses_symlinked_scratch_state_without_modifying_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-link-test"
+    agent_id = "agent-link-test"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-state.json"
+    outside.write_text("preserve", encoding="utf-8")
+    (session_dir / f"{agent_ref}.json").symlink_to(outside)
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStart",
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert outside.read_text(encoding="utf-8") == "preserve"
+
+
+def test_hook_refuses_oversized_scratch_state_without_deleting_evidence(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    session_id = "session-size-test"
+    agent_id = "agent-size-test"
+    session_ref = hashlib.sha256(session_id.encode()).hexdigest()
+    agent_ref = hashlib.sha256(agent_id.encode()).hexdigest()
+    session_dir = repo / ".git/codex-harness/runtime" / session_ref
+    session_dir.mkdir(parents=True)
+    state_file = session_dir / f"{agent_ref}.json"
+    state_file.write_bytes(b"x" * 4_097)
+    before = state_file.read_bytes()
+    event = {
+        **_common(repo),
+        "hook_event_name": "SubagentStop",
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "agent_type": "code_explorer",
+    }
+
+    result = _run(event)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert state_file.read_bytes() == before
+
+
+def test_hook_never_creates_more_than_64_agent_scratch_files_per_session(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_repo(repo)
+    common = _common(repo)
+    for index in range(64):
+        result = _run(
+            {
+                **common,
+                "hook_event_name": "SubagentStart",
+                "agent_id": f"agent-{index}",
+                "agent_type": "code_explorer",
+            }
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+
+    runtime = repo / ".git/codex-harness/runtime"
+    files = list(runtime.rglob("*.json"))
+    assert len(files) == 64
+    extra = _run(
+        {
+            **common,
+            "hook_event_name": "SubagentStart",
+            "agent_id": "agent-64",
+            "agent_type": "code_explorer",
+        }
+    )
+    assert extra.returncode == 0
+    assert extra.stdout == ""
+    assert extra.stderr == ""
+    assert len(list(runtime.rglob("*.json"))) == 64
 
 
 def test_hooks_json_uses_current_official_field_names() -> None:
