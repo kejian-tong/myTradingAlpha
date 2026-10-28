@@ -241,6 +241,19 @@ regression floor and GitHub CI.
 <commands>
 ```
 
+### Full local run ownership and evidence
+
+Follow [the validation efficiency policy](VALIDATION_EFFICIENCY.md). Record:
+
+- designated full local suite owner (Master by default): `<role or name>`;
+- exact full command and selectors (`none` when unfiltered): `<command>`;
+- source SHA/tree, base SHA, and checkout SHA/tree: `<values>`;
+- Python/uv/lock/environment identity: `<values>`;
+- completion, exit status, pass/fail/skip counts, and skip reasons: `<values>`;
+- full local log, CI run/job/attempt, and native log references: `<references>`;
+- before/after SHA, tree, and cleanliness: `<values>`;
+- evidence reuse decision and reason, if applicable: `<decision>`.
+
 ### Repository regression floor
 
 ```bash

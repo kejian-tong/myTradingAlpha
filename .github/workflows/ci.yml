@@ -90,13 +90,20 @@ jobs:
   foundation-contract-docs-lock:
     name: Foundation contract/docs/lock
     runs-on: ubuntu-latest
+    needs: [test, lint, smoke-install]
+    if: ${{ always() }}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          version: "0.12.7"
-          python-version: "3.14"
-      - name: Install locked development environment
-        run: uv sync --locked --extra dev
-      - name: Run foundation contract tests
-        run: uv run --no-sync pytest -q tests/productionization
+      - name: Verify Foundation dependency results
+        shell: bash
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          SMOKE_RESULT: ${{ needs['smoke-install'].result }}
+        run: |
+          set -euo pipefail
+          if [[ "${TEST_RESULT:-}" != "success" || "${LINT_RESULT:-}" != "success" || "${SMOKE_RESULT:-}" != "success" ]]; then
+            printf '%s\n' 'Foundation dependency coverage did not complete successfully.' >&2
+            exit 1
+          fi
+          printf '%s\n' 'Foundation dependency coverage is satisfied by test, lint, and smoke-install.'
