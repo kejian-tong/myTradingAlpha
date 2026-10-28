@@ -881,14 +881,10 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "MIT License" in notice
     assert "Copyright (c) 2026 Lauren Tan" in notice
     assert "https://github.com/cursor/plugins/tree/main/pstack" in notice
-    normalized_state = " ".join(state.split())
-    assert "BT-02" in state
-    assert "PR #97" in state
-    assert BT02_MERGE_SHA in state
-    assert BT01_MERGE_SHA in state
+    assert "HARNESS-EFF-02" in state
+    assert "PR #105 / merge `6de97229c19e9f57d536fc8e59c45411bb39abc5`" in state
     assert (
-        f"PR #92's JIT, RED evidence, writer lease lifecycle, review, and CI remain recoverable in "
-        f"its GitHub conversation; it merged at `{SIG05_MERGE_SHA}`."
-    ) in normalized_state
-    assert "PR #90's RED/GREEN, writer lease, exact-head review, and required-check evidence remain in its PR conversation" in state
-    assert HARNESS_PR90_MERGE_SHA in state
+        "https://github.com/kejian-tong/myTradingAlpha/blob/"
+        "6de97229c19e9f57d536fc8e59c45411bb39abc5/docs/productionization/AGENT_STATE.md"
+    ) in state
+    assert "prior BT01–04, SIG and Harness recovery references/routes" in state

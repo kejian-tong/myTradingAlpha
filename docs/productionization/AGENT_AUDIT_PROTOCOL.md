@@ -181,6 +181,9 @@ escalation reason, named roles/configured actuals, JIT/review/gate references, R
 scope/compatibility, blockers, and the next dependency-valid PR. GitHub/current main is authoritative;
 state is bounded operational memory, not a chronological log.
 
+Use [context management](CONTEXT_MANAGEMENT.md) for summary and source-window budgets; these never replace
+complete required reads, independent review, RED replay, full validation/CI, or canonical artifacts.
+
 ## 8. Exact-head rule
 
 Review and CI evidence are SHA-specific. Any new commit after review or CI evidence invalidates the affected
