@@ -161,8 +161,9 @@ def test_ci_keeps_static_contract_checks_only_in_required_lint_job() -> None:
 
     assert 'name: ruff (strict, full repo)' in lint_job
     assert "name: Foundation contract/docs/lock" in foundation_job
-    assert "uv sync --locked --extra dev" in foundation_job
-    assert "uv run --no-sync pytest -q tests/productionization" in foundation_job
+    assert "Verify Foundation dependency results" in foundation_job
+    assert "uv sync --locked --extra dev" not in foundation_job
+    assert "pytest" not in foundation_job
 
     static_checks = (
         "python scripts/check_agent_harness.py",
