@@ -191,7 +191,6 @@ def test_ci_binds_uv_to_each_intended_interpreter_without_split_ownership() -> N
         "test": "${{ matrix.python-version }}",
         "smoke-install": "3.14",
         "lint": "3.14",
-        "foundation-contract-docs-lock": "3.14",
     }
 
     assert set(expected_python) <= set(jobs)
@@ -295,10 +294,7 @@ def _required_ci_runs() -> dict[str, dict[str, str]]:
             "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
             "Run test suite": "uv run --no-sync pytest -q",
         },
-        "foundation-contract-docs-lock": {
-            "Install locked development environment": "uv sync --locked --extra dev",
-            "Run foundation contract tests": "uv run --no-sync pytest -q tests/productionization",
-        },
+        "foundation-contract-docs-lock": {},
         "smoke-install": {
             "Fresh locked install (no dev extras) and import": "uv sync --locked --no-dev --no-editable",
             "Import installed packages": (
@@ -343,16 +339,29 @@ def _assert_active_ci_policy(workflow: dict) -> None:
     for job_name, commands in _required_ci_runs().items():
         job = jobs.get(job_name)
         assert type(job) is dict
-        assert job.get("if", True) is True and job.get("continue-on-error", False) is False
+        if job_name == "foundation-contract-docs-lock":
+            assert type(job.get("if")) is str
+            assert job["if"] == "${{ always() }}"
+        else:
+            assert job.get("if", True) is True
+        assert job.get("continue-on-error", False) is False
         steps = job.get("steps")
         assert type(steps) is list and all(type(step) is dict for step in steps)
         for step in steps:
             assert step.get("if", True) is True and step.get("continue-on-error", False) is False
         uv_steps = [step for step in steps if step.get("uses") == f"astral-sh/setup-uv@{SETUP_UV_COMMIT}"]
-        assert len(uv_steps) == 1
-        assert uv_steps[0]["with"]["version"] == UV_VERSION
-        expected = "${{ matrix.python-version }}" if job_name == "test" else "3.14"
-        assert uv_steps[0]["with"]["python-version"] == expected
+        if job_name == "foundation-contract-docs-lock":
+            assert job["name"] == "Foundation contract/docs/lock"
+            assert job.get("timeout-minutes") == 5
+            assert len(steps) == 1
+            assert steps[0].get("name") == "Verify Foundation dependency results"
+            assert steps[0].get("shell") == "bash"
+            assert not uv_steps
+        else:
+            assert len(uv_steps) == 1
+            assert uv_steps[0]["with"]["version"] == UV_VERSION
+            expected = "${{ matrix.python-version }}" if job_name == "test" else "3.14"
+            assert uv_steps[0]["with"]["python-version"] == expected
         for name, command in commands.items():
             matches = [step for step in steps if step.get("name") == name]
             assert len(matches) == 1
@@ -402,7 +411,12 @@ def test_active_ci_policy_rejects_removed_filtered_or_disabled_required_work() -
         candidate["jobs"].pop(job_name)
         with pytest.raises(AssertionError):
             _assert_active_ci_policy(candidate)
-        for flag, value in (("if", False), ("if", "${{ false }}"), ("continue-on-error", True)):
+        for flag, value in (
+            ("if", False),
+            ("if", "${{ false }}"),
+            ("if", 1),
+            ("continue-on-error", True),
+        ):
             candidate = copy.deepcopy(template)
             candidate["jobs"][job_name][flag] = value
             with pytest.raises(AssertionError):

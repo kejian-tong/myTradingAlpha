@@ -6,25 +6,27 @@ reconciliation snapshot; resolve the current PR head/status and gates from GitHu
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `6de97229c19e9f57d536fc8e59c45411bb39abc5`
-- `last_reconciled_main_tree`: `c61da75328298fbd79aa3b299aca4cd26164f08c`
+- `last_reconciled_main_sha`: `e683b10f75b8038e3423de7cbb80ee4fb19e3303`
+- `last_reconciled_main_tree`: `7a5214fd01349fbd5a0d3027b8cacd5151e6d6f1`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-EFF-02 / PR #106
+- `current_pr_id`: HARNESS-EFF-03 / PR #107
 - `current_phase`: 03 — Backtest and Ledger
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
-- `autonomy_mode`: human-authorized HARNESS-EFF-02 only; later slices require separate authorization
+- `autonomy_mode`: human-authorized HARNESS-EFF-03 only; later slices require separate authorization
 - `next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required
 
 ## Current maintenance
 
-HARNESS-EFF-02 owns context/state compaction only. Master owns reconciliation facts and writer leases.
-High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate reviewer_high /
-GPT-6.1 Sol / xhigh; Master and boundary_reviewer / GPT-6.1 Sol / xhigh. These are configured routes,
-not authenticated runtime identity. Routing and CI are unchanged.
+HARNESS-EFF-03 owns validation efficiency and CI deduplication only. Master owns reconciliation facts
+and writer leases. High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate
+reviewer_high / GPT-6.1 Sol / xhigh; Master and boundary_reviewer / GPT-6.1 Sol / xhigh. These are
+configured routes, not authenticated runtime identity. Routing and safety gates are unchanged.
 
-At this snapshot, this PR's RED/GREEN, released lease, full validation, independent approval and Master
-merge gate must be resolved from its conversation; no future approval/merge is asserted here. There are
-no inherited material blockers from closed PR104/105. A new commit invalidates affected review and CI.
+Complete unfiltered local/CI suites, independent RED/focused review, required checks and exact-head
+evidence remain mandatory. Foundation aggregates same-workflow results, not a second test execution.
+Resolve this PR's RED/GREEN, released leases, validation, approval and Master gate from its conversation;
+no future approval/merge is asserted here. No inherited material blocker remains from closed PR104–106.
+A new commit invalidates affected review and CI.
 
 ## Last completed roadmap
 
@@ -34,7 +36,7 @@ no inherited material blockers from closed PR104/105. A new commit invalidates a
 merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`. Offline manifested replay/checkpointing only.
 Historical hardest `sol_xhigh_sol_xhigh`: critical_implementer / reviewer_xhigh, GPT-6.1 Sol / xhigh.
 Original RED `41d6801bd3854b9ee54d3bf8bb996e2e3b195463`; complete repair/lease history remains in PR104.
-Recorded final local/CI: 5286 passed, 4 skipped, 69 subtests; Foundation: 4710 passed, 2 skipped.
+Recorded final PR-source local/CI: 5286 passed, 4 skipped, 69 subtests; Foundation: 4710 passed, 2 skipped.
 [APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/104#issuecomment-6418127493),
 [Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/104#issuecomment-6418203129),
 [completion](https://github.com/kejian-tong/myTradingAlpha/pull/104#issuecomment-6418296352).
@@ -43,17 +45,19 @@ financial and publication checks remain. No general timing waiver or financial a
 
 ## Last completed Harness
 
-- `harness_reconciled_through`: PR #105 / merge `6de97229c19e9f57d536fc8e59c45411bb39abc5`
+- `harness_reconciled_through`: PR #106 / merge `e683b10f75b8038e3423de7cbb80ee4fb19e3303`
 
-[HARNESS-EFF-01 / PR #105](https://github.com/kejian-tong/myTradingAlpha/pull/105): explicit inclusive
-v2 accounting and bounded observations, legacy semantics retained. Base `b12bef51acd2b1ef6d6db01dede959f1dd67130f`;
-approved source `643a3187d4d4e22dc570f6c74589424b8a37912e`; tree matches reconciled main above.
-Historical initial normal_implementer/GPT-6 Luna/max escalated to high_implementer/GPT-6.1 Sol/xhigh;
-reviewer_high/GPT-6.1 Sol/xhigh, existing `sol_high_sol_high` route. Recorded 261 focused and 5474 full
-passes, 4 skips, 69 subtests; required CI and Foundation passed. Native Windows storage is not claimed.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/105#issuecomment-6443992835),
-[Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/105#issuecomment-6444042267),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/105#issuecomment-6444089249).
+[HARNESS-EFF-02 / PR #106](https://github.com/kejian-tong/myTradingAlpha/pull/106) added compact state,
+bounded read-only schema3 identity checks and context guidance. Base
+`6de97229c19e9f57d536fc8e59c45411bb39abc5`; approved source
+`16b479a7cfc9295079df267755323fc046a2d807`; merge/tree match reconciled main above.
+Historical high initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max and reviewer_high /
+GPT-6.1 Sol / xhigh. Recorded 158 focused and 64 consumer passes; PR-source local and CI full each
+5485 passed, 4 skipped, 69 subtests. The former separate Foundation execution passed 4909, skipped 2.
+[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/106#issuecomment-6459590623),
+[Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/106#issuecomment-6459625169),
+[completion](https://github.com/kejian-tong/myTradingAlpha/pull/106#issuecomment-6459699099).
+PR105 accounting remains unchanged; usage assertions and static byte reductions do not prove billing.
 
 ## Boundaries and recovery
 
@@ -67,7 +71,8 @@ passes, 4 skips, 69 subtests; required CI and Foundation passed. Native Windows 
 - Writer leases are cooperative and do not defend against same-user processes. Main-protection required contexts remain authoritative; recheck current GitHub rules.
 - Project Apps and Memories disabled: configuration intent. Rules/Permission Profiles/OTel/repo Plugins remain watch-only. External-spec Docs MCP is configuration intent until observed.
 
-[Immutable precompaction snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/6de97229c19e9f57d536fc8e59c45411bb39abc5/docs/productionization/AGENT_STATE.md)
-retains prior BT01–04, SIG and Harness recovery references/routes. Its superseded status is historical,
-not current authority. Load that history only for a specific question; current GitHub/PR evidence wins.
-Use [context policy](CONTEXT_MANAGEMENT.md) and [compaction policy](AGENT_STATE_COMPACTION.md) for recovery.
+[Immutable prior snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/e683b10f75b8038e3423de7cbb80ee4fb19e3303/docs/productionization/AGENT_STATE.md)
+retains PR105 and prior BT01–04, SIG and Harness recovery references/routes through immutable links.
+Its superseded status is historical, not current authority. Load that history only for a specific
+question; current GitHub/PR evidence wins. Use [context policy](CONTEXT_MANAGEMENT.md),
+[compaction policy](AGENT_STATE_COMPACTION.md) and [validation policy](VALIDATION_EFFICIENCY.md).
