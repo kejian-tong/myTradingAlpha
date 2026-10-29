@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import builtins
 import importlib
 import json
@@ -8,6 +9,7 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -796,3 +798,149 @@ def test_cli_rejects_fifo_without_waiting_for_a_writer(tmp_path: Path) -> None:
     result = _run_cli(fifo, cwd=tmp_path, timeout=3)
 
     _assert_cli_failure(result, str(fifo))
+
+
+@pytest.mark.parametrize("missing", (True, False), ids=("missing-key", "extra-key"))
+def test_nested_usage_requires_the_exact_counter_schema(missing: bool) -> None:
+    response = _response()
+    if missing:
+        del response["usage"]["input_tokens"]
+    else:
+        response["usage"]["unexpected"] = "private-nested-usage-marker"
+
+    _assert_rejected(
+        [_agent(ROOT_REF), response],
+        "private-nested-usage-marker",
+    )
+
+
+def test_hostile_record_type_and_nested_usage_key_are_rejected_before_callbacks() -> None:
+    module = _module()
+
+    class HostileString(str):
+        def __hash__(self):
+            raise AssertionError("record_type subclass hash must not run")
+
+        def __eq__(self, other):
+            raise AssertionError("record_type subclass equality must not run")
+
+    class CountedKey(str):
+        hash_calls = 0
+
+        def __hash__(self):
+            type(self).hash_calls += 1
+            return str.__hash__(self)
+
+        def __eq__(self, other):
+            raise AssertionError("usage-key subclass equality must not run")
+
+    hostile_type = _agent(ROOT_REF)
+    hostile_type["record_type"] = HostileString("agent")
+    with pytest.raises(ValueError) as error:
+        module.summarize_task_usage([hostile_type], root_ref=ROOT_REF)
+    _assert_fixed_error(error.value)
+
+    response = _response()
+    key = CountedKey("unexpected")
+    response["usage"][key] = "private-hostile-usage-key-marker"
+    CountedKey.hash_calls = 0
+    with pytest.raises(ValueError) as error:
+        module.summarize_task_usage([_agent(ROOT_REF), response], root_ref=ROOT_REF)
+    _assert_fixed_error(error.value, "private-hostile-usage-key-marker")
+    assert CountedKey.hash_calls == 0
+
+
+def test_per_metric_completeness_and_observed_subtotals_use_known_response_operands() -> None:
+    summary = _summary(
+        [
+            _agent(ROOT_REF),
+            _agent(CHILD_REF, ROOT_REF),
+            _response(
+                input_tokens=10,
+                cached_input_tokens=None,
+                output_tokens=2,
+                reasoning_output_tokens=None,
+            ),
+            _response(
+                CHILD_REF,
+                "9" * 64,
+                input_tokens=None,
+                cached_input_tokens=5,
+                output_tokens=8,
+                reasoning_output_tokens=3,
+            ),
+        ]
+    )
+
+    combined = summary["combined"]
+    assert combined["observed_totals"] == {
+        "input_tokens": 10,
+        "cached_input_tokens": 5,
+        "output_tokens": 10,
+        "reasoning_output_tokens": 3,
+        "total_tokens": 12,
+        "uncached_input_tokens": None,
+        "nonreasoning_output_tokens": 5,
+    }
+    assert combined["complete_totals"] == {
+        "input_tokens": None,
+        "cached_input_tokens": None,
+        "output_tokens": 10,
+        "reasoning_output_tokens": None,
+        "total_tokens": None,
+        "uncached_input_tokens": None,
+        "nonreasoning_output_tokens": None,
+    }
+    # The root has input but no cached count; the child has cache but no input.
+    # Subtracting the aggregate partial sums would fabricate uncached_input=5.
+    assert combined["observed_totals"]["uncached_input_tokens"] is None
+
+
+def test_encoded_secrets_are_redacted_from_nested_api_json_parser_and_path_errors(
+    tmp_path: Path,
+) -> None:
+    raw_secret = "private sentinel:alpha"
+    base64_secret = base64.b64encode(raw_secret.encode("utf-8")).decode("ascii")
+    url_secret = quote(raw_secret, safe="")
+    secrets = (raw_secret, base64_secret, url_secret)
+
+    malformed = _response()
+    malformed["usage"][raw_secret] = base64_secret
+    malformed["usage"]["output_tokens"] = url_secret
+    _assert_rejected([_agent(ROOT_REF), malformed], *secrets)
+
+    nested_path = tmp_path / f"{raw_secret}.jsonl"
+    nested_path.write_text(
+        json.dumps(_agent(ROOT_REF))
+        + "\n"
+        + json.dumps(malformed)
+        + "\n",
+        encoding="utf-8",
+    )
+    nested_cli_error = _run_cli(nested_path, cwd=tmp_path)
+    _assert_cli_failure(nested_cli_error, *secrets, str(nested_path))
+
+    invalid_json = tmp_path / "invalid-secret.jsonl"
+    invalid_json.write_text(
+        '{"record_type":"agent","unused":"'
+        + raw_secret
+        + base64_secret
+        + url_secret
+        + '"\n',
+        encoding="utf-8",
+    )
+    json_error = _run_cli(invalid_json, cwd=tmp_path)
+    _assert_cli_failure(json_error, *secrets)
+
+    valid = tmp_path / "valid-secret.jsonl"
+    valid.write_text(json.dumps(_agent(ROOT_REF)) + "\n", encoding="utf-8")
+    parser_error = _run_cli(
+        valid,
+        cwd=tmp_path,
+        extra_args=("--unexpected", *secrets),
+    )
+    _assert_cli_failure(parser_error, *secrets)
+
+    missing_path = tmp_path / f"{raw_secret}-{base64_secret}-{url_secret}.jsonl"
+    path_error = _run_cli(missing_path, cwd=tmp_path)
+    _assert_cli_failure(path_error, *secrets, str(missing_path))
