@@ -6,10 +6,10 @@ reconciliation snapshot; resolve the current PR head/status and gates from GitHu
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `4dbecb231457fe4820623677eb9e4b2e0621cd2b`
-- `last_reconciled_main_tree`: `723d83e0c5fd0052fa3ebe5767432770d47682f8`
+- `last_reconciled_main_sha`: `8b1138841719c19bb74b4ed1176c78af8bcc469c`
+- `last_reconciled_main_tree`: `4b1b4d9a3e74d1ad4a47e18c3fcaba32af0a1035`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-EFF-04 / PR #108
+- `current_pr_id`: HARNESS-EFF-04 / PR #109
 - `current_phase`: 03 — Backtest and Ledger
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
 - `autonomy_mode`: human-authorized HARNESS-EFF-04 only; later slices require separate authorization
@@ -18,15 +18,16 @@ reconciliation snapshot; resolve the current PR head/status and gates from GitHu
 ## Current maintenance
 
 HARNESS-EFF-04 owns remaining Harness remediation and security maintenance only.
+Current follow-up closes newly surfaced langgraph/sdk GHSA-3fx2-cqw9-xr3c using minimum patches,
+manifest floor and offline URL-path regressions. Their introduction is not attributed to PR108.
 Master owns state facts and leases. High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max;
 separate reviewer_high / GPT-6.1 Sol / xhigh; Master/boundary_reviewer / GPT-6.1 Sol / xhigh.
 Configured routes are not authenticated runtime identity. Routing and safety gates are unchanged.
 
-Scope: benchmark admission/dated credits, prospective native compaction, uv/security lock fixes and full
-unfiltered durations. No shared fixture cache or production backtest change. Resolve RED/GREEN, released
-leases, validation, independent review and Master gate from this PR; no future approval/merge is asserted here.
-Full local/CI and exact-head gates remain mandatory. Realized billing, complete request coverage, host
-enforcement, Enterprise USD and controlled savings require external evidence; never fabricate missing facts.
+Resolve RED/GREEN, leases, full validation, approval and Master gate from this PR conversation;
+no future approval/merge is asserted here. New commits stale affected proof. Scope is security maintenance;
+no later phase starts. Full local/CI and exact-head review remain mandatory. Host enforcement, actual bills
+and controlled cost savings remain external prerequisites.
 
 ## Last completed roadmap
 
@@ -45,18 +46,19 @@ financial and publication checks remain. No general timing waiver or financial a
 
 ## Last completed Harness
 
-- `harness_reconciled_through`: PR #107 / merge `4dbecb231457fe4820623677eb9e4b2e0621cd2b`
+- `harness_reconciled_through`: PR #108 / merge `8b1138841719c19bb74b4ed1176c78af8bcc469c`
 
-[HARNESS-EFF-03 / PR #107](https://github.com/kejian-tong/myTradingAlpha/pull/107) deduplicated Foundation
-and named validation ownership. Base `e683b10f75b8038e3423de7cbb80ee4fb19e3303`; approved source
-`22bded9c1af4f1f5cb6e88b93af05b5e7dd835c0`; merge/tree match reconciled main above.
+[HARNESS-EFF-04 / PR #108](https://github.com/kejian-tong/myTradingAlpha/pull/108) added bounded callback-safe
+analysis, dated credit estimates, prospective native compaction and seven security patches.
+Base `4dbecb231457fe4820623677eb9e4b2e0621cd2b`; approved source
+`e5460b09928632b4658f721a0ab119a690f05e75`; tree `4b1b4d9a3e74d1ad4a47e18c3fcaba32af0a1035`; merge/tree match reconciled main above.
 Historical high initial `luna_sol_high`, same configured writer/reviewer routes as current maintenance.
-RED `58c0c680ba658859eae7ea09c6839d8e4fc09792`;72 focused passes;
-PR-source local and CI full each 5491 passed, 4 skipped, 69 subtests. Foundation aggregation succeeded4s.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/107#issuecomment-6471350570),
-[Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/107#issuecomment-6471376503),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/107#issuecomment-6471442876).
-PR106/HARNESS-EFF-02 context policy and PR105 accounting remain in immutable recovery history.
+PR-source local and CI full each 5548 passed, 4 skipped, 69 subtests. Foundation aggregation succeeded4s.
+[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/108#issuecomment-6489107034),
+[Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/108#issuecomment-6489455137),
+[completion](https://github.com/kejian-tong/myTradingAlpha/pull/108#issuecomment-6489599975).
+Its12 scoped alerts are fixed; dependency-graph refresh surfaced alerts15/16.
+PR107/HARNESS-EFF-03 validation ownership and prior context/accounting remain in immutable history.
 
 ## Boundaries and recovery
 
@@ -70,7 +72,7 @@ PR106/HARNESS-EFF-02 context policy and PR105 accounting remain in immutable rec
 - Writer leases are cooperative and do not defend against same-user processes. Main-protection required contexts remain authoritative; recheck current GitHub rules.
 - Project Apps and Memories disabled: configuration intent. Rules/Permission Profiles/OTel/repo Plugins remain watch-only. External-spec Docs MCP is configuration intent until observed.
 
-[Immutable prior snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/4dbecb231457fe4820623677eb9e4b2e0621cd2b/docs/productionization/AGENT_STATE.md)
+[Immutable prior snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/8b1138841719c19bb74b4ed1176c78af8bcc469c/docs/productionization/AGENT_STATE.md)
 retains PR105 and prior BT01–04, SIG and Harness recovery references/routes through immutable links.
 Its superseded status is historical, not current authority. Load that history only for a specific
 question; current GitHub/PR evidence wins. Use [context policy](CONTEXT_MANAGEMENT.md),
