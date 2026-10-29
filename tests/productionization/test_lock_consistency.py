@@ -94,7 +94,7 @@ def _lock_package_names(lock_text: str) -> set[str]:
     }
 
 
-def _lock_package_versions(lock_text: str) -> dict[str, str]:
+def _lock_package_versions(lock_text: str) -> dict[str, set[str]]:
     versions = {}
     blocks = re.split(r"(?m)^\[\[package\]\]\s*$", lock_text)
     for block in blocks[1:]:
@@ -102,7 +102,7 @@ def _lock_package_versions(lock_text: str) -> dict[str, str]:
         version = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', block)
         if name is not None and version is not None:
             normalized_name = re.sub(r"[-_.]+", "-", name.group(1).lower())
-            versions[normalized_name] = version.group(1)
+            versions.setdefault(normalized_name, set()).add(version.group(1))
     return versions
 
 
@@ -188,9 +188,47 @@ def test_active_lock_meets_all_reviewed_security_minimums() -> None:
 
     for package, minimum in minimums.items():
         assert package in versions, f"uv.lock omits required package {package}"
-        assert _meets_version_floor(versions[package], minimum), (
-            f"uv.lock pins {package} {versions[package]}, below reviewed minimum {minimum}"
+        assert all(_meets_version_floor(version, minimum) for version in versions[package]), (
+            f"uv.lock pins {package} {sorted(versions[package])}, below reviewed minimum {minimum}"
         )
+
+
+def test_active_lock_matches_exact_reviewed_minimum_version_sets_for_all_variants() -> None:
+    lock_text = _require_file(LOCK_PATH, "uv.lock").read_text(encoding="utf-8")
+    versions = _lock_package_versions(lock_text)
+    expected = {
+        "aiohttp": {"3.14.4"},
+        "certifi": {"2026.10.18"},
+        "langgraph-checkpoint": {"4.3.0"},
+        "langgraph-checkpoint-sqlite": {"3.1.2"},
+        "multidict": {"6.9.1"},
+        "setuptools": {"84.1.0"},
+        "yarl": {"1.25.1"},
+    }
+
+    mismatches = {
+        package: {"expected": sorted(required), "actual": sorted(versions.get(package, set()))}
+        for package, required in expected.items()
+        if versions.get(package, set()) != required
+    }
+    assert not mismatches, f"uv.lock differs from the exact reviewed minimal versions: {mismatches}"
+
+
+def test_locked_floor_rejects_a_vulnerable_alternate_variant_hidden_by_a_patched_version() -> None:
+    lock_text = '''
+[[package]]
+name = "multidict"
+version = "6.8.0"
+
+[[package]]
+name = "multidict"
+version = "7.2.1"
+'''
+
+    versions = _lock_package_versions(lock_text)
+
+    assert versions["multidict"] == {"6.8.0", "7.2.1"}
+    assert not all(_meets_version_floor(version, "6.9.1") for version in versions["multidict"])
 
 
 def test_locked_floor_comparison_rejects_prereleases_and_malformed_versions() -> None:
@@ -202,10 +240,10 @@ def test_locked_floor_comparison_rejects_prereleases_and_malformed_versions() ->
 def test_project_and_pip_fallback_declare_reviewed_security_minimums() -> None:
     specs = _project_dependency_specs()
     minimums = {
-        "aiohttp": ">=3.14.4",
+        "aiohttp": ">=3.14.4,<4",
         "certifi": ">=2026.10.18",
         "langgraph-checkpoint-sqlite": ">=3.1.2",
-        "multidict": ">=6.9.1",
+        "multidict": ">=6.9.1,<7",
         "setuptools": ">=84.1.0",
     }
 

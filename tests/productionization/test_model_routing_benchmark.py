@@ -438,6 +438,48 @@ def test_current_card_does_not_charge_cache_writes_twice() -> None:
     )
 
 
+def test_current_card_does_not_inspect_unrecognized_caller_rate_objects() -> None:
+    benchmark = _module()
+    callbacks: list[str] = []
+
+    class HostileRate:
+        def __eq__(self, _other: object) -> bool:
+            callbacks.append("eq")
+            return False
+
+        def __getitem__(self, _key: str) -> float:
+            callbacks.append("getitem")
+            raise AssertionError("unrecognized rate object was inspected")
+
+    rates = dict(benchmark.CREDIT_RATES)
+    rates["gpt-6-luna"] = HostileRate()
+    row = _v2_row("gpt-6-luna", pricing_surface=CURRENT_CARD_ID)
+
+    assert benchmark.token_cost(row, rates) is None
+    assert callbacks == []
+
+
+def test_current_card_does_not_inspect_unrecognized_caller_rate_objects() -> None:
+    benchmark = _module()
+    callbacks: list[str] = []
+
+    class HostileRate:
+        def __eq__(self, _other: object) -> bool:
+            callbacks.append("eq")
+            return False
+
+        def __getitem__(self, _key: str) -> float:
+            callbacks.append("getitem")
+            raise AssertionError("unrecognized rate object was inspected")
+
+    rates = dict(benchmark.CREDIT_RATES)
+    rates["gpt-6-luna"] = HostileRate()
+    row = _v2_row("gpt-6-luna", pricing_surface=CURRENT_CARD_ID)
+
+    assert benchmark.token_cost(row, rates) is None
+    assert callbacks == []
+
+
 @pytest.mark.parametrize(
     ("evaluation_date", "age_days", "status", "fresh"),
     (
@@ -734,6 +776,33 @@ def test_analyze_accepts_the_10000_record_boundary_before_validation(
     with pytest.raises(ValueError, match="bounded validation probe"):
         benchmark.analyze([{}] * 10_000, evaluation_date=CURRENT_CARD_DATE)
     assert len(validated) == 1
+
+
+def test_analyze_uses_a_detached_snapshot_when_caller_appends_during_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _module()
+    records = [_row("gpt-6-luna", task_id="t1")]
+    appended = _row("gpt-6-luna", task_id="t2")
+    validated_task_ids: list[str] = []
+    original_validate = benchmark.validate
+
+    def append_during_validation(record):
+        validated = original_validate(record)
+        validated_task_ids.append(validated["task_id"])
+        if len(validated_task_ids) == 1:
+            records.append(appended)
+        return validated
+
+    monkeypatch.setattr(benchmark, "validate", append_during_validation)
+
+    result = benchmark.analyze(records, evaluation_date=EVAL_DATE)
+    task_class = result["task_classes"]["exploration"]
+
+    assert len(records) == 2
+    assert validated_task_ids == ["t1"]
+    assert task_class["routes"][0]["runs"] == 1
+    assert task_class["comparison_pairing"]["all_task_ids"] == ["t1"]
 
 
 def test_analyze_rejects_hostile_date_before_date_callbacks() -> None:
