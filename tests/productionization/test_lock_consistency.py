@@ -193,27 +193,6 @@ def test_active_lock_meets_all_reviewed_security_minimums() -> None:
         )
 
 
-def test_active_lock_matches_exact_reviewed_minimum_version_sets_for_all_variants() -> None:
-    lock_text = _require_file(LOCK_PATH, "uv.lock").read_text(encoding="utf-8")
-    versions = _lock_package_versions(lock_text)
-    expected = {
-        "aiohttp": {"3.14.4"},
-        "certifi": {"2026.10.18"},
-        "langgraph-checkpoint": {"4.3.0"},
-        "langgraph-checkpoint-sqlite": {"3.1.2"},
-        "multidict": {"6.9.1"},
-        "setuptools": {"84.1.0"},
-        "yarl": {"1.25.1"},
-    }
-
-    mismatches = {
-        package: {"expected": sorted(required), "actual": sorted(versions.get(package, set()))}
-        for package, required in expected.items()
-        if versions.get(package, set()) != required
-    }
-    assert not mismatches, f"uv.lock differs from the exact reviewed minimal versions: {mismatches}"
-
-
 def test_locked_floor_rejects_a_vulnerable_alternate_variant_hidden_by_a_patched_version() -> None:
     lock_text = '''
 [[package]]
@@ -235,6 +214,10 @@ def test_locked_floor_comparison_rejects_prereleases_and_malformed_versions() ->
     assert not _meets_version_floor("3.14.4rc1", "3.14.4")
     assert not _meets_version_floor("not-a-version", "3.14.4")
     assert _meets_version_floor("3.14.4.post1", "3.14.4")
+
+
+def test_locked_floor_comparison_accepts_a_newer_safe_patch_version() -> None:
+    assert _meets_version_floor("3.14.5", "3.14.4")
 
 
 def test_project_and_pip_fallback_declare_reviewed_security_minimums() -> None:

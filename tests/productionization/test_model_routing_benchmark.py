@@ -459,27 +459,6 @@ def test_current_card_does_not_inspect_unrecognized_caller_rate_objects() -> Non
     assert callbacks == []
 
 
-def test_current_card_does_not_inspect_unrecognized_caller_rate_objects() -> None:
-    benchmark = _module()
-    callbacks: list[str] = []
-
-    class HostileRate:
-        def __eq__(self, _other: object) -> bool:
-            callbacks.append("eq")
-            return False
-
-        def __getitem__(self, _key: str) -> float:
-            callbacks.append("getitem")
-            raise AssertionError("unrecognized rate object was inspected")
-
-    rates = dict(benchmark.CREDIT_RATES)
-    rates["gpt-6-luna"] = HostileRate()
-    row = _v2_row("gpt-6-luna", pricing_surface=CURRENT_CARD_ID)
-
-    assert benchmark.token_cost(row, rates) is None
-    assert callbacks == []
-
-
 @pytest.mark.parametrize(
     ("evaluation_date", "age_days", "status", "fresh"),
     (
