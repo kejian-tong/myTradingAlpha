@@ -554,6 +554,44 @@ def test_hostile_collections_and_scalar_subclasses_are_rejected_before_callbacks
     _assert_fixed_error(error.value)
 
 
+@pytest.mark.parametrize("container_type", (list, tuple), ids=("list", "tuple"))
+@pytest.mark.parametrize("equality_mode", ("raises", "deceptive"))
+def test_sequence_subclasses_with_hostile_metaclass_are_rejected_before_callbacks(
+    container_type: type, equality_mode: str
+) -> None:
+    module = _module()
+    calls = {"equality": 0, "length": 0, "iteration": 0}
+
+    class HostileSequenceMeta(type):
+        def __eq__(cls, other: object) -> bool:
+            calls["equality"] += 1
+            if equality_mode == "raises":
+                raise RuntimeError("private metaclass equality marker")
+            return True
+
+        __hash__ = type.__hash__
+
+    class HostileSequence(container_type, metaclass=HostileSequenceMeta):
+        def __len__(self) -> int:
+            calls["length"] += 1
+            raise RuntimeError("private sequence length marker")
+
+        def __iter__(self):
+            calls["iteration"] += 1
+            raise RuntimeError("private sequence iteration marker")
+
+    records = HostileSequence([_agent(ROOT_REF)])
+    error = None
+    try:
+        module.summarize_task_usage(records, root_ref=ROOT_REF)
+    except BaseException as exc:
+        error = exc
+
+    assert calls == {"equality": 0, "length": 0, "iteration": 0}
+    assert type(error) is ValueError
+    _assert_fixed_error(error)
+
+
 def test_identifier_validation_and_errors_do_not_echo_untrusted_values() -> None:
     secret = "private-identifier-marker"
     bad_agent = _agent(secret, ROOT_REF)
