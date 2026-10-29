@@ -87,7 +87,8 @@ def test_completed_review_gate_completion_and_validation_refs_remain_recoverable
         "#issuecomment-6489107034",
         "#issuecomment-6489455137",
         "#issuecomment-6489599975",
-        "5548 passed, 4 skipped, 69 subtests",
+        "PR-source local and CI full each 5548 passed, 4 skipped, 69 subtests",
+        "Foundation aggregation succeeded4s",
     ):
         assert reference in state, f"operational snapshot omits recovery reference {reference!r}"
 
