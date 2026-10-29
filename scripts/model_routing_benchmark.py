@@ -287,9 +287,7 @@ def token_cost(record: dict, rates: dict[str, dict[str, float]]) -> float | None
                 return None
             # This card reports Work subscription credits only. Its pricing is
             # static and selected by the row, never inferred from USD rates.
-            if rates is not CREDIT_RATES and (
-                type(rates) is not dict or rates != CREDIT_RATES
-            ):
+            if rates is not CREDIT_RATES:
                 return None
             model_rates = _CURRENT_WORK_STANDARD_CREDIT_RATES.get(record["model"])
         else:
