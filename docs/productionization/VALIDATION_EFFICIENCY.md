@@ -49,7 +49,7 @@ EVIDENCE_DIR=<private-evidence-directory>
 mkdir -p "$EVIDENCE_DIR"
 gh api "repos/OWNER/REPO/actions/runs/$RUN_ID" > "$EVIDENCE_DIR/run-before.json"
 jq -e --arg sha "$CANDIDATE_SHA" --argjson attempt "$ATTEMPT" \
-  '.head_sha == $sha and .run_attempt == $attempt' "$EVIDENCE_DIR/run-before.json" > /dev/null
+  '.head_sha == $sha and .run_attempt == $attempt' "$EVIDENCE_DIR/run-before.json" > /dev/null || exit 1
 set +e
 gh run watch "$RUN_ID" --exit-status --interval 60 > "$EVIDENCE_DIR/watch.log" 2>&1
 watch_exit=$?

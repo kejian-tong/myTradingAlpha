@@ -162,7 +162,9 @@ def summarize_task_usage(records: object, *, root_ref: object) -> dict:
     """Summarize explicit sanitized agent and response records without side effects."""
     if not _valid_ref(root_ref):
         raise _fail()
-    if type(records) not in (list, tuple) or len(records) > MAX_ROWS:
+    if type(records) is not list and type(records) is not tuple:
+        raise _fail()
+    if len(records) > MAX_ROWS:
         raise _fail()
 
     parents: dict[str, str | None] = {}
