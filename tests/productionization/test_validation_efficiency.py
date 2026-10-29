@@ -30,7 +30,7 @@ if [[ "${TEST_RESULT:-}" != "success" || "${LINT_RESULT:-}" != "success" || "${S
   exit 1
 fi
 printf '%s\\n' 'Foundation dependency coverage is satisfied by test, lint, and smoke-install.'"""
-FULL_TEST_COMMAND = "uv run --no-sync pytest -q"
+FULL_TEST_COMMAND = "uv run --no-sync pytest -q --durations=25"
 
 
 def _workflow() -> dict:

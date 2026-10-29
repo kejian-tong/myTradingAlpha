@@ -7,18 +7,18 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "e683b10f75b8038e3423de7cbb80ee4fb19e3303"
-RECONCILED_MAIN_TREE = "7a5214fd01349fbd5a0d3027b8cacd5151e6d6f1"
+RECONCILED_MAIN_SHA = "4dbecb231457fe4820623677eb9e4b2e0621cd2b"
+RECONCILED_MAIN_TREE = "723d83e0c5fd0052fa3ebe5767432770d47682f8"
 BT05_BASE_SHA = "3d9e049b2fa2c54b55ac66d1c3000480cd3254bd"
 BT05_SOURCE_SHA = "f1e4507f0508e822464878508219eeacf5a8eb45"
 BT05_SOURCE_TREE = "eb1fc414d070d9fec1f71bb95f7742be9fbf29ee"
 BT05_MERGE_SHA = "b12bef51acd2b1ef6d6db01dede959f1dd67130f"
-HARNESS106_BASE_SHA = "6de97229c19e9f57d536fc8e59c45411bb39abc5"
-HARNESS106_SOURCE_SHA = "16b479a7cfc9295079df267755323fc046a2d807"
-HARNESS106_MERGE_SHA = RECONCILED_MAIN_SHA
+HARNESS107_BASE_SHA = "e683b10f75b8038e3423de7cbb80ee4fb19e3303"
+HARNESS107_SOURCE_SHA = "22bded9c1af4f1f5cb6e88b93af05b5e7dd835c0"
+HARNESS107_MERGE_SHA = RECONCILED_MAIN_SHA
 COLD_STATE_URL = (
     "https://github.com/kejian-tong/myTradingAlpha/blob/"
-    "e683b10f75b8038e3423de7cbb80ee4fb19e3303/docs/productionization/AGENT_STATE.md"
+    "4dbecb231457fe4820623677eb9e4b2e0621cd2b/docs/productionization/AGENT_STATE.md"
 )
 
 
@@ -43,20 +43,20 @@ def test_operational_state_reconciles_the_current_main_and_completed_bt05() -> N
     assert "BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
 
 
-def test_current_harness_snapshot_is_pr106_and_authorizes_only_eff03() -> None:
+def test_current_harness_snapshot_is_pr107_and_authorizes_only_eff04() -> None:
     state = _state_text()
     normalized = " ".join(state.split())
 
     assert (
-        f"`harness_reconciled_through`: PR #106 / merge `{HARNESS106_MERGE_SHA}`"
+        f"`harness_reconciled_through`: PR #107 / merge `{HARNESS107_MERGE_SHA}`"
         in state
     )
-    assert f"Base `{HARNESS106_BASE_SHA}`" in normalized
-    assert f"approved source `{HARNESS106_SOURCE_SHA}`" in normalized
+    assert f"Base `{HARNESS107_BASE_SHA}`" in normalized
+    assert f"approved source `{HARNESS107_SOURCE_SHA}`" in normalized
     assert "merge/tree match reconciled main above" in normalized
-    assert "`current_pr_id`: HARNESS-EFF-03 /" in state
-    assert "`autonomy_mode`: human-authorized HARNESS-EFF-03 only; later slices require separate authorization" in state
-    assert "HARNESS-EFF-03 owns validation efficiency and CI deduplication only." in state
+    assert "`current_pr_id`: HARNESS-EFF-04 /" in state
+    assert "`autonomy_mode`: human-authorized HARNESS-EFF-04 only; later slices require separate authorization" in state
+    assert "HARNESS-EFF-04 owns remaining Harness remediation and security maintenance only." in state
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state
     assert "Routing and safety gates are unchanged." in state
@@ -80,12 +80,10 @@ def test_completed_review_gate_completion_and_validation_refs_remain_recoverable
         "#issuecomment-6418296352",
         "5286 passed, 4 skipped, 69 subtests",
         "Foundation: 4710 passed, 2 skipped",
-        "https://github.com/kejian-tong/myTradingAlpha/pull/106",
-        "#issuecomment-6459590623",
-        "#issuecomment-6459625169",
-        "#issuecomment-6459699099",
-        "PR-source local and CI full each 5485 passed, 4 skipped, 69 subtests",
-        "former separate Foundation execution passed 4909, skipped 2",
+        "https://github.com/kejian-tong/myTradingAlpha/pull/107",
+        "#issuecomment-6471350570",
+        "#issuecomment-6471376503",
+        "#issuecomment-6471442876",
     ):
         assert reference in state, f"operational snapshot omits recovery reference {reference!r}"
 

@@ -108,6 +108,29 @@ def _checker():
     return module
 
 
+def _set_root_toml_value(path: Path, key: str, value: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    assignment = re.compile(rf"(?m)^{re.escape(key)}\s*=.*$")
+    updated, count = assignment.subn(f"{key} = {value}", text, count=1)
+    if count == 0:
+        first_table = re.search(r"(?m)^\[", text)
+        assert first_table is not None, f"TOML fixture has no table boundary in {path}"
+        updated = text[: first_table.start()] + f"{key} = {value}\n\n" + text[first_table.start() :]
+    path.write_text(updated, encoding="utf-8")
+
+
+def _remove_root_toml_value(path: Path, key: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    updated, count = re.subn(rf"(?m)^{re.escape(key)}\s*=.*\n?", "", text, count=1)
+    assert count == 1, f"missing root TOML assignment {key!r} in {path}"
+    path.write_text(updated, encoding="utf-8")
+
+
+def _install_native_compaction_policy(path: Path) -> None:
+    _set_root_toml_value(path, "model_auto_compact_token_limit", "128000")
+    _set_root_toml_value(path, "model_auto_compact_token_limit_scope", '"total"')
+
+
 def _valid_agent_state() -> bytes:
     return (
         "# Productionization Agent State\n\n"
@@ -151,6 +174,73 @@ def _gate() -> dict:
 
 def test_current_configuration_is_consistent() -> None:
     assert _checker().configuration_errors(ROOT) == []
+
+
+def test_native_compaction_settings_are_exact_root_values_without_role_overrides() -> None:
+    checker = _checker()
+    config = checker._toml(ROOT / ".codex/config.toml")
+
+    assert type(config.get("model_auto_compact_token_limit")) is int
+    assert config["model_auto_compact_token_limit"] == 128_000
+    assert type(config.get("model_auto_compact_token_limit_scope")) is str
+    assert config["model_auto_compact_token_limit_scope"] == "total"
+    assert "model_context_window" not in config
+    forbidden_role_keys = {
+        "model_context_window",
+        "model_auto_compact_token_limit",
+        "model_auto_compact_token_limit_scope",
+    }
+    for role in _NON_MASTER_ROLES:
+        role_config = checker._toml(_role_path(ROOT, role))
+        assert forbidden_role_keys.isdisjoint(role_config), role
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    (
+        ("model_auto_compact_token_limit", None),
+        ("model_auto_compact_token_limit", "true"),
+        ("model_auto_compact_token_limit", "128000.0"),
+        ("model_auto_compact_token_limit", '"128000"'),
+        ("model_auto_compact_token_limit", "127999"),
+        ("model_auto_compact_token_limit_scope", None),
+        ("model_auto_compact_token_limit_scope", "false"),
+        ("model_auto_compact_token_limit_scope", "128000"),
+        ("model_auto_compact_token_limit_scope", '"session"'),
+    ),
+)
+def test_native_compaction_setting_rejects_missing_or_non_exact_root_value(
+    tmp_path: Path,
+    key: str,
+    value: str | None,
+) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    config_path = fixture / ".codex/config.toml"
+    _install_native_compaction_policy(config_path)
+    if value is None:
+        _remove_root_toml_value(config_path, key)
+    else:
+        _set_root_toml_value(config_path, key, value)
+
+    errors = _checker().configuration_errors(fixture)
+
+    assert errors, f"checker accepted invalid native compaction setting {key}={value!r}"
+
+
+def test_native_compaction_rejects_project_and_role_capacity_overrides(tmp_path: Path) -> None:
+    fixture = _copy_harness_fixture(tmp_path)
+    checker = _checker()
+    project_config = fixture / ".codex/config.toml"
+    _install_native_compaction_policy(project_config)
+    _set_root_toml_value(project_config, "model_context_window", "256000")
+    project_errors = checker.configuration_errors(fixture)
+    assert project_errors, "checker accepted a project model_context_window override"
+
+    _remove_root_toml_value(project_config, "model_context_window")
+    role_config = _role_path(fixture, "normal_implementer")
+    _set_root_toml_value(role_config, "model_auto_compact_token_limit", "64000")
+    role_errors = checker.configuration_errors(fixture)
+    assert role_errors, "checker accepted a role-level compaction capacity override"
 
 
 def test_agent_state_accepts_exact_byte_ceiling_and_rejects_ceiling_plus_one(tmp_path: Path) -> None:

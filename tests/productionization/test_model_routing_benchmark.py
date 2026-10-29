@@ -10,6 +10,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 EVAL_DATE = date(2026, 9, 7)
+CURRENT_CARD_ID = "work_codex_standard_2026_10_28"
+CURRENT_CARD_DATE = date(2026, 10, 28)
+CURRENT_CARD_SOURCE = "https://learn.chatgpt.com/docs/pricing"
 PROVENANCE_FIELDS = (
     "repository_commit_sha",
     "repository_tree_sha",
@@ -365,6 +368,293 @@ def test_v2_inclusive_input_is_priced_once_while_legacy_formula_stays_frozen() -
     assert benchmark.token_cost(legacy, benchmark.CREDIT_RATES) == 0.81
     assert benchmark.token_cost(inclusive, benchmark.CREDIT_RATES) == pytest.approx(0.71)
     assert benchmark.validate(inclusive)["usage"]["reasoning_output_tokens"] == 1_000
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "expected_credits"),
+    (
+        ("gpt-6-luna", "max", 0.33),
+        ("gpt-5.6-terra", "medium", 7.1),
+        ("gpt-6-sol", "high", 6.6),
+        ("gpt-6.1-sol", "xhigh", 6.55),
+        ("gpt-6-astra", "xhigh", 33.0),
+    ),
+)
+def test_dated_work_standard_card_prices_current_v2_usage_without_rewriting_history(
+    model: str,
+    effort: str,
+    expected_credits: float,
+) -> None:
+    benchmark = _module()
+    current = _v2_row(
+        model,
+        effort=effort,
+        pricing_surface=CURRENT_CARD_ID,
+    )
+
+    result = benchmark.analyze([current], evaluation_date=CURRENT_CARD_DATE)
+    route = result["task_classes"]["exploration"]["routes"][0]
+
+    assert result["pricing_surface"] == CURRENT_CARD_ID
+    assert result["rate_card_as_of"] == CURRENT_CARD_DATE.isoformat()
+    assert result["credit_rate_source"] == CURRENT_CARD_SOURCE
+    assert route["credits_mean"] == pytest.approx(expected_credits)
+    assert route["cost_observation_complete"] is True
+    assert route["usd_mean"] is None
+    assert route["usd_cost_observation_complete"] is False
+    assert benchmark.token_cost(_row("gpt-6-luna"), benchmark.CREDIT_RATES) == 0.81
+    assert benchmark.token_cost(
+        _v2_row("gpt-6-luna"), benchmark.CREDIT_RATES
+    ) == pytest.approx(0.71)
+
+
+def test_current_card_does_not_charge_cache_writes_twice() -> None:
+    benchmark = _module()
+    without_writes = _v2_row(
+        "gpt-6-luna",
+        pricing_surface=CURRENT_CARD_ID,
+    )
+    with_inclusive_writes = _v2_row(
+        "gpt-6-luna",
+        pricing_surface=CURRENT_CARD_ID,
+        usage_overrides={
+            "cache_write_tokens": 1_000,
+            "cache_write_30m_tokens": 600,
+            "cache_write_12h_tokens": 400,
+        },
+    )
+
+    no_write_result = benchmark.analyze([without_writes], evaluation_date=CURRENT_CARD_DATE)
+    write_result = benchmark.analyze([with_inclusive_writes], evaluation_date=CURRENT_CARD_DATE)
+
+    assert (
+        no_write_result["task_classes"]["exploration"]["routes"][0]["credits_mean"]
+        == pytest.approx(0.33)
+    )
+    assert (
+        write_result["task_classes"]["exploration"]["routes"][0]["credits_mean"]
+        == pytest.approx(0.33)
+    )
+
+
+@pytest.mark.parametrize(
+    ("evaluation_date", "age_days", "status", "fresh"),
+    (
+        (date(2026, 10, 27), -1, "evaluation_precedes_rate_card", False),
+        (date(2026, 10, 28), 0, "fresh", True),
+        (date(2026, 11, 27), 30, "fresh", True),
+        (date(2026, 11, 28), 31, "stale", False),
+    ),
+)
+def test_current_card_has_independent_as_of_date_and_freshness(
+    evaluation_date: date,
+    age_days: int,
+    status: str,
+    fresh: bool,
+) -> None:
+    benchmark = _module()
+    row = _v2_row("gpt-6-luna", pricing_surface=CURRENT_CARD_ID)
+
+    result = benchmark.analyze([row], evaluation_date=evaluation_date)
+
+    assert result["rate_card_as_of"] == CURRENT_CARD_DATE.isoformat()
+    assert result["rate_card_freshness"] == {
+        "as_of": CURRENT_CARD_DATE.isoformat(),
+        "evaluation_date": evaluation_date.isoformat(),
+        "age_days": age_days,
+        "max_age_days": 30,
+        "status": status,
+        "fresh": fresh,
+    }
+
+
+def test_known_card_mixture_is_rejected_before_pricing_or_eligibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _module()
+    rows = [
+        _v2_row("gpt-6-luna", pricing_surface="historical_work_codex"),
+        _v2_row("gpt-6-luna", task_id="t2", pricing_surface=CURRENT_CARD_ID),
+    ]
+    calculations: list[str] = []
+    original_eligible = benchmark.eligible
+    original_token_cost = benchmark.token_cost
+
+    def observed_eligible(*args, **kwargs):
+        calculations.append("eligible")
+        return original_eligible(*args, **kwargs)
+
+    def observed_token_cost(*args, **kwargs):
+        calculations.append("token_cost")
+        return original_token_cost(*args, **kwargs)
+
+    monkeypatch.setattr(benchmark, "eligible", observed_eligible)
+    monkeypatch.setattr(benchmark, "token_cost", observed_token_cost)
+
+    with pytest.raises(ValueError, match="pricing surfaces") as error:
+        benchmark.analyze(rows, evaluation_date=CURRENT_CARD_DATE)
+
+    assert calculations == []
+    assert CURRENT_CARD_ID not in str(error.value)
+
+
+@pytest.mark.parametrize("tier", ["long", "mixed"])
+def test_current_sol_long_and_mixed_contexts_use_subscription_credit_rates(tier: str) -> None:
+    benchmark = _module()
+    row = _v2_row(
+        "gpt-6.1-sol",
+        effort="xhigh",
+        pricing_surface=CURRENT_CARD_ID,
+        context_tier=tier,
+    )
+
+    result = benchmark.analyze([row], evaluation_date=CURRENT_CARD_DATE)
+    route = result["task_classes"]["exploration"]["routes"][0]
+
+    assert route["credits_mean"] == pytest.approx(6.55)
+    assert route["usd_mean"] is None
+    assert route["usd_cost_observation_complete"] is False
+
+
+@pytest.mark.parametrize(("model", "effort"), (("gpt-6-luna", "max"), ("gpt-5.6-terra", "medium")))
+@pytest.mark.parametrize("tier", ["long", "mixed", "unknown"])
+def test_unverified_long_tiers_remain_unpriced(
+    model: str,
+    effort: str,
+    tier: str,
+) -> None:
+    benchmark = _module()
+    row = _v2_row(
+        model,
+        effort=effort,
+        pricing_surface=CURRENT_CARD_ID,
+        context_tier=tier,
+    )
+
+    result = benchmark.analyze([row], evaluation_date=CURRENT_CARD_DATE)
+    route = result["task_classes"]["exploration"]["routes"][0]
+
+    assert route["credits_mean"] is None
+    assert route["usd_mean"] is None
+    assert route["cost_observation_complete"] is False
+    assert route["usd_cost_observation_complete"] is False
+
+
+def test_current_card_retains_failed_runs_and_blocks_false_frontier() -> None:
+    benchmark = _module()
+    luna = _v2_route_rows(
+        "gpt-6-luna",
+        pricing_surface=CURRENT_CARD_ID,
+        quality=100,
+        duration=20,
+    )
+    luna[0]["acceptance_pass"] = False
+    luna[0]["quality_score"] = 0
+    luna[0]["duration_ms"] = 500
+    terra = _v2_route_rows(
+        "gpt-5.6-terra",
+        pricing_surface=CURRENT_CARD_ID,
+        quality=91,
+        duration=90,
+    )
+    terra[-1]["usage"]["aggregation_scope"] = "includes_children"
+
+    result = benchmark.analyze([*luna, *terra], evaluation_date=CURRENT_CARD_DATE)[
+        "task_classes"]["exploration"]
+    luna_route = next(route for route in result["routes"] if route["model"] == "gpt-6-luna")
+    terra_route = next(route for route in result["routes"] if route["model"] == "gpt-5.6-terra")
+
+    assert luna_route["runs"] == 5
+    assert luna_route["eligible_runs"] == 4
+    assert luna_route["quality_mean"] == 80
+    assert luna_route["reliability_eligible"] is False
+    assert luna_route["reliability_reasons"] == ["acceptance_rate_below_floor"]
+    assert terra_route["runs"] == 5
+    assert terra_route["cost_observation_complete"] is False
+    assert result["comparison_status"] == "incomplete_cost_observation"
+    assert result["pareto_frontier"] == []
+
+
+def test_analyze_rejects_hostile_list_and_over_limit_before_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _module()
+    callbacks: list[str] = []
+
+    class HostileList(list):
+        def __iter__(self):
+            callbacks.append("iter")
+            return super().__iter__()
+
+        def __len__(self):
+            callbacks.append("len")
+            return super().__len__()
+
+    def unexpected_validation(_row):
+        callbacks.append("validate")
+        raise AssertionError("validation ran before public collection admission")
+
+    monkeypatch.setattr(benchmark, "validate", unexpected_validation)
+
+    with pytest.raises(ValueError):
+        benchmark.analyze(HostileList([{}]), evaluation_date=CURRENT_CARD_DATE)
+    assert callbacks == []
+
+    with pytest.raises(ValueError) as error:
+        benchmark.analyze([{}] * 10_001, evaluation_date=CURRENT_CARD_DATE)
+    assert callbacks == []
+    assert "10,001" not in str(error.value)
+    assert len(str(error.value)) <= 256
+
+
+def test_analyze_accepts_the_10000_record_boundary_before_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _module()
+    validated: list[object] = []
+
+    def stop_at_first_validation(row):
+        validated.append(row)
+        raise ValueError("bounded validation probe")
+
+    monkeypatch.setattr(benchmark, "validate", stop_at_first_validation)
+    with pytest.raises(ValueError, match="bounded validation probe"):
+        benchmark.analyze([{}] * 10_000, evaluation_date=CURRENT_CARD_DATE)
+    assert len(validated) == 1
+
+
+def test_analyze_rejects_hostile_date_before_date_callbacks() -> None:
+    benchmark = _module()
+    callbacks: list[str] = []
+    sentinel = "PRIVATE_DATE_SENTINEL"
+
+    class HostileDate(date):
+        def isoformat(self) -> str:
+            callbacks.append("isoformat")
+            return sentinel
+
+        def __sub__(self, other):
+            callbacks.append("sub")
+            raise AssertionError(sentinel)
+
+    with pytest.raises(ValueError) as error:
+        benchmark.analyze([], evaluation_date=HostileDate(2026, 10, 28))
+
+    assert callbacks == []
+    assert sentinel not in str(error.value)
+    assert len(str(error.value)) <= 256
+
+
+def test_invalid_pricing_surface_error_does_not_echo_private_input() -> None:
+    benchmark = _module()
+    sentinel = "PRIVATE_PRICING_SURFACE_SENTINEL"
+    row = _v2_row("gpt-6-luna", pricing_surface=sentinel)
+
+    with pytest.raises(ValueError) as error:
+        benchmark.analyze([row], evaluation_date=CURRENT_CARD_DATE)
+
+    assert sentinel not in str(error.value)
+    assert len(str(error.value)) <= 256
 
 
 def test_v2_benchmark_rejects_legacy_flat_token_fields_and_non_boolean_completeness() -> None:
