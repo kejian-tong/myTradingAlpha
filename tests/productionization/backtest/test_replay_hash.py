@@ -589,19 +589,20 @@ def test_every_operation_boundary_and_stale_checkpoint_resume_once(tmp_path: Pat
     api = _api()
     manifest, _, _ = _manifest(api, actions=True)
     full = _run(api, tmp_path / "full", manifest)
+    expected_economic = _economic(full)
     for index in range(full.checkpoint.operation_count + 1):
         root = tmp_path / f"cut-{index}"
         partial = _run(api, root, manifest, max_operations=index)
         checkpoint = partial.checkpoint
         assert checkpoint.operation_count == index
         resumed = _resume(api, root, manifest, checkpoint=checkpoint, events=partial.events)
-        assert _economic(resumed) == _economic(full)
+        assert _economic(resumed) == expected_economic
         # A formerly complete supplied prefix is stale after new operations publish.
         if len(partial.events) != len(resumed.events):
             _reject(lambda root=root, partial=partial: _resume(api, root, manifest, events=partial.events))
-        assert _economic(_resume(api, root, manifest, checkpoint=checkpoint)) == _economic(full)
+        assert _economic(_resume(api, root, manifest, checkpoint=checkpoint)) == expected_economic
         before = _snapshot(root)
-        assert _economic(_resume(api, root, manifest)) == _economic(full)
+        assert _economic(_resume(api, root, manifest)) == expected_economic
         assert _snapshot(root) == before
 
 
@@ -624,6 +625,7 @@ def test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix(
     with monkeypatch.context() as patch:
         patch.setattr(os, operation, count)
         full = _run(api, tmp_path / "full", manifest)
+    expected_economic = _economic(full)
     assert observed, "storage must use fsync plus create-only atomic link publication"
     for cut in range(1, len(observed) + 1):
         root = tmp_path / f"crash-{cut}"
@@ -647,10 +649,10 @@ def test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix(
         else:
             with api.ReplayRunner(root=root) as runner:
                 recovered = runner.run(manifest)
-        assert _economic(recovered) == _economic(full)
+        assert _economic(recovered) == expected_economic
         after = dict(_snapshot(root))
         assert all(after.get(name) == raw for name, raw in before.items())
-        assert _economic(_resume(api, root, manifest)) == _economic(full)
+        assert _economic(_resume(api, root, manifest)) == expected_economic
 
 
 @pytest.mark.parametrize("damage", ("torn_operation", "missing_operation", "duplicate_operation", "torn_checkpoint", "old_checkpoint", "result"))

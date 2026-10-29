@@ -44,6 +44,12 @@ per PR; the larger read/review budget does not permit multiple production writer
 numeric limit on cumulative repair/review cycles; every cycle must add evidence and must not lower tests or
 ignore findings.
 
+Use native interruptible waits for agent work so the Master can respond to new steering during execution.
+Watch long commands and CI runs from a tool-side wait, with the exact candidate SHA and CI run/job/attempt
+bound to the result. Keep complete private logs and native exit/conclusion evidence. Pending, cancelled,
+timed-out, missing or unknown status never passes a gate. Report completion, failure, or a decision point;
+do not spend repeated model turns polling unchanged status.
+
 ## 3. Phase A — concurrent pre-flight
 
 After reconciling main/GitHub and selecting the authorized PR, the Master may run independent read-only

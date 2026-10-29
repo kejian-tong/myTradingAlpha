@@ -32,6 +32,13 @@ validation, or durable evidence. Keep source identities and recovery references 
 changed or conflicting sources after compaction. Native compaction does not authorize transcript
 ingestion or a history collector.
 
+The [sanitized native compaction evidence](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6510865516)
+records a 128,000-token total-scope configured threshold, a native request input count of 129,095 around
+compaction, and 42,956 input tokens on the first following request. The difference between those two
+observed request-input counts is 86,139. These are request measurements; they do not measure retained
+context size or billing, and they do not establish causal token savings. Keep the complete evidence at its
+durable source and re-read changed or conflicting sources after compaction.
+
 ## Reuse and recovery
 
 Reuse a verified fact only while its source identity remains current. Re-read changed instructions, scope,
