@@ -398,6 +398,7 @@ def test_dated_work_standard_card_prices_current_v2_usage_without_rewriting_hist
     assert result["pricing_surface"] == CURRENT_CARD_ID
     assert result["rate_card_as_of"] == CURRENT_CARD_DATE.isoformat()
     assert result["credit_rate_source"] == CURRENT_CARD_SOURCE
+    assert result["usd_rate_source"] is None
     assert route["credits_mean"] == pytest.approx(expected_credits)
     assert route["cost_observation_complete"] is True
     assert route["usd_mean"] is None
@@ -498,6 +499,100 @@ def test_known_card_mixture_is_rejected_before_pricing_or_eligibility(
     assert CURRENT_CARD_ID not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    ("evaluation_date", "expected_status"),
+    (
+        (None, "unchecked_rate_card"),
+        (date(2026, 10, 27), "evaluation_precedes_rate_card"),
+        (date(2026, 11, 28), "stale_rate_card"),
+    ),
+)
+def test_current_card_freshness_blocks_a_complete_paired_frontier(
+    evaluation_date: date | None,
+    expected_status: str,
+) -> None:
+    benchmark = _module()
+    rows = [
+        *_v2_route_rows("gpt-6-luna", pricing_surface=CURRENT_CARD_ID),
+        *_v2_route_rows("gpt-5.6-terra", pricing_surface=CURRENT_CARD_ID),
+    ]
+
+    result = benchmark.analyze(rows, evaluation_date=evaluation_date)
+    task_class = result["task_classes"]["exploration"]
+    pairing = task_class["comparison_pairing"]
+
+    assert pairing["pairing_complete"] is True
+    assert pairing["minimum_pairing_met"] is True
+    assert all(route["cost_observation_complete"] for route in task_class["routes"])
+    assert task_class["comparison_status"] == expected_status
+    assert task_class["pareto_frontier"] == []
+
+
+@pytest.mark.parametrize(
+    ("usage_overrides", "task_usage_complete"),
+    (
+        ({"usage_scope": "request"}, False),
+        ({"usage_scope": "turn"}, False),
+        ({"usage_scope": "agent"}, False),
+        ({}, False),
+        ({"input_tokens": None}, True),
+        ({"cached_input_tokens": None}, True),
+        ({"output_tokens": None}, True),
+        ({"aggregation_scope": "unknown"}, True),
+        ({"aggregation_scope": "includes_children"}, True),
+    ),
+)
+def test_current_card_requires_complete_exclusive_whole_task_usage(
+    usage_overrides: dict,
+    task_usage_complete: bool,
+) -> None:
+    benchmark = _module()
+    row = _v2_row(
+        "gpt-6-luna",
+        pricing_surface=CURRENT_CARD_ID,
+        task_usage_complete=task_usage_complete,
+        usage_overrides=usage_overrides,
+    )
+
+    result = benchmark.analyze([row], evaluation_date=CURRENT_CARD_DATE)
+    route = result["task_classes"]["exploration"]["routes"][0]
+
+    assert route["credits_mean"] is None
+    assert route["cost_observation_complete"] is False
+    assert route["usd_mean"] is None
+    assert route["usd_cost_observation_complete"] is False
+
+
+def test_current_card_observation_reuse_is_rejected_before_economics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _module()
+    luna = _v2_route_rows("gpt-6-luna", pricing_surface=CURRENT_CARD_ID)
+    terra = _v2_route_rows("gpt-5.6-terra", pricing_surface=CURRENT_CARD_ID)
+    source_ref = luna[0]["usage"]["observation_ref"]
+    terra[0]["usage"]["observation_ref"] = source_ref
+    calculations: list[str] = []
+    original_eligible = benchmark.eligible
+    original_token_cost = benchmark.token_cost
+
+    def observed_eligible(*args, **kwargs):
+        calculations.append("eligible")
+        return original_eligible(*args, **kwargs)
+
+    def observed_token_cost(*args, **kwargs):
+        calculations.append("token_cost")
+        return original_token_cost(*args, **kwargs)
+
+    monkeypatch.setattr(benchmark, "eligible", observed_eligible)
+    monkeypatch.setattr(benchmark, "token_cost", observed_token_cost)
+
+    with pytest.raises(ValueError, match="usage observation cannot be reused") as error:
+        benchmark.analyze([*luna, *terra], evaluation_date=CURRENT_CARD_DATE)
+
+    assert calculations == []
+    assert source_ref not in str(error.value)
+
+
 @pytest.mark.parametrize("tier", ["long", "mixed"])
 def test_current_sol_long_and_mixed_contexts_use_subscription_credit_rates(tier: str) -> None:
     benchmark = _module()
@@ -537,6 +632,24 @@ def test_unverified_long_tiers_remain_unpriced(
     assert route["credits_mean"] is None
     assert route["usd_mean"] is None
     assert route["cost_observation_complete"] is False
+    assert route["usd_cost_observation_complete"] is False
+
+
+def test_current_sol_unknown_context_tier_remains_unpriced() -> None:
+    benchmark = _module()
+    row = _v2_row(
+        "gpt-6.1-sol",
+        effort="xhigh",
+        pricing_surface=CURRENT_CARD_ID,
+        context_tier="unknown",
+    )
+
+    result = benchmark.analyze([row], evaluation_date=CURRENT_CARD_DATE)
+    route = result["task_classes"]["exploration"]["routes"][0]
+
+    assert route["credits_mean"] is None
+    assert route["cost_observation_complete"] is False
+    assert route["usd_mean"] is None
     assert route["usd_cost_observation_complete"] is False
 
 

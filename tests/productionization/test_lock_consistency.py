@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from packaging.version import InvalidVersion, Version
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = REPOSITORY_ROOT / "pyproject.toml"
@@ -105,9 +106,11 @@ def _lock_package_versions(lock_text: str) -> dict[str, str]:
     return versions
 
 
-def _version_tuple(value: str) -> tuple[int, ...]:
-    components = re.findall(r"\d+", value)
-    return tuple(int(component) for component in components[:3])
+def _meets_version_floor(actual: str, minimum: str) -> bool:
+    try:
+        return Version(actual) >= Version(minimum)
+    except InvalidVersion:
+        return False
 
 
 def _fake_uv(tmp_path: Path) -> tuple[dict[str, str], Path]:
@@ -180,17 +183,23 @@ def test_active_lock_meets_all_reviewed_security_minimums() -> None:
         "langgraph-checkpoint-sqlite": "3.1.2",
         "multidict": "6.9.1",
         "setuptools": "84.1.0",
+        "yarl": "1.25.1",
     }
 
     for package, minimum in minimums.items():
         assert package in versions, f"uv.lock omits required package {package}"
-        assert _version_tuple(versions[package]) >= _version_tuple(minimum), (
+        assert _meets_version_floor(versions[package], minimum), (
             f"uv.lock pins {package} {versions[package]}, below reviewed minimum {minimum}"
         )
 
 
+def test_locked_floor_comparison_rejects_prereleases_and_malformed_versions() -> None:
+    assert not _meets_version_floor("3.14.4rc1", "3.14.4")
+    assert not _meets_version_floor("not-a-version", "3.14.4")
+    assert _meets_version_floor("3.14.4.post1", "3.14.4")
+
+
 def test_project_and_pip_fallback_declare_reviewed_security_minimums() -> None:
-    project_text = PYPROJECT_PATH.read_text(encoding="utf-8")
     specs = _project_dependency_specs()
     minimums = {
         "aiohttp": ">=3.14.4",
@@ -205,14 +214,29 @@ def test_project_and_pip_fallback_declare_reviewed_security_minimums() -> None:
             f"pip fallback must constrain {package} to the reviewed minimum {minimum}"
         )
 
+
+def test_source_build_uses_reviewed_setuptools_security_minimum() -> None:
+    project_text = PYPROJECT_PATH.read_text(encoding="utf-8")
     build_match = re.search(r"(?ms)^\[build-system\]\s*(.*?)(?=^\[|\Z)", project_text)
     assert build_match is not None, "pyproject.toml must declare [build-system]"
     build_requirements_match = re.search(
-        r"(?ms)^requires\s*=\s*\[(.*?)^\s*\]",
+        r"(?ms)^requires\s*=\s*\[(.*?)\]",
         build_match.group(1),
     )
     assert build_requirements_match is not None, "build backend requirements must remain explicit"
-    assert '"setuptools>=84.1.0"' in build_requirements_match.group(1), (
+    build_requirements = re.findall(r"[\"']([^\"']+)[\"']", build_requirements_match.group(1))
+    setuptools_requirements = [
+        requirement
+        for requirement in build_requirements
+        if re.match(r"(?i)^setuptools(?=$|[<>=!~;\[\s])", requirement)
+    ]
+    assert len(setuptools_requirements) == 1, "source build must constrain setuptools exactly once"
+    setuptools_floor = re.search(
+        r"(?:^|,)\s*>=\s*([^,;\s]+)",
+        setuptools_requirements[0][len("setuptools") :],
+    )
+    assert setuptools_floor is not None, "source build setuptools lower bound is missing"
+    assert _meets_version_floor(setuptools_floor.group(1), "84.1.0"), (
         "source builds must use the reviewed setuptools security minimum"
     )
 
