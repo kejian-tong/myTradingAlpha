@@ -6,27 +6,27 @@ reconciliation snapshot; resolve the current PR head/status and gates from GitHu
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `e683b10f75b8038e3423de7cbb80ee4fb19e3303`
-- `last_reconciled_main_tree`: `7a5214fd01349fbd5a0d3027b8cacd5151e6d6f1`
+- `last_reconciled_main_sha`: `4dbecb231457fe4820623677eb9e4b2e0621cd2b`
+- `last_reconciled_main_tree`: `723d83e0c5fd0052fa3ebe5767432770d47682f8`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-EFF-03 / PR #107
+- `current_pr_id`: HARNESS-EFF-04 / PR #108
 - `current_phase`: 03 — Backtest and Ledger
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
-- `autonomy_mode`: human-authorized HARNESS-EFF-03 only; later slices require separate authorization
+- `autonomy_mode`: human-authorized HARNESS-EFF-04 only; later slices require separate authorization
 - `next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required
 
 ## Current maintenance
 
-HARNESS-EFF-03 owns validation efficiency and CI deduplication only. Master owns reconciliation facts
-and writer leases. High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate
-reviewer_high / GPT-6.1 Sol / xhigh; Master and boundary_reviewer / GPT-6.1 Sol / xhigh. These are
-configured routes, not authenticated runtime identity. Routing and safety gates are unchanged.
+HARNESS-EFF-04 owns remaining Harness remediation and security maintenance only.
+Master owns state facts and leases. High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max;
+separate reviewer_high / GPT-6.1 Sol / xhigh; Master/boundary_reviewer / GPT-6.1 Sol / xhigh.
+Configured routes are not authenticated runtime identity. Routing and safety gates are unchanged.
 
-Complete unfiltered local/CI suites, independent RED/focused review, required checks and exact-head
-evidence remain mandatory. Foundation aggregates same-workflow results, not a second test execution.
-Resolve this PR's RED/GREEN, released leases, validation, approval and Master gate from its conversation;
-no future approval/merge is asserted here. No inherited material blocker remains from closed PR104–106.
-A new commit invalidates affected review and CI.
+Scope: benchmark admission/dated credits, prospective native compaction, uv/security lock fixes and full
+unfiltered durations. No shared fixture cache or production backtest change. Resolve RED/GREEN, released
+leases, validation, independent review and Master gate from this PR; no future approval/merge is asserted here.
+Full local/CI and exact-head gates remain mandatory. Realized billing, complete request coverage, host
+enforcement, Enterprise USD and controlled savings require external evidence; never fabricate missing facts.
 
 ## Last completed roadmap
 
@@ -45,19 +45,18 @@ financial and publication checks remain. No general timing waiver or financial a
 
 ## Last completed Harness
 
-- `harness_reconciled_through`: PR #106 / merge `e683b10f75b8038e3423de7cbb80ee4fb19e3303`
+- `harness_reconciled_through`: PR #107 / merge `4dbecb231457fe4820623677eb9e4b2e0621cd2b`
 
-[HARNESS-EFF-02 / PR #106](https://github.com/kejian-tong/myTradingAlpha/pull/106) added compact state,
-bounded read-only schema3 identity checks and context guidance. Base
-`6de97229c19e9f57d536fc8e59c45411bb39abc5`; approved source
-`16b479a7cfc9295079df267755323fc046a2d807`; merge/tree match reconciled main above.
-Historical high initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max and reviewer_high /
-GPT-6.1 Sol / xhigh. Recorded 158 focused and 64 consumer passes; PR-source local and CI full each
-5485 passed, 4 skipped, 69 subtests. The former separate Foundation execution passed 4909, skipped 2.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/106#issuecomment-6459590623),
-[Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/106#issuecomment-6459625169),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/106#issuecomment-6459699099).
-PR105 accounting remains unchanged; usage assertions and static byte reductions do not prove billing.
+[HARNESS-EFF-03 / PR #107](https://github.com/kejian-tong/myTradingAlpha/pull/107) deduplicated Foundation
+and named validation ownership. Base `e683b10f75b8038e3423de7cbb80ee4fb19e3303`; approved source
+`22bded9c1af4f1f5cb6e88b93af05b5e7dd835c0`; merge/tree match reconciled main above.
+Historical high initial `luna_sol_high`, same configured writer/reviewer routes as current maintenance.
+RED `58c0c680ba658859eae7ea09c6839d8e4fc09792`;72 focused passes;
+PR-source local and CI full each 5491 passed, 4 skipped, 69 subtests. Foundation aggregation succeeded4s.
+[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/107#issuecomment-6471350570),
+[Master gate](https://github.com/kejian-tong/myTradingAlpha/pull/107#issuecomment-6471376503),
+[completion](https://github.com/kejian-tong/myTradingAlpha/pull/107#issuecomment-6471442876).
+PR106/HARNESS-EFF-02 context policy and PR105 accounting remain in immutable recovery history.
 
 ## Boundaries and recovery
 
@@ -71,7 +70,7 @@ PR105 accounting remains unchanged; usage assertions and static byte reductions 
 - Writer leases are cooperative and do not defend against same-user processes. Main-protection required contexts remain authoritative; recheck current GitHub rules.
 - Project Apps and Memories disabled: configuration intent. Rules/Permission Profiles/OTel/repo Plugins remain watch-only. External-spec Docs MCP is configuration intent until observed.
 
-[Immutable prior snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/e683b10f75b8038e3423de7cbb80ee4fb19e3303/docs/productionization/AGENT_STATE.md)
+[Immutable prior snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/4dbecb231457fe4820623677eb9e4b2e0621cd2b/docs/productionization/AGENT_STATE.md)
 retains PR105 and prior BT01–04, SIG and Harness recovery references/routes through immutable links.
 Its superseded status is historical, not current authority. Load that history only for a specific
 question; current GitHub/PR evidence wins. Use [context policy](CONTEXT_MANAGEMENT.md),

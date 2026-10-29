@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from packaging.version import InvalidVersion, Version
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = REPOSITORY_ROOT / "pyproject.toml"
@@ -22,8 +23,8 @@ CI_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 README_PATH = REPOSITORY_ROOT / "README.md"
 
 CI_PYTHON_VERSIONS = {"3.14"}
-SETUP_UV_COMMIT = "20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
-UV_VERSION = "0.12.7"
+SETUP_UV_COMMIT = "07a047e608db84b3d8c06cd9a7c7dcc9c355c18e"
+UV_VERSION = "0.13.5"
 
 
 def _require_file(path: Path, contract: str) -> Path:
@@ -68,11 +69,48 @@ def _project_dependency_names() -> set[str]:
     return names
 
 
+def _project_dependency_specs() -> dict[str, str]:
+    project_text = PYPROJECT_PATH.read_text(encoding="utf-8")
+    project_match = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", project_text)
+    assert project_match is not None, "pyproject.toml must declare [project]"
+    dependencies_match = re.search(
+        r"(?ms)^dependencies\s*=\s*\[(.*?)^\s*\]",
+        project_match.group(1),
+    )
+    assert dependencies_match is not None, "[project].dependencies must remain declared"
+    requirements = re.findall(r'^\s*"([^"\n]+)"', dependencies_match.group(1), re.MULTILINE)
+    specs = {}
+    for requirement in requirements:
+        name = re.split(r"[<>=!~;\[\s]", requirement, maxsplit=1)[0]
+        normalized_name = re.sub(r"[-_.]+", "-", name.lower())
+        specs[normalized_name] = requirement[len(name) :]
+    return specs
+
+
 def _lock_package_names(lock_text: str) -> set[str]:
     return {
         re.sub(r"[-_.]+", "-", name.lower())
         for name in re.findall(r'^name\s*=\s*"([^"]+)"\s*$', lock_text, re.MULTILINE)
     }
+
+
+def _lock_package_versions(lock_text: str) -> dict[str, set[str]]:
+    versions = {}
+    blocks = re.split(r"(?m)^\[\[package\]\]\s*$", lock_text)
+    for block in blocks[1:]:
+        name = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', block)
+        version = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', block)
+        if name is not None and version is not None:
+            normalized_name = re.sub(r"[-_.]+", "-", name.group(1).lower())
+            versions.setdefault(normalized_name, set()).add(version.group(1))
+    return versions
+
+
+def _meets_version_floor(actual: str, minimum: str) -> bool:
+    try:
+        return Version(actual) >= Version(minimum)
+    except InvalidVersion:
+        return False
 
 
 def _fake_uv(tmp_path: Path) -> tuple[dict[str, str], Path]:
@@ -133,6 +171,95 @@ def test_current_lockfile_is_tracked_and_matches_project_dependencies() -> None:
     assert "tradingagents" in package_names
     assert _project_dependency_names() <= package_names
     assert re.search(r'^source\s*=\s*\{\s*editable\s*=\s*"\."\s*\}', lock_text, re.MULTILINE)
+
+
+def test_active_lock_meets_all_reviewed_security_minimums() -> None:
+    lock_text = _require_file(LOCK_PATH, "uv.lock").read_text(encoding="utf-8")
+    versions = _lock_package_versions(lock_text)
+    minimums = {
+        "aiohttp": "3.14.4",
+        "certifi": "2026.10.18",
+        "langgraph-checkpoint": "4.3.0",
+        "langgraph-checkpoint-sqlite": "3.1.2",
+        "multidict": "6.9.1",
+        "setuptools": "84.1.0",
+        "yarl": "1.25.1",
+    }
+
+    for package, minimum in minimums.items():
+        assert package in versions, f"uv.lock omits required package {package}"
+        assert all(_meets_version_floor(version, minimum) for version in versions[package]), (
+            f"uv.lock pins {package} {sorted(versions[package])}, below reviewed minimum {minimum}"
+        )
+
+
+def test_locked_floor_rejects_a_vulnerable_alternate_variant_hidden_by_a_patched_version() -> None:
+    lock_text = '''
+[[package]]
+name = "multidict"
+version = "6.8.0"
+
+[[package]]
+name = "multidict"
+version = "7.2.1"
+'''
+
+    versions = _lock_package_versions(lock_text)
+
+    assert versions["multidict"] == {"6.8.0", "7.2.1"}
+    assert not all(_meets_version_floor(version, "6.9.1") for version in versions["multidict"])
+
+
+def test_locked_floor_comparison_rejects_prereleases_and_malformed_versions() -> None:
+    assert not _meets_version_floor("3.14.4rc1", "3.14.4")
+    assert not _meets_version_floor("not-a-version", "3.14.4")
+    assert _meets_version_floor("3.14.4.post1", "3.14.4")
+
+
+def test_locked_floor_comparison_accepts_a_newer_safe_patch_version() -> None:
+    assert _meets_version_floor("3.14.5", "3.14.4")
+
+
+def test_project_and_pip_fallback_declare_reviewed_security_minimums() -> None:
+    specs = _project_dependency_specs()
+    minimums = {
+        "aiohttp": ">=3.14.4,<4",
+        "certifi": ">=2026.10.18",
+        "langgraph-checkpoint-sqlite": ">=3.1.2",
+        "multidict": ">=6.9.1,<7",
+        "setuptools": ">=84.1.0",
+    }
+
+    for package, minimum in minimums.items():
+        assert specs.get(package) == minimum, (
+            f"pip fallback must constrain {package} to the reviewed minimum {minimum}"
+        )
+
+
+def test_source_build_uses_reviewed_setuptools_security_minimum() -> None:
+    project_text = PYPROJECT_PATH.read_text(encoding="utf-8")
+    build_match = re.search(r"(?ms)^\[build-system\]\s*(.*?)(?=^\[|\Z)", project_text)
+    assert build_match is not None, "pyproject.toml must declare [build-system]"
+    build_requirements_match = re.search(
+        r"(?ms)^requires\s*=\s*\[(.*?)\]",
+        build_match.group(1),
+    )
+    assert build_requirements_match is not None, "build backend requirements must remain explicit"
+    build_requirements = re.findall(r"[\"']([^\"']+)[\"']", build_requirements_match.group(1))
+    setuptools_requirements = [
+        requirement
+        for requirement in build_requirements
+        if re.match(r"(?i)^setuptools(?=$|[<>=!~;\[\s])", requirement)
+    ]
+    assert len(setuptools_requirements) == 1, "source build must constrain setuptools exactly once"
+    setuptools_floor = re.search(
+        r"(?:^|,)\s*>=\s*([^,;\s]+)",
+        setuptools_requirements[0][len("setuptools") :],
+    )
+    assert setuptools_floor is not None, "source build setuptools lower bound is missing"
+    assert _meets_version_floor(setuptools_floor.group(1), "84.1.0"), (
+        "source builds must use the reviewed setuptools security minimum"
+    )
 
 
 def test_project_keeps_python_floor_and_pins_the_uv_tool_version() -> None:
@@ -292,7 +419,7 @@ def _required_ci_runs() -> dict[str, dict[str, str]]:
     return {
         "test": {
             "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
-            "Run test suite": "uv run --no-sync pytest -q",
+            "Run test suite": "uv run --no-sync pytest -q --durations=25",
         },
         "foundation-contract-docs-lock": {},
         "smoke-install": {

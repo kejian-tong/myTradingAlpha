@@ -108,6 +108,12 @@ totals unavailable. The 272,000-token exposure count applies only to known exclu
 aggregate scopes are present. `unknown_count` counts only unknown or excluded request rows; aggregate
 usage never supplies an inferred request count or an observed zero exceedance count.
 
+The benchmark derives cost estimates from caller-asserted usage and an explicitly selected dated pricing
+surface; those calculations are not telemetry observations or account bills. The current
+`work_codex_standard_2026_10_28` surface cites the [ChatGPT Work pricing page](https://learn.chatgpt.com/docs/pricing)
+and reports subscription credits only. Current-card Enterprise USD means and completeness remain unknown
+and incomplete. Do not infer realized charges from credits, API rates, model routes or telemetry gaps.
+
 This is a schema example using illustrative caller-reported values, not an observed runtime measurement:
 
 ```json

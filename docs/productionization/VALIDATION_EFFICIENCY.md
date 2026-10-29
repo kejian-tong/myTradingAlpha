@@ -2,7 +2,7 @@
 
 ## Ownership
 
-Default owner: Master. The Master owns one complete, unfiltered local full suite for each frozen candidate head. The full local suite command is `uv run --no-sync python -m pytest -q`; do not add selectors, skips, or hidden pytest environment settings. The Master records a different designated owner only when assigning that run. Writers perform focused tests and static checks, then stop before the full local run. Full GitHub CI remains a separate required run of the unfiltered test job, Ruff, clean-install smoke, and applicable required checks.
+Default owner: Master. The Master owns one complete, unfiltered local full suite for each frozen candidate head. The full local suite command is `uv run --no-sync python -m pytest -q --durations=25`; do not add selectors, skips, or hidden pytest environment settings. The Master records a different designated owner only when assigning that run. Writers perform focused tests and static checks, then stop before the full local run. Full GitHub CI remains a separate required run of the unfiltered test job, Ruff, clean-install smoke, and applicable required checks.
 
 A fresh controlling reviewer verifies the committed RED replay, focused and negative checks, complete source, the actual local full-run evidence, and final-head CI. The reviewer may verify the completed local full run from its native evidence without repeating it when the source, runtime, and command match and no material concern is found. The reviewer may run it again when evidence is missing, inconsistent, or raises a material concern. A model summary, caller-created receipt, status label, incomplete log, or claimed run is not execution evidence.
 
@@ -14,13 +14,13 @@ Reuse only completed verifiable evidence for an identical source/runtime/command
 
 ## CI coverage and aggregation
 
-The CI `test` job remains the unfiltered `uv run --no-sync pytest -q` execution. Pytest discovery remains `testpaths = ["tests"]` with the checked-in `addopts`, so productionization tests run within the full suite. The Foundation status now aggregates the same-workflow `test`, `lint`, and `smoke-install` job results. It uses the `needs` dependency set and result context, with `always()` so its short metadata check can report failed or skipped prerequisites; its Bash step accepts only three exact `success` values and otherwise exits nonzero with a fixed diagnostic. It performs no checkout, setup, install, test execution, network call, or artifact collection.
+The CI `test` job remains the unfiltered `uv run --no-sync pytest -q --durations=25` execution. Pytest discovery remains `testpaths = ["tests"]` with the checked-in `addopts`, so productionization tests run within the full suite. The Foundation status now aggregates the same-workflow `test`, `lint`, and `smoke-install` job results. It uses the `needs` dependency set and result context, with `always()` so its short metadata check can report failed or skipped prerequisites; its Bash step accepts only three exact `success` values and otherwise exits nonzero with a fixed diagnostic. It performs no checkout, setup, install, test execution, network call, or artifact collection.
 
 GitHub documents [`needs`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds), the [`needs` result context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#needs-context), and [`always()`](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always). These are same-workflow dependency results, not authenticated receipts for a local run or evidence of a separate execution. Whole-workflow cancellation may prevent a completed aggregate; a missing or cancelled required check does not pass. CodeQL and Dependency Review remain independent required checks and are not represented by the Foundation aggregate.
 
 ## Metrics
 
-Compare the number of full productionization-suite executions and setup steps before and after deduplication. Where comparable runner/runtime evidence exists, record elapsed job and workflow times with the matching head, run, job, and attempt. Do not infer billing, model-token savings, or financial performance from these measurements. No new runtime collector or cache is introduced.
+Compare the number of full productionization-suite executions and setup steps before and after deduplication. Record the command's top 25 duration observations with the complete unfiltered results; they are diagnostic data, not a time threshold. Where comparable runner/runtime evidence exists, record elapsed job and workflow times with the matching head, run, job, and attempt. Do not infer billing, model-token savings, or financial performance from these measurements. No new runtime collector or cache is introduced.
 
 ## Rollback
 

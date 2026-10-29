@@ -1,5 +1,7 @@
 model = "gpt-6.1-sol"
 model_reasoning_effort = "xhigh"
+model_auto_compact_token_limit = 128000
+model_auto_compact_token_limit_scope = "total"
 
 developer_instructions = """
 Trusted-project runtime configuration. Before work, read root AGENTS.md, the scoped AGENTS.md files

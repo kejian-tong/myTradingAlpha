@@ -9,7 +9,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-EXPECTED_UV_VERSION = "0.12.7"
+EXPECTED_UV_VERSION = "0.13.5"
 EXPECTED_PYTHON_REQUIREMENT = ">=3.10"
 PROJECT_SECTION = "project"
 LOCK_FILENAME = "uv.lock"

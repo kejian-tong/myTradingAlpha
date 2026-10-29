@@ -19,23 +19,23 @@ jobs:
         python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
-          version: "0.12.7"
+          version: "0.13.5"
           python-version: ${{ matrix.python-version }}
       - name: Install locked environment (with dev extras)
         run: uv sync --locked --extra dev
       - name: Run test suite
-        run: uv run --no-sync pytest -q
+        run: uv run --no-sync pytest -q --durations=25
 
   smoke-install:
     name: clean-install smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
-          version: "0.12.7"
+          version: "0.13.5"
           python-version: "3.14"
       - name: Fresh locked install (no dev extras) and import
         run: uv sync --locked --no-dev --no-editable
@@ -52,9 +52,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
-          version: "0.12.7"
+          version: "0.13.5"
           python-version: "3.14"
       - name: Install locked development environment
         run: uv sync --locked --extra dev
