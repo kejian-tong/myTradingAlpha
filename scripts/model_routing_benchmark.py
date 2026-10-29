@@ -17,13 +17,16 @@ from statistics import fmean
 
 RATE_CARD_AS_OF = "2026-09-07"
 RATE_CARD_MAX_AGE_DAYS = 30
+CURRENT_WORK_STANDARD_CARD_ID = "work_codex_standard_2026_10_28"
+CURRENT_WORK_STANDARD_CARD_AS_OF = "2026-10-28"
+CURRENT_WORK_STANDARD_CREDIT_SOURCE = "https://learn.chatgpt.com/docs/pricing"
 MIN_PAIRED_TASKS = 5
 PROMOTION_TASK_TARGET = 10
 MIN_ACCEPTANCE_RATE = 0.95
 CREDIT_RATE_SOURCE = "https://help.openai.com/en/articles/11481834"
 USD_RATE_SOURCE = "https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing"
 
-# Current ChatGPT Work/Codex token-based credits per 1M tokens.
+# Historical Work/Codex token-based credits per 1M tokens for RATE_CARD_AS_OF.
 CREDIT_RATES = {
     "gpt-6-luna": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
     "gpt-5.6-terra": {"input": 50.0, "cached_input": 5.0, "output": 300.0},
@@ -31,12 +34,22 @@ CREDIT_RATES = {
     "gpt-6-astra": {"input": 250.0, "cached_input": 25.0, "output": 1250.0},
 }
 
-# Enterprise token-based USD rates per 1M tokens, used only when useful for comparison.
+# Historical Enterprise token-based USD rates per 1M tokens.
 USD_RATES = {
     "gpt-6-luna": {"input": 0.20, "cached_input": 0.02, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00},
     "gpt-6-sol": {"input": 4.00, "cached_input": 0.40, "output": 20.00},
     "gpt-6-astra": {"input": 10.00, "cached_input": 1.00, "output": 50.00},
+}
+
+# The dated Work/Codex Standard card is additive; historical values above remain
+# immutable evidence for existing rows.
+_CURRENT_WORK_STANDARD_CREDIT_RATES = {
+    "gpt-6-luna": {"input": 2.5, "cached_input": 0.25, "output": 12.5},
+    "gpt-5.6-terra": {"input": 50.0, "cached_input": 5.0, "output": 300.0},
+    "gpt-6-sol": {"input": 50.0, "cached_input": 5.0, "output": 250.0},
+    "gpt-6.1-sol": {"input": 50.0, "cached_input": 2.5, "output": 250.0},
+    "gpt-6-astra": {"input": 250.0, "cached_input": 25.0, "output": 1250.0},
 }
 
 _TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens")
@@ -58,9 +71,9 @@ _ALLOWED_EFFORTS = {
 }
 _MODELS = frozenset(_ALLOWED_EFFORTS)
 
-# These route pairs are the dated rate-card coverage. Current GPT-6.1 Sol/xhigh
-# is accepted benchmark evidence but remains unpriced until verified Work/Codex
-# and Enterprise rates are available.
+# Route coverage for the historical rate card and historical pricing surface.
+# Current Work/Codex credits use the separately dated Standard card below;
+# Enterprise USD remains unavailable for that card.
 _RATE_CARD_ROUTE_PAIRS = frozenset(
     {
         ("gpt-6-luna", "max"),
@@ -72,13 +85,27 @@ _RATE_CARD_ROUTE_PAIRS = frozenset(
         ("gpt-6-astra", "xhigh"),
     }
 )
+_CURRENT_WORK_STANDARD_ROUTE_PAIRS = frozenset(
+    {
+        ("gpt-6-luna", "max"),
+        ("gpt-5.6-terra", "medium"),
+        ("gpt-5.6-terra", "high"),
+        ("gpt-5.6-terra", "xhigh"),
+        ("gpt-6-sol", "high"),
+        ("gpt-6-sol", "xhigh"),
+        ("gpt-6.1-sol", "xhigh"),
+        ("gpt-6-astra", "xhigh"),
+    }
+)
 _REQUIRED = {
     "task_id", "task_class", "model", "effort", "acceptance_pass", "safety_gate_pass",
     "missed_blocker_high", "quality_score", "duration_ms", "retries", *_PROVENANCE_FIELDS,
 }
 _OPTIONAL = set(_TOKEN_FIELDS)
 _V2_REQUIRED = {"schema_version", "usage", "task_usage_complete", "pricing_surface", "context_tier"}
-_V2_PRICING_SURFACES = frozenset({"historical_work_codex", "unknown"})
+_V2_PRICING_SURFACES = frozenset(
+    {"historical_work_codex", CURRENT_WORK_STANDARD_CARD_ID, "unknown"}
+)
 _V2_CONTEXT_TIERS = frozenset({"short", "long", "mixed", "unknown"})
 _LABEL_MAX_BYTES = 128
 
@@ -227,24 +254,46 @@ def token_cost(record: dict, rates: dict[str, dict[str, float]]) -> float | None
             record.get("task_usage_complete") is not True
             or usage.get("usage_scope") != "task"
             or usage.get("aggregation_scope") != "exclusive"
-            or record.get("pricing_surface") != "historical_work_codex"
-            or record.get("context_tier") != "short"
             or usage.get("input_tokens") is None
             or usage.get("cached_input_tokens") is None
             or usage.get("output_tokens") is None
-            or usage.get("cache_write_tokens") != 0
-            or any(
-                value not in (None, 0)
-                for value in (
-                    usage.get("cache_write_30m_tokens"),
-                    usage.get("cache_write_12h_tokens"),
-                )
-            )
         ):
             return None
-        if (record["model"], record["effort"]) not in _RATE_CARD_ROUTE_PAIRS:
+
+        surface = record.get("pricing_surface")
+        model_effort = (record["model"], record["effort"])
+        if surface == "historical_work_codex":
+            if (
+                record.get("context_tier") != "short"
+                or usage.get("cache_write_tokens") != 0
+                or any(
+                    value not in (None, 0)
+                    for value in (
+                        usage.get("cache_write_30m_tokens"),
+                        usage.get("cache_write_12h_tokens"),
+                    )
+                )
+                or model_effort not in _RATE_CARD_ROUTE_PAIRS
+            ):
+                return None
+            model_rates = rates.get(record["model"])
+        elif surface == CURRENT_WORK_STANDARD_CARD_ID:
+            tier = record.get("context_tier")
+            if tier != "short" and not (
+                record.get("model") == "gpt-6.1-sol" and tier in {"long", "mixed"}
+            ):
+                return None
+            if model_effort not in _CURRENT_WORK_STANDARD_ROUTE_PAIRS:
+                return None
+            # This card reports Work subscription credits only. Its pricing is
+            # static and selected by the row, never inferred from USD rates.
+            if rates is not CREDIT_RATES and (
+                type(rates) is not dict or rates != CREDIT_RATES
+            ):
+                return None
+            model_rates = _CURRENT_WORK_STANDARD_CREDIT_RATES.get(record["model"])
+        else:
             return None
-        model_rates = rates.get(record["model"])
         if model_rates is None:
             return None
         ordinary_input = usage["input_tokens"] - usage["cached_input_tokens"]
@@ -280,6 +329,7 @@ def _aggregate(rows: list[dict]) -> dict:
     costs = [token_cost(row, CREDIT_RATES) for row in rows]
     usd = [token_cost(row, USD_RATES) for row in rows]
     cost_complete = all(value is not None for value in costs)
+    usd_cost_complete = all(value is not None for value in usd)
 
     reliability_reasons = []
     if run_count < MIN_PAIRED_TASKS:
@@ -304,8 +354,11 @@ def _aggregate(rows: list[dict]) -> dict:
         "duration_ms_mean": fmean(row["duration_ms"] for row in rows),
         "retries_mean": fmean(row["retries"] for row in rows),
         "credits_mean": fmean(value for value in costs if value is not None) if cost_complete else None,
-        "usd_mean": fmean(value for value in usd if value is not None) if cost_complete else None,
+        "usd_mean": (
+            fmean(value for value in usd if value is not None) if usd_cost_complete else None
+        ),
         "cost_observation_complete": cost_complete,
+        "usd_cost_observation_complete": usd_cost_complete,
     }
 
 
@@ -404,18 +457,31 @@ def _astra_pairing(rows: list[dict]) -> dict[str, dict]:
     return result
 
 
-def _rate_card_freshness(evaluation_date: date | None) -> dict:
-    as_of = date.fromisoformat(RATE_CARD_AS_OF)
+def _rate_card_freshness(
+    evaluation_date: date | None,
+    *,
+    as_of: str | None = RATE_CARD_AS_OF,
+) -> dict:
+    if as_of is None:
+        return {
+            "as_of": None,
+            "evaluation_date": evaluation_date.isoformat() if evaluation_date is not None else None,
+            "age_days": None,
+            "max_age_days": RATE_CARD_MAX_AGE_DAYS,
+            "status": "unchecked",
+            "fresh": False,
+        }
+    as_of_date = date.fromisoformat(as_of)
     if evaluation_date is None:
         return {
-            "as_of": RATE_CARD_AS_OF,
+            "as_of": as_of,
             "evaluation_date": None,
             "age_days": None,
             "max_age_days": RATE_CARD_MAX_AGE_DAYS,
             "status": "unchecked",
             "fresh": False,
         }
-    age_days = (evaluation_date - as_of).days
+    age_days = (evaluation_date - as_of_date).days
     if age_days < 0:
         status = "evaluation_precedes_rate_card"
         fresh = False
@@ -426,7 +492,7 @@ def _rate_card_freshness(evaluation_date: date | None) -> dict:
         status = "stale"
         fresh = False
     return {
-        "as_of": RATE_CARD_AS_OF,
+        "as_of": as_of,
         "evaluation_date": evaluation_date.isoformat(),
         "age_days": age_days,
         "max_age_days": RATE_CARD_MAX_AGE_DAYS,
@@ -435,8 +501,16 @@ def _rate_card_freshness(evaluation_date: date | None) -> dict:
     }
 
 
-def _comparison_status(routes: list[dict], pairing: dict, freshness: dict) -> str:
-    if any((route["model"], route["effort"]) not in _RATE_CARD_ROUTE_PAIRS for route in routes):
+def _comparison_status(
+    routes: list[dict],
+    pairing: dict,
+    freshness: dict,
+    rate_card_route_pairs: frozenset[tuple[str, str]],
+) -> str:
+    if any(
+        (route["model"], route["effort"]) not in rate_card_route_pairs
+        for route in routes
+    ):
         return "unknown_route_pricing"
     if not freshness["fresh"]:
         return {
@@ -457,12 +531,23 @@ def _comparison_status(routes: list[dict], pairing: dict, freshness: dict) -> st
 
 
 def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict:
+    if type(records) is not list:
+        raise ValueError("benchmark records must be a built-in list")
+    max_records = _observations_module().MAX_JSONL_RECORDS
+    if len(records) > max_records:
+        raise ValueError("benchmark record count exceeds the reviewed limit")
+    records_snapshot = records[: max_records + 1]
+    if len(records_snapshot) > max_records:
+        raise ValueError("benchmark record count exceeds the reviewed limit")
+    if evaluation_date is not None and type(evaluation_date) is not date:
+        raise ValueError("evaluation_date must be a built-in date")
+
     grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     validated = []
     identities = set()
     provenance_by_task: dict[tuple[str, str], dict[str, str]] = {}
     observation_owners: dict[str, tuple[str, str, str, str]] = {}
-    for raw in records:
+    for raw in records_snapshot:
         row = validate(raw)
         task_key = (row["task_class"], row["task_id"])
         provenance = {field: row[field] for field in _PROVENANCE_FIELDS}
@@ -487,17 +572,51 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
     if len({row.get("schema_version", 1) for row in validated}) > 1:
         raise ValueError("mixed schema benchmark comparisons are not allowed")
 
+    pricing_surfaces = {
+        row["pricing_surface"]
+        for row in validated
+        if row.get("schema_version") == 2
+    }
+    known_surfaces = pricing_surfaces & {
+        "historical_work_codex",
+        CURRENT_WORK_STANDARD_CARD_ID,
+    }
+    if len(known_surfaces) > 1:
+        raise ValueError("mixed pricing surfaces are not allowed")
+    if known_surfaces:
+        pricing_surface = next(iter(known_surfaces))
+    elif pricing_surfaces:
+        pricing_surface = "unknown"
+    else:
+        pricing_surface = "historical_work_codex"
+
+    if pricing_surface == CURRENT_WORK_STANDARD_CARD_ID:
+        rate_card_as_of = CURRENT_WORK_STANDARD_CARD_AS_OF
+        credit_rate_source = CURRENT_WORK_STANDARD_CREDIT_SOURCE
+        usd_rate_source = None
+        rate_card_route_pairs = _CURRENT_WORK_STANDARD_ROUTE_PAIRS
+    elif pricing_surface == "historical_work_codex":
+        rate_card_as_of = RATE_CARD_AS_OF
+        credit_rate_source = CREDIT_RATE_SOURCE
+        usd_rate_source = USD_RATE_SOURCE
+        rate_card_route_pairs = _RATE_CARD_ROUTE_PAIRS
+    else:
+        rate_card_as_of = None
+        credit_rate_source = None
+        usd_rate_source = None
+        rate_card_route_pairs = frozenset()
+    freshness = _rate_card_freshness(evaluation_date, as_of=rate_card_as_of)
+
     by_class: dict[str, list[dict]] = defaultdict(list)
     for (task_class, model, effort), rows in sorted(grouped.items()):
         summary = {"model": model, "effort": effort, **_aggregate(rows)}
         by_class[task_class].append(summary)
 
     pairing_by_class = _comparison_pairing(validated)
-    freshness = _rate_card_freshness(evaluation_date)
     result_classes = {}
     for task_class, routes in sorted(by_class.items()):
         pairing = pairing_by_class[task_class]
-        status = _comparison_status(routes, pairing, freshness)
+        status = _comparison_status(routes, pairing, freshness, rate_card_route_pairs)
         candidates = [route for route in routes if route["reliability_eligible"]]
         frontier = []
         if status == "complete":
@@ -518,10 +637,11 @@ def analyze(records: list[dict], *, evaluation_date: date | None = None) -> dict
         }
 
     return {
-        "rate_card_as_of": RATE_CARD_AS_OF,
+        "pricing_surface": pricing_surface,
+        "rate_card_as_of": rate_card_as_of,
         "rate_card_freshness": freshness,
-        "credit_rate_source": CREDIT_RATE_SOURCE,
-        "usd_rate_source": USD_RATE_SOURCE,
+        "credit_rate_source": credit_rate_source,
+        "usd_rate_source": usd_rate_source,
         "minimum_acceptance_rate": MIN_ACCEPTANCE_RATE,
         "minimum_paired_tasks": MIN_PAIRED_TASKS,
         "promotion_task_target": PROMOTION_TASK_TARGET,

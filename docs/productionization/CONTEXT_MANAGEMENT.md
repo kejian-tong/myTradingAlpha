@@ -22,6 +22,16 @@ result. Preserve safety findings and unresolved questions in full enough detail 
 truncate or delete complete test output, review records, validation receipts, or other canonical evidence
 to meet a summary target.
 
+## Native Codex automatic compaction
+
+Trusted-project configuration may set the native root-level `model_auto_compact_token_limit = 128000`
+and `model_auto_compact_token_limit_scope = "total"` settings prospectively. They express client
+configuration intent; precedence, current-session loading, and what context is retained remain subject
+to Codex behavior and higher-priority configuration. These settings do not reduce required reads,
+validation, or durable evidence. Keep source identities and recovery references available and re-read
+changed or conflicting sources after compaction. Native compaction does not authorize transcript
+ingestion or a history collector.
+
 ## Reuse and recovery
 
 Reuse a verified fact only while its source identity remains current. Re-read changed instructions, scope,
@@ -30,4 +40,6 @@ for a specific recovery question. Current GitHub and repository state remain aut
 
 Stable prefixes may improve cache reuse; edits to them can reduce that benefit. Byte counts are practical
 proxies for context size, not measurements of tokens, cache hits, cost, threshold exposure, or savings.
-No automatic session compaction, transcript ingestion, or history collector is authorized by this policy.
+Reviewed native automatic compaction is authorized prospectively through the exact project settings above.
+It authorizes no transcript ingestion or history collector and does not reduce required reads or evidence
+retention.

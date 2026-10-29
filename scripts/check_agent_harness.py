@@ -136,6 +136,12 @@ def _toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _contains_toml_key(record: object, key: str) -> bool:
+    if type(record) is not dict:
+        return False
+    return key in record or any(_contains_toml_key(value, key) for value in record.values())
+
+
 def _normalize_memory_watchlist_cell(value: str) -> str:
     return " ".join(value.strip().split())
 
@@ -535,6 +541,18 @@ def configuration_errors(root: Path) -> list[str]:
         config = _toml(root / ".codex/config.toml")
         if (config.get("model"), config.get("model_reasoning_effort")) != ("gpt-6.1-sol", "xhigh"):
             errors.append("Master route differs from reviewed policy")
+        if (
+            type(config.get("model_auto_compact_token_limit")) is not int
+            or config["model_auto_compact_token_limit"] != 128_000
+        ):
+            errors.append("native model_auto_compact_token_limit must be the exact integer 128000")
+        if (
+            type(config.get("model_auto_compact_token_limit_scope")) is not str
+            or config["model_auto_compact_token_limit_scope"] != "total"
+        ):
+            errors.append("native model_auto_compact_token_limit_scope must be exactly 'total'")
+        if _contains_toml_key(config, "model_context_window"):
+            errors.append("project model_context_window override is forbidden")
         if config.get("agents") != {"enabled": True, "max_concurrent_threads_per_session": 8}:
             errors.append("agent enablement/concurrency differs from reviewed policy")
         errors.extend(_watch_only_feature_errors(root, config))
@@ -544,6 +562,15 @@ def configuration_errors(root: Path) -> list[str]:
             errors.append("named role file set differs from reviewed policy")
         for name, (model, effort, readonly) in _ROLES.items():
             role = _toml(root / ".codex/agents" / (name.replace("_", "-") + ".toml"))
+            if any(
+                _contains_toml_key(role, key)
+                for key in (
+                    "model_context_window",
+                    "model_auto_compact_token_limit",
+                    "model_auto_compact_token_limit_scope",
+                )
+            ):
+                errors.append(f"{name} must not override model compaction or capacity")
             if (role.get("name"), role.get("model"), role.get("model_reasoning_effort")) != (name, model, effort):
                 errors.append(f"invalid name/model/effort for {name}")
             if role.get("agents") != {"enabled": False}:

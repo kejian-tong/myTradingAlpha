@@ -33,23 +33,25 @@ Within a benchmark comparison, each v2 observation reference belongs to one comp
 `task_class`, `task_id`, `model` and `effort`. Cross-run reuse is rejected regardless of revision or content,
 before aggregation, sample eligibility or pricing. Duplicate task/route rows remain rejected.
 
-A v2 task cost is available only when `task_usage_complete=true`, `usage_scope=task`, aggregation is
-`exclusive`, input/cached/output counts are known, cache writes are known zero, the pricing surface is
-`historical_work_codex`, and the context tier is `short`. Reasoning is not charged twice. Request, turn,
-agent, partial, unknown, non-short, or write-bearing usage stays unpriced and cannot create a cost frontier.
-Short request observations with known input above 272,000 tokens are rejected. Comparisons that mix
-unversioned and v2 rows are rejected; no implicit normalization is performed.
+A v2 task cost requires `task_usage_complete=true`, `usage_scope=task`, `aggregation_scope=exclusive`,
+and known input, cached-input and output counts. The historical `historical_work_codex` surface also
+requires known zero cache writes and a short context tier. The dated current surface below prices known
+short tasks; it also prices GPT-6.1 Sol/xhigh long and mixed tasks under the documented no-surcharge
+subscription rule. It never adds cache writes a second time. Other long, mixed, unknown-tier, request,
+turn, agent, partial or unknown usage remains unpriced. Short request observations with known input above
+272,000 tokens are rejected. Comparisons that mix unversioned and v2 rows are rejected; no implicit
+normalization is performed.
 
 `task_usage_complete`, `pricing_surface`, `context_tier`, and `source_kind` are supplied assertions.
 Schema validation does not authenticate their source, establish runtime identity, or prove actual billing.
 
 ## Historical official rate-card priors
 
-The Work/Codex rate cards were re-checked on 2026-09-07. The benchmark keeps these values as dated rate
-evidence; they are not a verified current rate card for GPT-6.1 Sol/xhigh. No Work/Codex credit or
-Enterprise USD rates are assigned to that route. It returns `unknown_route_pricing` with null route costs,
-no Pareto frontier, and no promotion-ready status until pricing is verified and added in a reviewed Harness
-change. Astra/xhigh retains its historical rate data; as of 2026-10-08, that card is older than the
+The Work/Codex rate cards were re-checked on 2026-09-07. The benchmark keeps these values as historical
+rate evidence; they are not current card values. GPT-6.1 Sol/xhigh has no price under this historical
+surface, so those historical rows return `unknown_route_pricing` with null route costs. Its current
+Work/Codex credit rates are available only on the dated v2 card below, which still has no Enterprise USD
+rates. Astra/xhigh retains its historical rate data; as of 2026-10-08, that card is older than the
 30-day freshness limit and cannot support a cost frontier.
 
 | Model | Input credits / 1M | Cached input / 1M | Output / 1M | Input $ / 1M | Cached $ / 1M | Output $ / 1M |
@@ -64,17 +66,43 @@ Official sources:
 - credits: https://help.openai.com/en/articles/11481834
 - Enterprise token-based USD: https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing
 
+## Dated current Work/Codex Standard card
+
+Schema v2 may explicitly select `work_codex_standard_2026_10_28`, a separate Work/Codex Standard credit
+card dated 2026-10-28. The historical card above, its September 7 date, rates, unversioned `0.81` fixture,
+and historical v2 `0.71` fixture remain unchanged. Known historical and current surfaces cannot be mixed
+in one analysis; the benchmark rejects that input before eligibility or pricing. The `unknown` surface
+remains unpriced.
+
+| Model | Input credits / 1M | Cached input / 1M | Output / 1M |
+| --- | ---: | ---: | ---: |
+| GPT-6 Luna | 2.5 | 0.25 | 12.5 |
+| GPT-5.6 Terra | 50 | 5 | 300 |
+| GPT-6 Sol | 50 | 5 | 250 |
+| GPT-6.1 Sol | 50 | 2.5 | 250 |
+| GPT-6 Astra | 250 | 25 | 1,250 |
+
+The current card uses the official [ChatGPT Work pricing page](https://learn.chatgpt.com/docs/pricing).
+Each card has its own `as_of` date and 30-day freshness window. A current-card input is priced as
+`(input_tokens - cached_input_tokens) * input_rate + cached_input_tokens * cached_input_rate +
+output_tokens * output_rate`, divided by one million. Input already includes cached reads and writes, so
+writes have no separate Codex credit charge and are not added again.
+
+Enterprise USD rates for this current card are unavailable. The benchmark emits null USD means and an
+independent incomplete-USD flag; it does not infer USD from subscription credits, API rates or an actual
+bill. The listed credits are benchmark estimates from asserted token usage, not account-specific charges.
+
 Under the historical rate card, Astra costs 2.5x GPT-6 Sol for the same input/cached/output token mix;
 Terra costs about 10x Luna for the same mix. Those are historical token-rate priors. A stronger route may
 use fewer retries or less wall-clock time, so compare measured **end-to-end task runs**, not assumed
 per-message cost.
 
-Rate cards are mutable external facts. `RATE_CARD_AS_OF` is part of the benchmark evidence and cost-based
-Pareto output is allowed only while that rate card is at most 30 days old relative to the supplied
-evaluation date. The CLI uses today's date by default and accepts `--evaluation-date YYYY-MM-DD` for a
-reproducible historical run. Library callers that provide no evaluation date receive
-`unchecked_rate_card` and no cost frontier. Once the rate card is stale, re-check the official sources
-and update constants through a reviewed harness PR before using cost results for routing policy.
+Rate cards are mutable external facts. The historical `RATE_CARD_AS_OF` and dated current card retain
+independent dates and freshness checks; cost-based Pareto output is allowed only while the selected card
+is at most 30 days old relative to the supplied evaluation date. The CLI uses today's date by default and
+accepts `--evaluation-date YYYY-MM-DD` for a reproducible run. Library callers that provide no evaluation
+date receive `unchecked_rate_card` and no cost frontier. Once a card is stale, re-check its official source
+and update only that dated card through a reviewed Harness change.
 
 ## Official capability priors are not repo conclusions
 
@@ -147,8 +175,9 @@ token evidence, output is `incomplete_cost_observation` and no other route can b
 For v2 rows, nullable nested usage remains unknown and must satisfy the complete whole-task pricing rule
 described above before contributing cost. Unknown usage stays unknown.
 If any supplied route has no verified rate coverage, output is `unknown_route_pricing`; that task class
-receives no Pareto frontier and cannot be promotion-ready. GPT-6.1 Sol/xhigh is deliberately unpriced;
-historical Astra/xhigh rate values remain subject to rate-card freshness.
+receives no Pareto frontier and cannot be promotion-ready. GPT-6.1 Sol/xhigh remains unpriced under the
+historical card; current-card credit estimates do not supply an Enterprise USD price. Historical Astra/xhigh
+rate values remain subject to rate-card freshness.
 
 ### Gate D — Pareto efficiency
 
@@ -230,9 +259,10 @@ Until representative paired benchmark evidence accumulates, keep current product
   longer completion; its roughly 10x same-token Luna rate must buy measured task-level improvement.
 - GPT-6.1 Sol/xhigh is the active Sol route for controlling review, boundary review, escalated
   implementation and Master work where correctness risk dominates token price. Historical GPT-6 Sol
-  benchmark records remain replay evidence and do not describe active routing.
-- Astra/xhigh remains shadow-only. GPT-6.1 Sol cost comparisons require verified rates; unknown rates stay
-  unpriced and cannot produce a cost frontier or promotion-ready result.
+  benchmark records remain replay evidence and do not describe active routing. Current Work/Codex credits
+  are available only under the dated current card; Enterprise USD remains unknown.
+- Astra/xhigh remains shadow-only. Unknown rates stay unpriced and cannot produce a cost frontier or
+  promotion-ready result.
 
 ## Record format
 
@@ -247,7 +277,8 @@ An unversioned JSONL row contains:
 - optionally, all three observed `input_tokens`, `cached_input_tokens`, and `output_tokens`.
 
 A schema v2 row contains the same task, quality, acceptance, safety, duration, retry and provenance fields,
-plus `schema_version=2`, `usage`, exact-boolean `task_usage_complete`, `pricing_surface`, and `context_tier`.
+plus `schema_version=2`, `usage`, exact-boolean `task_usage_complete`, `pricing_surface` (`historical_work_codex`,
+`work_codex_standard_2026_10_28`, or `unknown`), and `context_tier`.
 It must not contain top-level legacy token fields. `usage` contains the exact observation reference,
 revision, source/scope/aggregation labels and seven nullable counts defined above.
 
