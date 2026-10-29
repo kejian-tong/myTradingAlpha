@@ -86,7 +86,8 @@ The current card uses the official [ChatGPT Work pricing page](https://learn.cha
 Each card has its own `as_of` date and 30-day freshness window. A current-card input is priced as
 `(input_tokens - cached_input_tokens) * input_rate + cached_input_tokens * cached_input_rate +
 output_tokens * output_rate`, divided by one million. Input already includes cached reads and writes, so
-writes have no separate Codex credit charge and are not added again.
+writes have no separate Codex credit charge and are not added again. The card is an asserted eligible
+Work/Codex subscription-credit basis; it excludes API-key usage and agreement-specific USD billing.
 
 Enterprise USD rates for this current card are unavailable. The benchmark emits null USD means and an
 independent incomplete-USD flag; it does not infer USD from subscription credits, API rates or an actual
@@ -102,7 +103,8 @@ independent dates and freshness checks; cost-based Pareto output is allowed only
 is at most 30 days old relative to the supplied evaluation date. The CLI uses today's date by default and
 accepts `--evaluation-date YYYY-MM-DD` for a reproducible run. Library callers that provide no evaluation
 date receive `unchecked_rate_card` and no cost frontier. Once a card is stale, re-check its official source
-and update only that dated card through a reviewed Harness change.
+and introduce a new dated surface/card through a reviewed Harness change. Never change the date, rates or
+identity of a published card; existing rows retain the pricing surface they recorded.
 
 ## Official capability priors are not repo conclusions
 
