@@ -179,6 +179,8 @@ def test_active_lock_meets_all_reviewed_security_minimums() -> None:
     minimums = {
         "aiohttp": "3.14.4",
         "certifi": "2026.10.18",
+        "langgraph": "1.2.14",
+        "langgraph-sdk": "0.4.6",
         "langgraph-checkpoint": "4.3.0",
         "langgraph-checkpoint-sqlite": "3.1.2",
         "multidict": "6.9.1",
@@ -225,6 +227,7 @@ def test_project_and_pip_fallback_declare_reviewed_security_minimums() -> None:
     minimums = {
         "aiohttp": ">=3.14.4,<4",
         "certifi": ">=2026.10.18",
+        "langgraph": ">=1.2.14,<2",
         "langgraph-checkpoint-sqlite": ">=3.1.2",
         "multidict": ">=6.9.1,<7",
         "setuptools": ">=84.1.0",
