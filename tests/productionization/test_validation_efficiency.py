@@ -267,7 +267,7 @@ def test_full_ci_and_pytest_discovery_remain_unfiltered() -> None:
         steps = job.get("steps")
         assert type(steps) is list
         commands = "\n".join(step.get("run", "") for step in steps if type(step) is dict)
-        assert re.search(rf"(?m)\bci_partition\.py\s+collect\b", commands)
+        assert re.search(r"(?m)\bci_partition\.py\s+collect\b", commands)
         assert re.search(
             rf"(?m)\bci_partition\.py\s+run\s+--shard\s+{shard}(?:\s|$)", commands
         )

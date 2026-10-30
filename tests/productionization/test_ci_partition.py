@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,8 @@ WEIGHT_SOURCE_HEAD = "f80d14b537d70e86cffdc2e41f4d447ec875a68f"
 WEIGHT_RUN_ID = 40995106582
 WEIGHT_JOB_ID = 123866296171
 DEFAULT_WEIGHT_MS = 1420
+MAX_REFERENCE_BYTES = 2_000_000
+MAX_RECEIPT_BYTES = 8_000_000
 MANIFEST_FIELDS = {
     "schema_version",
     "source_sha",
@@ -270,6 +273,12 @@ def _canonical_digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _canonical_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode("ascii") + b"\n"
+
+
 def _verify(bundle: RunBundle, receipts_dir: Path, *, serial: Path | None = None):
     args = ["verify", "--reference", str(bundle.reference), "--receipts", str(receipts_dir)]
     if serial is not None:
@@ -366,7 +375,7 @@ def test_collection_and_receipts_are_canonical_bound_and_complete(run_bundle: Ru
     assert manifest["runner_os"] == "Linux"
     assert manifest["runner_image_os"] == "ubuntu24"
     assert manifest["runner_image_version"] == "202610.30.1"
-    assert manifest["python_version"] == "3.14.7"
+    assert manifest["python_version"] == platform.python_version()
     assert manifest["uv_version"] == "0.13.5"
     assert manifest["lock_sha256"] == hashlib.sha256((run_bundle.project.root / "uv.lock").read_bytes()).hexdigest()
     nodeids = manifest["nodeids"]
@@ -394,7 +403,7 @@ def test_collection_and_receipts_are_canonical_bound_and_complete(run_bundle: Ru
         assert selected == [nodeid for nodeid in collection_order if nodeid in set(selected)]
         assert receipt["completed"] is True and receipt["pytest_exit_code"] == 0
         assert type(receipt["elapsed_ms"]) is int and receipt["elapsed_ms"] >= 0
-        assert receipt["python_version"] == "3.14.7"
+        assert receipt["python_version"] == platform.python_version()
         assert receipt["uv_version"] == "0.13.5"
         outcomes = receipt["outcomes"]
         assert [item["nodeid"] for item in outcomes] == selected
@@ -456,6 +465,19 @@ def test_actual_pytest_lifecycle_counts_skips_xfails_and_subtests_once(run_bundl
     assert serial_outcomes == partition_outcomes
 
 
+def test_run_preserves_native_pytest_summary_skip_reasons_and_durations(
+    run_bundle: RunBundle, tmp_path: Path
+) -> None:
+    receipt = tmp_path / "serial-output.json"
+    result = _invoke(run_bundle.project, "run", "--shard", "serial", "--output", str(receipt))
+    _successful(result)
+    native_output = result.stdout + result.stderr
+    assert "passed" in native_output
+    assert "valid setup skip" in native_output
+    assert "slowest 25 durations" in native_output
+    assert receipt.is_file()
+
+
 def test_aggregate_verification_proves_full_coverage_and_serial_parity(run_bundle: RunBundle, tmp_path: Path) -> None:
     receipts = _copy_receipts(run_bundle, tmp_path / "receipts")
     result = _verify(run_bundle, receipts, serial=run_bundle.serial)
@@ -500,6 +522,138 @@ def test_aggregate_verification_proves_full_coverage_and_serial_parity(run_bundl
     assert summary["coverage_sha256"] == _canonical_digest(
         {"nodeids": run_bundle.manifest["nodeids"], "outcomes": expected_outcomes}
     )
+
+
+def test_pure_bytes_verifier_accepts_explicit_native_binding_without_runtime_access(
+    run_bundle: RunBundle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_cli()
+    from scripts import ci_partition
+
+    expected_binding = {
+        key: run_bundle.manifest[key]
+        for key in (
+            "source_sha",
+            "checkout_sha",
+            "tree_sha",
+            "lock_sha256",
+            "workflow_run_id",
+            "workflow_run_attempt",
+            "runner_os",
+            "runner_image_os",
+            "runner_image_version",
+            "python_version",
+            "uv_version",
+        )
+    }
+    approved_weights_bytes = (run_bundle.project.root / "scripts" / "ci_partition_weights.json").read_bytes()
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("offline verifier attempted runtime or filesystem access")
+
+    monkeypatch.setattr(ci_partition, "_read_regular_file", forbidden)
+    monkeypatch.setattr(ci_partition, "_runtime_binding", forbidden)
+    monkeypatch.setattr(ci_partition.subprocess, "run", forbidden)
+    summary = ci_partition.verify_artifact_bytes(
+        expected_binding,
+        approved_weights_bytes,
+        run_bundle.reference.read_bytes(),
+        run_bundle.receipt_zero.read_bytes(),
+        run_bundle.receipt_one.read_bytes(),
+        run_bundle.serial.read_bytes(),
+    )
+    assert summary["completed"] is True
+    assert summary["serial_parity"] is True
+    assert summary["weights_sha256"] == hashlib.sha256(approved_weights_bytes).hexdigest()
+    assert summary["reference_sha256"] == hashlib.sha256(
+        run_bundle.reference.read_bytes()
+    ).hexdigest()
+
+
+def test_pure_verifier_rejects_alternative_disjoint_full_cover_assignment(
+    run_bundle: RunBundle,
+) -> None:
+    from scripts.ci_partition import verify_artifact_bytes
+
+    expected_binding = {
+        key: run_bundle.manifest[key]
+        for key in (
+            "source_sha",
+            "checkout_sha",
+            "tree_sha",
+            "lock_sha256",
+            "workflow_run_id",
+            "workflow_run_attempt",
+            "runner_os",
+            "runner_image_os",
+            "runner_image_version",
+            "python_version",
+            "uv_version",
+        )
+    }
+    zero = copy.deepcopy(run_bundle.shard_zero)
+    one = copy.deepcopy(run_bundle.shard_one)
+    zero_ids = set(zero["selected_nodeids"])
+    one_ids = set(one["selected_nodeids"])
+    assert zero_ids and one_ids and zero_ids.isdisjoint(one_ids)
+    exchange_zero = zero["selected_nodeids"][0]
+    exchange_one = one["selected_nodeids"][0]
+    zero_ids.remove(exchange_zero)
+    zero_ids.add(exchange_one)
+    one_ids.remove(exchange_one)
+    one_ids.add(exchange_zero)
+    collection_order = run_bundle.manifest["collection_order"]
+    zero["selected_nodeids"] = [nodeid for nodeid in collection_order if nodeid in zero_ids]
+    one["selected_nodeids"] = [nodeid for nodeid in collection_order if nodeid in one_ids]
+    zero_outcomes = {item["nodeid"]: item for item in run_bundle.shard_zero["outcomes"]}
+    one_outcomes = {item["nodeid"]: item for item in run_bundle.shard_one["outcomes"]}
+    combined_outcomes = {**zero_outcomes, **one_outcomes}
+    zero["outcomes"] = [combined_outcomes[nodeid] for nodeid in zero["selected_nodeids"]]
+    one["outcomes"] = [combined_outcomes[nodeid] for nodeid in one["selected_nodeids"]]
+    assert set(zero["selected_nodeids"]).isdisjoint(one["selected_nodeids"])
+    assert set(zero["selected_nodeids"]) | set(one["selected_nodeids"]) == set(collection_order)
+
+    with pytest.raises(ValueError, match="invalid CI partition artifact evidence"):
+        verify_artifact_bytes(
+            expected_binding,
+            (run_bundle.project.root / "scripts" / "ci_partition_weights.json").read_bytes(),
+            run_bundle.reference.read_bytes(),
+            _canonical_bytes(zero),
+            _canonical_bytes(one),
+        )
+
+
+def test_worker_process_preserves_output_and_uses_bounded_mode_timeouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import ci_partition
+
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+    report = {
+        "exit_code": 0,
+        "nodeids": [],
+        "collection_before": [],
+        "collection_after": [],
+        "lifecycle": {},
+    }
+
+    monkeypatch.setattr(ci_partition, "_clean_pytest_environment", lambda: {})
+
+    for mode, timeout in (("collect", 1_800), ("run", 18_000)):
+        report_path = tmp_path / ("run.json" if mode == "run" else "collect.json")
+
+        def write_report(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            calls.append((command, kwargs))
+            report_path_arg = command[6]
+            Path(report_path_arg).write_bytes(_canonical_bytes(report))
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        monkeypatch.setattr(ci_partition.subprocess, "run", write_report)
+        ci_partition._child_process(tmp_path, mode, report_path, [])
+        actual_command, actual_kwargs = calls[-1]
+        assert actual_kwargs["timeout"] == timeout
+        assert "stdout" not in actual_kwargs and "stderr" not in actual_kwargs
+        assert actual_command[1:3] == ["-I", "-c"]
 
 
 @pytest.mark.parametrize(
@@ -654,8 +808,23 @@ def test_verify_rejects_oversized_inputs_and_sanitizes_nested_sentinels(
     nested = quote(encoded, safe="")
     raw = json.dumps({"nested": {"value": [canary, encoded, nested]}}).encode()
     receipts = _copy_receipts(run_bundle, tmp_path / "oversized")
-    (receipts / "shard-0.json").write_bytes(raw * ((2_000_000 // len(raw)) + 1))
+    (receipts / "shard-0.json").write_bytes(raw * ((MAX_RECEIPT_BYTES // len(raw)) + 1))
     result = _verify(run_bundle, receipts)
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert result.stderr == FIXED_ERROR
+    assert all(value not in result.stdout + result.stderr for value in (canary, encoded, nested))
+
+    oversized_reference = tmp_path / "oversized-reference.json"
+    oversized_reference.write_bytes(raw * ((MAX_REFERENCE_BYTES // len(raw)) + 1))
+    result = _invoke(
+        run_bundle.project,
+        "verify",
+        "--reference",
+        str(oversized_reference),
+        "--receipts",
+        str(receipts),
+    )
     assert result.returncode != 0
     assert result.stdout == ""
     assert result.stderr == FIXED_ERROR

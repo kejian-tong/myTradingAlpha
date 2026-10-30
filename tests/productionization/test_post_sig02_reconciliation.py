@@ -45,7 +45,7 @@ def test_operational_state_reconciles_the_current_main_and_completed_bt05() -> N
     assert "BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
 
 
-def test_current_harness_snapshot_is_pr110_and_authorizes_only_eff06() -> None:
+def test_current_harness_snapshot_tracks_main_and_authorizes_only_eff06() -> None:
     state = _state_text()
     normalized = " ".join(state.split())
 
