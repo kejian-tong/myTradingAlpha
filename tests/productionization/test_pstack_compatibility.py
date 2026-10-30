@@ -882,7 +882,8 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "Copyright (c) 2026 Lauren Tan" in notice
     assert "https://github.com/cursor/plugins/tree/main/pstack" in notice
     assert "HARNESS-EFF-05" in state
-    assert "PR #109 / merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`" in state
+    assert "PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338`" in state
+    assert "merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`" in state
     assert (
         "https://github.com/kejian-tong/myTradingAlpha/blob/"
         "300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md"

@@ -30,7 +30,7 @@ if [[ "${TEST_RESULT:-}" != "success" || "${LINT_RESULT:-}" != "success" || "${S
   exit 1
 fi
 printf '%s\\n' 'Foundation dependency coverage is satisfied by test, lint, and smoke-install.'"""
-FULL_TEST_COMMAND = "uv run --no-sync pytest -q --durations=25"
+PARTITION_SCRIPT = "scripts/ci_partition.py"
 
 
 def _workflow() -> dict:
@@ -258,19 +258,77 @@ def test_full_ci_and_pytest_discovery_remain_unfiltered() -> None:
     workflow = _workflow()
     _assert_no_pytest_selector_env(workflow)
     jobs = workflow["jobs"]
-    test_job = jobs["test"]
-    steps = test_job["steps"]
-    full_test_steps = [step for step in steps if step.get("name") == "Run test suite"]
-    assert len(full_test_steps) == 1
-    assert full_test_steps[0].get("run", "").strip() == FULL_TEST_COMMAND
-    assert full_test_steps[0].get("if", True) is True
-    assert full_test_steps[0].get("continue-on-error", False) is False
+    assert {"test-shard-0", "test-shard-1", "test"} <= set(jobs)
+
+    for shard, shard_id in (("0", "test-shard-0"), ("1", "test-shard-1")):
+        job = jobs[shard_id]
+        assert job.get("if", True) is True
+        assert job.get("continue-on-error", False) is False
+        steps = job.get("steps")
+        assert type(steps) is list
+        commands = "\n".join(step.get("run", "") for step in steps if type(step) is dict)
+        assert re.search(rf"(?m)\bci_partition\.py\s+collect\b", commands)
+        assert re.search(
+            rf"(?m)\bci_partition\.py\s+run\s+--shard\s+{shard}(?:\s|$)", commands
+        )
+        assert not re.search(r"(?m)\bpytest\b", commands)
+        assert not re.search(r"(?m)\s--\s", commands)
+        assert not re.search(r"(?m)(?:^|\s)-[kfm](?:\s|$)", commands)
+
+    aggregate = jobs["test"]
+    assert aggregate.get("name") == "tests (py3.14)"
+    assert aggregate.get("needs") == ["test-shard-0", "test-shard-1"]
+    assert aggregate.get("if") == "${{ always() }}"
+    assert aggregate.get("continue-on-error", False) is False
+    aggregate_steps = aggregate.get("steps")
+    assert type(aggregate_steps) is list
+    aggregate_commands = "\n".join(
+        step.get("run", "") for step in aggregate_steps if type(step) is dict
+    )
+    assert re.search(r"(?m)\bci_partition\.py\s+collect\b", aggregate_commands)
+    assert re.search(r"(?m)\bci_partition\.py\s+verify\b", aggregate_commands)
+    assert not re.search(r"(?m)\bpytest\b", aggregate_commands)
+
+    # The optional serial job is a same-run reference only. Its label can skip
+    # the benchmark, but it cannot gate or replace the unconditional aggregate.
+    baseline = jobs.get("serial-baseline")
+    assert type(baseline) is dict
+    assert baseline.get("if") == (
+        "${{ github.event_name == 'pull_request' && "
+        "contains(github.event.pull_request.labels.*.name, 'ci-partition-benchmark') }}"
+    )
+    baseline_commands = "\n".join(
+        step.get("run", "")
+        for step in baseline.get("steps", [])
+        if type(step) is dict
+    )
+    assert re.search(
+        r"(?m)\bci_partition\.py\s+run\s+--shard\s+serial(?:\s|$)",
+        baseline_commands,
+    )
+    assert not re.search(r"(?m)\bpytest\b", baseline_commands)
+    assert "test" not in baseline.get("needs", [])
+
+    artifact_sha = "ea165f8d65b6e75b540449e92b4886f43607fa02"
+    coverage_uploads = [
+        step
+        for step in aggregate_steps
+        if step.get("uses") == f"actions/upload-artifact@{artifact_sha}"
+        and step.get("with", {}).get("name") == "ci-coverage"
+    ]
+    assert len(coverage_uploads) == 1
+    coverage_options = coverage_uploads[0]["with"]
+    assert type(coverage_options.get("path")) is str
+    assert "ci-coverage" in coverage_options["path"]
+    assert coverage_options.get("if-no-files-found") == "error"
+    assert 1 <= coverage_options.get("retention-days", 0) <= 7
+
+    assert (ROOT / ".github/workflows/codeql.yml").is_file()
+    assert (ROOT / ".github/workflows/dependency-review.yml").is_file()
 
     pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
     assert re.search(r'(?m)^testpaths\s*=\s*\["tests"\]\s*$', pyproject)
     assert re.search(r'(?m)^addopts\s*=\s*"-ra --strict-markers"\s*$', pyproject)
-    assert (ROOT / ".github/workflows/codeql.yml").is_file()
-    assert (ROOT / ".github/workflows/dependency-review.yml").is_file()
 
 
 def test_validation_policy_is_bounded_and_names_local_execution_ownership() -> None:

@@ -25,6 +25,10 @@ README_PATH = REPOSITORY_ROOT / "README.md"
 CI_PYTHON_VERSIONS = {"3.14"}
 SETUP_UV_COMMIT = "07a047e608db84b3d8c06cd9a7c7dcc9c355c18e"
 UV_VERSION = "0.13.5"
+UPLOAD_ARTIFACT_COMMIT = "ea165f8d65b6e75b540449e92b4886f43607fa02"
+DOWNLOAD_ARTIFACT_COMMIT = "d3f86a106a0bac45b974a628896c90dbdf5c8093"
+PARTITION_SCRIPT = "scripts/ci_partition.py"
+PARTITION_SHARDS = ("test-shard-0", "test-shard-1")
 
 
 def _require_file(path: Path, contract: str) -> Path:
@@ -318,9 +322,12 @@ def test_ci_binds_uv_to_each_intended_interpreter_without_split_ownership() -> N
     workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
     expected_python = {
-        "test": "${{ matrix.python-version }}",
+        "test-shard-0": "3.14",
+        "test-shard-1": "3.14",
+        "test": "3.14",
         "smoke-install": "3.14",
         "lint": "3.14",
+        "serial-baseline": "3.14",
     }
 
     assert set(expected_python) <= set(jobs)
@@ -419,10 +426,34 @@ def test_lock_checker_reports_requires_python_drift_without_mutating_lock(tmp_pa
 
 
 def _required_ci_runs() -> dict[str, dict[str, str]]:
-    return {
+    shard_commands = {
+        "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
+        "Collect full test suite": (
+            f"uv run --no-sync python {PARTITION_SCRIPT} collect --output collection.json"
+        ),
+    }
+    runs = {
+        "test-shard-0": {
+            **shard_commands,
+            "Run assigned test partition": (
+                f"uv run --no-sync python {PARTITION_SCRIPT} run --shard 0 --output shard-0.json"
+            ),
+        },
+        "test-shard-1": {
+            **shard_commands,
+            "Run assigned test partition": (
+                f"uv run --no-sync python {PARTITION_SCRIPT} run --shard 1 --output shard-1.json"
+            ),
+        },
         "test": {
             "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
-            "Run test suite": "uv run --no-sync pytest -q --durations=25",
+            "Prepare coverage artifact": "mkdir -p ci-coverage",
+            "Collect independent coverage reference": (
+                f"uv run --no-sync python {PARTITION_SCRIPT} collect --output ci-coverage/reference.json"
+            ),
+            "Verify complete shard coverage": (
+                f"uv run --no-sync python {PARTITION_SCRIPT} verify --reference ci-coverage/reference.json --receipts ci-shard-receipts > ci-coverage/summary.json"
+            ),
         },
         "foundation-contract-docs-lock": {},
         "smoke-install": {
@@ -453,33 +484,90 @@ def _required_ci_runs() -> dict[str, dict[str, str]]:
             "Check Markdown contracts": "uv run --no-sync python scripts/check_markdown_contracts.py",
         },
     }
+    runs["serial-baseline"] = {
+        "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
+        "Run serial reference suite": (
+            f"uv run --no-sync python {PARTITION_SCRIPT} run --shard serial --output serial.json"
+        ),
+    }
+    return runs
+
+
+def _upload_artifact_step(job: dict, name: str) -> dict:
+    steps = job.get("steps")
+    assert type(steps) is list
+    uploaders = [
+        step
+        for step in steps
+        if type(step) is dict and step.get("uses") == f"actions/upload-artifact@{UPLOAD_ARTIFACT_COMMIT}"
+    ]
+    assert len(uploaders) == 1
+    uploader = uploaders[0]
+    options = uploader.get("with")
+    assert type(options) is dict
+    assert options.get("name") == name
+    assert type(options.get("path")) is str and options["path"]
+    assert options.get("if-no-files-found") == "error"
+    assert type(options.get("retention-days")) is int
+    assert 1 <= options["retention-days"] <= 7
+    return uploader
 
 
 def _assert_active_ci_policy(workflow: dict) -> None:
     jobs = workflow.get("jobs")
-    assert type(jobs) is dict and "test" in jobs
-    strategy = jobs["test"].get("strategy")
-    assert type(strategy) is dict
-    matrix = strategy.get("matrix")
-    assert type(matrix) is dict and set(matrix) == {"python-version"}
-    versions = matrix["python-version"]
-    assert type(versions) is list and all(type(version) is str for version in versions)
-    assert versions == ["3.14"]
-    assert jobs["test"]["name"] == "tests (py${{ matrix.python-version }})"
-    for job_name, commands in _required_ci_runs().items():
+    required = {
+        *PARTITION_SHARDS,
+        "test",
+        "foundation-contract-docs-lock",
+        "smoke-install",
+        "lint",
+        "serial-baseline",
+    }
+    assert type(jobs) is dict and set(jobs) == required
+    assert jobs["test"]["name"] == "tests (py3.14)"
+    assert jobs["test"].get("needs") == list(PARTITION_SHARDS)
+    assert jobs["test"].get("if") == "${{ always() }}"
+    assert jobs["foundation-contract-docs-lock"].get("needs") == [
+        "test",
+        "lint",
+        "smoke-install",
+    ]
+
+    expected_artifact = {
+        "test-shard-0": "ci-shard-receipt-0",
+        "test-shard-1": "ci-shard-receipt-1",
+        "test": "ci-coverage",
+        "serial-baseline": "ci-serial-reference",
+    }
+    required_runs = _required_ci_runs()
+    for job_name, commands in required_runs.items():
         job = jobs.get(job_name)
         assert type(job) is dict
+        assert job.get("runs-on") == "ubuntu-latest"
         if job_name == "foundation-contract-docs-lock":
             assert type(job.get("if")) is str
             assert job["if"] == "${{ always() }}"
+        elif job_name == "test":
+            assert job.get("if") == "${{ always() }}"
+        elif job_name == "serial-baseline":
+            assert job.get("if") == (
+                "${{ github.event_name == 'pull_request' && "
+                "contains(github.event.pull_request.labels.*.name, 'ci-partition-benchmark') }}"
+            )
+            assert "test" not in job.get("needs", [])
         else:
             assert job.get("if", True) is True
         assert job.get("continue-on-error", False) is False
         steps = job.get("steps")
         assert type(steps) is list and all(type(step) is dict for step in steps)
         for step in steps:
-            assert step.get("if", True) is True and step.get("continue-on-error", False) is False
-        uv_steps = [step for step in steps if step.get("uses") == f"astral-sh/setup-uv@{SETUP_UV_COMMIT}"]
+            assert step.get("continue-on-error", False) is False
+            assert step.get("if", True) is True
+        uv_steps = [
+            step
+            for step in steps
+            if step.get("uses") == f"astral-sh/setup-uv@{SETUP_UV_COMMIT}"
+        ]
         if job_name == "foundation-contract-docs-lock":
             assert job["name"] == "Foundation contract/docs/lock"
             assert job.get("timeout-minutes") == 5
@@ -490,18 +578,155 @@ def _assert_active_ci_policy(workflow: dict) -> None:
         else:
             assert len(uv_steps) == 1
             assert uv_steps[0]["with"]["version"] == UV_VERSION
-            expected = "${{ matrix.python-version }}" if job_name == "test" else "3.14"
-            assert uv_steps[0]["with"]["python-version"] == expected
+            assert uv_steps[0]["with"]["python-version"] == "3.14"
+        assert "strategy" not in job
         for name, command in commands.items():
             matches = [step for step in steps if step.get("name") == name]
             assert len(matches) == 1
             assert matches[0].get("run", "").strip() == command
+        if job_name in expected_artifact:
+            _upload_artifact_step(job, expected_artifact[job_name])
+
+    for job_name in PARTITION_SHARDS:
+        job = jobs[job_name]
+        assert job.get("needs", []) == []
+        names = [step.get("name") for step in job["steps"]]
+        assert names.index("Collect full test suite") < names.index("Run assigned test partition")
+        assert names.index("Run assigned test partition") < names.index("Upload shard receipt")
+    aggregate_steps = jobs["test"]["steps"]
+    downloaders = [
+        step
+        for step in aggregate_steps
+        if step.get("uses") == f"actions/download-artifact@{DOWNLOAD_ARTIFACT_COMMIT}"
+    ]
+    assert len(downloaders) == 1
+    download_options = downloaders[0].get("with")
+    assert type(download_options) is dict
+    assert download_options.get("pattern") == "ci-shard-receipt-*"
+    assert download_options.get("merge-multiple") is True
+    assert type(download_options.get("path")) is str
+    aggregate_names = [step.get("name") for step in aggregate_steps]
+    assert aggregate_names.index("Download shard receipts") < aggregate_names.index(
+        "Verify complete shard coverage"
+    )
+    assert aggregate_names.index("Collect independent coverage reference") < aggregate_names.index(
+        "Verify complete shard coverage"
+    )
+    assert aggregate_names.index("Verify complete shard coverage") < aggregate_names.index(
+        "Upload coverage evidence"
+    )
+
+
+def _valid_ci_policy_fixture() -> dict:
+    """Build one valid fixed-topology policy fixture for mutation tests.
+
+    The checked-in workflow intentionally remains pre-partition during RED, so
+    mutation tests must not use it as their positive baseline. This synthetic
+    fixture lets each mutation demonstrate that the policy rejects that
+    specific violation rather than merely rejecting the preexisting workflow.
+    """
+    jobs = {}
+    for job_name, commands in _required_ci_runs().items():
+        if job_name == "foundation-contract-docs-lock":
+            jobs[job_name] = {
+                "name": "Foundation contract/docs/lock",
+                "runs-on": "ubuntu-latest",
+                "needs": ["test", "lint", "smoke-install"],
+                "if": "${{ always() }}",
+                "timeout-minutes": 5,
+                "steps": [
+                    {
+                        "name": "Verify Foundation dependency results",
+                        "shell": "bash",
+                        "run": "true",
+                    }
+                ],
+            }
+            continue
+
+        steps = [
+            {
+                "name": "Set up uv",
+                "uses": f"astral-sh/setup-uv@{SETUP_UV_COMMIT}",
+                "with": {"version": UV_VERSION, "python-version": "3.14"},
+            }
+        ]
+        for name, command in commands.items():
+            if name == "Verify complete shard coverage":
+                steps.append(
+                    {
+                        "name": "Download shard receipts",
+                        "uses": f"actions/download-artifact@{DOWNLOAD_ARTIFACT_COMMIT}",
+                        "with": {
+                            "pattern": "ci-shard-receipt-*",
+                            "merge-multiple": True,
+                            "path": "ci-shard-receipts",
+                        },
+                    }
+                )
+            steps.append({"name": name, "run": command})
+
+        artifact_name = {
+            "test-shard-0": "ci-shard-receipt-0",
+            "test-shard-1": "ci-shard-receipt-1",
+            "test": "ci-coverage",
+            "serial-baseline": "ci-serial-reference",
+        }.get(job_name)
+        if artifact_name is not None:
+            steps.append(
+                {
+                    "name": {
+                        "test-shard-0": "Upload shard receipt",
+                        "test-shard-1": "Upload shard receipt",
+                        "test": "Upload coverage evidence",
+                        "serial-baseline": "Upload serial reference",
+                    }[job_name],
+                    "uses": f"actions/upload-artifact@{UPLOAD_ARTIFACT_COMMIT}",
+                    "with": {
+                        "name": artifact_name,
+                        "path": {
+                            "test-shard-0": "shard-0.json",
+                            "test-shard-1": "shard-1.json",
+                            "test": "ci-coverage",
+                            "serial-baseline": "serial.json",
+                        }[job_name],
+                        "if-no-files-found": "error",
+                        "retention-days": 3,
+                    },
+                }
+            )
+
+        job = {"runs-on": "ubuntu-latest", "steps": steps}
+        if job_name == "test-shard-0":
+            job.update({"name": "test-shard-0", "needs": []})
+        elif job_name == "test-shard-1":
+            job.update({"name": "test-shard-1", "needs": []})
+        elif job_name == "test":
+            job.update(
+                {
+                    "name": "tests (py3.14)",
+                    "needs": list(PARTITION_SHARDS),
+                    "if": "${{ always() }}",
+                }
+            )
+        elif job_name == "serial-baseline":
+            job.update(
+                {
+                    "name": "serial baseline (py3.14)",
+                    "if": (
+                        "${{ github.event_name == 'pull_request' && "
+                        "contains(github.event.pull_request.labels.*.name, 'ci-partition-benchmark') }}"
+                    ),
+                }
+            )
+        else:
+            job["name"] = job_name
+        jobs[job_name] = job
+    return {"jobs": jobs}
 
 
 def _active_ci_fixture() -> dict:
-    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
-    workflow["jobs"]["test"]["strategy"]["matrix"] = {"python-version": ["3.14"]}
-    return workflow
+    return yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
 
 
 def test_active_ci_runtime_fixture_preserves_all_locked_full_and_security_gates() -> None:
@@ -509,48 +734,45 @@ def test_active_ci_runtime_fixture_preserves_all_locked_full_and_security_gates(
 
 
 def test_active_ci_policy_rejects_retired_ambiguous_or_hidden_matrix_expansion() -> None:
-    template = _active_ci_fixture()
-    invalid = [
-        None, {}, {"python-version": []}, {"python-version": ["3.13"]},
-        {"python-version": ["3.14", "3.14"]}, {"python-version": [3.14]},
-        {"python-version": ("3.14",)}, {"python-version": ["3.14"], "os": ["ubuntu-latest"]},
-        {"python-version": ["3.14"], "include": [{"python-version": "3.13"}]},
-        {"python-version": ["3.14"], "exclude": []},
-    ]
-    invalid.extend({"python-version": ["3.14", version]} for version in ("3.10", "3.11", "3.12", "3.13"))
-    for matrix in invalid:
+    template = _valid_ci_policy_fixture()
+    _assert_active_ci_policy(template)
+    for job_name in template["jobs"]:
         candidate = copy.deepcopy(template)
-        candidate["jobs"]["test"]["strategy"]["matrix"] = matrix
+        candidate["jobs"][job_name]["strategy"] = {
+            "matrix": {"python-version": ["3.14"], "os": ["ubuntu-latest"]}
+        }
         with pytest.raises(AssertionError):
             _assert_active_ci_policy(candidate)
-    for remove in ("strategy", "name"):
+    for extra_job in ("test-shard-2", "test-python-3.13", "extra-required-gate"):
         candidate = copy.deepcopy(template)
-        candidate["jobs"]["test"].pop(remove)
-        with pytest.raises((AssertionError, KeyError)):
+        candidate["jobs"][extra_job] = copy.deepcopy(candidate["jobs"]["test-shard-0"])
+        with pytest.raises(AssertionError):
             _assert_active_ci_policy(candidate)
     candidate = copy.deepcopy(template)
-    candidate["jobs"]["test"]["strategy"].pop("matrix")
+    candidate["jobs"]["test"]["needs"] = ["test-shard-0", "test-shard-1", "serial-baseline"]
     with pytest.raises(AssertionError):
         _assert_active_ci_policy(candidate)
 
 
 def test_active_ci_policy_rejects_removed_filtered_or_disabled_required_work() -> None:
-    template = _active_ci_fixture()
+    template = _valid_ci_policy_fixture()
+    _assert_active_ci_policy(template)
     for job_name, commands in _required_ci_runs().items():
         candidate = copy.deepcopy(template)
         candidate["jobs"].pop(job_name)
         with pytest.raises(AssertionError):
             _assert_active_ci_policy(candidate)
-        for flag, value in (
-            ("if", False),
-            ("if", "${{ false }}"),
-            ("if", 1),
-            ("continue-on-error", True),
-        ):
-            candidate = copy.deepcopy(template)
-            candidate["jobs"][job_name][flag] = value
-            with pytest.raises(AssertionError):
-                _assert_active_ci_policy(candidate)
+        if job_name != "serial-baseline":
+            for flag, value in (
+                ("if", False),
+                ("if", "${{ false }}"),
+                ("if", 1),
+                ("continue-on-error", True),
+            ):
+                candidate = copy.deepcopy(template)
+                candidate["jobs"][job_name][flag] = value
+                with pytest.raises(AssertionError):
+                    _assert_active_ci_policy(candidate)
         for name in commands:
             candidate = copy.deepcopy(template)
             steps = candidate["jobs"][job_name]["steps"]
@@ -561,8 +783,14 @@ def test_active_ci_policy_rejects_removed_filtered_or_disabled_required_work() -
                 if alteration == "remove":
                     target.pop(index)
                 elif alteration == "filter":
-                    target[index]["run"] += " -k narrowed_selection"
+                    target[index]["run"] += " -- -k narrowed_selection"
                 else:
                     target[index][alteration] = alteration == "continue-on-error"
                 with pytest.raises(AssertionError):
                     _assert_active_ci_policy(broken)
+
+    for value in (False, "${{ false }}", "always()"):
+        candidate = copy.deepcopy(template)
+        candidate["jobs"]["serial-baseline"]["if"] = value
+        with pytest.raises(AssertionError):
+            _assert_active_ci_policy(candidate)
