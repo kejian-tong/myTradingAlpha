@@ -147,6 +147,49 @@ JSON records are limited to 16,384 bytes, each stream to 16,777,216 bytes and 10
 Metadata labels are limited to 128 UTF-8 bytes, and token measurements and derived arithmetic use the
 non-negative signed 64-bit range. Diagnostics do not include untrusted values.
 
+### Explicit task usage inventory
+
+`scripts/harness_task_usage.py` summarizes only an explicitly supplied, sanitized task inventory. Its
+pure `summarize_task_usage(records, root_ref=...)` API performs no discovery, transcript/history access,
+network, process, or persistence work. The explicit-file CLI reads JSONL through the existing strict
+observation codec. Each row has an exact schema:
+
+- `agent`: `record_type`, 64-character lowercase-hex `agent_ref`, and nullable 64-character lowercase-hex
+  `parent_ref`. The one root named by `root_ref` has a null parent; every other inventoried agent must be
+  connected to that root by an acyclic parent chain.
+- `response_usage`: `record_type`, `agent_ref`, 64-character lowercase-hex `response_ref`, and a `usage`
+  object containing exactly `input_tokens`, `cached_input_tokens`, `output_tokens`, and
+  `reasoning_output_tokens`. Each usage value is either null or an exact built-in integer from zero through
+  the signed 64-bit maximum. Cached input cannot exceed input, and reasoning output cannot exceed output.
+
+The strict JSONL codec bounds each nonblank row at 16,384 bytes, the file at 16,777,216 bytes, the number
+of nonblank rows at 10,000, and JSON nesting depth at 64. Task summarization also caps explicit rows at
+10,000 and distinct agents at 256. Identical repeated response rows with the same global `response_ref`
+count once and increment retries; reuse with conflicting agent or usage content is rejected. Unknown
+fields, invalid types, malformed graph structure, and unsafe input fail with a fixed, redacted diagnostic.
+
+The summary separates the root, its explicit child inventory, and their combined totals. Its coverage
+qualifier is `explicit_inventory_only`: the supplied records establish neither that every runtime agent nor
+every real response was supplied. The `children` group counts all supplied descendants at every depth once;
+`combined` counts the root and each descendant once. An inventoried agent with no response usage makes
+the group's complete totals unknown. Nullable metrics preserve per-metric completeness. Observed totals
+sum known values only; derived total, uncached, and non-reasoning values are computed per response only
+when both operands for that response are known, then summed from those known per-response results. This
+avoids deriving a subtotal by subtracting unrelated partial aggregates. These are caller-supplied
+observations, not authenticated runtime measurements, billing, or a replacement for legacy lifecycle or
+v2 usage accounting.
+
+Minimal explicit-file example (the file contains these two JSONL rows):
+
+```jsonl
+{"record_type":"agent","agent_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","parent_ref":null}
+{"record_type":"response_usage","agent_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","response_ref":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"reasoning_output_tokens":10}}
+```
+
+```bash
+python scripts/harness_task_usage.py --observations /path/to/sanitized-task-usage.jsonl --root-ref aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
 Do not commit raw telemetry by default. Publish only deliberately summarized, non-sensitive benchmark
 results through a reviewed harness PR when they change policy.
 

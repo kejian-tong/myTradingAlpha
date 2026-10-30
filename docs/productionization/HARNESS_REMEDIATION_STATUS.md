@@ -20,6 +20,16 @@ These remain external evidence prerequisites. Missing values stay unknown; the b
 USD from credits, API prices or telemetry gaps. The current card is not a routing, review, merge or
 promotion decision.
 
+## HARNESS-EFF-05 explicit task usage follow-up
+
+This bounded Harness follow-up adds a pure summarizer for caller-supplied pseudonymous agent inventory
+and response usage, alongside guidance for interruptible work monitoring and context recovery. It does
+not change production code, runtime routing, legacy lifecycle telemetry, v2 usage accounting, or
+benchmark pricing behavior. The task summary is qualified to its explicit inventory; missing agents,
+responses, and per-metric usage remain unknown. Its values do not authenticate runtime provenance, establish
+complete billing, or prove context-retention or cost savings. The authorization, exact-head validation,
+review, and merge gate remain separate evidence requirements.
+
 Official references checked for this change: [ChatGPT Work pricing](https://learn.chatgpt.com/docs/pricing),
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference),
 [uv 0.13.5 release](https://github.com/astral-sh/uv/releases/tag/0.13.5), and
@@ -32,3 +42,9 @@ can be reverted without rewriting historical records. Restore prior duration rep
 policy/tests. Retain reviewed security floors when reverting unrelated Harness behavior; lowering them
 requires a separate reviewed decision. No persisted product schema or research artifact migration is
 introduced.
+
+## HARNESS-EFF-05 rollback
+
+Revert the explicit task usage helper and its focused contract tests with this follow-up's guidance.
+Preserve the historical HARNESS-EFF-04 status and rollback facts above. No persisted product schema or
+research artifact migration is introduced.

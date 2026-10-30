@@ -881,10 +881,10 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
     assert "MIT License" in notice
     assert "Copyright (c) 2026 Lauren Tan" in notice
     assert "https://github.com/cursor/plugins/tree/main/pstack" in notice
-    assert "HARNESS-EFF-04" in state
-    assert "PR #108 / merge `8b1138841719c19bb74b4ed1176c78af8bcc469c`" in state
+    assert "HARNESS-EFF-05" in state
+    assert "PR #109 / merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`" in state
     assert (
         "https://github.com/kejian-tong/myTradingAlpha/blob/"
-        "8b1138841719c19bb74b4ed1176c78af8bcc469c/docs/productionization/AGENT_STATE.md"
+        "300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md"
     ) in state
     assert "prior BT01–04, SIG and Harness recovery references/routes" in state
