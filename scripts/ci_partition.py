@@ -35,6 +35,26 @@ MAX_RUNNER_DETAIL_LINES = 128
 SUPPORTED_RUNNER_IMAGE = "ubuntu-24.04"
 SUPPORTED_RUNNER_IMAGE_OS = "ubuntu24"
 FIXED_ERROR = "CI partition operation failed\n"
+RUNNER_METADATA_PATH_CODE = "RUNNER_METADATA_PATH"
+RUNNER_METADATA_READ_CODE = "RUNNER_METADATA_READ"
+RUNNER_METADATA_JSON_CODE = "RUNNER_METADATA_JSON"
+RUNNER_METADATA_SHAPE_CODE = "RUNNER_METADATA_SHAPE"
+RUNNER_METADATA_DECLARATION_CODE = "RUNNER_METADATA_DECLARATION"
+RUNNER_IMAGE_UNSUPPORTED_CODE = "RUNNER_IMAGE_UNSUPPORTED"
+RUNNER_IMAGE_OS_CODE = "RUNNER_IMAGE_OS"
+RUNNER_IMAGE_VERSION_CODE = "RUNNER_IMAGE_VERSION"
+RUNNER_ADMISSION_CODES = frozenset(
+    {
+        RUNNER_METADATA_PATH_CODE,
+        RUNNER_METADATA_READ_CODE,
+        RUNNER_METADATA_JSON_CODE,
+        RUNNER_METADATA_SHAPE_CODE,
+        RUNNER_METADATA_DECLARATION_CODE,
+        RUNNER_IMAGE_UNSUPPORTED_CODE,
+        RUNNER_IMAGE_OS_CODE,
+        RUNNER_IMAGE_VERSION_CODE,
+    }
+)
 UV_VERSION = "0.13.5"
 BINDING_FIELDS = (
     "source_sha",
@@ -76,6 +96,13 @@ _INTERNAL_LAUNCH = (
 
 class PartitionError(Exception):
     """An expected fail-closed input or execution error."""
+
+
+class _RunnerAdmissionError(PartitionError):
+    """A native runner admission failure with a fixed diagnostic code."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -529,27 +556,37 @@ def _event_source_sha() -> str:
 def _native_runner_image() -> tuple[str, str]:
     metadata_path_value = os.environ.get("IMAGEDATA_FILE", "/imagegeneration/imagedata.json")
     if type(metadata_path_value) is not str or not metadata_path_value:
-        raise PartitionError
+        raise _RunnerAdmissionError(RUNNER_METADATA_PATH_CODE)
     metadata_path = Path(metadata_path_value)
     if not metadata_path.is_absolute():
-        raise PartitionError
+        raise _RunnerAdmissionError(RUNNER_METADATA_PATH_CODE)
 
-    raw = _read_regular_file(metadata_path, maximum=MAX_RUNNER_METADATA_BYTES)
+    try:
+        raw = _read_regular_file(metadata_path, maximum=MAX_RUNNER_METADATA_BYTES)
+    except PartitionError:
+        raise _RunnerAdmissionError(RUNNER_METADATA_READ_CODE) from None
     try:
         groups = json.loads(
             raw.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_constant,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError, OverflowError) as exc:
-        raise PartitionError from exc
+    except (
+        PartitionError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+        OverflowError,
+    ):
+        raise _RunnerAdmissionError(RUNNER_METADATA_JSON_CODE) from None
     if type(groups) is not list or not groups or len(groups) > MAX_RUNNER_GROUPS:
-        raise PartitionError
+        raise _RunnerAdmissionError(RUNNER_METADATA_SHAPE_CODE)
 
     runner_details: list[str] = []
     for group in groups:
         if type(group) is not dict or set(group) != {"group", "detail"}:
-            raise PartitionError
+            raise _RunnerAdmissionError(RUNNER_METADATA_SHAPE_CODE)
         name = group["group"]
         detail = group["detail"]
         if (
@@ -557,49 +594,52 @@ def _native_runner_image() -> tuple[str, str]:
             or not _bounded_string(detail, maximum=MAX_RUNNER_DETAIL_CHARS)
             or len(detail.splitlines()) > MAX_RUNNER_DETAIL_LINES
         ):
-            raise PartitionError
+            raise _RunnerAdmissionError(RUNNER_METADATA_SHAPE_CODE)
         if name == "Runner Image":
             runner_details.append(detail)
     if len(runner_details) != 1:
-        raise PartitionError
+        raise _RunnerAdmissionError(RUNNER_METADATA_SHAPE_CODE)
 
     lines = runner_details[0].splitlines()
-    if not lines or len(lines) > MAX_RUNNER_DETAIL_LINES:
-        raise PartitionError
+    if not lines:
+        raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
+    if len(lines) > MAX_RUNNER_DETAIL_LINES:
+        raise _RunnerAdmissionError(RUNNER_METADATA_SHAPE_CODE)
     image_lines: list[str] = []
     version_lines: list[str] = []
     for line in lines:
         declaration = line.lstrip()
         if declaration.startswith("Image:"):
             if line != declaration:
-                raise PartitionError
+                raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
             image_lines.append(declaration)
         elif declaration.startswith("Version:"):
             if line != declaration:
-                raise PartitionError
+                raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
             version_lines.append(declaration)
         elif declaration.startswith("Image"):
             if line != declaration or not declaration.startswith("Image Release: "):
-                raise PartitionError
+                raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
         elif declaration.startswith("Version"):
-            raise PartitionError
+            raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
     if len(image_lines) != 1 or len(version_lines) != 1:
-        raise PartitionError
+        raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
     image_match = re.fullmatch(r"Image: (.+)", image_lines[0])
     version_match = re.fullmatch(r"Version: ([0-9]+\.[0-9]+\.[0-9]+)", version_lines[0])
     if image_match is None or version_match is None:
-        raise PartitionError
+        raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
     image = image_match.group(1)
     version = version_match.group(1)
     image_os = os.environ.get("ImageOS")  # noqa: SIM112 - exact GitHub Actions key
     image_version = os.environ.get("ImageVersion")  # noqa: SIM112 - exact GitHub Actions key
-    if (
-        image != SUPPORTED_RUNNER_IMAGE
-        or image_os != SUPPORTED_RUNNER_IMAGE_OS
-        or version != image_version
-        or VERSION.fullmatch(version) is None
-    ):
-        raise PartitionError
+    if image != SUPPORTED_RUNNER_IMAGE:
+        raise _RunnerAdmissionError(RUNNER_IMAGE_UNSUPPORTED_CODE)
+    if image_os != SUPPORTED_RUNNER_IMAGE_OS:
+        raise _RunnerAdmissionError(RUNNER_IMAGE_OS_CODE)
+    if version != image_version:
+        raise _RunnerAdmissionError(RUNNER_IMAGE_VERSION_CODE)
+    if VERSION.fullmatch(version) is None:
+        raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
     return image_os, version
 
 
@@ -1000,8 +1040,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         sys.stdout.buffer.write(_canonical_json(summary))
         return 0
-    except Exception:
+    except Exception as exc:
         sys.stderr.write(FIXED_ERROR)
+        if type(exc) is _RunnerAdmissionError:
+            code = exc.code
+            if type(code) is str and code in RUNNER_ADMISSION_CODES:
+                sys.stderr.write(f"{code}\n")
         return 1
 
 

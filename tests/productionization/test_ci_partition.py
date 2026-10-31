@@ -1508,7 +1508,7 @@ def test_verify_rejects_serial_mismatch_and_runner_image_or_runtime_mismatch(
         str(receipts),
         env=wrong_image_env,
     )
-    assert result.returncode != 0 and result.stdout == "" and result.stderr == FIXED_ERROR
+    _assert_admission_failure(result, "RUNNER_IMAGE_VERSION")
 
 
 def test_cli_rejects_hidden_pytest_selectors_and_plugin_deselection(tmp_path: Path) -> None:
