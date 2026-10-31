@@ -814,7 +814,7 @@ def test_disposition_parser_accepts_exact_rows_and_rejects_unknown_duplicate_or_
         positive + "| `unknown/new-file.md` | `excluded` |\n",
         positive + f"| `{path}` | `{disposition}` |\n",
         positive.replace(f"`{disposition}`", "`version_provenance_only` and `excluded`"),
-        positive.replace(f"`{disposition}`", "`excluded`").replace(path, path),
+        positive.replace(f"`{disposition}`", "`excluded`"),
     )
     for section in invalid_sections:
         try:
@@ -1341,7 +1341,7 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
         "300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md"
     ) in state
     assert "prior BT01–04, SIG and Harness recovery references/routes" in state
-    assert "last_completed_roadmap_pr: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`" in state
+    assert "last_completed_maintenance_pr: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`" in state
     assert "HARNESS-PSTACK-01536" in state
     assert "0.15.36" in state
     assert "BT-06 not started" in state
