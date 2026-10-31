@@ -6,33 +6,29 @@ Resolve active head, blockers, validation, review and gate from the PR conversat
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `5647d9283b22150c1400584d8fbef7c74c6c9338`
-- `last_reconciled_main_tree`: `75cf2253270a4353d4dea96cfbf4569430b3a34d`
+- `last_reconciled_main_sha`: `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
+- `last_reconciled_main_tree`: `f6a105adbe0d93917cf1a426a55b18ee5a7791a8`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-EFF-06 / PR #111
+- `current_pr_id`: HARNESS-PSTACK-01536 / PR #112
 - `current_phase`: bounded Harness maintenance; Phase 03 incomplete
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
-- `harness_reconciled_through`: PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338`
-- `autonomy_mode`: human-authorized HARNESS-EFF-06 only; later slices require separate authorization
+- `last_completed_maintenance_pr`: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
+- `harness_reconciled_through`: PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
+- `autonomy_mode`: human-authorized bounded pstack synchronization only; later slices require separate authorization
 - `next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required
 
 ## Current maintenance
 
-HARNESS-EFF-06 owns verified two-runner CI partitioning, full-collection/execution receipts and a
-same-head serial comparison requiring at least 25% measured CI test-path improvement before merge.
-BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged. No financial algorithm,
-dependency, runtime/config precedence, production phase or broker behavior changes.
+PR #112 owns pstack 0.15.36/state-contract repair. Sources/hashes/exclusions are in the manifest. BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged.
 
-High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate reviewer_high /
-GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh. Master owns state, scope, sequential writer leases
-and merge. RED/GREEN, leases, local/CI logs, coverage/timing, review and gate
-belong in [PR #111](https://github.com/kejian-tong/myTradingAlpha/pull/111);
-no future approval/merge is asserted here. New commits stale affected evidence; incomplete runs do not pass.
+High `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate reviewer_high / GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh.
+[Exact-base JIT](https://github.com/kejian-tong/myTradingAlpha/pull/112#issuecomment-6546408010).
+Head `55a5f474e1c3d7939d5ebbefdc4bc34d120e5ead` failed six state contracts; its interrupted local full run is not a pass. Repair, full local/CI, separate exact-head review and Master gate remain required; no future approval/merge is asserted here.
 
 ## Completed recovery anchors
 
 PR110: Base `300605dcbed7aff113d81fd7d709ebbabe01e61c`; approved source
-`f80d14b537d70e86cffdc2e41f4d447ec875a68f`; merge/tree match reconciled main above.
+`f80d14b537d70e86cffdc2e41f4d447ec875a68f`; PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338` is historical.
 HARNESS-EFF-05 compaction, event monitoring, recovery reference reuse and usage accounting;
 local and CI each 5615 passed, 4 skipped, 69 subtests.
 [APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517349963),

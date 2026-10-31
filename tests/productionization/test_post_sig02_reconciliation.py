@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,8 +7,8 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "5647d9283b22150c1400584d8fbef7c74c6c9338"
-RECONCILED_MAIN_TREE = "75cf2253270a4353d4dea96cfbf4569430b3a34d"
+RECONCILED_MAIN_SHA = "342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f"
+RECONCILED_MAIN_TREE = "f6a105adbe0d93917cf1a426a55b18ee5a7791a8"
 BT05_BASE_SHA = "3d9e049b2fa2c54b55ac66d1c3000480cd3254bd"
 BT05_SOURCE_SHA = "f1e4507f0508e822464878508219eeacf5a8eb45"
 BT05_SOURCE_TREE = "eb1fc414d070d9fec1f71bb95f7742be9fbf29ee"
@@ -45,20 +44,23 @@ def test_operational_state_reconciles_the_current_main_and_completed_bt05() -> N
     assert "BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
 
 
-def test_current_harness_snapshot_tracks_main_and_authorizes_only_eff06() -> None:
+def test_current_harness_snapshot_tracks_main_and_authorizes_only_pstack() -> None:
     state = _state_text()
     normalized = " ".join(state.split())
 
     assert (
-        f"`harness_reconciled_through`: PR #110 / merge `{RECONCILED_MAIN_SHA}`"
+        f"`harness_reconciled_through`: PR #111 / merge `{RECONCILED_MAIN_SHA}`"
         in state
     )
     assert f"PR109: Base `{HARNESS109_BASE_SHA}`" in normalized
     assert f"approved source `{HARNESS109_SOURCE_SHA}`" in normalized
     assert f"tree `{HARNESS109_TREE}`" in normalized
     assert f"merge `{HARNESS109_MERGE_SHA}`" in normalized
-    assert re.search(r"`current_pr_id`: HARNESS-EFF-06 / PR #[1-9][0-9]{0,5}(?:\s|$)", state)
-    assert "`autonomy_mode`: human-authorized HARNESS-EFF-06 only; later slices require separate authorization" in state
+    assert "`current_pr_id`: HARNESS-PSTACK-01536 / PR #112" in state
+    assert "`autonomy_mode`: human-authorized bounded pstack synchronization only; later slices require separate authorization" in state
+    assert "High `luna_sol_high`: normal_implementer / GPT-6 Luna / max" in state
+    assert "separate reviewer_high / GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh" in state
+    assert "https://github.com/kejian-tong/myTradingAlpha/pull/112#issuecomment-6546408010" in state
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state
     assert "Routing and safety gates are unchanged." in state

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "canonical_source": {
     "repository": "cursor/plugins/pstack",
-    "version": "0.15.32",
-    "commit": "e73df471cd4bd918367e99f3dd9c51bd53ddf5f0",
+    "version": "0.15.36",
+    "commit": "4dd1d05818d19792e7cd6e818f1667f95f7e1dbe",
     "skill_sources": [
       {
         "path": "skills/architect/SKILL.md",
@@ -11,7 +11,7 @@
       },
       {
         "path": "skills/arena/SKILL.md",
-        "sha256": "ed72f6c132b1ce3974d949581d0adc5dade424fe20793ac3b4c4fae22ecb9354"
+        "sha256": "d0adeca6c9b19d43d90ed8f0484f0ddd362f05006d628b8f4cc6c9b55fa4d2b3"
       },
       {
         "path": "skills/figure-it-out/SKILL.md",
@@ -27,7 +27,7 @@
       },
       {
         "path": "skills/interrogate/SKILL.md",
-        "sha256": "a16dfe179005abc22a4651b82f25b0c8ab953284276efe4e6dc341958fb63647"
+        "sha256": "3f3c2e9b8cf6b180dba9f32a4aff85e5691b09805232468e37a0ba45437a9984"
       },
       {
         "path": "skills/ketchup/SKILL.md",
@@ -35,7 +35,7 @@
       },
       {
         "path": "skills/poteto-mode/SKILL.md",
-        "sha256": "2755f102e7a6d0496b429d1031a22fb353e1f3d523543367caeaae5c4ed6f544"
+        "sha256": "ee1848c973a112026f09ba12ea7a13c1654006e7bf170d1c34bf5d5816bc439b"
       },
       {
         "path": "skills/principle-exhaust-the-design-space/SKILL.md",
@@ -143,9 +143,9 @@
     },
     {
       "name": "interrogate",
-      "adaptation_purpose": "Surface adversarial questions as supplemental analysis.",
+      "adaptation_purpose": "Surface verified adversarial findings while retaining unexecuted material risks.",
       "path": ".agents/skills/interrogate/SKILL.md",
-      "sha256": "6e3f59e13326020f26ebffda83607568859b917c537bbe8ea01adc2f3f9692b4",
+      "sha256": "3cd1e74e4208abf60f894c84630d20590931bb9de36b3734da24d6087ebf1017",
       "source_paths": [
         "skills/interrogate/SKILL.md"
       ]
@@ -288,6 +288,7 @@
     "ketchup-video",
     "maintain-formal-verification-skill",
     "orchestrate",
+    "principle-explain-the-number",
     "pstack agents",
     "pstack scripts",
     "setup-pstack",
