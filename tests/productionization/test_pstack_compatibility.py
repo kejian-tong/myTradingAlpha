@@ -18,12 +18,12 @@ SIG05_MERGE_SHA = "d709f16b37e40837c4ee687a6bc03ab92ea55218"
 BT01_MERGE_SHA = "a713fbb48324ad9da45e254268b9cfe30b0a634b"
 BT02_MERGE_SHA = "7b818c3f78916375ef80d1a5c65d24a95b5423d5"
 HARNESS_PR90_MERGE_SHA = "8f76f341bedf086dd4eb69e4229be33127f5028f"
-EXPECTED_CANONICAL_VERSION = "0.15.32"
-EXPECTED_CANONICAL_COMMIT = "e73df471cd4bd918367e99f3dd9c51bd53ddf5f0"
-EXPECTED_CANONICAL_TREE = "880564357e051d7c7802da1cb5d8df1d0b008299"
-PREVIOUS_CANONICAL_VERSION = "0.15.25"
-PREVIOUS_CANONICAL_COMMIT = "99743e9c151c8537cbbf1f98bb38f34ef3368453"
-PREVIOUS_CANONICAL_TREE = "0d5fd349cbc77d054eed60f0e8cdfbea86321ff9"
+EXPECTED_CANONICAL_VERSION = "0.15.36"
+EXPECTED_CANONICAL_COMMIT = "4dd1d05818d19792e7cd6e818f1667f95f7e1dbe"
+EXPECTED_CANONICAL_TREE = "4719e1c4b4c43bac85d4206a8b41dd2899769c1c"
+PREVIOUS_CANONICAL_VERSION = "0.15.32"
+PREVIOUS_CANONICAL_COMMIT = "e73df471cd4bd918367e99f3dd9c51bd53ddf5f0"
+PREVIOUS_CANONICAL_TREE = "880564357e051d7c7802da1cb5d8df1d0b008299"
 
 EXPECTED_SKILLS = {
     "architect",
@@ -83,13 +83,13 @@ EXPECTED_AUTHORITY_PATHS = {
 
 EXPECTED_CANONICAL_SOURCES = {
     "skills/architect/SKILL.md": "31f8e97a52bfa5432edd61f68ade2a8632ef0bacbc2d2a6802d7a0e6821944ac",
-    "skills/arena/SKILL.md": "ed72f6c132b1ce3974d949581d0adc5dade424fe20793ac3b4c4fae22ecb9354",
+    "skills/arena/SKILL.md": "d0adeca6c9b19d43d90ed8f0484f0ddd362f05006d628b8f4cc6c9b55fa4d2b3",
     "skills/figure-it-out/SKILL.md": "bdb23cdbd82a1e6af094b495691c832a6f7f3ab9706ba9edbeb664ef51a726e1",
     "skills/how/SKILL.md": "08a00079bb15b4258874ac3ff62d4ca7e94350ffedb521d0fd296dc9dd21904e",
     "skills/in-your-own-words/SKILL.md": "fa8ba74e27d7be371dc270ec78bbf816411477d0dfab185356c861ac8dd413ad",
-    "skills/interrogate/SKILL.md": "a16dfe179005abc22a4651b82f25b0c8ab953284276efe4e6dc341958fb63647",
+    "skills/interrogate/SKILL.md": "3f3c2e9b8cf6b180dba9f32a4aff85e5691b09805232468e37a0ba45437a9984",
     "skills/ketchup/SKILL.md": "f2923ffd14f6fc778f75a47aaed1f317fb5fd00b5701ca769d6446c74106dead",
-    "skills/poteto-mode/SKILL.md": "2755f102e7a6d0496b429d1031a22fb353e1f3d523543367caeaae5c4ed6f544",
+    "skills/poteto-mode/SKILL.md": "ee1848c973a112026f09ba12ea7a13c1654006e7bf170d1c34bf5d5816bc439b",
     "skills/principle-exhaust-the-design-space/SKILL.md": "2de83d99f93f60ec6313455b0bc9aa9f0bfb93dd59f414f403691322db00d4db",
     "skills/principle-prove-it-works/SKILL.md": "ec79a15025bac8d33d62011c54f3b612733fd2a024e623b531b3637aa75070e2",
     "skills/principle-redesign-from-first-principles/SKILL.md": "170e0a658783e43fee8ec5a8c2422a4abb8f69cef621dd1819a95910b8207034",
@@ -183,87 +183,486 @@ EXPECTED_EXCLUDED_CAPABILITIES = {
     "create-formal-verification-skill",
     "maintain-formal-verification-skill",
     "ketchup-video",
+    "principle-explain-the-number",
 }
 
-# Complete 0.15.25 -> 0.15.32 source delta, grouped by its frozen disposition.
+# Complete 0.15.32 -> 0.15.36 source delta, grouped by its frozen disposition.
 EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION = {
-    "version_provenance_only": [
-        ".cursor-plugin/plugin.json",
-        "plugin.json",
+    'version_provenance_only': [
+        '.cursor-plugin/plugin.json',
+        'plugin.json',
     ],
-    "excluded_source_documentation": [
-        "README.md",
-        "docs/guide/01-setup.md",
-        "docs/guide/02-poteto-mode.md",
-        "docs/guide/03-understand.md",
-        "docs/guide/04-design.md",
-        "docs/guide/05-build-and-clean.md",
-        "docs/guide/06-verify-and-ship.md",
-        "docs/guide/07-overnight.md",
-        "docs/guide/08-principles.md",
-        "docs/guide/09-make-it-yours.md",
-        "docs/guide/10-recipes-and-pitfalls.md",
-        "docs/guide/README.md",
-        "docs/harness/claude-code.md",
+    'excluded_source_documentation': [
+        'README.md',
+        'docs/guide/04-design.md',
+        'docs/guide/06-verify-and-ship.md',
+        'docs/guide/07-overnight.md',
+        'docs/guide/10-recipes-and-pitfalls.md',
     ],
-    "excluded_pending_separate_scope": [
-        "skills/create-formal-verification-skill/SKILL.md",
-        "skills/ketchup-video/SKILL.md",
-        "skills/maintain-formal-verification-skill/SKILL.md",
-        "skills/statechart/SKILL.md",
+    'excluded_pending_separate_scope': [
+        'skills/statechart/SKILL.md',
+        'skills/statechart/references/render.md',
     ],
-    "selected_source_requires_compatible_review": [
-        "skills/ketchup/SKILL.md",
-        "skills/poteto-mode/SKILL.md",
-        "skills/sharpen/SKILL.md",
+    'selected_source_requires_compatible_review': [
+        'skills/arena/SKILL.md',
+        'skills/interrogate/SKILL.md',
+        'skills/poteto-mode/SKILL.md',
     ],
-    "excluded_existing_allowlist": [
-        "skills/make-bot-ui/SKILL.md",
-        "skills/poteto-help/SKILL.md",
-        "skills/poteto-help/references/recipes.md",
-        "skills/reflect/SKILL.md",
-        "skills/setup-pstack/SKILL.md",
-        "skills/swarm/SKILL.md",
-        "skills/typescript-best-practices/SKILL.md",
-        "skills/typescript-best-practices/references/patterns.md",
+    'excluded_existing_allowlist': [
+        'skills/create-formal-verification-skill/SKILL.md',
+        'skills/ketchup-video/SKILL.md',
+        'skills/poteto-help/SKILL.md',
+        'skills/poteto-help/references/recipes.md',
+        'skills/principle-explain-the-number/SKILL.md',
+        'skills/setup-pstack/SKILL.md',
     ],
-    "excluded": [
-        "skills/poteto-mode/scripts/check-plan.mjs",
-        "skills/poteto-mode/scripts/check-plan.test.ts",
-        "skills/poteto-mode/scripts/orch/orch.test.ts",
-        "skills/poteto-mode/scripts/orch/store.ts",
-        "skills/poteto-mode/scripts/watch-pr/github.test.ts",
-        "skills/poteto-mode/scripts/watch-pr/github.ts",
-        "skills/poteto-mode/scripts/watch-pr/policy.test.ts",
-        "skills/poteto-mode/scripts/watch-pr/policy.ts",
-        "skills/poteto-mode/scripts/watch-pr/types.ts",
-        "skills/poteto-mode/scripts/worktree-audit.sh",
-        "skills/statechart/scripts/bug-states.mjs",
-        "skills/statechart/scripts/chart-edges.mjs",
-        "skills/statechart/scripts/chart-parts.mjs",
-        "skills/statechart/scripts/chart-to-tla.mjs",
-        "skills/statechart/scripts/compare-charts.mjs",
-        "skills/statechart/scripts/lib.mjs",
-        "skills/statechart/scripts/map-view.mjs",
-        "skills/statechart/scripts/property-loop.mjs",
-        "skills/statechart/scripts/read-check.mjs",
-        "skills/statechart/scripts/regions-chart.mjs",
-        "skills/statechart/scripts/render.mjs",
-        "skills/statechart/scripts/rule-book.mjs",
-        "skills/statechart/scripts/second-replay.mjs",
-        "skills/statechart/scripts/snapshot.mjs",
-        "skills/statechart/scripts/spec-text.mjs",
-        "skills/statechart/scripts/statechart-help.mjs",
-        "skills/statechart/scripts/statechart.mjs",
-        "skills/statechart/scripts/test/band.mmd",
-        "skills/statechart/scripts/test/regions.mmd",
-        "skills/statechart/scripts/test/statechart.test.mjs",
-        "skills/statechart/scripts/test/sync.mmd",
-        "skills/statechart/scripts/test/upload.mmd",
-        "skills/statechart/scripts/tlc-to-chart-args.mjs",
-        "skills/statechart/scripts/tlc-to-chart.mjs",
-        "skills/statechart/scripts/tlc-tools.mjs",
-        "skills/statechart/scripts/ways-in.mjs",
+    'excluded': [
+        'skills/interrogate/references/code-quality-review.md',
+        'skills/interrogate/references/lead-judgment.md',
+        'skills/interrogate/references/reviewer-prompt.md',
+        'skills/interrogate/references/rubric.md',
+        'skills/poteto-mode/playbooks/autonomous-run.md',
+        'skills/poteto-mode/playbooks/autopilot-full.md',
+        'skills/poteto-mode/playbooks/autopilot-stack.md',
+        'skills/poteto-mode/playbooks/babysit.md',
+        'skills/poteto-mode/playbooks/multi-phase-plan.md',
+        'skills/poteto-mode/playbooks/opening-a-pr.md',
+        'skills/poteto-mode/playbooks/orchestrate.md',
+        'skills/poteto-mode/scripts/orch/orch.test.ts',
+        'skills/poteto-mode/scripts/orch/orch.ts',
+        'skills/poteto-mode/scripts/orch/store.ts',
+        'skills/poteto-mode/scripts/package.json',
+        'skills/statechart/scripts/backends/cfg.ts',
+        'skills/statechart/scripts/backends/mermaid.ts',
+        'skills/statechart/scripts/backends/plain-text.ts',
+        'skills/statechart/scripts/backends/report.ts',
+        'skills/statechart/scripts/bug-states.mjs',
+        'skills/statechart/scripts/chart-edges.mjs',
+        'skills/statechart/scripts/chart-parts.mjs',
+        'skills/statechart/scripts/chart-to-tla.mjs',
+        'skills/statechart/scripts/compare-charts.mjs',
+        'skills/statechart/scripts/frontends/config.ts',
+        'skills/statechart/scripts/frontends/dot.ts',
+        'skills/statechart/scripts/frontends/marks.ts',
+        'skills/statechart/scripts/frontends/messages.ts',
+        'skills/statechart/scripts/frontends/spec.ts',
+        'skills/statechart/scripts/frontends/trace.ts',
+        'skills/statechart/scripts/frontends/value.ts',
+        'skills/statechart/scripts/frontends/verdict.ts',
+        'skills/statechart/scripts/frontends/view.ts',
+        'skills/statechart/scripts/ir.ts',
+        'skills/statechart/scripts/lib.mjs',
+        'skills/statechart/scripts/map-view.mjs',
+        'skills/statechart/scripts/package.json',
+        'skills/statechart/scripts/passes/annotate.ts',
+        'skills/statechart/scripts/passes/label.ts',
+        'skills/statechart/scripts/passes/lift.ts',
+        'skills/statechart/scripts/passes/loop-check.ts',
+        'skills/statechart/scripts/passes/paths.ts',
+        'skills/statechart/scripts/passes/reach.ts',
+        'skills/statechart/scripts/passes/region-check.ts',
+        'skills/statechart/scripts/passes/regions.ts',
+        'skills/statechart/scripts/pipeline.ts',
+        'skills/statechart/scripts/property-loop.mjs',
+        'skills/statechart/scripts/read-check.mjs',
+        'skills/statechart/scripts/regions-chart.mjs',
+        'skills/statechart/scripts/render.mjs',
+        'skills/statechart/scripts/rule-book.mjs',
+        'skills/statechart/scripts/run.ts',
+        'skills/statechart/scripts/second-replay.mjs',
+        'skills/statechart/scripts/snapshot.mjs',
+        'skills/statechart/scripts/spec-text.mjs',
+        'skills/statechart/scripts/statechart',
+        'skills/statechart/scripts/statechart-help.mjs',
+        'skills/statechart/scripts/statechart.mjs',
+        'skills/statechart/scripts/statechart.ts',
+        'skills/statechart/scripts/test/ConfigOracle.java',
+        'skills/statechart/scripts/test/band.mmd',
+        'skills/statechart/scripts/test/chart.test.ts',
+        'skills/statechart/scripts/test/charts/Braces.mmd',
+        'skills/statechart/scripts/test/charts/Escapes.mmd',
+        'skills/statechart/scripts/test/charts/Phases.mmd',
+        'skills/statechart/scripts/test/cli.test.ts',
+        'skills/statechart/scripts/test/config-fuzz.test.ts',
+        'skills/statechart/scripts/test/corpus.test.ts',
+        'skills/statechart/scripts/test/corpus/Counter/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/Counter/Counter.cfg',
+        'skills/statechart/scripts/test/corpus/Counter/Counter.tla',
+        'skills/statechart/scripts/test/corpus/Counter/chart.mmd',
+        'skills/statechart/scripts/test/corpus/Counter/graph.dot',
+        'skills/statechart/scripts/test/corpus/Counter/report.md',
+        'skills/statechart/scripts/test/corpus/Counter/sany.out',
+        'skills/statechart/scripts/test/corpus/Counter/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterAction/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterAction/CounterAction.cfg',
+        'skills/statechart/scripts/test/corpus/CounterAction/CounterAction.tla',
+        'skills/statechart/scripts/test/corpus/CounterAction/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterAction/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterAction/report.md',
+        'skills/statechart/scripts/test/corpus/CounterAction/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterAction/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterAction/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterAction/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterAction/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterAction/verdict-3.out',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/CounterDeadlock.cfg',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/CounterDeadlock.tla',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/report.md',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterDeadlock/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterFan/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterFan/CounterFan.cfg',
+        'skills/statechart/scripts/test/corpus/CounterFan/CounterFan.tla',
+        'skills/statechart/scripts/test/corpus/CounterFan/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterFan/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterFan/report.md',
+        'skills/statechart/scripts/test/corpus/CounterFan/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterFan/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterFan/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterFan/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterGuard/ChartRun.exit',
+        'skills/statechart/scripts/test/corpus/CounterGuard/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterGuard/CounterGuard.cfg',
+        'skills/statechart/scripts/test/corpus/CounterGuard/CounterGuard.tla',
+        'skills/statechart/scripts/test/corpus/CounterGuard/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterGuard/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterGuard/report.md',
+        'skills/statechart/scripts/test/corpus/CounterGuard/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterGuard/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterGuard/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterGuard/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterGuard/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/CounterInitPast.cfg',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/CounterInitPast.tla',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/report.md',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPast/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/CounterInitPastHolds.cfg',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/CounterInitPastHolds.tla',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/report.md',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterInitPastHolds/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterInstance/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterInstance/CounterInstance.cfg',
+        'skills/statechart/scripts/test/corpus/CounterInstance/CounterInstance.tla',
+        'skills/statechart/scripts/test/corpus/CounterInstance/CounterSteps.tla',
+        'skills/statechart/scripts/test/corpus/CounterInstance/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterInstance/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterInstance/report.md',
+        'skills/statechart/scripts/test/corpus/CounterInstance/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterInstance/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterInstance/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterJump/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterJump/CounterJump.cfg',
+        'skills/statechart/scripts/test/corpus/CounterJump/CounterJump.tla',
+        'skills/statechart/scripts/test/corpus/CounterJump/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterJump/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterJump/report.md',
+        'skills/statechart/scripts/test/corpus/CounterJump/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterJump/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterJump/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterJump/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterLoop/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterLoop/CounterLoop.cfg',
+        'skills/statechart/scripts/test/corpus/CounterLoop/CounterLoop.tla',
+        'skills/statechart/scripts/test/corpus/CounterLoop/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterLoop/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterLoop/report.md',
+        'skills/statechart/scripts/test/corpus/CounterLoop/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterLoop/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterLoop/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterOrder/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterOrder/CounterOrder.cfg',
+        'skills/statechart/scripts/test/corpus/CounterOrder/CounterOrder.tla',
+        'skills/statechart/scripts/test/corpus/CounterOrder/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterOrder/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterOrder/report.md',
+        'skills/statechart/scripts/test/corpus/CounterOrder/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterOrder/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterOrder/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterOrder/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterOrder/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterRules/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterRules/CounterRules.cfg',
+        'skills/statechart/scripts/test/corpus/CounterRules/CounterRules.tla',
+        'skills/statechart/scripts/test/corpus/CounterRules/Moves.tla',
+        'skills/statechart/scripts/test/corpus/CounterRules/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterRules/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterRules/report.md',
+        'skills/statechart/scripts/test/corpus/CounterRules/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-3.exit',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-3.out',
+        'skills/statechart/scripts/test/corpus/CounterRules/verdict-4.out',
+        'skills/statechart/scripts/test/corpus/CounterStart/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterStart/CounterStart.cfg',
+        'skills/statechart/scripts/test/corpus/CounterStart/CounterStart.tla',
+        'skills/statechart/scripts/test/corpus/CounterStart/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterStart/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterStart/report.md',
+        'skills/statechart/scripts/test/corpus/CounterStart/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterStart/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterStart/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterStart/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterStop/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterStop/CounterStop.cfg',
+        'skills/statechart/scripts/test/corpus/CounterStop/CounterStop.tla',
+        'skills/statechart/scripts/test/corpus/CounterStop/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterStop/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterStop/report.md',
+        'skills/statechart/scripts/test/corpus/CounterStop/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterStop/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterTie/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterTie/CounterTie.cfg',
+        'skills/statechart/scripts/test/corpus/CounterTie/CounterTie.tla',
+        'skills/statechart/scripts/test/corpus/CounterTie/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterTie/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterTie/report.md',
+        'skills/statechart/scripts/test/corpus/CounterTie/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-3.exit',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-3.out',
+        'skills/statechart/scripts/test/corpus/CounterTie/verdict-4.out',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/CounterTieInGraph.cfg',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/CounterTieInGraph.tla',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/report.md',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterTieInGraph/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterView/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/CounterView/CounterView.cfg',
+        'skills/statechart/scripts/test/corpus/CounterView/CounterView.tla',
+        'skills/statechart/scripts/test/corpus/CounterView/chart.mmd',
+        'skills/statechart/scripts/test/corpus/CounterView/graph.dot',
+        'skills/statechart/scripts/test/corpus/CounterView/report.md',
+        'skills/statechart/scripts/test/corpus/CounterView/sany.out',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-3.exit',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-3.out',
+        'skills/statechart/scripts/test/corpus/CounterView/verdict-4.out',
+        'skills/statechart/scripts/test/corpus/CounterView/view.mjs',
+        'skills/statechart/scripts/test/corpus/DieHard/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/DieHard/DieHard.cfg',
+        'skills/statechart/scripts/test/corpus/DieHard/DieHard.tla',
+        'skills/statechart/scripts/test/corpus/DieHard/chart.mmd',
+        'skills/statechart/scripts/test/corpus/DieHard/graph.dot',
+        'skills/statechart/scripts/test/corpus/DieHard/report.md',
+        'skills/statechart/scripts/test/corpus/DieHard/sany.out',
+        'skills/statechart/scripts/test/corpus/DieHard/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/DieHard/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/DieHard/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/FirstRule/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/FirstRule/FirstRule.cfg',
+        'skills/statechart/scripts/test/corpus/FirstRule/FirstRule.tla',
+        'skills/statechart/scripts/test/corpus/FirstRule/chart.mmd',
+        'skills/statechart/scripts/test/corpus/FirstRule/graph.dot',
+        'skills/statechart/scripts/test/corpus/FirstRule/report.md',
+        'skills/statechart/scripts/test/corpus/FirstRule/sany.out',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-3.exit',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-3.out',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-4.exit',
+        'skills/statechart/scripts/test/corpus/FirstRule/verdict-4.out',
+        'skills/statechart/scripts/test/corpus/HiddenClock/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/HiddenClock/HiddenClock.cfg',
+        'skills/statechart/scripts/test/corpus/HiddenClock/HiddenClock.tla',
+        'skills/statechart/scripts/test/corpus/HiddenClock/chart.mmd',
+        'skills/statechart/scripts/test/corpus/HiddenClock/graph.dot',
+        'skills/statechart/scripts/test/corpus/HiddenClock/report.md',
+        'skills/statechart/scripts/test/corpus/HiddenClock/sany.out',
+        'skills/statechart/scripts/test/corpus/HiddenClock/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/HiddenClock/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/Login/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/Login/Login.cfg',
+        'skills/statechart/scripts/test/corpus/Login/Login.tla',
+        'skills/statechart/scripts/test/corpus/Login/chart.mmd',
+        'skills/statechart/scripts/test/corpus/Login/graph.dot',
+        'skills/statechart/scripts/test/corpus/Login/report.md',
+        'skills/statechart/scripts/test/corpus/Login/sany.out',
+        'skills/statechart/scripts/test/corpus/Login/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/Login/view.mjs',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/LoginGuarded.cfg',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/LoginGuarded.tla',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/chart.mmd',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/graph.dot',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/report.md',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/sany.out',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/LoginGuarded/view.mjs',
+        'skills/statechart/scripts/test/corpus/LoginParallel/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/LoginParallel/LoginParallel.cfg',
+        'skills/statechart/scripts/test/corpus/LoginParallel/LoginParallel.tla',
+        'skills/statechart/scripts/test/corpus/LoginParallel/chart.mmd',
+        'skills/statechart/scripts/test/corpus/LoginParallel/graph.dot',
+        'skills/statechart/scripts/test/corpus/LoginParallel/report.md',
+        'skills/statechart/scripts/test/corpus/LoginParallel/sany.out',
+        'skills/statechart/scripts/test/corpus/LoginParallel/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/LoginParallel/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/LoginParallel/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/LoginParallel/view.mjs',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/MediaPlayer.cfg',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/MediaPlayer.tla',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/chart.mmd',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/graph.dot',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/report.md',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/sany.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayer/view.mjs',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/MediaPlayerFixed.cfg',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/MediaPlayerFixed.tla',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/chart.mmd',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/graph.dot',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/report.md',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/sany.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerFixed/view.mjs',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/MediaPlayer.tla',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/MediaPlayerProps.cfg',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/MediaPlayerProps.tla',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/chart.mmd',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/graph.dot',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/report.md',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/sany.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-3.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-4.exit',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-4.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-5.exit',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-5.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/verdict-6.out',
+        'skills/statechart/scripts/test/corpus/MediaPlayerProps/view.mjs',
+        'skills/statechart/scripts/test/corpus/PickWorker/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/PickWorker/PickWorker.cfg',
+        'skills/statechart/scripts/test/corpus/PickWorker/PickWorker.tla',
+        'skills/statechart/scripts/test/corpus/PickWorker/chart.mmd',
+        'skills/statechart/scripts/test/corpus/PickWorker/graph.dot',
+        'skills/statechart/scripts/test/corpus/PickWorker/report.md',
+        'skills/statechart/scripts/test/corpus/PickWorker/sany.out',
+        'skills/statechart/scripts/test/corpus/PickWorker/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/Shadow/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/Shadow/Shadow.cfg',
+        'skills/statechart/scripts/test/corpus/Shadow/Shadow.tla',
+        'skills/statechart/scripts/test/corpus/Shadow/ShadowLib.tla',
+        'skills/statechart/scripts/test/corpus/Shadow/ShadowSub.tla',
+        'skills/statechart/scripts/test/corpus/Shadow/chart.mmd',
+        'skills/statechart/scripts/test/corpus/Shadow/graph.dot',
+        'skills/statechart/scripts/test/corpus/Shadow/report.md',
+        'skills/statechart/scripts/test/corpus/Shadow/sany.out',
+        'skills/statechart/scripts/test/corpus/Shadow/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/SpacedNames/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/SpacedNames/SpacedNames.cfg',
+        'skills/statechart/scripts/test/corpus/SpacedNames/SpacedNames.tla',
+        'skills/statechart/scripts/test/corpus/SpacedNames/chart.mmd',
+        'skills/statechart/scripts/test/corpus/SpacedNames/graph.dot',
+        'skills/statechart/scripts/test/corpus/SpacedNames/report.md',
+        'skills/statechart/scripts/test/corpus/SpacedNames/sany.out',
+        'skills/statechart/scripts/test/corpus/SpacedNames/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/SpacedNames/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/SpacedNames/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/SpacedNames/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/TwoPhase/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/TwoPhase/TwoPhase.cfg',
+        'skills/statechart/scripts/test/corpus/TwoPhase/TwoPhase.tla',
+        'skills/statechart/scripts/test/corpus/TwoPhase/chart.mmd',
+        'skills/statechart/scripts/test/corpus/TwoPhase/graph.dot',
+        'skills/statechart/scripts/test/corpus/TwoPhase/report.md',
+        'skills/statechart/scripts/test/corpus/TwoPhase/sany.out',
+        'skills/statechart/scripts/test/corpus/TwoPhase/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/TwoPhase/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/TwoPhase/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/TwoPhase/view.mjs',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/TwoPhaseFixed.cfg',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/TwoPhaseFixed.tla',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/chart.mmd',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/graph.dot',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/report.md',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/sany.out',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/TwoPhaseFixed/view.mjs',
+        'skills/statechart/scripts/test/corpus/TypeGuard/ChartRun.exit',
+        'skills/statechart/scripts/test/corpus/TypeGuard/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/TypeGuard/TypeGuard.cfg',
+        'skills/statechart/scripts/test/corpus/TypeGuard/TypeGuard.tla',
+        'skills/statechart/scripts/test/corpus/TypeGuard/chart.mmd',
+        'skills/statechart/scripts/test/corpus/TypeGuard/graph.dot',
+        'skills/statechart/scripts/test/corpus/TypeGuard/report.md',
+        'skills/statechart/scripts/test/corpus/TypeGuard/sany.out',
+        'skills/statechart/scripts/test/corpus/TypeGuard/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/TypeGuard/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/TypeGuard/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/TypeGuard/verdict-2.out',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/ChartRun.out',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/UserNoDeadlock.cfg',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/UserNoDeadlock.tla',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/chart.mmd',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/graph.dot',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/report.md',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/sany.out',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/verdict-1.exit',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/verdict-1.out',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/verdict-2.exit',
+        'skills/statechart/scripts/test/corpus/UserNoDeadlock/verdict-2.out',
+        'skills/statechart/scripts/test/differential.test.ts',
+        'skills/statechart/scripts/test/grid/Grid.cfg',
+        'skills/statechart/scripts/test/grid/Grid.tla',
+        'skills/statechart/scripts/test/grid/sany.out',
+        'skills/statechart/scripts/test/java.ts',
+        'skills/statechart/scripts/test/labels.ts',
+        'skills/statechart/scripts/test/messages.test.ts',
+        'skills/statechart/scripts/test/pipeline.test.ts',
+        'skills/statechart/scripts/test/plain-tlc.test.ts',
+        'skills/statechart/scripts/test/regions.mmd',
+        'skills/statechart/scripts/test/render.test.ts',
+        'skills/statechart/scripts/test/statechart.test.mjs',
+        'skills/statechart/scripts/test/sync.mmd',
+        'skills/statechart/scripts/test/tlc-out.test.ts',
+        'skills/statechart/scripts/test/tlc.ts',
+        'skills/statechart/scripts/test/upload.mmd',
+        'skills/statechart/scripts/tlc-to-chart-args.mjs',
+        'skills/statechart/scripts/tlc-to-chart.mjs',
+        'skills/statechart/scripts/tlc-tools.mjs',
+        'skills/statechart/scripts/tsconfig.json',
+        'skills/statechart/scripts/ways-in.mjs',
+        'skills/statechart/scripts/worker.ts',
     ],
 }
 EXPECTED_CURRENT_PATH_DISPOSITIONS = {
@@ -370,38 +769,59 @@ def _compatibility_current_pin(document: str) -> re.Match[str] | None:
 
 def _represented_current_path_dispositions(section: str) -> tuple[dict[str, str], dict[str, int]]:
     disposition_names = set(EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION)
-    current_heading_disposition: str | None = None
     represented: dict[str, str] = {}
     counts: dict[str, int] = {}
     for line in section.splitlines():
-        heading = re.match(r"^\s*#{3,6}\s+(.+?)\s*$", line)
-        if heading:
-            heading_labels = [
-                label for label in disposition_names if label in heading.group(1)
-            ]
-            current_heading_disposition = (
-                heading_labels[0] if len(heading_labels) == 1 else None
-            )
-
-        path_mentions = [
-            path
-            for path in EXPECTED_CURRENT_PATH_DISPOSITIONS
-            if f"`{path}`" in line
-        ]
-        if not path_mentions:
+        if not line.lstrip().startswith("|"):
             continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 2 and cells[0].lower() in {"upstream path", "path"}:
+            continue
+        if len(cells) == 2 and all(re.fullmatch(r"[-: ]+", cell) for cell in cells):
+            continue
+        assert len(cells) == 2, f"disposition row must have exactly two cells: {line!r}"
+        path = cells[0].strip("`")
+        assert path in EXPECTED_CURRENT_PATH_DISPOSITIONS, f"unexpected changed path: {path!r}"
         inline_labels = [
             label
             for label in disposition_names
-            if re.search(rf"(?<![a-z0-9_]){re.escape(label)}(?![a-z0-9_])", line)
+            if re.search(rf"(?<![a-z0-9_]){re.escape(label)}(?![a-z0-9_])", cells[1])
         ]
-        assert len(inline_labels) <= 1, f"ambiguous disposition row: {line!r}"
-        disposition = inline_labels[0] if inline_labels else current_heading_disposition
-        assert disposition is not None, f"changed path lacks a disposition: {line!r}"
-        for path in path_mentions:
-            counts[path] = counts.get(path, 0) + 1
-            represented[path] = disposition
+        assert len(inline_labels) == 1, f"missing or ambiguous disposition: {line!r}"
+        assert inline_labels[0] == EXPECTED_CURRENT_PATH_DISPOSITIONS[path], (
+            f"incorrect disposition for changed path: {path!r}"
+        )
+        assert counts.get(path, 0) == 0, f"duplicate changed path: {path!r}"
+        counts[path] = 1
+        represented[path] = inline_labels[0]
     return represented, counts
+
+
+def test_disposition_parser_accepts_exact_rows_and_rejects_unknown_duplicate_or_ambiguous_rows() -> None:
+    path = ".cursor-plugin/plugin.json"
+    disposition = "version_provenance_only"
+    positive = (
+        "| Upstream path | Disposition |\n"
+        "| --- | --- |\n"
+        f"| `{path}` | `{disposition}` |\n"
+    )
+    assert _represented_current_path_dispositions(positive) == (
+        {path: disposition},
+        {path: 1},
+    )
+
+    invalid_sections = (
+        positive + "| `unknown/new-file.md` | `excluded` |\n",
+        positive + f"| `{path}` | `{disposition}` |\n",
+        positive.replace(f"`{disposition}`", "`version_provenance_only` and `excluded`"),
+        positive.replace(f"`{disposition}`", "`excluded`").replace(path, path),
+    )
+    for section in invalid_sections:
+        try:
+            _represented_current_path_dispositions(section)
+        except AssertionError:
+            continue
+        raise AssertionError(f"invalid disposition table was accepted: {section!r}")
 
 
 def test_manifest_pins_canonical_source_and_portable_reference() -> None:
@@ -628,6 +1048,29 @@ def test_routed_skills_preserve_repository_workflow_boundaries() -> None:
     assert "do not create a private log" in show_work
 
 
+def test_interrogate_requires_reproduction_evidence_and_retains_unexecuted_risks() -> None:
+    interrogate = " ".join(
+        (SKILLS_ROOT / "interrogate" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
+    assert "supplemental" in interrogate
+    assert "exact-head-review" in interrogate
+    assert "already-authorized" in interrogate
+    assert "command" in interrogate and "actual output" in interrogate
+    assert "expected output" in interrogate
+    assert "root cause" in interrogate
+    assert re.search(r"\bunexecuted\b[^.]*\bmaterial\b[^.]*\b(?:security|policy)\b", interrogate)
+    assert re.search(r"\b(?:do not|don't|never|must not)\b[^.]*\b(?:erase|drop|discard)\b[^.]*\b(?:risk|finding)", interrogate)
+    assert re.search(r"\b(?:retain|preserve|keep)\b[^.]*\b(?:gate|blocker)", interrogate)
+    assert re.search(r"\bno new\b[^.]*\b(?:capture|posting|transcript)\b[^.]*\b(?:obligation|requirement)", interrogate)
+    assert re.search(r"\b(?:do not|don't|never|must not)\b[^.]*\b(?:spawn|delegate)", interrogate)
+    assert re.search(r"\b(?:do not|don't|never|must not)\b[^.]*\bexecute\b[^.]*\bfetched scripts?\b", interrogate)
+    assert re.search(r"\b(?:do not|don't|never|must not)\b[^.]*\b(?:create|keep)\b[^.]*\bprivate logs?\b", interrogate)
+    assert re.search(r"\b(?:do not|don't|never|must not)\b[^.]*\b(?:retrieve|collect)\b[^.]*\braw transcripts?\b", interrogate)
+
+
 def test_new_routed_skills_keep_catchup_and_restatement_read_only() -> None:
     ketchup = " ".join(
         (SKILLS_ROOT / "ketchup" / "SKILL.md")
@@ -805,19 +1248,28 @@ def test_current_pin_parser_has_a_historical_negative_and_current_positive_contr
         f"commit `{EXPECTED_CANONICAL_COMMIT}`, subtree `{EXPECTED_CANONICAL_TREE}`."
     )
     assert _compatibility_current_pin(historical_only) is None
+    fork_only = (
+        "# pstack compatibility\n\n"
+        "The user fork is version `0.15.25`, commit `e5136d82418d2db3165ea1050d17577cd618cc05`, "
+        "with subtree `de8e53ebbeca0fe9351e950095e720655da08349`."
+    )
+    assert _compatibility_current_pin(fork_only) is None
     assert _compatibility_current_pin(
         "# pstack compatibility\n\nThe historical integration is retained below.\n\n"
         + positive.split("\n\n", 1)[1]
     ) is None
 
 
-def test_current_change_disposition_is_pinned_and_covers_all_66_paths() -> None:
+def test_current_change_disposition_is_pinned_and_covers_all_464_paths() -> None:
     compatibility = COMPATIBILITY_DOC.read_text(encoding="utf-8")
     path_count = sum(
         len(paths) for paths in EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION.values()
     )
-    assert path_count == 66
-    assert len(EXPECTED_CURRENT_PATH_DISPOSITIONS) == 66
+    assert path_count == 464
+    assert len(EXPECTED_CURRENT_PATH_DISPOSITIONS) == 464
+    assert all(paths == sorted(paths) for paths in EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION.values())
+    flattened_paths = [path for paths in EXPECTED_CURRENT_CHANGE_PATHS_BY_DISPOSITION.values() for path in paths]
+    assert len(flattened_paths) == len(set(flattened_paths)) == 464
 
     sections = [
         body
@@ -836,7 +1288,7 @@ def test_current_change_disposition_is_pinned_and_covers_all_66_paths() -> None:
         EXPECTED_CANONICAL_TREE,
     ):
         assert pin in first_paragraph, f"current disposition lacks anchored pin {pin}"
-    assert re.search(r"\b66\b[^.\n]{0,60}\bchanged paths?\b", first_paragraph, re.IGNORECASE)
+    assert re.search(r"\b464\b[^.\n]{0,60}\bchanged paths?\b", first_paragraph, re.IGNORECASE)
 
     represented, counts = _represented_current_path_dispositions(current_section)
     assert represented == EXPECTED_CURRENT_PATH_DISPOSITIONS
@@ -889,3 +1341,7 @@ def test_compatibility_document_notice_and_operational_state_are_reconciled() ->
         "300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md"
     ) in state
     assert "prior BT01–04, SIG and Harness recovery references/routes" in state
+    assert "last_completed_roadmap_pr: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`" in state
+    assert "HARNESS-PSTACK-01536" in state
+    assert "0.15.36" in state
+    assert "BT-06 not started" in state
