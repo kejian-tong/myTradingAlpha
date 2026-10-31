@@ -39,6 +39,20 @@ DEFAULT_WEIGHT_MS = 786
 APPROVED_WEIGHTS_SHA256 = "9200d8af2316570148051728f0f85d1c4411bf08fbbec578f428aab61bb38095"
 MAX_RUNNER_METADATA_BYTES = 16_384
 RUNNER_IMAGE_VERSION = "202610.30.1"
+_RUNNER_IMAGE_VERSION_SECRET = "HARNESS/EFF06+REDACTION=CANARY"
+_RUNNER_IMAGE_VERSION_SECRETS = (
+    _RUNNER_IMAGE_VERSION_SECRET,
+    base64.b64encode(_RUNNER_IMAGE_VERSION_SECRET.encode("ascii")).decode("ascii"),
+    quote(_RUNNER_IMAGE_VERSION_SECRET, safe=""),
+)
+_INHERITED_IMAGE_VERSION_CASES = (
+    pytest.param("stale", "202610.31.1", id="stale"),
+    pytest.param("absent", None, id="absent"),
+    pytest.param("malformed", f"not-a-version\n{_RUNNER_IMAGE_VERSION_SECRET}", id="malformed"),
+    pytest.param("raw-secret", _RUNNER_IMAGE_VERSION_SECRETS[0], id="raw-secret"),
+    pytest.param("base64-secret", _RUNNER_IMAGE_VERSION_SECRETS[1], id="base64-secret"),
+    pytest.param("url-secret", _RUNNER_IMAGE_VERSION_SECRETS[2], id="url-secret"),
+)
 MAX_REFERENCE_BYTES = 2_000_000
 MAX_RECEIPT_BYTES = 8_000_000
 MANIFEST_FIELDS = {
@@ -367,11 +381,17 @@ def _canonical_bytes(value: Any) -> bytes:
     ).encode("ascii") + b"\n"
 
 
-def _verify(bundle: RunBundle, receipts_dir: Path, *, serial: Path | None = None):
+def _verify(
+    bundle: RunBundle,
+    receipts_dir: Path,
+    *,
+    serial: Path | None = None,
+    env: dict[str, str] | None = None,
+):
     args = ["verify", "--reference", str(bundle.reference), "--receipts", str(receipts_dir)]
     if serial is not None:
         args.extend(("--serial", str(serial)))
-    return _invoke(bundle.project, *args)
+    return _invoke(bundle.project, *args, env=env)
 
 
 def _copy_receipts(bundle: RunBundle, destination: Path) -> Path:
@@ -506,7 +526,7 @@ def test_00_cli_entrypoint_has_the_fixed_command_surface() -> None:
             id="nonascii-version-digit",
         ),
         pytest.param(_runner_image_metadata(image="ubuntu-22.04"), id="unsupported-image"),
-        pytest.param(_runner_image_metadata(version="202610.30.2"), id="metadata-environment-version-mismatch"),
+        pytest.param(_runner_image_metadata(version="202610.30.1x"), id="malformed-native-version"),
         pytest.param(
             _metadata_json(
                 [
@@ -553,15 +573,9 @@ def test_native_runner_metadata_rejects_ambiguous_or_unbounded_documents(
     [
         pytest.param("ImageOS", "ubuntu22", "RUNNER_IMAGE_OS", id="image-os-mismatch"),
         pytest.param("ImageOS", "ubuntu24\n", "RUNNER_IMAGE_OS", id="image-os-control-character"),
-        pytest.param(
-            "ImageVersion", "202610.31.1", "RUNNER_IMAGE_VERSION", id="image-version-mismatch"
-        ),
-        pytest.param(
-            "ImageVersion", "202610.30.１", "RUNNER_IMAGE_VERSION", id="image-version-nonascii-digit"
-        ),
     ],
 )
-def test_native_environment_disagreement_fails_before_pytest_or_output(
+def test_image_os_environment_disagreement_fails_before_pytest_or_output(
     tmp_path: Path,
     command: str,
     environment_key: str,
@@ -580,7 +594,8 @@ def test_native_environment_disagreement_fails_before_pytest_or_output(
         },
     )
     project.env["PARTITION_TEST_SENTINEL"] = str(sentinel)
-    project.env[environment_key] = environment_value
+    env = dict(project.env)
+    env[environment_key] = environment_value
     output = tmp_path / "operation.json"
     args = (
         ("collect", "--output", str(output))
@@ -588,7 +603,7 @@ def test_native_environment_disagreement_fails_before_pytest_or_output(
         else ("run", "--shard", "serial", "--output", str(output))
     )
 
-    result = _invoke(project, *args)
+    result = _invoke(project, *args, env=env)
 
     _assert_metadata_rejected(
         result,
@@ -597,6 +612,63 @@ def test_native_environment_disagreement_fails_before_pytest_or_output(
         path=Path(project.env["IMAGEDATA_FILE"]),
     )
     assert not sentinel.exists()
+
+
+@pytest.mark.parametrize("command", ["collect", "run"])
+@pytest.mark.parametrize(
+    ("case", "environment_value"), _INHERITED_IMAGE_VERSION_CASES
+)
+def test_collect_and_run_bind_native_image_version_with_inert_environment_value(
+    tmp_path: Path, command: str, case: str, environment_value: str | None
+) -> None:
+    project = _init_project(tmp_path / "repo")
+    env = dict(project.env)
+    if environment_value is None:
+        env.pop("ImageVersion")
+    else:
+        env["ImageVersion"] = environment_value
+    output = tmp_path / "operation.json"
+    args = (
+        ("collect", "--output", str(output))
+        if command == "collect"
+        else ("run", "--shard", "serial", "--output", str(output))
+    )
+
+    result = _invoke(project, *args, env=env)
+
+    _successful(result)
+    artifact = _load_canonical(output)
+    assert artifact["runner_image_os"] == "ubuntu24"
+    assert artifact["runner_image_version"] == RUNNER_IMAGE_VERSION, case
+    output_bytes = output.read_bytes()
+    for secret in _RUNNER_IMAGE_VERSION_SECRETS:
+        assert secret.encode("ascii") not in result.stdout.encode("utf-8")
+        assert secret.encode("ascii") not in result.stderr.encode("utf-8")
+        assert secret.encode("ascii") not in output_bytes
+    if environment_value is not None:
+        assert environment_value.encode("ascii") not in output_bytes
+
+
+def test_malformed_native_version_is_rejected_when_inherited_version_matches(
+    tmp_path: Path,
+) -> None:
+    malformed_version = "202610.30.1x"
+    project = _init_project(tmp_path / "repo")
+    metadata = _write_runner_metadata(
+        project, _runner_image_metadata(version=malformed_version)
+    )
+    env = dict(project.env)
+    env["ImageVersion"] = malformed_version
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output), env=env)
+
+    _assert_metadata_rejected(
+        result,
+        output,
+        reason_code="RUNNER_METADATA_DECLARATION",
+        path=metadata,
+    )
 
 
 @pytest.mark.parametrize(
@@ -777,32 +849,6 @@ def test_runner_metadata_rejection_does_not_leak_raw_encoded_or_path_secrets(tmp
         result, output, reason_code="RUNNER_METADATA_SHAPE", path=metadata
     )
     for secret in encoded_secrets:
-        assert secret not in result.stdout + result.stderr
-
-
-@pytest.mark.parametrize("secret_kind", ["raw", "base64", "url"])
-def test_runner_environment_secret_is_not_echoed(
-    tmp_path: Path, secret_kind: str
-) -> None:
-    raw_secret = "HARNESS/EFF06+REDACTION=CANARY"
-    encoded_secrets = {
-        "raw": raw_secret,
-        "base64": base64.b64encode(raw_secret.encode("ascii")).decode("ascii"),
-        "url": quote(raw_secret, safe=""),
-    }
-    project = _init_project(tmp_path / "repo")
-    project.env["ImageVersion"] = encoded_secrets[secret_kind]
-    output = tmp_path / "collection.json"
-
-    result = _invoke(project, "collect", "--output", str(output))
-
-    _assert_metadata_rejected(
-        result,
-        output,
-        reason_code="RUNNER_IMAGE_VERSION",
-        path=Path(project.env["IMAGEDATA_FILE"]),
-    )
-    for secret in encoded_secrets.values():
         assert secret not in result.stdout + result.stderr
 
 
@@ -1096,12 +1142,9 @@ def test_aggregate_verification_proves_full_coverage_and_serial_parity(run_bundl
     ("environment_key", "environment_value", "reason_code"),
     [
         pytest.param("ImageOS", "ubuntu22", "RUNNER_IMAGE_OS", id="image-os"),
-        pytest.param(
-            "ImageVersion", "202610.31.1", "RUNNER_IMAGE_VERSION", id="image-version"
-        ),
     ],
 )
-def test_verify_reports_runner_mismatch_with_valid_reference_and_receipts(
+def test_verify_rejects_image_os_environment_mismatch_with_valid_artifacts(
     run_bundle: RunBundle,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1121,6 +1164,39 @@ def test_verify_reports_runner_mismatch_with_valid_reference_and_receipts(
     _assert_admission_failure(result, reason_code)
     assert run_bundle.reference.read_bytes() == reference_before
     assert {path.name: path.read_bytes() for path in sorted(receipts.iterdir())} == receipt_bytes_before
+
+
+@pytest.mark.parametrize(
+    ("case", "environment_value"), _INHERITED_IMAGE_VERSION_CASES
+)
+def test_verify_binds_native_image_version_with_inert_environment_value(
+    run_bundle: RunBundle, tmp_path: Path, case: str, environment_value: str | None
+) -> None:
+    receipts = _copy_receipts(run_bundle, tmp_path / "receipts")
+    env = dict(run_bundle.project.env)
+    if environment_value is None:
+        env.pop("ImageVersion")
+    else:
+        env["ImageVersion"] = environment_value
+
+    result = _verify(run_bundle, receipts, serial=run_bundle.serial, env=env)
+
+    _successful(result)
+    summary = json.loads(result.stdout)
+    assert summary["binding"]["runner_image_version"] == RUNNER_IMAGE_VERSION, case
+    artifact_bytes = b"".join(
+        [
+            run_bundle.reference.read_bytes(),
+            run_bundle.serial.read_bytes(),
+            *(path.read_bytes() for path in sorted(receipts.iterdir())),
+        ]
+    )
+    output_bytes = result.stdout.encode("utf-8") + result.stderr.encode("utf-8")
+    for secret in _RUNNER_IMAGE_VERSION_SECRETS:
+        assert secret.encode("ascii") not in output_bytes
+        assert secret.encode("ascii") not in artifact_bytes
+    if environment_value is not None:
+        assert environment_value.encode("ascii") not in artifact_bytes
 
 
 def test_pure_bytes_verifier_accepts_explicit_native_binding_without_runtime_access(
@@ -1497,8 +1573,12 @@ def test_verify_rejects_serial_mismatch_and_runner_image_or_runtime_mismatch(
     )
     assert result.returncode != 0 and result.stdout == "" and result.stderr == FIXED_ERROR
 
+    native_version = "202610.30.2"
+    native_metadata = tmp_path / "different-runner-imagedata.json"
+    native_metadata.write_bytes(_runner_image_metadata(version=native_version))
     wrong_image_env = dict(run_bundle.project.env)
-    wrong_image_env["ImageVersion"] = "202610.30.2"
+    wrong_image_env["IMAGEDATA_FILE"] = str(native_metadata)
+    wrong_image_env["ImageVersion"] = native_version
     result = _invoke(
         run_bundle.project,
         "verify",
@@ -1508,7 +1588,7 @@ def test_verify_rejects_serial_mismatch_and_runner_image_or_runtime_mismatch(
         str(receipts),
         env=wrong_image_env,
     )
-    _assert_admission_failure(result, "RUNNER_IMAGE_VERSION")
+    assert result.returncode != 0 and result.stdout == "" and result.stderr == FIXED_ERROR
 
 
 def test_cli_rejects_hidden_pytest_selectors_and_plugin_deselection(tmp_path: Path) -> None:
