@@ -22,10 +22,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci_partition.py"
 WEIGHTS = ROOT / "scripts" / "ci_partition_weights.json"
 FIXED_ERROR = "CI partition operation failed\n"
-WEIGHT_SOURCE_HEAD = "f80d14b537d70e86cffdc2e41f4d447ec875a68f"
-WEIGHT_RUN_ID = 40995106582
-WEIGHT_JOB_ID = 123866296171
-DEFAULT_WEIGHT_MS = 1420
+WEIGHT_SOURCE_HEAD = "948cb8bb702dfaf0aa8db8f13d776e4afd33270a"
+WEIGHT_RUN_ID = 41130111267
+WEIGHT_JOB_ID = 124318560359
+DEFAULT_WEIGHT_MS = 786
+APPROVED_WEIGHTS_SHA256 = "9200d8af2316570148051728f0f85d1c4411bf08fbbec578f428aab61bb38095"
+MAX_RUNNER_METADATA_BYTES = 16_384
+RUNNER_IMAGE_VERSION = "202610.30.1"
 MAX_REFERENCE_BYTES = 2_000_000
 MAX_RECEIPT_BYTES = 8_000_000
 MANIFEST_FIELDS = {
@@ -67,31 +70,31 @@ RECEIPT_FIELDS = {
 }
 
 EXPECTED_WEIGHTS_MS = {
-    "tests/productionization/backtest/test_actions_benchmarks.py::test_bt04_repair_byte_admission_is_independent_of_native_node_limit[1539-True]": 110980,
-    "tests/productionization/backtest/test_actions_benchmarks.py::test_bt04_repair_byte_admission_is_independent_of_native_node_limit[1653-False]": 92340,
-    "tests/productionization/backtest/test_actions_benchmarks.py::test_bt04_repair_resource_admission_precedes_ledger_and_economics[12-True]": 130780,
-    "tests/productionization/backtest/test_actions_benchmarks.py::test_eight_benchmark_members_sixteen_sessions_and_128_work_units_are_real": 322490,
-    "tests/productionization/backtest/test_actions_benchmarks.py::test_outstanding_intent_count_accepts_64_unique_cancellations_and_rejects_65": 103910,
-    "tests/productionization/backtest/test_actions_benchmarks.py::test_reference_count_accepts_32_genuine_instruments_and_rejects_33_before_work": 420740,
-    "tests/productionization/backtest/test_ledger_nav.py::test_cumulative_fee_once_reconciles_two_three_and_five_partials[quantities2-cap2]": 62940,
-    "tests/productionization/backtest/test_ledger_nav.py::test_sell_economics_and_public_checker_ignore_ambient_decimal_context[fractional-unarmed-ROUND_DOWN-replay]": 62060,
-    "tests/productionization/backtest/test_ledger_nav.py::test_sell_economics_and_public_checker_ignore_ambient_decimal_context[fractional-unarmed-ROUND_UP-replay]": 61640,
-    "tests/productionization/backtest/test_replay_hash.py::test_benchmark_prefixes_follow_closing_stages_without_future_suffix[3]": 63250,
-    "tests/productionization/backtest/test_replay_hash.py::test_competing_intents_have_run_independent_semantic_priority": 137300,
-    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[after-fsync]": 1232060,
-    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[after-link]": 614320,
-    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[before-fsync]": 1247210,
-    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[before-link]": 621200,
-    "tests/productionization/backtest/test_replay_hash.py::test_every_operation_boundary_and_stale_checkpoint_resume_once": 705280,
-    "tests/productionization/backtest/test_replay_hash.py::test_explicit_resume_evidence_must_equal_published_exact_prefix[changed]": 62380,
-    "tests/productionization/backtest/test_replay_hash.py::test_explicit_resume_evidence_must_equal_published_exact_prefix[extra]": 62520,
-    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[False-quant_llm]": 147620,
-    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[False-quant_only]": 134380,
-    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[True-quant_llm]": 196390,
-    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[True-quant_only]": 179970,
-    "tests/productionization/backtest/test_replay_hash.py::test_set_like_ownership_and_cancellation_indexes_use_projected_identity[False]": 108750,
-    "tests/productionization/backtest/test_replay_hash.py::test_set_like_ownership_and_cancellation_indexes_use_projected_identity[True]": 173450,
-    "tests/productionization/backtest/test_replay_hash.py::test_three_hash_domains_use_independent_canonical_utf8_preimages": 104720,
+    "tests/productionization/backtest/test_actions_benchmarks.py::test_bt04_repair_byte_admission_is_independent_of_native_node_limit[1539-True]": 60200,
+    "tests/productionization/backtest/test_actions_benchmarks.py::test_bt04_repair_byte_admission_is_independent_of_native_node_limit[1653-False]": 48980,
+    "tests/productionization/backtest/test_actions_benchmarks.py::test_bt04_repair_resource_admission_precedes_ledger_and_economics[12-True]": 68440,
+    "tests/productionization/backtest/test_actions_benchmarks.py::test_eight_benchmark_members_sixteen_sessions_and_128_work_units_are_real": 185970,
+    "tests/productionization/backtest/test_actions_benchmarks.py::test_outstanding_intent_count_accepts_64_unique_cancellations_and_rejects_65": 60950,
+    "tests/productionization/backtest/test_actions_benchmarks.py::test_reference_count_accepts_32_genuine_instruments_and_rejects_33_before_work": 257730,
+    "tests/productionization/backtest/test_ledger_nav.py::test_cumulative_fee_once_reconciles_two_three_and_five_partials[quantities2-cap2]": 36540,
+    "tests/productionization/backtest/test_ledger_nav.py::test_sell_economics_and_public_checker_ignore_ambient_decimal_context[fractional-armed-ROUND_DOWN-replay]": 34710,
+    "tests/productionization/backtest/test_ledger_nav.py::test_sell_economics_and_public_checker_ignore_ambient_decimal_context[fractional-armed-ROUND_UP-replay]": 34840,
+    "tests/productionization/backtest/test_ledger_nav.py::test_sell_economics_and_public_checker_ignore_ambient_decimal_context[fractional-unarmed-ROUND_DOWN-replay]": 34820,
+    "tests/productionization/backtest/test_ledger_nav.py::test_sell_economics_and_public_checker_ignore_ambient_decimal_context[fractional-unarmed-ROUND_UP-replay]": 34820,
+    "tests/productionization/backtest/test_replay_hash.py::test_benchmark_prefixes_follow_closing_stages_without_future_suffix[3]": 34360,
+    "tests/productionization/backtest/test_replay_hash.py::test_competing_intents_have_run_independent_semantic_priority": 75950,
+    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[after-fsync]": 701650,
+    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[after-link]": 349940,
+    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[before-fsync]": 699980,
+    "tests/productionization/backtest/test_replay_hash.py::test_each_atomic_publication_and_sync_crash_retains_recoverable_prefix[before-link]": 352320,
+    "tests/productionization/backtest/test_replay_hash.py::test_every_operation_boundary_and_stale_checkpoint_resume_once": 384210,
+    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[False-quant_llm]": 79980,
+    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[False-quant_only]": 72480,
+    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[True-quant_llm]": 106280,
+    "tests/productionization/backtest/test_replay_hash.py::test_run_and_operational_lineage_exclusions_preserve_typed_sources[True-quant_only]": 98390,
+    "tests/productionization/backtest/test_replay_hash.py::test_set_like_ownership_and_cancellation_indexes_use_projected_identity[False]": 59170,
+    "tests/productionization/backtest/test_replay_hash.py::test_set_like_ownership_and_cancellation_indexes_use_projected_identity[True]": 94350,
+    "tests/productionization/backtest/test_replay_hash.py::test_three_hash_domains_use_independent_canonical_utf8_preimages": 57900,
 }
 
 LIFECYCLE_TESTS = '''\
@@ -162,6 +165,57 @@ def _require_cli() -> None:
     )
 
 
+def _metadata_json(groups: list[dict[str, Any]]) -> bytes:
+    return json.dumps(groups, ensure_ascii=True, indent=2).encode("utf-8") + b"\n"
+
+
+def _deeply_nested_value(depth: int) -> Any:
+    value: Any = "deep"
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def _runner_image_metadata(
+    *, image: str = "ubuntu-24.04", version: str = RUNNER_IMAGE_VERSION
+) -> bytes:
+    return _metadata_json(
+        [
+            {"group": "Operating System", "detail": "Ubuntu 24.04"},
+            {
+                "group": "Runner Image",
+                "detail": (
+                    f"Image: {image}\nVersion: {version}\n"
+                    "Included Software: https://github.com/actions/runner-images"
+                ),
+            },
+        ]
+    )
+
+
+def _write_runner_metadata(
+    project: TinyProject,
+    raw: bytes,
+    *,
+    name: str = "runner-imagedata.json",
+) -> Path:
+    path = project.root / name
+    path.write_bytes(raw)
+    project.env["IMAGEDATA_FILE"] = str(path)
+    return path
+
+
+def _assert_metadata_rejected(
+    result: subprocess.CompletedProcess[str], output: Path, *, path: Path | None = None
+) -> None:
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == FIXED_ERROR
+    assert not output.exists()
+    if path is not None:
+        assert str(path) not in result.stdout + result.stderr
+
+
 def _git(root: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True, timeout=10
@@ -175,6 +229,8 @@ def _init_project(root: Path, *, test_files: dict[str, str] | None = None) -> Ti
     (root / "scripts").mkdir()
     shutil.copyfile(SCRIPT, root / "scripts" / "ci_partition.py")
     shutil.copyfile(WEIGHTS, root / "scripts" / "ci_partition_weights.json")
+    image_data_path = root / "runner-imagedata.json"
+    image_data_path.write_bytes(_runner_image_metadata())
     (root / "pyproject.toml").write_text(
         '[tool.pytest.ini_options]\n'
         'testpaths = ["tests"]\n'
@@ -227,7 +283,8 @@ def _init_project(root: Path, *, test_files: dict[str, str] | None = None) -> Ti
             "GITHUB_SHA": checkout_sha,
             "RUNNER_OS": "Linux",
             "ImageOS": "ubuntu24",
-            "ImageVersion": "202610.30.1",
+            "ImageVersion": RUNNER_IMAGE_VERSION,
+            "IMAGEDATA_FILE": str(image_data_path),
         }
     )
     return TinyProject(root, env, source_sha, checkout_sha, tree_sha)
@@ -348,10 +405,271 @@ def test_00_cli_entrypoint_has_the_fixed_command_surface() -> None:
     assert "--reference" in result.stdout and "--receipts" in result.stdout
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(b"{not-json", id="malformed-json"),
+        pytest.param(b"\xff\xfe", id="malformed-utf8"),
+        pytest.param(b"{}", id="wrong-root-object"),
+        pytest.param(b"null", id="wrong-root-null"),
+        pytest.param(b"[null]", id="wrong-entry-shape"),
+        pytest.param(b'[{"group":"Runner Image","detail":7}]', id="wrong-detail-shape"),
+        pytest.param(
+            b'[{"group":"Runner Image","detail":"Image: ubuntu-24.04\\nVersion: 202610.30.1",'
+            b'"\\u0067roup":"Other"}]',
+            id="escaped-duplicate-json-key",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Operating System", "detail": "Ubuntu 24.04"}]),
+            id="missing-runner-image-group",
+        ),
+        pytest.param(
+            _metadata_json(
+                [
+                    {"group": "Runner Image", "detail": "Image: ubuntu-24.04\nVersion: 202610.30.1"},
+                    {"group": "Runner Image", "detail": "Image: ubuntu-24.04\nVersion: 202610.30.1"},
+                ]
+            ),
+            id="duplicate-runner-image-group",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Runnеr Image", "detail": "Image: ubuntu-24.04\nVersion: 202610.30.1"}]),
+            id="unicode-confusable-group",
+        ),
+        pytest.param(
+            _metadata_json(
+                [
+                    {
+                        "group": "Runner Image",
+                        "detail": "Image: ubuntu-24.04\nVersion: 202610.30.1\nVersion: 202610.30.1",
+                    }
+                ]
+            ),
+            id="duplicate-version-line",
+        ),
+        pytest.param(
+            _metadata_json(
+                [
+                    {
+                        "group": "Runner Image",
+                        "detail": "Image: ubuntu-24.04\nImage: ubuntu-24.04\nVersion: 202610.30.1",
+                    }
+                ]
+            ),
+            id="duplicate-image-line",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Runner Image", "detail": "Version: 202610.30.1"}]),
+            id="missing-image-line",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Runner Image", "detail": "Image: ubuntu-24.04"}]),
+            id="missing-version-line",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Runner Image", "detail": "Image: ubuntu-24.04\nVersion: 202610.30"}]),
+            id="nondotted-version",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Runner Image", "detail": "Image: ubuntu-24.04\nVersion: 202610.30.１"}]),
+            id="nonascii-version-digit",
+        ),
+        pytest.param(_runner_image_metadata(image="ubuntu-22.04"), id="unsupported-image"),
+        pytest.param(_runner_image_metadata(version="202610.30.2"), id="metadata-environment-version-mismatch"),
+        pytest.param(
+            _metadata_json(
+                [
+                    {
+                        "group": "Runner Image",
+                        "detail": "Image: ubuntu-24.04\nVersion: 202610.30.1\n" + "other\n" * 512,
+                    }
+                ]
+            ),
+            id="excessive-detail-lines",
+        ),
+        pytest.param(
+            json.dumps(
+                [{"group": "Runner Image", "detail": _deeply_nested_value(48)}],
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            id="deeply-nested-detail",
+        ),
+        pytest.param(
+            json.dumps(
+                [{"group": "x", "detail": ""} for _ in range(512)]
+                + [{"group": "Runner Image", "detail": "Image: ubuntu-24.04\nVersion: 202610.30.1"}],
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            id="excessive-group-count",
+        ),
+    ],
+)
+def test_native_runner_metadata_rejects_ambiguous_or_unbounded_documents(
+    tmp_path: Path, raw: bytes
+) -> None:
+    project = _init_project(tmp_path / "repo")
+    metadata = _write_runner_metadata(project, raw)
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output))
+
+    _assert_metadata_rejected(result, output, path=metadata)
+
+
+@pytest.mark.parametrize("command", ["collect", "run"])
+@pytest.mark.parametrize(
+    ("environment_key", "environment_value"),
+    [
+        pytest.param("ImageOS", "ubuntu22", id="image-os-mismatch"),
+        pytest.param("ImageOS", "ubuntu24\n", id="image-os-control-character"),
+        pytest.param("ImageVersion", "202610.31.1", id="image-version-mismatch"),
+        pytest.param("ImageVersion", "202610.30.１", id="image-version-nonascii-digit"),
+    ],
+)
+def test_native_environment_disagreement_fails_before_pytest_or_output(
+    tmp_path: Path,
+    command: str,
+    environment_key: str,
+    environment_value: str,
+) -> None:
+    sentinel = tmp_path / "collection-sentinel"
+    project = _init_project(
+        tmp_path / "repo",
+        test_files={
+            "conftest.py": (
+                "import os\nfrom pathlib import Path\n"
+                "Path(os.environ['PARTITION_TEST_SENTINEL']).write_text('collected')\n"
+            ),
+            "tests/test_sentinel.py": "def test_sentinel():\n    assert True\n",
+        },
+    )
+    project.env["PARTITION_TEST_SENTINEL"] = str(sentinel)
+    project.env[environment_key] = environment_value
+    output = tmp_path / "operation.json"
+    args = (
+        ("collect", "--output", str(output))
+        if command == "collect"
+        else ("run", "--shard", "serial", "--output", str(output))
+    )
+
+    result = _invoke(project, *args)
+
+    _assert_metadata_rejected(result, output, path=Path(project.env["IMAGEDATA_FILE"]))
+    assert not sentinel.exists()
+
+
+@pytest.mark.parametrize("path_kind", ["missing", "relative", "symlink", "directory", "fifo", "special"])
+def test_runner_metadata_requires_an_absolute_regular_nonsymlink_file(
+    tmp_path: Path, path_kind: str
+) -> None:
+    project = _init_project(tmp_path / "repo")
+    valid_path = Path(project.env["IMAGEDATA_FILE"])
+    if path_kind == "missing":
+        metadata_path = tmp_path / "missing-imagedata.json"
+        project.env["IMAGEDATA_FILE"] = str(metadata_path)
+    elif path_kind == "relative":
+        project.env["IMAGEDATA_FILE"] = valid_path.name
+    elif path_kind == "symlink":
+        metadata_path = tmp_path / "linked-imagedata.json"
+        metadata_path.symlink_to(valid_path)
+        project.env["IMAGEDATA_FILE"] = str(metadata_path)
+    elif path_kind == "directory":
+        metadata_path = tmp_path / "imagedata-directory"
+        metadata_path.mkdir()
+        project.env["IMAGEDATA_FILE"] = str(metadata_path)
+    elif path_kind == "fifo":
+        metadata_path = tmp_path / "imagedata.fifo"
+        os.mkfifo(metadata_path)
+        project.env["IMAGEDATA_FILE"] = str(metadata_path)
+    else:
+        metadata_path = Path("/dev/null")
+        project.env["IMAGEDATA_FILE"] = str(metadata_path)
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output), timeout=3)
+
+    _assert_metadata_rejected(result, output, path=Path(project.env["IMAGEDATA_FILE"]))
+
+
+def test_runner_metadata_rejection_does_not_leak_raw_encoded_or_path_secrets(tmp_path: Path) -> None:
+    raw_secret = "HARNESS/EFF06+REDACTION=CANARY"
+    encoded_secrets = (
+        raw_secret,
+        base64.b64encode(raw_secret.encode("ascii")).decode("ascii"),
+        quote(raw_secret, safe=""),
+    )
+    project = _init_project(tmp_path / "repo")
+    raw = json.dumps(
+        [
+            {"group": "Operating System", "detail": "Ubuntu 24.04"},
+            {
+                "group": "Runner Image",
+                "detail": {"nested": [raw_secret, encoded_secrets[1], encoded_secrets[2]]},
+            },
+        ],
+        ensure_ascii=True,
+    ).encode("utf-8")
+    metadata = project.root / f"metadata-{quote(raw_secret, safe='')}.json"
+    metadata.write_bytes(raw)
+    project.env["IMAGEDATA_FILE"] = str(metadata)
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output))
+
+    _assert_metadata_rejected(result, output, path=metadata)
+    for secret in encoded_secrets:
+        assert secret not in result.stdout + result.stderr
+
+
+def test_runner_metadata_accepts_exact_byte_limit_and_rejects_one_byte_over(tmp_path: Path) -> None:
+    project = _init_project(tmp_path / "repo")
+    metadata = Path(project.env["IMAGEDATA_FILE"])
+    valid = metadata.read_bytes()
+    assert len(valid) < MAX_RUNNER_METADATA_BYTES
+    metadata.write_bytes(valid + b" " * (MAX_RUNNER_METADATA_BYTES - len(valid)))
+    exact_output = tmp_path / "exact-limit.json"
+
+    exact_result = _invoke(project, "collect", "--output", str(exact_output))
+
+    _successful(exact_result)
+    assert exact_output.is_file()
+
+    metadata.write_bytes(valid + b" " * (MAX_RUNNER_METADATA_BYTES + 1 - len(valid)))
+    oversized_output = tmp_path / "oversized.json"
+
+    oversized_result = _invoke(project, "collect", "--output", str(oversized_output))
+
+    _assert_metadata_rejected(oversized_result, oversized_output, path=metadata)
+
+
+def test_runner_metadata_is_one_immutable_snapshot_for_the_operation(tmp_path: Path) -> None:
+    project = _init_project(
+        tmp_path / "repo",
+        test_files={
+            "conftest.py": (
+                "import os\nfrom pathlib import Path\n"
+                "Path(os.environ['IMAGEDATA_FILE']).write_bytes(b'{malformed after admission')\n"
+            ),
+            "tests/test_snapshot.py": "def test_snapshot():\n    assert True\n",
+        },
+    )
+    metadata = Path(project.env["IMAGEDATA_FILE"])
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output))
+
+    _successful(result)
+    manifest = _load_canonical(output)
+    assert metadata.read_bytes() == b"{malformed after admission"
+    assert manifest["runner_image_os"] == "ubuntu24"
+    assert manifest["runner_image_version"] == RUNNER_IMAGE_VERSION
+
+
 def test_weights_are_the_approved_fixed_positive_observations() -> None:
     _require_cli()
     raw = WEIGHTS.read_bytes()
     weights = json.loads(raw)
+    assert hashlib.sha256(raw).hexdigest() == APPROVED_WEIGHTS_SHA256
     assert type(weights) is dict
     assert set(weights) == {"default_ms", "job_id", "run_id", "schema_version", "source_head", "weights_ms"}
     assert weights["schema_version"] == 1 and type(weights["schema_version"]) is int

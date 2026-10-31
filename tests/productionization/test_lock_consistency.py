@@ -29,6 +29,12 @@ UPLOAD_ARTIFACT_COMMIT = "ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD_ARTIFACT_COMMIT = "d3f86a106a0bac45b974a628896c90dbdf5c8093"
 PARTITION_SCRIPT = "scripts/ci_partition.py"
 PARTITION_SHARDS = ("test-shard-0", "test-shard-1")
+PINNED_TEST_RUNNER_JOBS = {
+    "test-shard-0",
+    "test-shard-1",
+    "test",
+    "serial-baseline",
+}
 
 
 def _require_file(path: Path, contract: str) -> Path:
@@ -540,10 +546,14 @@ def _assert_active_ci_policy(workflow: dict) -> None:
         "serial-baseline": "ci-serial-reference",
     }
     required_runs = _required_ci_runs()
+    assert {
+        job_name for job_name in required_runs if jobs[job_name].get("runs-on") == "ubuntu-24.04"
+    } == PINNED_TEST_RUNNER_JOBS
     for job_name, commands in required_runs.items():
         job = jobs.get(job_name)
         assert type(job) is dict
-        assert job.get("runs-on") == "ubuntu-latest"
+        expected_runner = "ubuntu-24.04" if job_name in PINNED_TEST_RUNNER_JOBS else "ubuntu-latest"
+        assert job.get("runs-on") == expected_runner
         if job_name == "foundation-contract-docs-lock":
             assert type(job.get("if")) is str
             assert job["if"] == "${{ always() }}"
@@ -696,7 +706,8 @@ def _valid_ci_policy_fixture() -> dict:
                 }
             )
 
-        job = {"runs-on": "ubuntu-latest", "steps": steps}
+        runner = "ubuntu-24.04" if job_name in PINNED_TEST_RUNNER_JOBS else "ubuntu-latest"
+        job = {"runs-on": runner, "steps": steps}
         if job_name == "test-shard-0":
             job.update({"name": "test-shard-0", "needs": []})
         elif job_name == "test-shard-1":
@@ -731,6 +742,23 @@ def _active_ci_fixture() -> dict:
 
 def test_active_ci_runtime_fixture_preserves_all_locked_full_and_security_gates() -> None:
     _assert_active_ci_policy(_active_ci_fixture())
+
+
+def test_active_ci_policy_pins_exactly_the_four_test_jobs_to_ubuntu_24_04() -> None:
+    template = _valid_ci_policy_fixture()
+    _assert_active_ci_policy(template)
+
+    for job_name in PINNED_TEST_RUNNER_JOBS:
+        candidate = copy.deepcopy(template)
+        candidate["jobs"][job_name]["runs-on"] = "ubuntu-latest"
+        with pytest.raises(AssertionError):
+            _assert_active_ci_policy(candidate)
+
+    for job_name in set(template["jobs"]) - PINNED_TEST_RUNNER_JOBS:
+        candidate = copy.deepcopy(template)
+        candidate["jobs"][job_name]["runs-on"] = "ubuntu-24.04"
+        with pytest.raises(AssertionError):
+            _assert_active_ci_policy(candidate)
 
 
 def test_active_ci_policy_rejects_retired_ambiguous_or_hidden_matrix_expansion() -> None:

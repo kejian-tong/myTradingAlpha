@@ -31,6 +31,12 @@ if [[ "${TEST_RESULT:-}" != "success" || "${LINT_RESULT:-}" != "success" || "${S
 fi
 printf '%s\\n' 'Foundation dependency coverage is satisfied by test, lint, and smoke-install.'"""
 PARTITION_SCRIPT = "scripts/ci_partition.py"
+PINNED_TEST_RUNNER_JOBS = {
+    "test-shard-0",
+    "test-shard-1",
+    "test",
+    "serial-baseline",
+}
 
 
 def _workflow() -> dict:
@@ -83,6 +89,24 @@ def _assert_no_pytest_selector_env(workflow: dict) -> None:
         if type(environment) is dict:
             assert all(type(key) is str for key in environment)
             assert not [key for key in environment if key.upper().startswith("PYTEST_")]
+
+
+def _assert_no_runner_metadata_override(workflow: dict) -> None:
+    jobs = workflow.get("jobs")
+    assert type(jobs) is dict
+    scopes = [workflow]
+    for job in jobs.values():
+        assert type(job) is dict
+        scopes.append(job)
+        steps = job.get("steps", [])
+        assert type(steps) is list
+        scopes.extend(step for step in steps if type(step) is dict)
+
+    for scope in scopes:
+        environment = scope.get("env")
+        assert environment is None or type(environment) is dict
+        if type(environment) is dict:
+            assert "IMAGEDATA_FILE" not in environment
 
 
 def _valid_workflow() -> dict:
@@ -257,8 +281,15 @@ def test_workflow_selector_environment_is_rejected_at_workflow_job_and_step_leve
 def test_full_ci_and_pytest_discovery_remain_unfiltered() -> None:
     workflow = _workflow()
     _assert_no_pytest_selector_env(workflow)
+    _assert_no_runner_metadata_override(workflow)
     jobs = workflow["jobs"]
     assert {"test-shard-0", "test-shard-1", "test"} <= set(jobs)
+    assert {
+        job_name for job_name, job in jobs.items() if job.get("runs-on") == "ubuntu-24.04"
+    } == PINNED_TEST_RUNNER_JOBS
+
+    for job_name in PINNED_TEST_RUNNER_JOBS:
+        assert jobs[job_name].get("runs-on") == "ubuntu-24.04"
 
     for shard, shard_id in (("0", "test-shard-0"), ("1", "test-shard-1")):
         job = jobs[shard_id]
