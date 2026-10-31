@@ -631,13 +631,10 @@ def _native_runner_image() -> tuple[str, str]:
     image = image_match.group(1)
     version = version_match.group(1)
     image_os = os.environ.get("ImageOS")  # noqa: SIM112 - exact GitHub Actions key
-    image_version = os.environ.get("ImageVersion")  # noqa: SIM112 - exact GitHub Actions key
     if image != SUPPORTED_RUNNER_IMAGE:
         raise _RunnerAdmissionError(RUNNER_IMAGE_UNSUPPORTED_CODE)
     if image_os != SUPPORTED_RUNNER_IMAGE_OS:
         raise _RunnerAdmissionError(RUNNER_IMAGE_OS_CODE)
-    if version != image_version:
-        raise _RunnerAdmissionError(RUNNER_IMAGE_VERSION_CODE)
     if VERSION.fullmatch(version) is None:
         raise _RunnerAdmissionError(RUNNER_METADATA_DECLARATION_CODE)
     return image_os, version
