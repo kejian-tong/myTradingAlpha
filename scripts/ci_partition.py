@@ -27,6 +27,13 @@ MAX_EXECUTION_SECONDS = 18_000
 MAX_NODE_COUNT = 50_000
 MAX_NODEID_CHARS = 262_144
 MAX_STRING_CHARS = 512
+MAX_RUNNER_METADATA_BYTES = 16_384
+MAX_RUNNER_GROUPS = 128
+MAX_RUNNER_GROUP_CHARS = 128
+MAX_RUNNER_DETAIL_CHARS = 4_096
+MAX_RUNNER_DETAIL_LINES = 128
+SUPPORTED_RUNNER_IMAGE = "ubuntu-24.04"
+SUPPORTED_RUNNER_IMAGE_OS = "ubuntu24"
 FIXED_ERROR = "CI partition operation failed\n"
 UV_VERSION = "0.13.5"
 BINDING_FIELDS = (
@@ -314,10 +321,11 @@ def _validate_receipt(
         raise PartitionError
     if any(not _bounded_string(item, maximum=MAX_NODEID_CHARS) for item in selected):
         raise PartitionError
+    selected_set = set(selected)
     nodeid_set = set(nodeids)
-    if len(set(selected)) != len(selected) or any(item not in nodeid_set for item in selected):
+    if len(selected_set) != len(selected) or any(item not in nodeid_set for item in selected):
         raise PartitionError
-    if selected != [item for item in manifest["collection_order"] if item in set(selected)]:
+    if selected != [item for item in manifest["collection_order"] if item in selected_set]:
         raise PartitionError
     _validate_outcomes(value["outcomes"], selected)
     return value
@@ -431,10 +439,10 @@ def _parse_weights(raw: bytes) -> tuple[int, dict[str, int]]:
             raise PartitionError
     if (
         value["schema_version"] != 1
-        or value["source_head"] != "f80d14b537d70e86cffdc2e41f4d447ec875a68f"
-        or value["run_id"] != 40995106582
-        or value["job_id"] != 123866296171
-        or value["default_ms"] != 1420
+        or value["source_head"] != "948cb8bb702dfaf0aa8db8f13d776e4afd33270a"
+        or value["run_id"] != 41130111267
+        or value["job_id"] != 124318560359
+        or value["default_ms"] != 786
         or type(value["weights_ms"]) is not dict
     ):
         raise PartitionError
@@ -518,7 +526,85 @@ def _event_source_sha() -> str:
     return source_sha
 
 
+def _native_runner_image() -> tuple[str, str]:
+    metadata_path_value = os.environ.get("IMAGEDATA_FILE", "/imagegeneration/imagedata.json")
+    if type(metadata_path_value) is not str or not metadata_path_value:
+        raise PartitionError
+    metadata_path = Path(metadata_path_value)
+    if not metadata_path.is_absolute():
+        raise PartitionError
+
+    raw = _read_regular_file(metadata_path, maximum=MAX_RUNNER_METADATA_BYTES)
+    try:
+        groups = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError, OverflowError) as exc:
+        raise PartitionError from exc
+    if type(groups) is not list or not groups or len(groups) > MAX_RUNNER_GROUPS:
+        raise PartitionError
+
+    runner_details: list[str] = []
+    for group in groups:
+        if type(group) is not dict or set(group) != {"group", "detail"}:
+            raise PartitionError
+        name = group["group"]
+        detail = group["detail"]
+        if (
+            not _bounded_string(name, maximum=MAX_RUNNER_GROUP_CHARS)
+            or not _bounded_string(detail, maximum=MAX_RUNNER_DETAIL_CHARS)
+            or len(detail.splitlines()) > MAX_RUNNER_DETAIL_LINES
+        ):
+            raise PartitionError
+        if name == "Runner Image":
+            runner_details.append(detail)
+    if len(runner_details) != 1:
+        raise PartitionError
+
+    lines = runner_details[0].splitlines()
+    if not lines or len(lines) > MAX_RUNNER_DETAIL_LINES:
+        raise PartitionError
+    image_lines: list[str] = []
+    version_lines: list[str] = []
+    for line in lines:
+        declaration = line.lstrip()
+        if declaration.startswith("Image:"):
+            if line != declaration:
+                raise PartitionError
+            image_lines.append(declaration)
+        elif declaration.startswith("Version:"):
+            if line != declaration:
+                raise PartitionError
+            version_lines.append(declaration)
+        elif declaration.startswith("Image"):
+            if line != declaration or not declaration.startswith("Image Release: "):
+                raise PartitionError
+        elif declaration.startswith("Version"):
+            raise PartitionError
+    if len(image_lines) != 1 or len(version_lines) != 1:
+        raise PartitionError
+    image_match = re.fullmatch(r"Image: (.+)", image_lines[0])
+    version_match = re.fullmatch(r"Version: ([0-9]+\.[0-9]+\.[0-9]+)", version_lines[0])
+    if image_match is None or version_match is None:
+        raise PartitionError
+    image = image_match.group(1)
+    version = version_match.group(1)
+    image_os = os.environ.get("ImageOS")  # noqa: SIM112 - exact GitHub Actions key
+    image_version = os.environ.get("ImageVersion")  # noqa: SIM112 - exact GitHub Actions key
+    if (
+        image != SUPPORTED_RUNNER_IMAGE
+        or image_os != SUPPORTED_RUNNER_IMAGE_OS
+        or version != image_version
+        or VERSION.fullmatch(version) is None
+    ):
+        raise PartitionError
+    return image_os, version
+
+
 def _runtime_binding() -> dict[str, Any]:
+    runner_image_os, runner_image_version = _native_runner_image()
     root = Path.cwd().resolve(strict=True)
     if Path(_git(root, "rev-parse", "--show-toplevel")).resolve(strict=True) != root:
         raise PartitionError
@@ -555,8 +641,8 @@ def _runtime_binding() -> dict[str, Any]:
         "workflow_run_id": _positive_env_integer("GITHUB_RUN_ID"),
         "workflow_run_attempt": _positive_env_integer("GITHUB_RUN_ATTEMPT"),
         "runner_os": os.environ.get("RUNNER_OS"),
-        "runner_image_os": os.environ.get("ImageOS"),  # noqa: SIM112 - exact GitHub Actions key
-        "runner_image_version": os.environ.get("ImageVersion"),  # noqa: SIM112 - exact GitHub Actions key
+        "runner_image_os": runner_image_os,
+        "runner_image_version": runner_image_version,
         "python_version": platform.python_version(),
         "uv_version": UV_VERSION,
     }

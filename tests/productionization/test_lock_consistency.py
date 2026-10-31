@@ -432,7 +432,11 @@ def test_lock_checker_reports_requires_python_drift_without_mutating_lock(tmp_pa
 
 
 def _required_ci_runs() -> dict[str, dict[str, str]]:
+    runner_diagnostics = (
+        'lscpu\nfindmnt -n -T "$GITHUB_WORKSPACE" -o FSTYPE,OPTIONS'
+    )
     shard_commands = {
+        "Record runner diagnostics": runner_diagnostics,
         "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
         "Collect full test suite": (
             f"uv run --no-sync python {PARTITION_SCRIPT} collect --output collection.json"
@@ -452,6 +456,7 @@ def _required_ci_runs() -> dict[str, dict[str, str]]:
             ),
         },
         "test": {
+            "Record runner diagnostics": runner_diagnostics,
             "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
             "Prepare coverage artifact": "mkdir -p ci-coverage",
             "Collect independent coverage reference": (
@@ -491,6 +496,7 @@ def _required_ci_runs() -> dict[str, dict[str, str]]:
         },
     }
     runs["serial-baseline"] = {
+        "Record runner diagnostics": runner_diagnostics,
         "Install locked environment (with dev extras)": "uv sync --locked --extra dev",
         "Run serial reference suite": (
             f"uv run --no-sync python {PARTITION_SCRIPT} run --shard serial --output serial.json"
@@ -628,13 +634,7 @@ def _assert_active_ci_policy(workflow: dict) -> None:
 
 
 def _valid_ci_policy_fixture() -> dict:
-    """Build one valid fixed-topology policy fixture for mutation tests.
-
-    The checked-in workflow intentionally remains pre-partition during RED, so
-    mutation tests must not use it as their positive baseline. This synthetic
-    fixture lets each mutation demonstrate that the policy rejects that
-    specific violation rather than merely rejecting the preexisting workflow.
-    """
+    """Build a stable valid policy fixture so each mutation tests one violation."""
     jobs = {}
     for job_name, commands in _required_ci_runs().items():
         if job_name == "foundation-contract-docs-lock":

@@ -186,6 +186,7 @@ def _runner_image_metadata(
                 "group": "Runner Image",
                 "detail": (
                     f"Image: {image}\nVersion: {version}\n"
+                    "Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24/202610.30.1\n"
                     "Included Software: https://github.com/actions/runner-images"
                 ),
             },
