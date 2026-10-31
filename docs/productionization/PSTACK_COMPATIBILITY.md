@@ -2,7 +2,7 @@
 
 This Harness integration adapts a bounded set of skills from `cursor/plugins/pstack` version `0.15.36`, commit `4dd1d05818d19792e7cd6e818f1667f95f7e1dbe`, whose `pstack` subtree is `4719e1c4b4c43bac85d4206a8b41dd2899769c1c`. The previous integrated pin was version `0.15.32`, commit `e73df471cd4bd918367e99f3dd9c51bd53ddf5f0`, with subtree `880564357e051d7c7802da1cb5d8df1d0b008299`. The machine-readable source and adaptation contract is `.agents/skills/poteto-mode/compatibility.json`.
 
-The selected source inventory remains 19 files: 16 previously selected sources and the three root skill sources—`ketchup`, `in-your-own-words`, and `sharpen`—introduced in PR #101. Exactly three selected source hashes change at the current pin (`arena`, `interrogate`, and `poteto-mode`); the other 16 selected source hashes are unchanged. The 16-skill local adaptation inventory and six authoritative Harness skills remain. Only the local `interrogate` adaptation changes in this update; the other 15 adaptations, including `arena` and `poteto-mode`, remain byte-identical. Skill frontmatter contains only the Codex `name` and `description`. The manifest remains schema version 1, preserves its authority and portable-reference records, retains all prior exclusions, and adds four exclusions for `statechart`, `create-formal-verification-skill`, `maintain-formal-verification-skill`, and `ketchup-video`.
+The selected source inventory remains 19 files: 16 previously selected sources and the three root skill sources—`ketchup`, `in-your-own-words`, and `sharpen`—introduced in PR #101. Exactly three selected source hashes change at the current pin (`arena`, `interrogate`, and `poteto-mode`); the other 16 selected source hashes are unchanged. The 16-skill local adaptation inventory and six authoritative Harness skills remain. Only the local `interrogate` adaptation changes in this update; the other 15 adaptations, including `arena` and `poteto-mode`, remain byte-identical. Skill frontmatter contains only the Codex `name` and `description`. The manifest remains schema version 1 and preserves its authority and portable-reference records. It retains the 17 exclusions established by the preceding integration (including `statechart`, `create-formal-verification-skill`, `maintain-formal-verification-skill`, and `ketchup-video`) and adds one exclusion for the changed but unselected `principle-explain-the-number` skill.
 
 ## Skill purposes
 
@@ -31,7 +31,7 @@ The initial adaptation in PR #101 moved from canonical version `0.15.13`, commit
 
 ## Historical source synchronization — PR #102
 
-PR #102 recorded the preceding canonical update from version `0.15.25`, commit `e5136d82418d2db3165ea1050d17577cd618cc05`, subtree `de8e53ebbeca0fe9351e950095e720655da08349`, to version `0.15.25`, commit `99743e9c151c8537cbbf1f98bb38f34ef3368453`, subtree `0d5fd349cbc77d054eed60f0e8cdfbea86321ff9`. Its one-commit and five-path counts describe that historical compression-only update, not the current 66-path synchronization.
+PR #102 recorded the preceding canonical update from version `0.15.25`, commit `e5136d82418d2db3165ea1050d17577cd618cc05`, subtree `de8e53ebbeca0fe9351e950095e720655da08349`, to version `0.15.25`, commit `99743e9c151c8537cbbf1f98bb38f34ef3368453`, subtree `0d5fd349cbc77d054eed60f0e8cdfbea86321ff9`. Its one-commit and five-path counts describe that historical compression-only update, not the current 464-path synchronization.
 
 ## Current upstream change disposition
 
@@ -39,14 +39,28 @@ The current canonical source advances from version `0.15.32`, commit `e73df471cd
 
 Three previously selected source hashes change (`arena`, `interrogate`, and `poteto-mode`). Only `interrogate` receives a local adaptation; its upstream workflow is narrowed to preserve repository authority, evidence boundaries, and unresolved material-risk handling. The changed `arena` and `poteto-mode` source bytes are excluded from adaptation. Their model-family fallback and cross-judge changes, mandatory first-message restatement, model defaults, and autopilot wording do not alter local skills or repository routing.
 
-The paths for the 433 changed statechart entries, all other added scripts and playbooks, deleted interrogate references, and new guidance are excluded. Excluded implementation and corpus files were classified using frozen tree metadata; their scripts and corpus contents were not imported or run. The new `principle-explain-the-number` capability, formal-verification skills, video and setup guidance are explicitly outside this sync. Version metadata paths provide provenance only. The complete mapping below records every changed path once.
+The paths for the 433 changed statechart entries, all other added scripts and playbooks, deleted interrogate references, and new guidance are excluded. Excluded implementation and corpus files were classified using frozen tree metadata; their scripts and corpus contents were not imported or run. The changed, unselected `principle-explain-the-number` capability, formal-verification skills, video, setup guidance, and remaining new playbooks are explicitly excluded from this sync. Version metadata paths provide provenance only. The complete mapping below records every changed path once.
 
 | Upstream path | Disposition |
 | --- | --- |
+| `.cursor-plugin/plugin.json` | `version_provenance_only` |
+| `README.md` | `excluded_source_documentation` |
+| `docs/guide/04-design.md` | `excluded_source_documentation` |
+| `docs/guide/06-verify-and-ship.md` | `excluded_source_documentation` |
+| `docs/guide/07-overnight.md` | `excluded_source_documentation` |
+| `docs/guide/10-recipes-and-pitfalls.md` | `excluded_source_documentation` |
+| `plugin.json` | `version_provenance_only` |
+| `skills/arena/SKILL.md` | `selected_source_requires_compatible_review` |
+| `skills/create-formal-verification-skill/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/interrogate/SKILL.md` | `selected_source_requires_compatible_review` |
 | `skills/interrogate/references/code-quality-review.md` | `excluded` |
 | `skills/interrogate/references/lead-judgment.md` | `excluded` |
 | `skills/interrogate/references/reviewer-prompt.md` | `excluded` |
 | `skills/interrogate/references/rubric.md` | `excluded` |
+| `skills/ketchup-video/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/poteto-help/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/poteto-help/references/recipes.md` | `excluded_existing_allowlist` |
+| `skills/poteto-mode/SKILL.md` | `selected_source_requires_compatible_review` |
 | `skills/poteto-mode/playbooks/autonomous-run.md` | `excluded` |
 | `skills/poteto-mode/playbooks/autopilot-full.md` | `excluded` |
 | `skills/poteto-mode/playbooks/autopilot-stack.md` | `excluded` |
@@ -58,6 +72,10 @@ The paths for the 433 changed statechart entries, all other added scripts and pl
 | `skills/poteto-mode/scripts/orch/orch.ts` | `excluded` |
 | `skills/poteto-mode/scripts/orch/store.ts` | `excluded` |
 | `skills/poteto-mode/scripts/package.json` | `excluded` |
+| `skills/principle-explain-the-number/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/setup-pstack/SKILL.md` | `excluded_existing_allowlist` |
+| `skills/statechart/SKILL.md` | `excluded_pending_separate_scope` |
+| `skills/statechart/references/render.md` | `excluded_pending_separate_scope` |
 | `skills/statechart/scripts/backends/cfg.ts` | `excluded` |
 | `skills/statechart/scripts/backends/mermaid.ts` | `excluded` |
 | `skills/statechart/scripts/backends/plain-text.ts` | `excluded` |
@@ -489,24 +507,6 @@ The paths for the 433 changed statechart entries, all other added scripts and pl
 | `skills/statechart/scripts/tsconfig.json` | `excluded` |
 | `skills/statechart/scripts/ways-in.mjs` | `excluded` |
 | `skills/statechart/scripts/worker.ts` | `excluded` |
-| `skills/create-formal-verification-skill/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/ketchup-video/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/poteto-help/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/poteto-help/references/recipes.md` | `excluded_existing_allowlist` |
-| `skills/principle-explain-the-number/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/setup-pstack/SKILL.md` | `excluded_existing_allowlist` |
-| `skills/statechart/SKILL.md` | `excluded_pending_separate_scope` |
-| `skills/statechart/references/render.md` | `excluded_pending_separate_scope` |
-| `README.md` | `excluded_source_documentation` |
-| `docs/guide/04-design.md` | `excluded_source_documentation` |
-| `docs/guide/06-verify-and-ship.md` | `excluded_source_documentation` |
-| `docs/guide/07-overnight.md` | `excluded_source_documentation` |
-| `docs/guide/10-recipes-and-pitfalls.md` | `excluded_source_documentation` |
-| `skills/arena/SKILL.md` | `selected_source_requires_compatible_review` |
-| `skills/interrogate/SKILL.md` | `selected_source_requires_compatible_review` |
-| `skills/poteto-mode/SKILL.md` | `selected_source_requires_compatible_review` |
-| `.cursor-plugin/plugin.json` | `version_provenance_only` |
-| `plugin.json` | `version_provenance_only` |
 
 The dispositions distinguish version-only provenance, excluded source documentation, the three selected source files that required compatibility assessment, already excluded allowlist files, additions reserved for separate scope, and excluded files. All 464 paths appear exactly once; only the `interrogate` source changes its adapted local bytes.
 

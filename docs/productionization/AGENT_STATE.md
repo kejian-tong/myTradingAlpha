@@ -26,7 +26,7 @@ The sync changes no trading algorithm, product dependency, runtime configuration
 
 Current reconciliation records last_completed_maintenance_pr: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`.
 
-HARNESS-EFF-06 / PR #111 refreshed on base `5647d9283b22150c1400584d8fbef7c74c6c9338` and merged at `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`. It added verified two-runner CI partitioning and full-collection receipts; local and CI each reported 5615 passed, 4 skipped, 69 subtests. Its serial comparison policy is in that PR. Its green result is the current main; PR #112 has its own validation gates.
+HARNESS-EFF-06 / PR #111 refreshed on base `5647d9283b22150c1400584d8fbef7c74c6c9338` and merged at `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`. It added verified two-runner CI partitioning and full-collection receipts. Its public final gate and completion record report 5,748 passed, 4 skipped, and 69 subtests on reviewed head `f5c5ea41382bbf3c33e1f2d5b3dc0df9185ba059` ([gate](https://github.com/kejian-tong/myTradingAlpha/pull/111#issuecomment-6540633425)). Its merge is the current main; PR #112 has its own validation gates.
 
 HARNESS-EFF-05: PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338`; recovery references, compaction and usage accounting remain linked from that PR. BT-05 / PR #104 merged at `b12bef51acd2b1ef6d6db01dede959f1dd67130f`; it added offline manifested replay/checkpointing only. Prior PR108/109 evidence remains in their GitHub PR histories.
 
