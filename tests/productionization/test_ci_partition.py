@@ -22,6 +22,16 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci_partition.py"
 WEIGHTS = ROOT / "scripts" / "ci_partition_weights.json"
 FIXED_ERROR = "CI partition operation failed\n"
+RUNNER_ADMISSION_CODES = {
+    "RUNNER_METADATA_PATH",
+    "RUNNER_METADATA_READ",
+    "RUNNER_METADATA_JSON",
+    "RUNNER_METADATA_SHAPE",
+    "RUNNER_METADATA_DECLARATION",
+    "RUNNER_IMAGE_UNSUPPORTED",
+    "RUNNER_IMAGE_OS",
+    "RUNNER_IMAGE_VERSION",
+}
 WEIGHT_SOURCE_HEAD = "948cb8bb702dfaf0aa8db8f13d776e4afd33270a"
 WEIGHT_RUN_ID = 41130111267
 WEIGHT_JOB_ID = 124318560359
@@ -207,14 +217,34 @@ def _write_runner_metadata(
 
 
 def _assert_metadata_rejected(
-    result: subprocess.CompletedProcess[str], output: Path, *, path: Path | None = None
+    result: subprocess.CompletedProcess[str],
+    output: Path,
+    *,
+    reason_code: str | None = None,
+    path: Path | None = None,
 ) -> None:
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr == FIXED_ERROR
+    assert result.stderr.startswith(FIXED_ERROR)
+    diagnostic = result.stderr[len(FIXED_ERROR) :]
+    assert diagnostic.endswith("\n") and diagnostic.count("\n") == 1
+    actual_code = diagnostic[:-1]
+    assert actual_code in RUNNER_ADMISSION_CODES
+    if reason_code is not None:
+        assert reason_code in RUNNER_ADMISSION_CODES
+        assert actual_code == reason_code
     assert not output.exists()
     if path is not None:
         assert str(path) not in result.stdout + result.stderr
+
+
+def _assert_admission_failure(
+    result: subprocess.CompletedProcess[str], reason_code: str
+) -> None:
+    assert reason_code in RUNNER_ADMISSION_CODES
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == f"{FIXED_ERROR}{reason_code}\n"
 
 
 def _git(root: Path, *args: str) -> str:
@@ -519,12 +549,16 @@ def test_native_runner_metadata_rejects_ambiguous_or_unbounded_documents(
 
 @pytest.mark.parametrize("command", ["collect", "run"])
 @pytest.mark.parametrize(
-    ("environment_key", "environment_value"),
+    ("environment_key", "environment_value", "reason_code"),
     [
-        pytest.param("ImageOS", "ubuntu22", id="image-os-mismatch"),
-        pytest.param("ImageOS", "ubuntu24\n", id="image-os-control-character"),
-        pytest.param("ImageVersion", "202610.31.1", id="image-version-mismatch"),
-        pytest.param("ImageVersion", "202610.30.１", id="image-version-nonascii-digit"),
+        pytest.param("ImageOS", "ubuntu22", "RUNNER_IMAGE_OS", id="image-os-mismatch"),
+        pytest.param("ImageOS", "ubuntu24\n", "RUNNER_IMAGE_OS", id="image-os-control-character"),
+        pytest.param(
+            "ImageVersion", "202610.31.1", "RUNNER_IMAGE_VERSION", id="image-version-mismatch"
+        ),
+        pytest.param(
+            "ImageVersion", "202610.30.１", "RUNNER_IMAGE_VERSION", id="image-version-nonascii-digit"
+        ),
     ],
 )
 def test_native_environment_disagreement_fails_before_pytest_or_output(
@@ -532,6 +566,7 @@ def test_native_environment_disagreement_fails_before_pytest_or_output(
     command: str,
     environment_key: str,
     environment_value: str,
+    reason_code: str,
 ) -> None:
     sentinel = tmp_path / "collection-sentinel"
     project = _init_project(
@@ -555,11 +590,92 @@ def test_native_environment_disagreement_fails_before_pytest_or_output(
 
     result = _invoke(project, *args)
 
-    _assert_metadata_rejected(result, output, path=Path(project.env["IMAGEDATA_FILE"]))
+    _assert_metadata_rejected(
+        result,
+        output,
+        reason_code=reason_code,
+        path=Path(project.env["IMAGEDATA_FILE"]),
+    )
     assert not sentinel.exists()
 
 
-@pytest.mark.parametrize("path_kind", ["missing", "relative", "symlink", "directory", "fifo", "special"])
+@pytest.mark.parametrize(
+    ("raw", "reason_code"),
+    [
+        pytest.param(b"{malformed", "RUNNER_METADATA_JSON", id="json"),
+        pytest.param(b"[NaN]", "RUNNER_METADATA_JSON", id="nonstandard-json-constant"),
+        pytest.param(
+            b'[{"group":"Runner Image","group":"Runner Image","detail":"Image: ubuntu-24.04\\nVersion: 202610.30.1"}]',
+            "RUNNER_METADATA_JSON",
+            id="duplicate-json-key",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Other", "detail": "value"}]),
+            "RUNNER_METADATA_SHAPE",
+            id="shape",
+        ),
+        pytest.param(
+            _metadata_json([{"group": "Runner Image", "detail": "Version: 202610.30.1"}]),
+            "RUNNER_METADATA_DECLARATION",
+            id="declaration",
+        ),
+        pytest.param(
+            _runner_image_metadata(image="ubuntu-22.04"),
+            "RUNNER_IMAGE_UNSUPPORTED",
+            id="unsupported-image",
+        ),
+    ],
+)
+def test_native_metadata_categories_use_fixed_reason_codes(
+    tmp_path: Path, raw: bytes, reason_code: str
+) -> None:
+    project = _init_project(tmp_path / "repo")
+    metadata = _write_runner_metadata(project, raw)
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output))
+
+    _assert_metadata_rejected(result, output, reason_code=reason_code, path=metadata)
+
+
+@pytest.mark.parametrize("command", ["collect", "run"])
+def test_malformed_metadata_code_precedes_pytest_import_and_output(
+    tmp_path: Path, command: str
+) -> None:
+    sentinel = tmp_path / "collection-sentinel"
+    project = _init_project(
+        tmp_path / "repo",
+        test_files={
+            "conftest.py": (
+                "import os\nfrom pathlib import Path\n"
+                "Path(os.environ['PARTITION_TEST_SENTINEL']).write_text('collected')\n"
+            ),
+            "tests/test_sentinel.py": "def test_sentinel():\n    assert True\n",
+        },
+    )
+    project.env["PARTITION_TEST_SENTINEL"] = str(sentinel)
+    metadata = _write_runner_metadata(project, b"{malformed")
+    output = tmp_path / "operation.json"
+    args = (
+        ("collect", "--output", str(output))
+        if command == "collect"
+        else ("run", "--shard", "serial", "--output", str(output))
+    )
+
+    result = _invoke(project, *args)
+
+    _assert_metadata_rejected(
+        result,
+        output,
+        reason_code="RUNNER_METADATA_JSON",
+        path=metadata,
+    )
+    assert not sentinel.exists()
+
+
+@pytest.mark.parametrize(
+    "path_kind", ["missing", "relative", "empty", "symlink", "directory", "fifo", "special"]
+)
 def test_runner_metadata_requires_an_absolute_regular_nonsymlink_file(
     tmp_path: Path, path_kind: str
 ) -> None:
@@ -570,6 +686,8 @@ def test_runner_metadata_requires_an_absolute_regular_nonsymlink_file(
         project.env["IMAGEDATA_FILE"] = str(metadata_path)
     elif path_kind == "relative":
         project.env["IMAGEDATA_FILE"] = valid_path.name
+    elif path_kind == "empty":
+        project.env["IMAGEDATA_FILE"] = ""
     elif path_kind == "symlink":
         metadata_path = tmp_path / "linked-imagedata.json"
         metadata_path.symlink_to(valid_path)
@@ -589,7 +707,45 @@ def test_runner_metadata_requires_an_absolute_regular_nonsymlink_file(
 
     result = _invoke(project, "collect", "--output", str(output), timeout=3)
 
-    _assert_metadata_rejected(result, output, path=Path(project.env["IMAGEDATA_FILE"]))
+    reason_code = "RUNNER_METADATA_PATH" if path_kind in {"relative", "empty"} else "RUNNER_METADATA_READ"
+    _assert_metadata_rejected(
+        result,
+        output,
+        reason_code=reason_code,
+        path=Path(project.env["IMAGEDATA_FILE"]),
+    )
+
+
+def test_failed_runner_metadata_read_is_classified_without_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts import ci_partition
+
+    project = _init_project(tmp_path / "repo")
+    metadata = tmp_path / "missing-imagedata.json"
+    output = tmp_path / "collection.json"
+    reads: list[Path] = []
+    original_read = ci_partition._read_regular_file
+
+    def counted_read(path: Path, *, maximum: int) -> bytes:
+        if Path(path) == metadata:
+            reads.append(Path(path))
+        return original_read(path, maximum=maximum)
+
+    monkeypatch.chdir(project.root)
+    monkeypatch.setenv("IMAGEDATA_FILE", str(metadata))
+    monkeypatch.setattr(ci_partition, "_read_regular_file", counted_read)
+
+    result = ci_partition.main(["collect", "--output", str(output)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert captured.out == ""
+    assert captured.err == f"{FIXED_ERROR}RUNNER_METADATA_READ\n"
+    assert reads == [metadata]
+    assert not output.exists()
 
 
 def test_runner_metadata_rejection_does_not_leak_raw_encoded_or_path_secrets(tmp_path: Path) -> None:
@@ -617,9 +773,97 @@ def test_runner_metadata_rejection_does_not_leak_raw_encoded_or_path_secrets(tmp
 
     result = _invoke(project, "collect", "--output", str(output))
 
-    _assert_metadata_rejected(result, output, path=metadata)
+    _assert_metadata_rejected(
+        result, output, reason_code="RUNNER_METADATA_SHAPE", path=metadata
+    )
     for secret in encoded_secrets:
         assert secret not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("secret_kind", ["raw", "base64", "url"])
+def test_runner_environment_secret_is_not_echoed(
+    tmp_path: Path, secret_kind: str
+) -> None:
+    raw_secret = "HARNESS/EFF06+REDACTION=CANARY"
+    encoded_secrets = {
+        "raw": raw_secret,
+        "base64": base64.b64encode(raw_secret.encode("ascii")).decode("ascii"),
+        "url": quote(raw_secret, safe=""),
+    }
+    project = _init_project(tmp_path / "repo")
+    project.env["ImageVersion"] = encoded_secrets[secret_kind]
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output))
+
+    _assert_metadata_rejected(
+        result,
+        output,
+        reason_code="RUNNER_IMAGE_VERSION",
+        path=Path(project.env["IMAGEDATA_FILE"]),
+    )
+    for secret in encoded_secrets.values():
+        assert secret not in result.stdout + result.stderr
+
+
+def test_non_admission_runtime_error_keeps_original_diagnostic(tmp_path: Path) -> None:
+    project = _init_project(tmp_path / "repo")
+    project.env["GITHUB_SHA"] = "b" * 40
+    output = tmp_path / "collection.json"
+
+    result = _invoke(project, "collect", "--output", str(output))
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == FIXED_ERROR
+    assert not output.exists()
+
+
+def test_generic_partition_error_cannot_forge_or_coerce_an_admission_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts import ci_partition
+
+    callbacks: list[str] = []
+
+    class HostileCode:
+        def _called(self, name: str) -> None:
+            callbacks.append(name)
+            raise AssertionError("untrusted reason code was evaluated")
+
+        def __str__(self) -> str:
+            self._called("str")
+
+        def __repr__(self) -> str:
+            self._called("repr")
+
+        def __hash__(self) -> int:
+            self._called("hash")
+
+        def __eq__(self, _other: object) -> bool:
+            self._called("eq")
+
+    error = ci_partition.PartitionError("do not disclose this error")
+    error.code = "RUNNER_METADATA_PATH"
+    error.reason_code = "not-an-allowlisted-code"
+    error.diagnostic_code = HostileCode()
+
+    def fail_runtime_binding() -> Any:
+        raise error
+
+    monkeypatch.setattr(ci_partition, "_runtime_binding", fail_runtime_binding)
+    output = tmp_path / "collection.json"
+
+    result = ci_partition.main(["collect", "--output", str(output)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert captured.out == ""
+    assert captured.err == FIXED_ERROR
+    assert callbacks == []
+    assert not output.exists()
 
 
 def test_runner_metadata_accepts_exact_byte_limit_and_rejects_one_byte_over(tmp_path: Path) -> None:
@@ -640,7 +884,12 @@ def test_runner_metadata_accepts_exact_byte_limit_and_rejects_one_byte_over(tmp_
 
     oversized_result = _invoke(project, "collect", "--output", str(oversized_output))
 
-    _assert_metadata_rejected(oversized_result, oversized_output, path=metadata)
+    _assert_metadata_rejected(
+        oversized_result,
+        oversized_output,
+        reason_code="RUNNER_METADATA_READ",
+        path=metadata,
+    )
 
 
 def test_runner_metadata_is_one_immutable_snapshot_for_the_operation(tmp_path: Path) -> None:
@@ -841,6 +1090,37 @@ def test_aggregate_verification_proves_full_coverage_and_serial_parity(run_bundl
     assert summary["coverage_sha256"] == _canonical_digest(
         {"nodeids": run_bundle.manifest["nodeids"], "outcomes": expected_outcomes}
     )
+
+
+@pytest.mark.parametrize(
+    ("environment_key", "environment_value", "reason_code"),
+    [
+        pytest.param("ImageOS", "ubuntu22", "RUNNER_IMAGE_OS", id="image-os"),
+        pytest.param(
+            "ImageVersion", "202610.31.1", "RUNNER_IMAGE_VERSION", id="image-version"
+        ),
+    ],
+)
+def test_verify_reports_runner_mismatch_with_valid_reference_and_receipts(
+    run_bundle: RunBundle,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environment_key: str,
+    environment_value: str,
+    reason_code: str,
+) -> None:
+    receipts = _copy_receipts(run_bundle, tmp_path / "receipts")
+    reference_before = run_bundle.reference.read_bytes()
+    receipt_bytes_before = {
+        path.name: path.read_bytes() for path in sorted(receipts.iterdir())
+    }
+    monkeypatch.setitem(run_bundle.project.env, environment_key, environment_value)
+
+    result = _verify(run_bundle, receipts, serial=run_bundle.serial)
+
+    _assert_admission_failure(result, reason_code)
+    assert run_bundle.reference.read_bytes() == reference_before
+    assert {path.name: path.read_bytes() for path in sorted(receipts.iterdir())} == receipt_bytes_before
 
 
 def test_pure_bytes_verifier_accepts_explicit_native_binding_without_runtime_access(
