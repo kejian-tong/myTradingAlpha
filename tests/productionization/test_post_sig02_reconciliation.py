@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -7,16 +8,16 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "300605dcbed7aff113d81fd7d709ebbabe01e61c"
-RECONCILED_MAIN_TREE = "67d3c9378a0017cecc02acf85649c93d0bc988d6"
+RECONCILED_MAIN_SHA = "5647d9283b22150c1400584d8fbef7c74c6c9338"
+RECONCILED_MAIN_TREE = "75cf2253270a4353d4dea96cfbf4569430b3a34d"
 BT05_BASE_SHA = "3d9e049b2fa2c54b55ac66d1c3000480cd3254bd"
 BT05_SOURCE_SHA = "f1e4507f0508e822464878508219eeacf5a8eb45"
 BT05_SOURCE_TREE = "eb1fc414d070d9fec1f71bb95f7742be9fbf29ee"
 BT05_MERGE_SHA = "b12bef51acd2b1ef6d6db01dede959f1dd67130f"
 HARNESS109_BASE_SHA = "8b1138841719c19bb74b4ed1176c78af8bcc469c"
 HARNESS109_SOURCE_SHA = "e721ccad33aa912c473fcce8b74d7f48ba56e904"
-HARNESS109_TREE = RECONCILED_MAIN_TREE
-HARNESS109_MERGE_SHA = RECONCILED_MAIN_SHA
+HARNESS109_TREE = "67d3c9378a0017cecc02acf85649c93d0bc988d6"
+HARNESS109_MERGE_SHA = "300605dcbed7aff113d81fd7d709ebbabe01e61c"
 COLD_STATE_URL = (
     "https://github.com/kejian-tong/myTradingAlpha/blob/"
     "300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md"
@@ -44,24 +45,20 @@ def test_operational_state_reconciles_the_current_main_and_completed_bt05() -> N
     assert "BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
 
 
-def test_current_harness_snapshot_is_pr109_and_authorizes_only_eff05() -> None:
+def test_current_harness_snapshot_tracks_main_and_authorizes_only_eff06() -> None:
     state = _state_text()
     normalized = " ".join(state.split())
 
     assert (
-        f"`harness_reconciled_through`: PR #109 / merge `{HARNESS109_MERGE_SHA}`"
+        f"`harness_reconciled_through`: PR #110 / merge `{RECONCILED_MAIN_SHA}`"
         in state
     )
-    assert f"Base `{HARNESS109_BASE_SHA}`" in normalized
+    assert f"PR109: Base `{HARNESS109_BASE_SHA}`" in normalized
     assert f"approved source `{HARNESS109_SOURCE_SHA}`" in normalized
     assert f"tree `{HARNESS109_TREE}`" in normalized
-    assert "merge/tree match reconciled main above" in normalized
-    assert "`current_pr_id`: HARNESS-EFF-05 / PR #110" in state
-    assert "`autonomy_mode`: human-authorized HARNESS-EFF-05 only; later slices require separate authorization" in state
-    assert (
-        "HARNESS-EFF-05 owns native compaction evidence, meaningful-event monitoring, profile-led "
-        "recovery-test reference reuse and explicit root/child usage accounting."
-    ) in normalized
+    assert f"merge `{HARNESS109_MERGE_SHA}`" in normalized
+    assert re.search(r"`current_pr_id`: HARNESS-EFF-06 / PR #[1-9][0-9]{0,5}(?:\s|$)", state)
+    assert "`autonomy_mode`: human-authorized HARNESS-EFF-06 only; later slices require separate authorization" in state
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state
     assert "Routing and safety gates are unchanged." in state

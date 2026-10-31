@@ -10,23 +10,134 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: tests (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.14"]
+  test-shard-0:
+    name: test-shard-0
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
           version: "0.13.5"
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
+      - name: Record runner diagnostics
+        run: |
+          lscpu
+          findmnt -n -T "$GITHUB_WORKSPACE" -o FSTYPE,OPTIONS
       - name: Install locked environment (with dev extras)
         run: uv sync --locked --extra dev
-      - name: Run test suite
-        run: uv run --no-sync pytest -q --durations=25
+      - name: Collect full test suite
+        run: uv run --no-sync python scripts/ci_partition.py collect --output collection.json
+      - name: Run assigned test partition
+        run: uv run --no-sync python scripts/ci_partition.py run --shard 0 --output shard-0.json
+      - name: Upload shard receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-shard-receipt-0
+          path: shard-0.json
+          if-no-files-found: error
+          retention-days: 3
+
+  test-shard-1:
+    name: test-shard-1
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: "0.13.5"
+          python-version: "3.14"
+      - name: Record runner diagnostics
+        run: |
+          lscpu
+          findmnt -n -T "$GITHUB_WORKSPACE" -o FSTYPE,OPTIONS
+      - name: Install locked environment (with dev extras)
+        run: uv sync --locked --extra dev
+      - name: Collect full test suite
+        run: uv run --no-sync python scripts/ci_partition.py collect --output collection.json
+      - name: Run assigned test partition
+        run: uv run --no-sync python scripts/ci_partition.py run --shard 1 --output shard-1.json
+      - name: Upload shard receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-shard-receipt-1
+          path: shard-1.json
+          if-no-files-found: error
+          retention-days: 3
+
+  test:
+    name: tests (py3.14)
+    runs-on: ubuntu-24.04
+    needs: [test-shard-0, test-shard-1]
+    if: ${{ always() }}
+    steps:
+      - name: Verify shard job outcomes
+        shell: bash
+        env:
+          SHARD_ZERO_RESULT: ${{ needs.test-shard-0.result }}
+          SHARD_ONE_RESULT: ${{ needs.test-shard-1.result }}
+        run: |
+          set -euo pipefail
+          if [[ "${SHARD_ZERO_RESULT:-}" != "success" || "${SHARD_ONE_RESULT:-}" != "success" ]]; then
+            printf '%s\n' 'CI shard execution did not complete successfully.' >&2
+            exit 1
+          fi
+          printf '%s\n' 'Both fixed shard jobs completed successfully.'
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: "0.13.5"
+          python-version: "3.14"
+      - name: Record runner diagnostics
+        run: |
+          lscpu
+          findmnt -n -T "$GITHUB_WORKSPACE" -o FSTYPE,OPTIONS
+      - name: Install locked environment (with dev extras)
+        run: uv sync --locked --extra dev
+      - name: Prepare coverage artifact
+        run: mkdir -p ci-coverage
+      - name: Collect independent coverage reference
+        run: uv run --no-sync python scripts/ci_partition.py collect --output ci-coverage/reference.json
+      - name: Download shard receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ci-shard-receipt-*
+          merge-multiple: true
+          path: ci-shard-receipts
+      - name: Verify complete shard coverage
+        run: uv run --no-sync python scripts/ci_partition.py verify --reference ci-coverage/reference.json --receipts ci-shard-receipts > ci-coverage/summary.json
+      - name: Upload coverage evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-coverage
+          path: ci-coverage
+          if-no-files-found: error
+          retention-days: 3
+
+  serial-baseline:
+    name: serial baseline (py3.14)
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci-partition-benchmark') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: "0.13.5"
+          python-version: "3.14"
+      - name: Record runner diagnostics
+        run: |
+          lscpu
+          findmnt -n -T "$GITHUB_WORKSPACE" -o FSTYPE,OPTIONS
+      - name: Install locked environment (with dev extras)
+        run: uv sync --locked --extra dev
+      - name: Run serial reference suite
+        run: uv run --no-sync python scripts/ci_partition.py run --shard serial --output serial.json
+      - name: Upload serial reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-serial-reference
+          path: serial.json
+          if-no-files-found: error
+          retention-days: 3
 
   smoke-install:
     name: clean-install smoke

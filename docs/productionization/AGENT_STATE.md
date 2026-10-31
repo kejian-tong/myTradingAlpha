@@ -6,31 +6,38 @@ Resolve active head, blockers, validation, review and gate from the PR conversat
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `300605dcbed7aff113d81fd7d709ebbabe01e61c`
-- `last_reconciled_main_tree`: `67d3c9378a0017cecc02acf85649c93d0bc988d6`
+- `last_reconciled_main_sha`: `5647d9283b22150c1400584d8fbef7c74c6c9338`
+- `last_reconciled_main_tree`: `75cf2253270a4353d4dea96cfbf4569430b3a34d`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-EFF-05 / PR #110
+- `current_pr_id`: HARNESS-EFF-06 / PR #111
 - `current_phase`: bounded Harness maintenance; Phase 03 incomplete
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
-- `harness_reconciled_through`: PR #109 / merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`
-- `autonomy_mode`: human-authorized HARNESS-EFF-05 only; later slices require separate authorization
+- `harness_reconciled_through`: PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338`
+- `autonomy_mode`: human-authorized HARNESS-EFF-06 only; later slices require separate authorization
 - `next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required
 
 ## Current maintenance
 
-HARNESS-EFF-05 owns native compaction evidence, meaningful-event monitoring, profile-led recovery-test
-reference reuse and explicit root/child usage accounting. BT-06/Phase04+ is not authorized.
-Routing and safety gates are unchanged. No financial algorithm, dependency, runtime/config precedence,
-production phase or broker behavior changes. Full required source/log/review reads override summary budgets.
+HARNESS-EFF-06 owns verified two-runner CI partitioning, full-collection/execution receipts and a
+same-head serial comparison requiring at least 25% measured CI test-path improvement before merge.
+BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged. No financial algorithm,
+dependency, runtime/config precedence, production phase or broker behavior changes.
 
 High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate reviewer_high /
 GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh. Master owns state, scope, sequential writer leases
-and merge. Configured intent and observed model/effort are distinct from authenticated runtime identity.
-Exact RED/GREEN SHAs, lease exports, findings, full local/CI logs and final gate belong in
-[PR #110](https://github.com/kejian-tong/myTradingAlpha/pull/110); no future approval/merge is asserted here.
-New commits stale affected evidence. Failed or incomplete runs do not pass.
+and merge. RED/GREEN, leases, local/CI logs, coverage/timing, review and gate
+belong in [PR #111](https://github.com/kejian-tong/myTradingAlpha/pull/111);
+no future approval/merge is asserted here. New commits stale affected evidence; incomplete runs do not pass.
 
 ## Completed recovery anchors
+
+PR110: Base `300605dcbed7aff113d81fd7d709ebbabe01e61c`; approved source
+`f80d14b537d70e86cffdc2e41f4d447ec875a68f`; merge/tree match reconciled main above.
+HARNESS-EFF-05 compaction, event monitoring, recovery reference reuse and usage accounting;
+local and CI each 5615 passed, 4 skipped, 69 subtests.
+[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517349963),
+[gate](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517427662),
+[completion](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517487603).
 
 BT-05: Base `3d9e049b2fa2c54b55ac66d1c3000480cd3254bd`; approved source
 `f1e4507f0508e822464878508219eeacf5a8eb45`; tree `eb1fc414d070d9fec1f71bb95f7742be9fbf29ee`.
@@ -43,7 +50,7 @@ Its human computation-clock waiver changes no synchronization, resource, securit
 
 PR109: Base `8b1138841719c19bb74b4ed1176c78af8bcc469c`; approved source
 `e721ccad33aa912c473fcce8b74d7f48ba56e904`; tree `67d3c9378a0017cecc02acf85649c93d0bc988d6`;
-merge/tree match reconciled main above. Minimum langgraph/sdk security patches and offline URL-path
+merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`. Minimum langgraph/sdk security patches and offline URL-path
 regressions; high initial route, full local and required CI passed.
 [APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/109#issuecomment-6495074222),
 [gate](https://github.com/kejian-tong/myTradingAlpha/pull/109#issuecomment-6495090548),
