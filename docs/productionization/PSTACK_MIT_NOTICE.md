@@ -21,8 +21,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 The adapted skills under `.agents/skills/` are based on `cursor/plugins/pstack`,
-version `0.15.32`, commit `e73df471cd4bd918367e99f3dd9c51bd53ddf5f0`, whose
-`pstack` subtree is `880564357e051d7c7802da1cb5d8df1d0b008299`.
+version `0.15.36`, commit `4dd1d05818d19792e7cd6e818f1667f95f7e1dbe`, whose
+`pstack` subtree is `4719e1c4b4c43bac85d4206a8b41dd2899769c1c`.
 The source paths and SHA-256 hashes are listed in
 `.agents/skills/poteto-mode/compatibility.json`.
 
