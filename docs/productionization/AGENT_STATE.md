@@ -1,87 +1,42 @@
 # Productionization Agent State
 
-Bounded premerge snapshot, not a chronological log. GitHub/current `main` is authoritative.
-Resolve active head, blockers, validation, review and gate from the PR conversation before resuming.
+Bounded operational snapshot; GitHub and current `main` are authoritative. Resolve any active head or gate from its PR evidence.
 
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `5647d9283b22150c1400584d8fbef7c74c6c9338`
-- `last_reconciled_main_tree`: `75cf2253270a4353d4dea96cfbf4569430b3a34d`
+- `last_reconciled_main_sha`: `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
+- `last_reconciled_main_tree`: `f6a105adbe0d93917cf1a426a55b18ee5a7791a8`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-EFF-06 / PR #111
-- `current_phase`: bounded Harness maintenance; Phase 03 incomplete
+- `current_pr_id`: HARNESS-PSTACK-01536 / PR #112
+- `current_phase`: bounded Harness pstack 0.15.36 synchronization; pre-merge
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
-- `harness_reconciled_through`: PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338`
-- `autonomy_mode`: human-authorized HARNESS-EFF-06 only; later slices require separate authorization
-- `next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required
+- `last_completed_maintenance_pr`: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
+- `harness_reconciled_through`: PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
+- `authorization`: weekly bounded pstack compatibility sync only; later roadmap slices require separate authorization
+- `next_dependency`: PR #112 exact-head validation, independent review, required CI and Master gate; no result asserted
 
 ## Current maintenance
 
-HARNESS-EFF-06 owns verified two-runner CI partitioning, full-collection/execution receipts and a
-same-head serial comparison requiring at least 25% measured CI test-path improvement before merge.
-BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged. No financial algorithm,
-dependency, runtime/config precedence, production phase or broker behavior changes.
+PR #112 updates the bounded compatible pstack adaptation to canonical version `0.15.36`, commit `4dd1d05818d19792e7cd6e818f1667f95f7e1dbe`, subtree `4719e1c4b4c43bac85d4206a8b41dd2899769c1c`. Its exact-base JIT and all 464 path dispositions are in the PR. Only `interrogate` receives a local skill adaptation. Its reproducible-evidence guidance preserves unexecuted material policy/security risks and the existing review gates. RED and correction history is recorded in the PR; neither validation nor approval of its final head is asserted here. The canonical source and separately frozen user fork remain distinct.
 
-High initial `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate reviewer_high /
-GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh. Master owns state, scope, sequential writer leases
-and merge. RED/GREEN, leases, local/CI logs, coverage/timing, review and gate
-belong in [PR #111](https://github.com/kejian-tong/myTradingAlpha/pull/111);
-no future approval/merge is asserted here. New commits stale affected evidence; incomplete runs do not pass.
+The sync changes no trading algorithm, product dependency, runtime configuration, broker behavior, credential handling, PAPER/live approval, promotion or deployment boundary. BT-06/Phase04+ is not authorized. The Master owns the scope, one-writer leases and merge decision; only the existing named repository roles and gates apply.
 
-## Completed recovery anchors
+## Completed maintenance and roadmap references
 
-PR110: Base `300605dcbed7aff113d81fd7d709ebbabe01e61c`; approved source
-`f80d14b537d70e86cffdc2e41f4d447ec875a68f`; merge/tree match reconciled main above.
-HARNESS-EFF-05 compaction, event monitoring, recovery reference reuse and usage accounting;
-local and CI each 5615 passed, 4 skipped, 69 subtests.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517349963),
-[gate](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517427662),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/110#issuecomment-6517487603).
+Current reconciliation records last_completed_maintenance_pr: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`.
 
-BT-05: Base `3d9e049b2fa2c54b55ac66d1c3000480cd3254bd`; approved source
-`f1e4507f0508e822464878508219eeacf5a8eb45`; tree `eb1fc414d070d9fec1f71bb95f7742be9fbf29ee`.
-Offline manifested replay/checkpointing only. Historical hardest route; full 5286 passed, 4 skipped,
-69 subtests; Foundation: 4710 passed, 2 skipped.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/104#issuecomment-6418127493),
-[gate](https://github.com/kejian-tong/myTradingAlpha/pull/104#issuecomment-6418203129),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/104#issuecomment-6418296352).
-Its human computation-clock waiver changes no synchronization, resource, security, financial or publication gate.
+HARNESS-EFF-06 / PR #111 refreshed on base `5647d9283b22150c1400584d8fbef7c74c6c9338` and merged at `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`. It added verified two-runner CI partitioning and full-collection receipts; local and CI each reported 5615 passed, 4 skipped, 69 subtests. Its serial comparison policy is in that PR. Its green result is the current main; PR #112 has its own validation gates.
 
-PR109: Base `8b1138841719c19bb74b4ed1176c78af8bcc469c`; approved source
-`e721ccad33aa912c473fcce8b74d7f48ba56e904`; tree `67d3c9378a0017cecc02acf85649c93d0bc988d6`;
-merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`. Minimum langgraph/sdk security patches and offline URL-path
-regressions; high initial route, full local and required CI passed.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/109#issuecomment-6495074222),
-[gate](https://github.com/kejian-tong/myTradingAlpha/pull/109#issuecomment-6495090548),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/109#issuecomment-6495208854).
-
-Prior PR108: callback-safe analysis, dated credit estimates, prospective compaction and security patches.
-PR-source local and CI full each 5548 passed, 4 skipped, 69 subtests; Foundation aggregation succeeded4s.
-[APPROVE](https://github.com/kejian-tong/myTradingAlpha/pull/108#issuecomment-6489107034),
-[gate](https://github.com/kejian-tong/myTradingAlpha/pull/108#issuecomment-6489455137),
-[completion](https://github.com/kejian-tong/myTradingAlpha/pull/108#issuecomment-6489599975).
+HARNESS-EFF-05: PR #110 / merge `5647d9283b22150c1400584d8fbef7c74c6c9338`; recovery references, compaction and usage accounting remain linked from that PR. BT-05 / PR #104 merged at `b12bef51acd2b1ef6d6db01dede959f1dd67130f`; it added offline manifested replay/checkpointing only. Prior PR108/109 evidence remains in their GitHub PR histories.
 
 ## Boundaries and assurance
 
-- Phase 03 gate: insufficient_evidence until all six separately merged slices. No live broker write before Phase 09.
-- SIG-04 validates caller-supplied candidates only; no inference.
-- SIG-05 adds only in-memory deterministic shadow envelopes.
-- SIG-05 authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior.
-- No PAPER/live operation; explicit human PAPER/live gates remain mandatory and unexercised.
-- Separate review uses a clean detached exact-head worktree and RED replay. Full local/required CI,
-  released writer evidence and Master gate remain mandatory. BLOCKER/HIGH, dirty/stale isolation,
-  observed mutation or required-CI failure blocks merge.
-- Host-origin assurance absence is supplemental disclosure, not a block alone. Permission profile is
-  disabled; observed filesystem is unrestricted. Read-only role configuration expresses intent.
-- Hook load/trust unknown without host report; configuration alone is ineffective proof. Runtime receipt
-  and offline verifier do not authenticate host/model/isolation. No enforced isolation is claimed.
-- Writer leases are cooperative; they cannot constrain malicious same-user processes.
-- Apps/Memories disabled; rules, permission profiles, OTEL and repo plugins remain watch-only.
-  External-spec/docs MCP settings express configuration intent, not observed host behavior.
+- Phase 03 remains `insufficient_evidence` until all six separately merged slices. No live broker write before Phase 09.
+- SIG-04 validates caller-supplied candidates only. SIG-05 adds only in-memory deterministic shadow envelopes and authorizes no portfolio, risk, order, broker, PAPER/live, or promotion behavior.
+- Explicit human PAPER/live/promotion gates remain mandatory and unexercised by this maintenance sync.
+- Current PR review, full local and exact-head CI, writer lifecycle and Master gate remain mandatory. BLOCKER/HIGH, dirty/stale isolation, observed mutation, missing role, or required-CI failure blocks merge.
+- Host-origin assurance absence is supplemental; configured read-only intent does not authenticate runtime isolation. Writer leases are cooperative.
+- Apps/Memories remain disabled; rules, permissions, OTEL, repository plugins and MCP are watch-only.
 
-[Immutable cold snapshot](https://github.com/kejian-tong/myTradingAlpha/blob/300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md)
-retains prior BT01–04, SIG and Harness recovery references/routes. Its superseded status is historical,
-not current authority. Load that history only for a specific question. Use
-[context](CONTEXT_MANAGEMENT.md), [state compaction](AGENT_STATE_COMPACTION.md) and
-[validation](VALIDATION_EFFICIENCY.md) policies.
+[Immutable cold snapshot (merge `300605dcbed7aff113d81fd7d709ebbabe01e61c`)](https://github.com/kejian-tong/myTradingAlpha/blob/300605dcbed7aff113d81fd7d709ebbabe01e61c/docs/productionization/AGENT_STATE.md) retains prior BT01–04, SIG and Harness recovery references/routes. Its status is historical. Use [context management](CONTEXT_MANAGEMENT.md), [state compaction](AGENT_STATE_COMPACTION.md), and [validation efficiency](VALIDATION_EFFICIENCY.md) for their respective procedures.
