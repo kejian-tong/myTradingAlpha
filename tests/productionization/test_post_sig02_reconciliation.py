@@ -7,8 +7,8 @@ STATE = ROOT / "docs/productionization/AGENT_STATE.md"
 README = ROOT / "docs/productionization/README.md"
 TARGET = ROOT / "docs/productionization/02_TARGET_ARCHITECTURE.md"
 
-RECONCILED_MAIN_SHA = "342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f"
-RECONCILED_MAIN_TREE = "f6a105adbe0d93917cf1a426a55b18ee5a7791a8"
+PREMERGE_BASE_SHA = "6ff575bcade4c2e541b64f48ee4936775e39eaee"
+PREMERGE_BASE_TREE = "e1e96da986bd5370dd07e03fbb64bb8a1e895b27"
 BT05_BASE_SHA = "3d9e049b2fa2c54b55ac66d1c3000480cd3254bd"
 BT05_SOURCE_SHA = "f1e4507f0508e822464878508219eeacf5a8eb45"
 BT05_SOURCE_TREE = "eb1fc414d070d9fec1f71bb95f7742be9fbf29ee"
@@ -27,13 +27,13 @@ def _state_text() -> str:
     return STATE.read_text(encoding="utf-8")
 
 
-def test_operational_state_reconciles_the_current_main_and_completed_bt05() -> None:
+def test_recorded_premerge_snapshot_reconciles_base_and_completed_bt05() -> None:
     state = _state_text()
     normalized = " ".join(state.split())
 
     assert "- `schema_version`: 3" in state
-    assert f"`last_reconciled_main_sha`: `{RECONCILED_MAIN_SHA}`" in state
-    assert f"`last_reconciled_main_tree`: `{RECONCILED_MAIN_TREE}`" in state
+    assert f"`last_reconciled_main_sha`: `{PREMERGE_BASE_SHA}`" in state
+    assert f"`last_reconciled_main_tree`: `{PREMERGE_BASE_TREE}`" in state
     assert "`roadmap_status`: BT-05 merged; BT-06 not started" in state
     assert f"`last_completed_roadmap_pr`: BT-05 / PR #104 / merge `{BT05_MERGE_SHA}`" in normalized
     assert f"Base `{BT05_BASE_SHA}`" in normalized
@@ -44,23 +44,39 @@ def test_operational_state_reconciles_the_current_main_and_completed_bt05() -> N
     assert "BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
 
 
-def test_current_harness_snapshot_tracks_main_and_authorizes_only_pstack() -> None:
+def test_active_harness_closure_snapshot_preserves_current_scope_and_authority() -> None:
     state = _state_text()
     normalized = " ".join(state.split())
 
     assert (
-        f"`harness_reconciled_through`: PR #111 / merge `{RECONCILED_MAIN_SHA}`"
+        f"`last_reconciled_main_sha`: `{PREMERGE_BASE_SHA}`"
+        in state
+    )
+    assert f"`last_reconciled_main_tree`: `{PREMERGE_BASE_TREE}`" in state
+    assert (
+        f"`last_completed_maintenance_pr`: DEPS-PYASN1-065 / PR #113 / merge `{PREMERGE_BASE_SHA}`"
+        in normalized
+    )
+    assert (
+        f"`harness_reconciled_through`: PR #113 / merge `{PREMERGE_BASE_SHA}`"
         in state
     )
     assert f"PR109: Base `{HARNESS109_BASE_SHA}`" in normalized
     assert f"approved source `{HARNESS109_SOURCE_SHA}`" in normalized
     assert f"tree `{HARNESS109_TREE}`" in normalized
     assert f"merge `{HARNESS109_MERGE_SHA}`" in normalized
-    assert "`current_pr_id`: HARNESS-PSTACK-01536 / PR #112" in state
-    assert "`autonomy_mode`: human-authorized bounded pstack synchronization only; later slices require separate authorization" in state
+    assert "`current_pr_id`: HARNESS-CLOSURE-01" in state
+    assert "`current_phase`: bounded Harness maintenance; Phase 03 incomplete" in state
+    assert "`autonomy_mode`: human-authorized bounded Harness closure only; later slices require separate authorization" in state
+    assert "`next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
+    assert "[Closure register](HARNESS_REMEDIATION_STATUS.md) records merged #111/#112/#113 and remaining external evidence limits." in state
+    assert "Current maintenance" in state
+    assert "Closes runner-provenance wording, aggregate-guard regression coverage and known-issue reporting." in state
     assert "High `luna_sol_high`: normal_implementer / GPT-6 Luna / max" in state
     assert "separate reviewer_high / GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh" in state
-    assert "https://github.com/kejian-tong/myTradingAlpha/pull/112#issuecomment-6546408010" in state
+    assert "The active PR conversation holds the exact-base JIT." in state
+    assert "HARNESS-PSTACK-01536" not in state
+    assert "pull/112#issuecomment-6546408010" not in state
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state
     assert "Routing and safety gates are unchanged." in state
