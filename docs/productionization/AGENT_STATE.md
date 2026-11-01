@@ -1,29 +1,31 @@
 # Productionization Agent State
 
-Bounded premerge snapshot, not a chronological log. GitHub/current `main` is authoritative.
+Premerge snapshot, not a chronological log. GitHub/current `main` is authoritative.
 Resolve active head, blockers, validation, review and gate from the PR conversation before resuming.
 
 ## Current control state
 
 - `schema_version`: 3
-- `last_reconciled_main_sha`: `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
-- `last_reconciled_main_tree`: `f6a105adbe0d93917cf1a426a55b18ee5a7791a8`
+- `last_reconciled_main_sha`: `6ff575bcade4c2e541b64f48ee4936775e39eaee`
+- `last_reconciled_main_tree`: `e1e96da986bd5370dd07e03fbb64bb8a1e895b27`
 - `roadmap_status`: BT-05 merged; BT-06 not started
-- `current_pr_id`: HARNESS-PSTACK-01536 / PR #112
+- `current_pr_id`: HARNESS-CLOSURE-01 / PR #114
 - `current_phase`: bounded Harness maintenance; Phase 03 incomplete
 - `last_completed_roadmap_pr`: BT-05 / PR #104 / merge `b12bef51acd2b1ef6d6db01dede959f1dd67130f`
-- `last_completed_maintenance_pr`: HARNESS-EFF-06 / PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
-- `harness_reconciled_through`: PR #111 / merge `342b31134e2c9302b5ccb4ea91cd7bc08d17cc8f`
-- `autonomy_mode`: human-authorized bounded pstack synchronization only; later slices require separate authorization
+- `last_completed_maintenance_pr`: DEPS-PYASN1-065 / PR #113 / merge `6ff575bcade4c2e541b64f48ee4936775e39eaee`
+- `harness_reconciled_through`: PR #113 / merge `6ff575bcade4c2e541b64f48ee4936775e39eaee`
+- `autonomy_mode`: human-authorized bounded Harness closure only; later slices require separate authorization
 - `next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required
 
 ## Current maintenance
 
-PR #112 owns pstack 0.15.36/state-contract repair. Sources/hashes/exclusions are in the manifest. BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged.
+Closes runner-provenance wording, aggregate-guard regression coverage and known-issue reporting.
+[Closure register](HARNESS_REMEDIATION_STATUS.md): merged #111/#112/#113; HARNESS-PSTACK-01536 0.15.36; external evidence limits.
+Last maintenance approved source: `acfdce1b5aa041b3f2e3efc7b4d3f6ea98699fa7`; merge/tree above.
+BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged.
 
 High `luna_sol_high`: normal_implementer / GPT-6 Luna / max; separate reviewer_high / GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh.
-[Exact-base JIT](https://github.com/kejian-tong/myTradingAlpha/pull/112#issuecomment-6546408010).
-Head `55a5f474e1c3d7939d5ebbefdc4bc34d120e5ead` failed six state contracts; its interrupted local full run is not a pass. Repair, full local/CI, separate exact-head review and Master gate remain required; no future approval/merge is asserted here.
+The active PR conversation holds the exact-base JIT. Full local/CI, separate exact-head review and Master gate remain required; no future approval/merge is asserted here.
 
 ## Completed recovery anchors
 

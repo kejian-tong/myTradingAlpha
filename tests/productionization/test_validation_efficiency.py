@@ -24,6 +24,13 @@ FOUNDATION_ENV = {
     "LINT_RESULT": "${{ needs.lint.result }}",
     "SMOKE_RESULT": "${{ needs['smoke-install'].result }}",
 }
+SHARD_AGGREGATE_JOB_ID = "test"
+SHARD_GUARD_NAME = "Verify shard job outcomes"
+SHARD_GUARD_ENV = {
+    "SHARD_ZERO_RESULT": "${{ needs.test-shard-0.result }}",
+    "SHARD_ONE_RESULT": "${{ needs.test-shard-1.result }}",
+}
+SHARD_GUARD_DIAGNOSTIC = "CI shard execution did not complete successfully.\n"
 FOUNDATION_RUN = """set -euo pipefail
 if [[ "${TEST_RESULT:-}" != "success" || "${LINT_RESULT:-}" != "success" || "${SMOKE_RESULT:-}" != "success" ]]; then
   printf '%s\\n' 'Foundation dependency coverage did not complete successfully.' >&2
@@ -70,6 +77,29 @@ def _assert_foundation_contract(workflow: dict) -> dict:
     run = step.get("run")
     assert type(run) is str and run.strip() == FOUNDATION_RUN
     return step
+
+
+def _assert_first_shard_aggregate_guard(workflow: dict) -> dict:
+    jobs = workflow.get("jobs")
+    assert type(jobs) is dict
+    job = jobs.get(SHARD_AGGREGATE_JOB_ID)
+    assert type(job) is dict
+    assert job.get("name") == "tests (py3.14)"
+    assert job.get("needs") == ["test-shard-0", "test-shard-1"]
+    assert job.get("if") == "${{ always() }}"
+    assert job.get("continue-on-error", False) is False
+
+    steps = job.get("steps")
+    assert type(steps) is list and steps
+    guard = steps[0]
+    assert type(guard) is dict
+    assert guard.get("name") == SHARD_GUARD_NAME
+    assert guard.get("shell") == "bash"
+    assert guard.get("env") == SHARD_GUARD_ENV
+    assert set(guard) == {"name", "shell", "env", "run"}
+    run = guard.get("run")
+    assert type(run) is str and run.strip()
+    return guard
 
 
 def _assert_no_pytest_selector_env(workflow: dict) -> None:
@@ -210,6 +240,106 @@ def test_foundation_gate_rejects_non_success_results_without_leaking_values() ->
         result = _run_shell(step["run"], results)
         if result.returncode == 0 or result.stderr != fixed_diagnostic or result.stdout:
             pytest.fail(f"Foundation gate did not fail closed when {position} was missing")
+
+
+def test_first_shard_aggregate_guard_passes_when_both_shards_succeed() -> None:
+    guard = _assert_first_shard_aggregate_guard(_workflow())
+    result = _run_shell(
+        guard["run"],
+        {"SHARD_ZERO_RESULT": "success", "SHARD_ONE_RESULT": "success"},
+    )
+
+    assert result.returncode == 0, "aggregate shard guard rejected two successful dependencies"
+    assert result.stdout == "Both fixed shard jobs completed successfully.\n"
+    assert result.stderr == ""
+
+
+def test_first_shard_aggregate_guard_rejects_incomplete_or_malformed_results() -> None:
+    guard = _assert_first_shard_aggregate_guard(_workflow())
+    invalid_results = (
+        ("empty", ""),
+        ("failed", "failure"),
+        ("cancelled", "cancelled"),
+        ("skipped", "skipped"),
+        ("unknown", "unknown"),
+        ("uppercase", "SUCCESS"),
+        ("leading whitespace", " success"),
+        ("trailing whitespace", "success "),
+        ("lookalike", "successx"),
+        ("shell metacharacters", "success; printf injected"),
+    )
+
+    for position in SHARD_GUARD_ENV:
+        results = dict.fromkeys(SHARD_GUARD_ENV, "success")
+        results.pop(position)
+        result = _run_shell(guard["run"], results)
+        assert result.returncode != 0, f"aggregate shard guard accepted missing {position}"
+        assert result.stdout == ""
+        assert result.stderr == SHARD_GUARD_DIAGNOSTIC
+
+        for result_name, invalid in invalid_results:
+            results = dict.fromkeys(SHARD_GUARD_ENV, "success")
+            results[position] = invalid
+            result = _run_shell(guard["run"], results)
+
+            assert result.returncode != 0, (
+                f"aggregate shard guard accepted {result_name} for {position}"
+            )
+            assert result.stdout == ""
+            assert result.stderr == SHARD_GUARD_DIAGNOSTIC
+
+
+def test_first_shard_aggregate_guard_rejects_binding_and_execution_drift() -> None:
+    valid = _workflow()
+    _assert_first_shard_aggregate_guard(valid)
+
+    mutations = (
+        (
+            "wrong result binding",
+            lambda workflow: workflow["jobs"][SHARD_AGGREGATE_JOB_ID]["steps"][0]["env"].__setitem__(
+                "SHARD_ZERO_RESULT", "${{ needs.test.result }}"
+            ),
+        ),
+        (
+            "conditional guard",
+            lambda workflow: workflow["jobs"][SHARD_AGGREGATE_JOB_ID]["steps"][0].__setitem__(
+                "if", "${{ success() }}"
+            ),
+        ),
+        (
+            "conditional aggregate job",
+            lambda workflow: workflow["jobs"][SHARD_AGGREGATE_JOB_ID].__setitem__(
+                "if", "${{ success() }}"
+            ),
+        ),
+        (
+            "continued guard",
+            lambda workflow: workflow["jobs"][SHARD_AGGREGATE_JOB_ID]["steps"][0].__setitem__(
+                "continue-on-error", True
+            ),
+        ),
+        (
+            "continued aggregate job",
+            lambda workflow: workflow["jobs"][SHARD_AGGREGATE_JOB_ID].__setitem__(
+                "continue-on-error", True
+            ),
+        ),
+        (
+            "misordered guard",
+            lambda workflow: workflow["jobs"][SHARD_AGGREGATE_JOB_ID]["steps"].__setitem__(
+                slice(0, 2),
+                list(reversed(workflow["jobs"][SHARD_AGGREGATE_JOB_ID]["steps"][:2])),
+            ),
+        ),
+    )
+    for label, mutate in mutations:
+        candidate = copy.deepcopy(valid)
+        mutate(candidate)
+        try:
+            _assert_first_shard_aggregate_guard(candidate)
+        except AssertionError:
+            continue
+        pytest.fail(f"first aggregate shard guard accepted {label}")
 
 
 def test_foundation_contract_rejects_dependency_shell_and_filter_drift() -> None:
