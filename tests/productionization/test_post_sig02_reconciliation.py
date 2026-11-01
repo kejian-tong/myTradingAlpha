@@ -69,13 +69,13 @@ def test_active_harness_closure_snapshot_preserves_current_scope_and_authority()
     assert "`current_phase`: bounded Harness maintenance; Phase 03 incomplete" in state
     assert "`autonomy_mode`: human-authorized bounded Harness closure only; later slices require separate authorization" in state
     assert "`next_dependency`: BT-06 informational only; refreshed main, fresh Master and separate authorization required" in state
-    assert "[Closure register](HARNESS_REMEDIATION_STATUS.md) records merged #111/#112/#113 and remaining external evidence limits." in state
+    assert "[Closure register](HARNESS_REMEDIATION_STATUS.md): merged #111/#112/#113; HARNESS-PSTACK-01536 0.15.36; external evidence limits." in state
     assert "Current maintenance" in state
     assert "Closes runner-provenance wording, aggregate-guard regression coverage and known-issue reporting." in state
     assert "High `luna_sol_high`: normal_implementer / GPT-6 Luna / max" in state
     assert "separate reviewer_high / GPT-6.1 Sol / xhigh; Master / GPT-6.1 Sol / xhigh" in state
     assert "The active PR conversation holds the exact-base JIT." in state
-    assert "HARNESS-PSTACK-01536" not in state
+    assert "`current_pr_id`: HARNESS-PSTACK-01536" not in state
     assert "pull/112#issuecomment-6546408010" not in state
     assert "BT-06/Phase04+ is not authorized" in state
     assert "no future approval/merge is asserted here" in state

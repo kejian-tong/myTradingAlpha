@@ -1,6 +1,6 @@
 # Productionization Agent State
 
-Bounded premerge snapshot, not a chronological log. GitHub/current `main` is authoritative.
+Premerge snapshot, not a chronological log. GitHub/current `main` is authoritative.
 Resolve active head, blockers, validation, review and gate from the PR conversation before resuming.
 
 ## Current control state
@@ -20,7 +20,7 @@ Resolve active head, blockers, validation, review and gate from the PR conversat
 ## Current maintenance
 
 Closes runner-provenance wording, aggregate-guard regression coverage and known-issue reporting.
-[Closure register](HARNESS_REMEDIATION_STATUS.md) records merged #111/#112/#113 and remaining external evidence limits.
+[Closure register](HARNESS_REMEDIATION_STATUS.md): merged #111/#112/#113; HARNESS-PSTACK-01536 0.15.36; external evidence limits.
 Last maintenance approved source: `acfdce1b5aa041b3f2e3efc7b4d3f6ea98699fa7`; merge/tree above.
 BT-06/Phase04+ is not authorized. Routing and safety gates are unchanged.
 
