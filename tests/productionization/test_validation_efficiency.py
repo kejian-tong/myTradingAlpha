@@ -270,7 +270,7 @@ def test_first_shard_aggregate_guard_rejects_incomplete_or_malformed_results() -
     )
 
     for position in SHARD_GUARD_ENV:
-        results = {key: "success" for key in SHARD_GUARD_ENV}
+        results = dict.fromkeys(SHARD_GUARD_ENV, "success")
         results.pop(position)
         result = _run_shell(guard["run"], results)
         assert result.returncode != 0, f"aggregate shard guard accepted missing {position}"
@@ -278,7 +278,7 @@ def test_first_shard_aggregate_guard_rejects_incomplete_or_malformed_results() -
         assert result.stderr == SHARD_GUARD_DIAGNOSTIC
 
         for result_name, invalid in invalid_results:
-            results = {key: "success" for key in SHARD_GUARD_ENV}
+            results = dict.fromkeys(SHARD_GUARD_ENV, "success")
             results[position] = invalid
             result = _run_shell(guard["run"], results)
 
